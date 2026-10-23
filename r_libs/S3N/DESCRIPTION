@@ -1,0 +1,20 @@
+Package: S3N
+Type: Package
+Title: Scalable Spatial Stream Network Models
+Version: 1.0.5
+Authors@R: person("Jessica", "Kunke", , "jessicakunke@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0009-0006-1475-3734"))
+Depends: R (>= 3.3.0), parallel, stats, graphics
+Description: This package implements nearest neighbor Gaussian process models  adapted for stream networks, as well as computationally efficient stream network preprocessing.
+License: use_gpl3_license()
+Encoding: UTF-8
+NeedsCompilation: yes
+RoxygenNote: 7.3.1
+Packaged: 2022-04-28 06:25:59 UTC; asaha
+Repository: CRAN
+Date/Publication: 2022-04-29 23:20:17 UTC
+Suggests: dplyr
+Author: Jessica Kunke [aut, cre] (ORCID:
+    <https://orcid.org/0009-0006-1475-3734>)
+Maintainer: Jessica Kunke <jessicakunke@gmail.com>
+Built: R 4.5.3; x86_64-redhat-linux-gnu; 2026-10-23 08:25:21 UTC; unix
