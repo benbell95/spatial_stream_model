@@ -49,6 +49,3 @@ rsconnect/
 data/
 gis/
 output/
-
-# Dont upload the S3N package!
-r_libs/
