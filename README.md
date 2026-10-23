@@ -16,7 +16,26 @@ The riverline data comes from the Open Rivers Network, available from: [Open Riv
 
 ## Usage
 
-Clone the repository to get the scripts. Within the project folder, create two additional folders; `data` and `gis`. In the `data` folder, unzip the `NCEA_River_Surveillance_Network_ARD_Open.zip` into it which you can download from: [Data.gov.uk](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#general), and in the `gis` folder, download the ORN GeoPackage file and unzip. [Open Rivers](https://openrivers.net/download/).
+Clone the repository to get the scripts. Within the project folder, create three additional folders; `data`, `gis` and `r_libs`. 
+
+In the `data` folder, unzip the `NCEA_River_Surveillance_Network_ARD_Open.zip` into it which you can download from: [Data.gov.uk](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#general), and in the `gis` folder, download the ORN GeoPackage file and unzip. [Open Rivers](https://openrivers.net/download/).
+
+The [S3N](https://github.com/jpierkunke/S3N) package should be installed into the `r_libs` folder (in a S3N sub-folder). Simply clone the respository to install.
+
+The final folder structure should look like this:
+
+```
+spatial_stream_modelling
+├── data
+│   └── NCEA_River_Surveillance_Network_ARD_Open        <- Download from Data.gov.uk
+├── docs
+├── gis         <- Download the ORN GeoPackage and place in here        
+├── readings
+├── r_libs
+│   └── S3N     <- Download from Github     
+├── scripts
+└── src
+```
 
 The scripts are run from the command line (rather than from within R/Python).
 
