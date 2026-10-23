@@ -48,4 +48,4 @@ rsconnect/
 # Data folder, GIS folder, and outputs folder
 data/
 gis/
-outputs/
+output/
