@@ -12,12 +12,19 @@ River monitoring data comes from the EA NCEA project, available from: [Data.gov.
 
 The riverline data comes from the Open Rivers Network, available from: [Open Rivers](https://openrivers.net/)
 
-
+<img width="2600" height="1450" alt="fig1_england_stream_0117_map" src="https://github.com/user-attachments/assets/12cdd4ab-f316-463c-bfac-f6855b946db7" />
 
 ## Usage
 
-Refer to the `usage_guide.md` file, found in the `docs` folder on how to use these scripts.
+Clone the repository to get the scripts. Within the project folder, create two additional folders; `data` and `gis`. In the `data` folder, unzip the `NCEA_River_Surveillance_Network_ARD_Open.zip` into it which you can download from: [Data.gov.uk](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#general), and in the `gis` folder, download the ORN GeoPackage file and unzip. [Open Rivers](https://openrivers.net/download/).
+
+The scripts are run from the command line (rather than from within R/Python).
+
+Refer to the `usage_guide.md` file, found in the `docs` folder on how for full details on how to use these scripts.
+
 
 ## Requirements
 
-This has been tested on Fedora (Linux) v44, and R v4.5+. Refer to the `preprocessing_pipeline.md` file for a full list of requirements.
+Refer to the `preprocessing_pipeline.md` file for a full list of requirements.
+
+This has been tested on Fedora v44 (Linux), and R v4.5+
