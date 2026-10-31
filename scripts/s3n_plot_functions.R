@@ -65,8 +65,8 @@ compute_color_scale <- function(vals_model_sc, use_log, vmin_raw = NULL, vmax_ra
     vmax <- vmax + 0.5
   }
   if (use_log) {
-    cands <- c(0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5,
-               1, 2, 2.5, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+    cands <- c(0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5,
+               1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
     raw_in <- cands[cands >= exp(vmin) * 0.95 & cands <= exp(vmax) * 1.05]
     if (length(raw_in) > 7) {
       raw_in <- raw_in[unique(round(seq(1, length(raw_in), length.out = 6)))]
@@ -207,16 +207,33 @@ shorten_det_name <- function(det_name) {
   paste0(substr(s, 1, 22), tag)
 }
 
+format_top_banner <- function(network_label = NULL, vars_label = NULL) {
+  has_net  <- !is.null(network_label) && nzchar(network_label)
+  has_vars <- !is.null(vars_label) && nzchar(vars_label)
+  if (has_net && has_vars) {
+    sprintf("Water Network: %s   |   Fixed-Effect Regression Covariates: %s", network_label, vars_label)
+  } else if (has_net) {
+    sprintf("Water Network: %s", network_label)
+  } else if (has_vars) {
+    sprintf("Fixed-Effect Regression Covariates: %s", vars_label)
+  } else {
+    ""
+  }
+}
+
 # Figure 1: Full England Stream Network Map
 plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_log, out_file,
-                                  reverse_color = FALSE, sc_val = NULL, sc_se = NULL, vars_label = NULL) {
+                                  reverse_color = FALSE, sc_val = NULL, sc_se = NULL,
+                                  vars_label = NULL, network_label = NULL) {
   eng_pred <- normalize_pred_df(eng_pred)
   pal_use  <- get_val_pal(reverse_color)
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
+  has_net  <- !is.null(network_label) && nzchar(network_label)
+  banner   <- format_top_banner(network_label, vars_label)
   png(out_file, width = 2600, height = 1450, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
-      oma = if (has_vars) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   if (is.null(sc_val)) sc_val <- compute_color_scale(eng_pred$pred_model_sc, use_log)
   if (is.null(sc_se))  sc_se  <- compute_se_scale(eng_pred$se_model_sc)
@@ -225,11 +242,13 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
   cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, det_unit)
+  net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
   sub_a <- if (has_vars) {
-    sprintf("S3N across %d catchments | Covariates: %s", length(unique(eng_pred$CatchID)), vars_label)
+    sprintf("S3N across %d catchments%s | Covariates: %s",
+            length(unique(eng_pred$CatchID)), net_tag, vars_label)
   } else {
-    sprintf("Scalable Spatial Stream Network (S3N) model across %d monitored catchments",
-            length(unique(eng_pred$CatchID)))
+    sprintf("Scalable Spatial Stream Network (S3N) across %d catchments%s",
+            length(unique(eng_pred$CatchID)), net_tag)
   }
 
   plot_stream_network(
@@ -243,8 +262,8 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   plot_stream_network(
     eng_pred, "se_model_sc", vmin = sc_se$vmin, vmax = sc_se$vmax, pal = uncert_cols,
     main_title = sprintf("B. S3N Prediction Uncertainty & RSN Stations (n = %s)", format(n_obs_eng, big.mark = ",")),
-    sub_title  = sprintf("Kriging standard error (%s) with observed RSN stations overlaid",
-                         if (use_log) "log scale" else det_unit),
+    sub_title  = sprintf("Kriging standard error (%s) with observed RSN stations overlaid%s",
+                         if (use_log) "log scale" else det_unit, net_tag),
     cbar_ticks = sc_se$ticks, cbar_labels = sc_se$labels,
     cbar_title = if (use_log) "Kriging SE\n(log scale)" else sprintf("Kriging SE\n(%s)", det_unit),
     show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
@@ -255,41 +274,44 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
          col = "#111111", cex = 0.65, lwd = 0.5)
   legend("topleft", legend = sprintf("Observed RSN Station (colored by %s)", det_short),
          pch = 21, pt.bg = "#e67e22", col = "#111111", pt.cex = 1.0, bty = "n", cex = 0.80)
-  if (has_vars) {
-    mtext(sprintf("Fixed-Effect Regression Covariates: %s", vars_label),
-          side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  if (nzchar(banner)) {
+    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
   }
 }
 
 # Generic 2-Panel River Basin High-Resolution S3N Map (used for Figure 2 Humber & Figure 5+ Custom Basins)
 plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                           reverse_color = FALSE, sc_se = NULL, vars_label = NULL) {
+                           reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL) {
   basin_pred <- normalize_pred_df(basin_pred)
   cv_tab     <- normalize_cv_tab(cv_tab)
   pal_use    <- get_val_pal(reverse_color)
   has_vars   <- !is.null(vars_label) && nzchar(vars_label)
+  has_net    <- !is.null(network_label) && nzchar(network_label)
+  banner     <- format_top_banner(network_label, vars_label)
   png(out_file, width = 2600, height = 1350, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
-      oma = if (has_vars) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   if (is.null(sc_se)) sc_se <- compute_se_scale(basin_pred$se_model_sc)
   n_obs_basin <- sum(basin_pred$has_obs == 1)
   det_short   <- shorten_det_name(det_name)
-  cv_row      <- subset(cv_tab, Domain == domain_label & Model == "S3N Combined (Tail-Up + Tail-Down)")
+  net_tag     <- if (has_net) sprintf(" [%s]", network_label) else ""
+  cv_row      <- subset(cv_tab, (Domain == domain_label | grepl(paste0("^", basin_title), Domain)) &
+                                Model == "S3N Combined (Tail-Up + Tail-Down)")
   sub_a <- if (nrow(cv_row) > 0) {
     if (has_vars) {
-      sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | n = %d sites | Covariates: %s",
-              cv_row$R2[1], cv_row$RMSE[1], n_obs_basin, vars_label)
+      sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | n = %d sites%s | Covariates: %s",
+              cv_row$R2[1], cv_row$RMSE[1], n_obs_basin, net_tag, vars_label)
     } else {
-      sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | Circles show %d observed RSN stations",
-              cv_row$R2[1], cv_row$RMSE[1], n_obs_basin)
+      sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | %d observed RSN stations%s",
+              cv_row$R2[1], cv_row$RMSE[1], n_obs_basin, net_tag)
     }
   } else {
     if (has_vars) {
-      sprintf("England S3N subset (n = %d sites) | Covariates: %s", n_obs_basin, vars_label)
+      sprintf("England S3N subset (n = %d sites)%s | Covariates: %s", n_obs_basin, net_tag, vars_label)
     } else {
-      sprintf("England S3N model subset | Circles show %d observed RSN stations in %s", n_obs_basin, basin_title)
+      sprintf("England S3N model subset | %d observed RSN stations in %s%s", n_obs_basin, basin_title, net_tag)
     }
   }
 
@@ -308,7 +330,7 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   plot_stream_network(
     basin_pred, "se_model_sc", vmin = sc_se$vmin, vmax = sc_se$vmax, pal = uncert_cols,
     main_title = sprintf("B. %s: S3N Kriging Standard Error (%s)", basin_title, det_short),
-    sub_title  = "Uncertainty is lowest along monitored flow-connected paths and higher in headwaters",
+    sub_title  = sprintf("Lower along monitored flow-connected paths, higher in headwaters%s", net_tag),
     cbar_ticks = sc_se$ticks, cbar_labels = sc_se$labels,
     cbar_title = if (use_log) "Kriging SE\n(log scale)" else sprintf("Kriging SE\n(%s)", det_unit),
     show_obs = FALSE, base_lwd = 0.35, max_lwd = 2.8
@@ -319,46 +341,49 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   }
   legend("topleft", legend = sprintf("RSN Monitoring Site Location (n = %d)", n_obs_basin),
          pch = 3, col = "#c0392b", pt.cex = 0.9, bty = "n", cex = 0.82)
-  if (has_vars) {
-    mtext(sprintf("Fixed-Effect Regression Covariates: %s", vars_label),
-          side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  if (nzchar(banner)) {
+    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
   }
 }
 
 # Figure 2: Humber River Basin High-Resolution S3N Map
 plot_fig2_humber_map <- function(hum_pred, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                                 reverse_color = FALSE, sc_se = NULL, vars_label = NULL) {
+                                 reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL) {
   plot_basin_map(hum_pred, "Humber Basin", "Humber Basin (CatchID=80)",
                  cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                 reverse_color = reverse_color, sc_se = sc_se, vars_label = vars_label)
+                 reverse_color = reverse_color, sc_se = sc_se,
+                 vars_label = vars_label, network_label = network_label)
 }
 
 # Figure 3: Thames & Severn River Basins S3N Maps
 plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                                        reverse_color = FALSE, vars_label = NULL) {
+                                        reverse_color = FALSE, vars_label = NULL, network_label = NULL) {
   tha_pred <- normalize_pred_df(tha_pred)
   sev_pred <- normalize_pred_df(sev_pred)
   pal_use  <- get_val_pal(reverse_color)
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
+  has_net  <- !is.null(network_label) && nzchar(network_label)
+  banner   <- format_top_banner(network_label, vars_label)
   png(out_file, width = 2600, height = 1250, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
-      oma = if (has_vars) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
   cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, det_unit)
+  net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
   sub_tha <- if (has_vars) {
-    sprintf("n = %d RSN sites | S3N Tail-Up | Covariates: %s", sum(tha_pred$has_obs == 1), vars_label)
+    sprintf("n = %d RSN sites%s | S3N Tail-Up | Covariates: %s", sum(tha_pred$has_obs == 1), net_tag, vars_label)
   } else {
-    sprintf("n = %d observed RSN stations | Flow-connected Tail-Up stream network predictions",
-            sum(tha_pred$has_obs == 1))
+    sprintf("n = %d observed RSN stations%s | Flow-connected Tail-Up predictions",
+            sum(tha_pred$has_obs == 1), net_tag)
   }
   sub_sev <- if (has_vars) {
-    sprintf("n = %d RSN sites | S3N Combined | Covariates: %s", sum(sev_pred$has_obs == 1), vars_label)
+    sprintf("n = %d RSN sites%s | S3N Combined | Covariates: %s", sum(sev_pred$has_obs == 1), net_tag, vars_label)
   } else {
-    sprintf("n = %d observed RSN stations | Combined Tail-Up + Tail-Down S3N predictions",
-            sum(sev_pred$has_obs == 1))
+    sprintf("n = %d observed RSN stations%s | Combined Tail-Up + Tail-Down predictions",
+            sum(sev_pred$has_obs == 1), net_tag)
   }
 
   plot_stream_network(
@@ -378,23 +403,25 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
     show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.40, max_lwd = 2.8
   )
-  if (has_vars) {
-    mtext(sprintf("Fixed-Effect Regression Covariates: %s", vars_label),
-          side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  if (nzchar(banner)) {
+    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
   }
 }
 
 # Figure 4: 4-Panel Model Diagnostics, Cross-Validation & Parameter CIs
 plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, det_code, det_name, det_unit, use_log, out_file,
-                                  extra_cv_list = list(), lims_a = NULL, ylim_d = NULL) {
+                                  extra_cv_list = list(), lims_a = NULL, ylim_d = NULL,
+                                  vars_label = NULL, network_label = NULL) {
   eng_pred <- normalize_pred_df(eng_pred)
   eng_cv   <- normalize_cv_pts(eng_cv)
   hum_cv   <- normalize_cv_pts(hum_cv)
   cv_tab   <- normalize_cv_tab(cv_tab)
+  banner   <- format_top_banner(network_label, vars_label)
 
   png(out_file, width = 2400, height = 1800, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(2, 2), mar = c(4.5, 5.2, 3.2, 1.8), bg = "white")
+  par(mfrow = c(2, 2), mar = c(4.5, 5.2, 3.2, 1.8),
+      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   det_short <- shorten_det_name(det_name)
   sc_lbl    <- if (use_log) sprintf("log(%s, %s)", det_short, det_unit) else sprintf("%s (%s)", det_short, det_unit)
@@ -420,7 +447,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   }
 
   eng_row <- subset(cv_tab, Domain == "All England RSN Network" & Model == "S3N Combined (Tail-Up + Tail-Down)")
-  hum_row <- subset(cv_tab, Domain == "Humber Basin (CatchID=80)" & Model == "S3N Combined (Tail-Up + Tail-Down)")
+  hum_row <- subset(cv_tab, grepl("^Humber Basin", Domain) & Model == "S3N Combined (Tail-Up + Tail-Down)")
 
   leg_txt  <- sprintf("All England (n = %d): R2 = %.3f, RMSE = %.3f", nrow(eng_cv), eng_row$R2[1], eng_row$RMSE[1])
   leg_pch  <- 16
@@ -583,11 +610,15 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   y_txt <- pmin(par("usr")[4] - 0.07 * yr_d, bp_d$stats[4, ] + 0.07 * yr_d)
   text(1:4, y_txt, labels = sprintf("Median:\n%s %s", formatC(medians, format = "fg", digits = 3), det_unit),
        font = 2, cex = 0.78, col = "#111111")
+  if (nzchar(banner)) {
+    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  }
 }
 
 # Figure 5 (Temporal Multi-Panel Grid): All England S3N Comparison Across Seasons, Years, or Months
 plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_code, det_name, det_unit,
-                                            use_log, out_file, reverse_color = FALSE, vars_label = NULL) {
+                                            use_log, out_file, reverse_color = FALSE,
+                                            vars_label = NULL, network_label = NULL) {
   period_items <- Filter(Negate(is.null), period_items)
   n_pan <- length(period_items)
   if (n_pan == 0) return(invisible(NULL))
@@ -681,8 +712,10 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
   n_reaches_tot <- nrow(period_items[[1]]$eng_pred)
   n_catch_tot   <- length(unique(period_items[[1]]$eng_pred$CatchID))
   has_vars      <- !is.null(vars_label) && nzchar(vars_label)
-  sub_outer <- sprintf("Unified color scale across all %d %s panels (%s reaches across %d monitored catchments)%s",
+  has_net       <- !is.null(network_label) && nzchar(network_label)
+  sub_outer <- sprintf("Unified color scale across all %d %s panels (%s reaches across %d catchments)%s%s",
                        n_pan, tolower(by_mode), format(n_reaches_tot, big.mark = ","), n_catch_tot,
+                       if (has_net) paste0(" | Network: ", network_label) else "",
                        if (has_vars) paste0(" | Covariates: ", vars_label) else "")
   mtext(sprintf("All England S3N Stream Network Comparison by %s: %s (%s)",
                 mode_cap, det_short, det_unit),
@@ -1051,4 +1084,183 @@ format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
   if (length(terms) == 0) return("None (Intercept-only spatial model)")
   paste(unname(COVARIATE_SHORT_LABEL[terms]), collapse = ", ")
 }
+
+# ==============================================================================
+# WATER NETWORK METADATA & CORE BASIN RESOLUTION HELPERS
+# ==============================================================================
+
+NETWORK_ALIAS_MAP <- c(
+  orn            = "orn",
+  orn_v2         = "orn",
+  os_orn         = "orn",
+  euhydro_thames = "euhydro_thames",
+  thames         = "euhydro_thames",
+  eu_hydro_thames = "euhydro_thames",
+  euhydro_tweed  = "euhydro_tweed",
+  tweed          = "euhydro_tweed",
+  eu_hydro_tweed = "euhydro_tweed",
+  euhydro        = "euhydro",
+  eu_hydro       = "euhydro"
+)
+
+parse_json_string_field <- function(lines, key, default = "") {
+  pat <- paste0('"', key, '"\\s*:\\s*"([^"]*)"')
+  hit <- grep(pat, lines, value = TRUE)
+  if (length(hit) == 0) return(default)
+  sub(paste0('^.*', pat, '.*$'), "\\1", hit[1])
+}
+
+parse_json_int_field <- function(lines, key, default = NA_integer_) {
+  pat <- paste0('"', key, '"\\s*:\\s*([0-9]+)')
+  hit <- grep(pat, lines, value = TRUE)
+  if (length(hit) == 0) return(default)
+  as.integer(sub(paste0('^.*', pat, '.*$'), "\\1", hit[1]))
+}
+
+resolve_network_processed_dir <- function(base_dir, network_arg = NULL) {
+  proc_root <- file.path(base_dir, "data/processed")
+  if (is.null(network_arg) || !nzchar(trimws(network_arg))) {
+    # Check active network_metadata.json in data/processed/, defaulting to 'orn'
+    meta_p <- file.path(proc_root, "network_metadata.json")
+    if (file.exists(meta_p)) {
+      lines <- readLines(meta_p, warn = FALSE)
+      abbr  <- parse_json_string_field(lines, "abbr", "orn")
+      sub_d <- file.path(proc_root, abbr)
+      if (dir.exists(sub_d) && file.exists(file.path(sub_d, "england_rsn_reaches.csv"))) {
+        return(sub_d)
+      }
+    }
+    if (dir.exists(file.path(proc_root, "orn")) &&
+        file.exists(file.path(proc_root, "orn", "england_rsn_reaches.csv"))) {
+      return(file.path(proc_root, "orn"))
+    }
+    return(proc_root)
+  }
+
+  raw_net <- tolower(trimws(network_arg))
+  abbr <- if (raw_net %in% names(NETWORK_ALIAS_MAP)) unname(NETWORK_ALIAS_MAP[raw_net]) else raw_net
+  sub_d <- file.path(proc_root, abbr)
+  if (!file.exists(file.path(sub_d, "england_rsn_reaches.csv"))) {
+    cat(sprintf("Preprocessing water network '%s' via scripts/01_preprocess_orn.py...\n", abbr))
+    cmd <- sprintf("python3 %s --network=%s",
+                   shQuote(file.path(base_dir, "scripts/01_preprocess_orn.py")),
+                   shQuote(abbr))
+    status <- system(cmd)
+    if (status != 0L) {
+      stop(sprintf("Failed to preprocess water network '%s'. Run `python3 scripts/01_preprocess_orn.py --list-networks`.", abbr))
+    }
+  }
+  if (file.exists(file.path(sub_d, "england_rsn_reaches.csv"))) {
+    return(sub_d)
+  }
+  proc_root
+}
+
+load_network_metadata <- function(proc_dir) {
+  meta_p <- file.path(proc_dir, "network_metadata.json")
+  if (!file.exists(meta_p)) {
+    return(list(
+      abbr        = "orn",
+      label       = "OS Open Rivers Network (ORN v2)",
+      short_label = "ORN v2",
+      humber_cid  = 80L,
+      thames_cid  = 3055L,
+      severn_cid  = 2786L
+    ))
+  }
+  lines <- readLines(meta_p, warn = FALSE)
+  list(
+    abbr        = parse_json_string_field(lines, "abbr", "orn"),
+    label       = parse_json_string_field(lines, "label", "OS Open Rivers Network (ORN v2)"),
+    short_label = parse_json_string_field(lines, "short_label", "ORN v2"),
+    humber_cid  = parse_json_int_field(lines, "humber", NA_integer_),
+    thames_cid  = parse_json_int_field(lines, "thames", NA_integer_),
+    severn_cid  = parse_json_int_field(lines, "severn", NA_integer_)
+  )
+}
+
+resolve_core_basin <- function(df_reaches, catch_lookup = NULL, net_meta = NULL, target = c("humber", "thames", "severn")) {
+  target <- match.arg(target)
+  avail_cids <- unique(df_reaches$CatchID)
+
+  # 1. Check explicit core_basins in network_metadata.json
+  meta_cid <- if (!is.null(net_meta)) switch(target,
+    humber = net_meta$humber_cid,
+    thames = net_meta$thames_cid,
+    severn = net_meta$severn_cid
+  ) else NA_integer_
+  if (!is.na(meta_cid) && (meta_cid %in% avail_cids)) {
+    lbl <- switch(target,
+      humber = sprintf("Humber Basin (CatchID=%d)", meta_cid),
+      thames = sprintf("Thames Basin (CatchID=%d)", meta_cid),
+      severn = sprintf("Severn Basin (CatchID=%d)", meta_cid)
+    )
+    return(list(catch_id = meta_cid, domain_label = lbl))
+  }
+
+  # 1b. Known CatchIDs across ORN and EU-Hydro
+  known_cids <- switch(target,
+    humber = c(80L, 75L),
+    thames = c(3055L, 306L),
+    severn = c(2786L, 243L)
+  )
+  hit_known <- known_cids[known_cids %in% avail_cids]
+  if (length(hit_known) > 0) {
+    cid <- hit_known[1]
+    lbl <- switch(target,
+      humber = sprintf("Humber Basin (CatchID=%d)", cid),
+      thames = sprintf("Thames Basin (CatchID=%d)", cid),
+      severn = sprintf("Severn Basin (CatchID=%d)", cid)
+    )
+    return(list(catch_id = cid, domain_label = lbl))
+  }
+
+  # 2. Search catch_lookup by Main_River or RBD_Name
+  if (!is.null(catch_lookup) && nrow(catch_lookup) > 0) {
+    pat <- switch(target,
+      humber = "humber|trent|ouse",
+      thames = "thames",
+      severn = "severn"
+    )
+    hits <- which(grepl(pat, catch_lookup$Main_River, ignore.case = TRUE) |
+                  grepl(pat, catch_lookup$RBD_Name, ignore.case = TRUE))
+    if (length(hits) > 0) {
+      sub_lu <- catch_lookup[hits, ]
+      sub_lu <- sub_lu[order(-sub_lu$n_obs_reaches, -sub_lu$n_reaches), ]
+      cid <- sub_lu$CatchID[1]
+      lbl <- switch(target,
+        humber = sprintf("Humber Basin (CatchID=%d)", cid),
+        thames = sprintf("Thames Basin (CatchID=%d)", cid),
+        severn = sprintf("Severn Basin (CatchID=%d)", cid)
+      )
+      return(list(catch_id = cid, domain_label = lbl))
+    }
+  }
+
+  # 3. Fallback to largest monitored catchment
+  tab_c <- sort(table(df_reaches$CatchID), decreasing = TRUE)
+  cid <- as.integer(names(tab_c)[1])
+  lbl <- sprintf("%s Basin (CatchID=%d)", paste0(toupper(substr(target, 1, 1)), substr(target, 2, nchar(target))), cid)
+  list(catch_id = cid, domain_label = lbl)
+}
+
+extract_network_label_from_tables <- function(cv_tab = NULL, param_tab = NULL, dir_path = NULL) {
+  if (!is.null(cv_tab) && "Network_Label" %in% colnames(cv_tab) && nrow(cv_tab) > 0) {
+    val <- as.character(cv_tab$Network_Label[1])
+    if (!is.na(val) && nzchar(val)) return(val)
+  }
+  if (!is.null(param_tab) && "Network_Label" %in% colnames(param_tab) && nrow(param_tab) > 0) {
+    val <- as.character(param_tab$Network_Label[1])
+    if (!is.na(val) && nzchar(val)) return(val)
+  }
+  if (!is.null(dir_path)) {
+    bname <- basename(normalizePath(dir_path, mustWork = FALSE))
+    if (grepl("euhydro_thames", bname)) return("EU-Hydro (Thames)")
+    if (grepl("euhydro_tweed", bname))  return("EU-Hydro (Tweed)")
+    if (grepl("euhydro", bname))        return("EU-Hydro v1.3")
+    if (grepl("_orn", bname))           return("ORN v2")
+  }
+  "ORN v2"
+}
+
 

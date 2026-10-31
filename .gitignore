@@ -48,7 +48,8 @@ rsconnect/
 # Ignore r_libs folder - this is a backup of the S3N package
 r_libs/
 
-# Data folder, GIS folder, and outputs folder
+# configs folder, data folder, GIS folder, and outputs folder
+configs/
 data/
 gis/
 output/

@@ -79,17 +79,32 @@ WIDE_VAR_META <- list(
   pca2                   = c(short = "RHS Habitat PCA2",       desc = "RHS Habitat Gradient PCA Axis 2",            unit = "PCA2")
 )
 
-ds_arg  <- grep("^--dataset=", args, value = TRUE)
-ds_mode <- if (length(ds_arg) > 0) tolower(sub("^--dataset=", "", ds_arg[1])) else NA_character_
+ds_arg      <- grep("^--dataset=", args, value = TRUE)
+ds_mode     <- if (length(ds_arg) > 0) tolower(sub("^--dataset=", "", ds_arg[1])) else NA_character_
+net_arg_vec <- grep("^--network=", args, value = TRUE)
+network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
+
+source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+
+if ("--list-networks" %in% args) {
+  system(sprintf("python3 %s --list-networks", shQuote(file.path(BASE_DIR, "scripts/01_preprocess_orn.py"))))
+  quit(save = "no", status = 0)
+}
 
 if ("--list-vars" %in% args || "--list-covariates" %in% args) {
-  source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
   print_available_covariates()
   quit(save = "no", status = 0)
 }
 
+PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli)
+net_meta       <- load_network_metadata(PROC_DIR)
+REACHES_CSV    <- file.path(PROC_DIR, "england_rsn_reaches.csv")
+SITES_CSV      <- file.path(PROC_DIR, "rsn_sites.csv")
+CATCHMENTS_CSV <- file.path(PROC_DIR, "rsn_catchments_lookup.csv")
+
 if ("--list-basins" %in% args) {
-  cat("Available River Basin Districts (RBD) and Top Monitored Catchments:\n\n")
+  cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s)]:\n\n",
+              net_meta$label, net_meta$abbr))
   c_lu <- read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
   rbd_tab <- aggregate(cbind(n_reaches, n_obs_reaches) ~ RBD_ID + RBD_Name, data = c_lu, FUN = sum)
   rbd_tab <- rbd_tab[order(-rbd_tab$n_obs_reaches), ]
@@ -261,6 +276,7 @@ source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
 
 vars_tag <- format_covariates_folder_tag(var_specs)
 out_folder_name <- if (ds_mode == "wq") paste0("det_", det_code) else paste0(ds_mode, "_", gsub("[^a-zA-Z0-9_]+", "_", det_code))
+out_folder_name <- paste0(out_folder_name, "_", net_meta$abbr)
 if (nzchar(vars_tag)) {
   out_folder_name <- paste0(out_folder_name, "_", vars_tag)
 }
@@ -736,16 +752,20 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   df_full$obs_y   <- ifelse(df_full$has_obs == 1L, reach_agg$y_resp[idx_match], NA_real_)
   df_full$obs_up_dist_km <- ifelse(df_full$has_obs == 1L, reach_agg$obs_up_dist_km[idx_match], df_full$up_dist_mid_km)
 
+  humber_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "humber")
+  thames_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "thames")
+  severn_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "severn")
+
   res_eng <- analyze_domain(df_full, "england", "All England RSN Network", m_neighbors = 15L, n_boot = n_boot)
   if (is.null(res_eng)) return(NULL)
-  res_hum <- analyze_domain(subset(df_full, CatchID == 80),   "humber", "Humber Basin (CatchID=80)",   m_neighbors = 15L, n_boot = n_boot)
-  res_tha <- analyze_domain(subset(df_full, CatchID == 3055), "thames", "Thames Basin (CatchID=3055)", m_neighbors = 15L, n_boot = n_boot)
-  res_sev <- analyze_domain(subset(df_full, CatchID == 2786), "severn", "Severn Basin (CatchID=2786)", m_neighbors = 15L, n_boot = n_boot)
+  res_hum <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
+  res_tha <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
+  res_sev <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
 
   eng_pred <- res_eng$pred_df
-  hum_pred <- if (!is.null(res_hum)) res_hum$pred_df else subset(eng_pred, CatchID == 80)
-  tha_pred <- if (!is.null(res_tha)) res_tha$pred_df else subset(eng_pred, CatchID == 3055)
-  sev_pred <- if (!is.null(res_sev)) res_sev$pred_df else subset(eng_pred, CatchID == 2786)
+  hum_pred <- if (!is.null(res_hum)) res_hum$pred_df else subset(eng_pred, CatchID == humber_info$catch_id)
+  tha_pred <- if (!is.null(res_tha)) res_tha$pred_df else subset(eng_pred, CatchID == thames_info$catch_id)
+  sev_pred <- if (!is.null(res_sev)) res_sev$pred_df else subset(eng_pred, CatchID == severn_info$catch_id)
 
   # Fit any user-specified additional basins (--basin=...)
   extra_fits <- lapply(extra_basins, function(b_info) {
@@ -764,7 +784,11 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_cv$Determinand_Name <- det_title_name
   all_cv$Unit             <- det_unit
   all_cv$Scale            <- if (use_log) "log" else "raw"
+  all_cv$Network_Abbr     <- net_meta$abbr
+  all_cv$Network_Label    <- net_meta$short_label
   all_params$Period       <- period_tag
+  all_params$Network_Abbr  <- net_meta$abbr
+  all_params$Network_Label <- net_meta$short_label
 
   write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
   write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)
@@ -827,15 +851,16 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   fig3_path <- file.path(out_subdir, sprintf("fig3_thames_severn_%s_maps.png", det_code))
   fig4_path <- file.path(out_subdir, sprintf("fig4_cv_and_diagnostics_%s.png", det_code))
   vars_sub  <- format_covariates_subtitle(var_specs = var_specs, param_tab = all_params)
+  net_lbl   <- net_meta$short_label
 
   plot_fig1_england_map(eng_pred, det_code, det_title_name, det_unit, use_log, fig1_path,
                         reverse_color = reverse_color, sc_val = sc_val, sc_se = sc_se_eng,
-                        vars_label = vars_sub)
+                        vars_label = vars_sub, network_label = net_lbl)
   plot_fig2_humber_map(hum_pred, all_cv, sc_val, det_code, det_title_name, det_unit, use_log, fig2_path,
                        reverse_color = reverse_color, sc_se = sc_se_hum,
-                       vars_label = vars_sub)
+                       vars_label = vars_sub, network_label = net_lbl)
   plot_fig3_thames_severn_map(tha_pred, sev_pred, sc_val, det_code, det_title_name, det_unit, use_log, fig3_path,
-                              reverse_color = reverse_color, vars_label = vars_sub)
+                              reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl)
 
   extra_cv_for_fig4 <- lapply(extra_fits, function(ef) {
     list(
@@ -846,7 +871,8 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   })
   plot_fig4_diagnostics(eng_pred, res_eng$cv_pts, if (!is.null(res_hum)) res_hum$cv_pts else NULL,
                         all_cv, all_params, det_code, det_title_name, det_unit, use_log, fig4_path,
-                        extra_cv_list = extra_cv_for_fig4, lims_a = lims_a, ylim_d = ylim_d)
+                        extra_cv_list = extra_cv_for_fig4, lims_a = lims_a, ylim_d = ylim_d,
+                        vars_label = vars_sub, network_label = net_lbl)
 
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
@@ -854,7 +880,8 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
       fig_k_path <- file.path(out_subdir, sprintf("fig%d_%s_basin_%s_map.png", 4L + k, ef$info$slug, det_code))
       plot_basin_map(ef$pred_df, ef$info$short_title, ef$info$domain_label,
                      all_cv, sc_val, det_code, det_title_name, det_unit, use_log, fig_k_path,
-                     reverse_color = reverse_color, sc_se = sc_se_hum, vars_label = vars_sub)
+                     reverse_color = reverse_color, sc_se = sc_se_hum,
+                     vars_label = vars_sub, network_label = net_lbl)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
     }
   }
@@ -922,7 +949,7 @@ if (!is.na(by_mode)) {
   plot_fig5_temporal_england_grid(grid_items, by_mode, shared_sc$sc_val,
                                   det_code, det_name, det_unit, use_log,
                                   fig5_grid_path, reverse_color = reverse_color,
-                                  vars_label = vars_sub_grid)
+                                  vars_label = vars_sub_grid, network_label = net_meta$short_label)
   write.csv(comb_cv, file.path(OUT_DIR, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
   write.csv(comb_pa, file.path(OUT_DIR, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
 } else {

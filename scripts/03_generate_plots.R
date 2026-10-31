@@ -33,6 +33,7 @@ use_log_cli   <- NULL
 reverse_color <- FALSE
 vmin_raw      <- NULL
 vmax_raw      <- NULL
+custom_basins <- character(0)
 
 for (a in args) {
   if (grepl("^--dir=", a)) {
@@ -56,6 +57,10 @@ for (a in args) {
     vmin_raw <- as.numeric(sub("^--vmin=", "", a))
   } else if (grepl("^--vmax=", a)) {
     vmax_raw <- as.numeric(sub("^--vmax=", "", a))
+  } else if (grepl("^--basin=", a) || grepl("^--catchid=", a)) {
+    b_val <- sub("^--(basin|catchid)=", "", a)
+    b_parts <- trimws(unlist(strsplit(b_val, ",")))
+    custom_basins <- c(custom_basins, b_parts[nzchar(b_parts)])
   }
 }
 
@@ -123,9 +128,12 @@ load_plot_bundle <- function(dir_p) {
     hum_cv_file   <- find_first_csv(dir_p, "^cv_predictions_humber_.*\\.csv$",  required = FALSE)
 
     eng_pred  <- normalize_pred_df(read.csv(eng_pred_file))
-    hum_pred  <- if (!is.null(hum_pred_file)) normalize_pred_df(read.csv(hum_pred_file)) else subset(eng_pred, CatchID == 80)
-    tha_pred  <- if (!is.null(tha_pred_file)) normalize_pred_df(read.csv(tha_pred_file)) else subset(eng_pred, CatchID == 3055)
-    sev_pred  <- if (!is.null(sev_pred_file)) normalize_pred_df(read.csv(sev_pred_file)) else subset(eng_pred, CatchID == 2786)
+    hum_cid   <- resolve_core_basin(eng_pred, target = "humber")$catch_id
+    tha_cid   <- resolve_core_basin(eng_pred, target = "thames")$catch_id
+    sev_cid   <- resolve_core_basin(eng_pred, target = "severn")$catch_id
+    hum_pred  <- if (!is.null(hum_pred_file)) normalize_pred_df(read.csv(hum_pred_file)) else subset(eng_pred, CatchID == hum_cid)
+    tha_pred  <- if (!is.null(tha_pred_file)) normalize_pred_df(read.csv(tha_pred_file)) else subset(eng_pred, CatchID == tha_cid)
+    sev_pred  <- if (!is.null(sev_pred_file)) normalize_pred_df(read.csv(sev_pred_file)) else subset(eng_pred, CatchID == sev_cid)
 
     cv_tab    <- normalize_cv_tab(read.csv(cv_tab_file))
     param_tab <- read.csv(param_file)
@@ -274,25 +282,53 @@ for (b in bundles) {
               formatC(if (b$use_log) exp(shared_sc_val$vmax) else shared_sc_val$vmax, format = "fg", digits = 3)))
 
   vars_sub <- format_covariates_subtitle(param_tab = b$param_tab)
+  net_lbl  <- extract_network_label_from_tables(b$cv_tab, b$param_tab, b$FIG_DIR)
 
   plot_fig1_england_map(b$eng_pred, b$det_code, b$det_name, b$det_unit, b$use_log,
                         file.path(b$FIG_DIR, f1_name), reverse_color = reverse_color,
                         sc_val = shared_sc_val, sc_se = shared_sc_se_e,
-                        vars_label = vars_sub)
+                        vars_label = vars_sub, network_label = net_lbl)
 
   plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
                        file.path(b$FIG_DIR, f2_name), reverse_color = reverse_color,
-                       sc_se = shared_sc_se_h, vars_label = vars_sub)
+                       sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl)
 
   plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
                               file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color,
-                              vars_label = vars_sub)
+                              vars_label = vars_sub, network_label = net_lbl)
 
   plot_fig4_diagnostics(b$eng_pred, b$eng_cv, b$hum_cv, b$cv_tab, b$param_tab,
                         b$det_code, b$det_name, b$det_unit, b$use_log,
                         file.path(b$FIG_DIR, f4_name),
                         lims_a = if (length(bundles) > 1) lims_a_shared else NULL,
-                        ylim_d = ylim_d_shared)
+                        ylim_d = ylim_d_shared,
+                        vars_label = vars_sub, network_label = net_lbl)
+
+  if (length(custom_basins) > 0) {
+    for (bi in seq_along(custom_basins)) {
+      b_spec <- custom_basins[bi]
+      if (tolower(b_spec) %in% c("thames", "humber", "severn")) {
+        b_res <- resolve_core_basin(b$eng_pred, target = tolower(b_spec))
+        b_cid <- b_res$catch_id
+        b_title <- b_res$domain_label
+      } else if (grepl("^[0-9]+$", b_spec)) {
+        b_cid <- as.integer(b_spec)
+        b_title <- sprintf("CatchID %d Basin", b_cid)
+      } else {
+        b_cid <- NA_integer_
+        b_title <- b_spec
+      }
+      b_pred <- subset(b$eng_pred, CatchID == b_cid)
+      if (nrow(b_pred) > 0) {
+        b_slug <- gsub("[^a-z0-9]+", "_", tolower(b_title))
+        b_slug <- gsub("^_|_$", "", b_slug)
+        f5_b_name <- file.path(b$FIG_DIR, sprintf("fig%d_%s_%s_map.png", 4 + bi, b_slug, b$det_code))
+        cat(sprintf("Rendering custom basin figure: %s (%d reaches)...\n", basename(f5_b_name), nrow(b_pred)))
+        plot_basin_map(b_pred, b_title, b_title, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
+                       f5_b_name, reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl)
+      }
+    }
+  }
 }
 
 # If temporal subdirectories (year_*, season_*, month_*) exist under target_dir,
@@ -314,13 +350,14 @@ for (m_type in c("season", "year", "month")) {
     })
     b0 <- m_bundles[[1]]
     vars_sub_g <- format_covariates_subtitle(param_tab = b0$param_tab)
+    net_lbl_g  <- extract_network_label_from_tables(b0$cv_tab, b0$param_tab, target_dir)
     fig5_path <- file.path(target_dir, sprintf("fig5_england_by_%s_%s_map.png", m_type, b0$det_code))
     cat(sprintf("Rendering Figure 5 (%d-panel All England %s comparison grid): %s...\n",
                 length(grid_items), m_type, fig5_path))
     plot_fig5_temporal_england_grid(grid_items, m_type, shared_sc_val,
                                     b0$det_code, b0$det_name, b0$det_unit, b0$use_log,
                                     fig5_path, reverse_color = reverse_color,
-                                    vars_label = vars_sub_g)
+                                    vars_label = vars_sub_g, network_label = net_lbl_g)
   }
 }
 

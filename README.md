@@ -1,6 +1,6 @@
 # Scalable Spatial Stream Modelling (S3N)
 
-This project implements a scalable spatial stream model (S3N) using Environment Agency (EA) water quality data (NCEA) on the UK Open Rivers Network (ORN) riverline dataset.
+This project implements a scalable spatial stream model (S3N) using Environment Agency (EA) water quality data (NCEA) on the UK Open Rivers Network (ORN) riverline dataset. 
 
 This project was built using Google Antigravity and the Gemini Argon 4 model, and reviewed by a human :)
 
@@ -8,11 +8,19 @@ It is based on this paper: Kunke, J.P., Olden, J.D. and McCormick, T.H., 2025. S
 
 It uses the R `S3N` package, available from: [Github](https://github.com/jpierkunke/S3N) (tested with version 1.0.5), with a custom `C++` script to compute stream distances, weights and nearest neighbours.
 
-River lines/reaches are preprocessed using a custom Python script.
+River lines/reaches are preprocessed using a custom Python script, which ensures the water network data is compatible with the `S3N` package.
 
 River monitoring data comes from the EA NCEA project, available from: [Data.gov.uk](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#general)
 
 The riverline data comes from the Open Rivers Network, available from: [Open Rivers](https://openrivers.net/)
+
+This process is fast. F
+
+ℹ️ You can also use other river network datasets with this script (this script has also been testing using [EU-Hydro](https://land.copernicus.eu/en/products/eu-hydro/eu-hydro-river-network-database#download) data), and there are [instructions](docs/custom_water_network_guide.md) in the `docs` folder on how to use different river networks. 
+
+The usage instructions below use the ORN data as an example.
+
+Example outputs:
 
 <img width="2600" height="1450" alt="fig1_england_stream_0117_map" src="https://github.com/user-attachments/assets/12cdd4ab-f316-463c-bfac-f6855b946db7" />
 
@@ -59,6 +67,8 @@ The final folder structure should look like this:
 
 ```
 spatial_stream_modelling
+├── configs
+│   └── networks
 ├── data
 │   └── NCEA_River_Surveillance_Network_ARD_Open        <- Download from Data.gov.uk
 ├── docs
@@ -70,7 +80,7 @@ spatial_stream_modelling
 
 The scripts are run from the command line (CLI) in your terminal, rather than from within R/Python (although this is also possible).
 
-You will need to run the preprocessing script first, to process the ORN riverline GIS data (if not already done so). This only needs to be done once.
+You will need to run the preprocessing script first, to process the ORN riverline GIS data (if not already done so). You should run this script directly to customise the settings, or if using a network other than the ORN. This only needs to be done once (per network).
 
 From the terminal:
 
@@ -79,15 +89,17 @@ From the terminal:
 python3 scripts/01_preprocess_orn.py
 ```
 
-After which you can use the `run_s3n_determinand.R` script to run the spatial model:
+To run the spatial modelling, use the `run_s3n_determinand.R` script:
 
 ```
 # Run all spatial model + create plots (default settings)
 Rscript scripts/run_s3n_determinand.R 0117
 ```
+ℹ️ Note, this script will check for preprocessed data, and will run the preprocess script with default settings if it does not find any.
+
+This will create a sub folder in the `output` folder containing all the model data/results as `.csv` files and plots as `.png` files.
 
 Refer to the `usage_guide.md` file, found in the `docs` folder for full details on how to use these scripts, and all of the available [options](docs/usage_guide.md#22-complete-option-reference). 
-
 
 For example, you can plot any determinand in the dataset, by river basin, or even for a named river. You can also model the data by year, month and season. Full details available in the [usage guide](docs/usage_guide.md).
 
@@ -104,11 +116,12 @@ For example, to run the model using specific variables, use:
 # Specify variables for the model run
 Rscript scripts/run_s3n_determinand.R 0117 --vars=elevation,slope,aquifer
 ```
+And you can use other water networks for the spatial modelling: [custom water networks](docs/custom_water_network_guide.md).
 
 A full list of commands is available in the [usage guide](docs/usage_guide.md).
 
 ## Requirements
 
-Refer to the `preprocessing_pipeline.md` file for a full list of requirements.
+Refer to the `preprocessing_pipeline.md` file in the `docs` folder for a full list of [requirements](docs/preprocessing_pipeline.md).
 
-This has been tested on Fedora v44 (Linux), R v4.5+, and Python 3.14.7+.
+This has been tested on Linux (Fedora v44), R v4.5+, and Python 3.14.7+.

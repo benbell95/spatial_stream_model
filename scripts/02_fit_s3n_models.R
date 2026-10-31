@@ -21,10 +21,19 @@ BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
 source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
+if ("--list-networks" %in% args) {
+  system(sprintf("python3 %s --list-networks", shQuote(file.path(BASE_DIR, "scripts/01_preprocess_orn.py"))))
+  quit(save = "no", status = 0)
+}
 if ("--list-vars" %in% args || "--list-covariates" %in% args) {
   print_available_covariates()
   quit(save = "no", status = 0)
 }
+net_arg_vec <- grep("^--network=", args, value = TRUE)
+network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
+PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli)
+net_meta    <- load_network_metadata(PROC_DIR)
+
 vars_args <- grep("^--(vars|covariates)=", args, value = TRUE)
 var_specs <- if (length(vars_args) > 0) {
   unlist(strsplit(sub("^--(vars|covariates)=", "", vars_args), ",", fixed = TRUE))
@@ -45,17 +54,26 @@ suppressPackageStartupMessages({
 dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
 
 vars_tag <- format_covariates_folder_tag(var_specs)
-OUT_ROOT <- if (nzchar(vars_tag)) file.path(BASE_DIR, "output", vars_tag) else file.path(BASE_DIR, "output")
+sub_tag  <- if (net_meta$abbr != "orn") paste0("net_", net_meta$abbr) else ""
+if (nzchar(vars_tag)) {
+  sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", vars_tag) else vars_tag
+}
+OUT_ROOT <- if (nzchar(sub_tag)) file.path(BASE_DIR, "output", sub_tag) else file.path(BASE_DIR, "output")
 dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)
 
 cat("======================================================================\n")
-cat("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline\n")
+cat(sprintf("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline [%s]\n", net_meta$label))
 cat("======================================================================\n\n")
 
 t_start <- proc.time()
-df_full <- read.csv(file.path(BASE_DIR, "data/processed/england_rsn_reaches.csv"))
+df_full <- read.csv(file.path(PROC_DIR, "england_rsn_reaches.csv"))
+catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
+  read.csv(file.path(PROC_DIR, "rsn_catchments_lookup.csv"), stringsAsFactors = FALSE)
+} else {
+  NULL
+}
 cat(sprintf("Loaded %d stream reaches (%d with RSN Nitrate observations) across %d catchments.\n",
             nrow(df_full), sum(df_full$has_obs == 1), length(unique(df_full$CatchID))))
 
@@ -317,13 +335,21 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   )
 }
 
+humber_info <- resolve_core_basin(df_full, catch_lu, net_meta, "humber")
+thames_info <- resolve_core_basin(df_full, catch_lu, net_meta, "thames")
+severn_info <- resolve_core_basin(df_full, catch_lu, net_meta, "severn")
+
 res_england <- analyze_domain(df_full, "england", "All England RSN Network", m_neighbors = 15L, n_boot = 100L)
-res_humber  <- analyze_domain(subset(df_full, CatchID == 80),   "humber",  "Humber Basin (CatchID=80)",   m_neighbors = 15L, n_boot = 100L)
-res_thames  <- analyze_domain(subset(df_full, CatchID == 3055), "thames",  "Thames Basin (CatchID=3055)", m_neighbors = 15L, n_boot = 100L)
-res_severn  <- analyze_domain(subset(df_full, CatchID == 2786), "severn",  "Severn Basin (CatchID=2786)", m_neighbors = 15L, n_boot = 100L)
+res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = 100L)
+res_thames  <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = 100L)
+res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = 100L)
 
 all_cv <- rbind(res_england$cv_summary, res_humber$cv_summary, res_thames$cv_summary, res_severn$cv_summary)
 all_params <- rbind(res_england$param_df, res_humber$param_df, res_thames$param_df, res_severn$param_df)
+all_cv$Network_Abbr      <- net_meta$abbr
+all_cv$Network_Label     <- net_meta$short_label
+all_params$Network_Abbr  <- net_meta$abbr
+all_params$Network_Label <- net_meta$short_label
 
 write.csv(all_cv, file.path(OUT_ROOT, "tables/cv_model_comparison.csv"), row.names = FALSE)
 write.csv(all_params, file.path(OUT_ROOT, "tables/s3n_parameter_estimates.csv"), row.names = FALSE)
