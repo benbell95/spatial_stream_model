@@ -17,8 +17,13 @@
 #   - S3N Combined (S3N-TU+TD: spatial information-gain weighted combination)
 # ==============================================================================
 
+user_lib <- Sys.getenv("R_LIBS_USER")
+if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
+  .libPaths(c(user_lib, .libPaths()))
+}
+
 suppressPackageStartupMessages({
-  library(S3N, lib.loc = "/home/ben/code/r/spatial_stream_model/r_libs")
+  library(S3N)
 })
 
 BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
@@ -73,7 +78,7 @@ build_design_matrix <- function(df, include_peat = TRUE) {
 }
 
 # Function to fit S3N-TU, S3N-TD, Bootstrap CIs, 5-Fold CV, and Full Network Prediction
-analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 100L, n_omp = 4L) {
+analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 100L, n_omp = 1L) {
   cat(sprintf("\n----------------------------------------------------------------------\n"))
   cat(sprintf("  Domain: %s (%d reaches, %d observed)\n",
               domain_label, nrow(df), sum(df$has_obs == 1)))
@@ -290,22 +295,23 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
 
   # Format parameter table with 95% Bootstrap CIs
   param_names <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
+  phi_shift   <- c(rep(0, ncol(X_obs)), 0, 0, 0.001)
   param_df <- rbind(
     data.frame(
       Domain    = domain_label,
       Model     = "S3N Tail-Up (FC + AFV)",
       Parameter = param_names,
-      Estimate  = round(c(fit_tu$Beta, fit_tu$Theta), 4),
-      CI_Lower  = round(bs_tu$confidence.interval[1, ], 4),
-      CI_Upper  = round(bs_tu$confidence.interval[2, ], 4)
+      Estimate  = round(c(fit_tu$Beta, fit_tu$Theta) + phi_shift, 4),
+      CI_Lower  = round(bs_tu$confidence.interval[1, ] + phi_shift, 4),
+      CI_Upper  = round(bs_tu$confidence.interval[2, ] + phi_shift, 4)
     ),
     data.frame(
       Domain    = domain_label,
       Model     = "S3N Tail-Down (Stream)",
       Parameter = param_names,
-      Estimate  = round(c(fit_td$Beta, fit_td$Theta), 4),
-      CI_Lower  = round(bs_td$confidence.interval[1, ], 4),
-      CI_Upper  = round(bs_td$confidence.interval[2, ], 4)
+      Estimate  = round(c(fit_td$Beta, fit_td$Theta) + phi_shift, 4),
+      CI_Lower  = round(bs_td$confidence.interval[1, ] + phi_shift, 4),
+      CI_Upper  = round(bs_td$confidence.interval[2, ] + phi_shift, 4)
     )
   )
 

@@ -229,8 +229,13 @@ basin_specs <- if (length(basin_args) > 0) {
 }
 basin_specs <- trimws(basin_specs[nchar(trimws(basin_specs)) > 0])
 
+user_lib <- Sys.getenv("R_LIBS_USER")
+if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
+  .libPaths(c(user_lib, .libPaths()))
+}
+
 suppressPackageStartupMessages({
-  library(S3N, lib.loc = file.path(BASE_DIR, "r_libs"))
+  library(S3N)
 })
 dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
 
@@ -422,7 +427,7 @@ build_design_matrix <- function(df, include_peat = TRUE) {
   X[, keep_cols, drop = FALSE]
 }
 
-analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 50L, n_omp = 4L) {
+analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 50L, n_omp = 1L) {
   obs_idx  <- which(df$has_obs == 1L)
   n_obs    <- length(obs_idx)
   if (n_obs < 15L) {
@@ -610,15 +615,16 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   print(cv_summary, row.names = FALSE)
 
   param_names <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
+  phi_shift   <- c(rep(0, ncol(X_obs)), 0, 0, 0.001)
   param_df <- rbind(
     data.frame(Domain = domain_label, Model = "S3N Tail-Up (FC + AFV)", Parameter = param_names,
-               Estimate = round(c(fit_tu$Beta, fit_tu$Theta), 4),
-               CI_Lower = round(bs_tu$confidence.interval[1, ], 4),
-               CI_Upper = round(bs_tu$confidence.interval[2, ], 4)),
+               Estimate = round(c(fit_tu$Beta, fit_tu$Theta) + phi_shift, 4),
+               CI_Lower = round(bs_tu$confidence.interval[1, ] + phi_shift, 4),
+               CI_Upper = round(bs_tu$confidence.interval[2, ] + phi_shift, 4)),
     data.frame(Domain = domain_label, Model = "S3N Tail-Down (Stream)", Parameter = param_names,
-               Estimate = round(c(fit_td$Beta, fit_td$Theta), 4),
-               CI_Lower = round(bs_td$confidence.interval[1, ], 4),
-               CI_Upper = round(bs_td$confidence.interval[2, ], 4))
+               Estimate = round(c(fit_td$Beta, fit_td$Theta) + phi_shift, 4),
+               CI_Lower = round(bs_td$confidence.interval[1, ] + phi_shift, 4),
+               CI_Upper = round(bs_td$confidence.interval[2, ] + phi_shift, 4))
   )
 
   cv_pts <- data.frame(

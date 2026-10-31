@@ -109,11 +109,11 @@ SEXP C_compute_s3n_neighbors(
                 fc = true;
                 dist = std::max(1e-4, std::fabs(up_dist_km[a] - up_dist_km[b]));
                 if (model_type == 1) {
-                    wt = 1.0;
+                    wt = std::min(1.0 - 1e-6, std::exp(-0.001 * dist));
                 } else {
                     double afv_up = std::min(log_afv[a], log_afv[b]);
                     double afv_dn = std::max(log_afv[a], log_afv[b]);
-                    wt = std::exp(0.5 * (afv_up - afv_dn));
+                    wt = std::min(1.0 - 1e-6, std::exp(0.5 * (afv_up - afv_dn) - 0.001 * dist));
                 }
             } else {
                 int anc = parent_dn[a];
@@ -124,7 +124,7 @@ SEXP C_compute_s3n_neighbors(
                 dist = std::max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * ncj_up);
                 if (model_type == 1) {
                     fc = true;
-                    wt = 1.0;
+                    wt = std::min(1.0 - 1e-6, std::exp(-0.001 * dist));
                 } else {
                     fc = false;
                     wt = 0.0;
