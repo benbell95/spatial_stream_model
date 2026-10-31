@@ -82,6 +82,12 @@ WIDE_VAR_META <- list(
 ds_arg  <- grep("^--dataset=", args, value = TRUE)
 ds_mode <- if (length(ds_arg) > 0) tolower(sub("^--dataset=", "", ds_arg[1])) else NA_character_
 
+if ("--list-vars" %in% args || "--list-covariates" %in% args) {
+  source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+  print_available_covariates()
+  quit(save = "no", status = 0)
+}
+
 if ("--list-basins" %in% args) {
   cat("Available River Basin Districts (RBD) and Top Monitored Catchments:\n\n")
   c_lu <- read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
@@ -157,6 +163,7 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
   }
   cat("\nUsage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
   cat("        [--raw|--log] [--reverse-color] [--censor=ros|half_lod] [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins]\n")
+  cat("        [--vars=<Covariate_List>] [--list-vars]\n")
   cat("        [--year=YYYY] [--season=winter|spring|summer|autumn] [--month=1..12] [--by=year|season|month]\n")
   cat("Examples:\n")
   cat("  Rscript scripts/run_s3n_determinand.R --list --dataset=inverts # List macroinvertebrate indices\n")
@@ -228,6 +235,14 @@ basin_specs <- if (length(basin_args) > 0) {
   character(0)
 }
 basin_specs <- trimws(basin_specs[nchar(trimws(basin_specs)) > 0])
+
+vars_args <- grep("^--(vars|covariates)=", args, value = TRUE)
+var_specs <- if (length(vars_args) > 0) {
+  unlist(strsplit(sub("^--(vars|covariates)=", "", vars_args), ",", fixed = TRUE))
+} else {
+  character(0)
+}
+var_specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
 
 user_lib <- Sys.getenv("R_LIBS_USER")
 if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
@@ -393,40 +408,6 @@ sites_lu   <- read.csv(SITES_CSV, stringsAsFactors = FALSE)
 sites_lu   <- sites_lu[sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
 df_reaches <- read.csv(REACHES_CSV, stringsAsFactors = FALSE)
 
-build_design_matrix <- function(df, include_peat = TRUE) {
-  elev_sc  <- as.numeric(scale(df$Elevation))
-  slope_sc <- as.numeric(scale(df$Slope))
-  accum_sc <- as.numeric(scale(log10(pmax(1e-4, df$US_Accum_km))))
-  east_sc  <- as.numeric(scale(df$mid_X))
-  north_sc <- as.numeric(scale(df$mid_Y))
-
-  if (include_peat && sd(df$Is_Peat[df$has_obs == 1]) > 0 && sd(df$Is_Sandstone[df$has_obs == 1]) > 0) {
-    X <- cbind(
-      Intercept          = 1.0,
-      Elevation_z        = elev_sc,
-      Slope_z            = slope_sc,
-      log10_US_Accum_z   = accum_sc,
-      Is_Chalk_Limestone = as.numeric(df$Is_Chalk_Limestone),
-      Is_Sandstone       = as.numeric(df$Is_Sandstone),
-      Is_Peat            = as.numeric(df$Is_Peat),
-      Easting_z          = east_sc,
-      Northing_z         = north_sc
-    )
-  } else {
-    X <- cbind(
-      Intercept        = 1.0,
-      Elevation_z      = elev_sc,
-      Slope_z          = slope_sc,
-      log10_US_Accum_z = accum_sc,
-      Is_Aquifer       = as.numeric(df$Is_Aquifer),
-      Easting_z        = east_sc,
-      Northing_z       = north_sc
-    )
-  }
-  keep_cols <- c(TRUE, apply(X[df$has_obs == 1, -1, drop = FALSE], 2, sd) > 0)
-  X[, keep_cols, drop = FALSE]
-}
-
 analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 50L, n_omp = 1L) {
   obs_idx  <- which(df$has_obs == 1L)
   n_obs    <- length(obs_idx)
@@ -446,7 +427,8 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   parent_0 <- ifelse(df_ord$parent_dn == 0, -1L, id_map[as.character(df_ord$parent_dn)] - 1L)
   up_dist  <- ifelse(df_ord$has_obs == 1L, df_ord$obs_up_dist_km, df_ord$up_dist_mid_km)
 
-  X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"))
+  X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"), var_specs = var_specs)
+  cat(sprintf("  Fixed-effect covariates (%d): %s\n", ncol(X_all), paste(colnames(X_all), collapse = ", ")))
   X_obs <- X_all[1:n_obs, , drop = FALSE]
   y_obs <- as.matrix(df_ord$obs_y[1:n_obs])
   vy    <- max(1e-4, var(y_obs[, 1]))

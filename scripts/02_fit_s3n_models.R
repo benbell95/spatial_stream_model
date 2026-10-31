@@ -17,6 +17,22 @@
 #   - S3N Combined (S3N-TU+TD: spatial information-gain weighted combination)
 # ==============================================================================
 
+BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
+source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+
+args <- commandArgs(trailingOnly = TRUE)
+if ("--list-vars" %in% args || "--list-covariates" %in% args) {
+  print_available_covariates()
+  quit(save = "no", status = 0)
+}
+vars_args <- grep("^--(vars|covariates)=", args, value = TRUE)
+var_specs <- if (length(vars_args) > 0) {
+  unlist(strsplit(sub("^--(vars|covariates)=", "", vars_args), ",", fixed = TRUE))
+} else {
+  character(0)
+}
+var_specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
+
 user_lib <- Sys.getenv("R_LIBS_USER")
 if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
   .libPaths(c(user_lib, .libPaths()))
@@ -26,7 +42,6 @@ suppressPackageStartupMessages({
   library(S3N)
 })
 
-BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
 dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
 
 dir.create(file.path(BASE_DIR, "output/tables"), recursive = TRUE, showWarnings = FALSE)
@@ -41,41 +56,6 @@ t_start <- proc.time()
 df_full <- read.csv(file.path(BASE_DIR, "data/processed/england_rsn_reaches.csv"))
 cat(sprintf("Loaded %d stream reaches (%d with RSN Nitrate observations) across %d catchments.\n",
             nrow(df_full), sum(df_full$has_obs == 1), length(unique(df_full$CatchID))))
-
-# Helper to build standardized design matrix X for a domain
-build_design_matrix <- function(df, include_peat = TRUE) {
-  # Fit scaling parameters on all reaches in the domain for consistent prediction
-  elev_sc  <- scale(df$Elevation)
-  slope_sc <- scale(df$Slope)
-  accum_sc <- scale(log10(pmax(1e-4, df$US_Accum_km)))
-  east_sc  <- scale(df$mid_X)
-  north_sc <- scale(df$mid_Y)
-
-  if (include_peat && sd(df$Is_Peat[df$has_obs == 1]) > 0 && sd(df$Is_Sandstone[df$has_obs == 1]) > 0) {
-    X <- cbind(
-      Intercept          = 1.0,
-      Elevation_z        = as.numeric(elev_sc),
-      Slope_z            = as.numeric(slope_sc),
-      log10_US_Accum_z   = as.numeric(accum_sc),
-      Is_Chalk_Limestone = as.numeric(df$Is_Chalk_Limestone),
-      Is_Sandstone       = as.numeric(df$Is_Sandstone),
-      Is_Peat            = as.numeric(df$Is_Peat),
-      Easting_z          = as.numeric(east_sc),
-      Northing_z         = as.numeric(north_sc)
-    )
-  } else {
-    X <- cbind(
-      Intercept          = 1.0,
-      Elevation_z        = as.numeric(elev_sc),
-      Slope_z            = as.numeric(slope_sc),
-      log10_US_Accum_z   = as.numeric(accum_sc),
-      Is_Aquifer         = as.numeric(df$Is_Aquifer),
-      Easting_z          = as.numeric(east_sc),
-      Northing_z         = as.numeric(north_sc)
-    )
-  }
-  X
-}
 
 # Function to fit S3N-TU, S3N-TD, Bootstrap CIs, 5-Fold CV, and Full Network Prediction
 analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 100L, n_omp = 1L) {
@@ -98,7 +78,8 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   parent_0 <- ifelse(df_ord$parent_dn == 0, -1L, id_map[as.character(df_ord$parent_dn)] - 1L)
   up_dist  <- ifelse(df_ord$has_obs == 1, df_ord$obs_up_dist_km, df_ord$up_dist_mid_km)
 
-  X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"))
+  X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"), var_specs = var_specs)
+  cat(sprintf("  Fixed-effect covariates (%d): %s\n", ncol(X_all), paste(colnames(X_all), collapse = ", ")))
   X_obs <- X_all[1:n_obs, , drop = FALSE]
   y_obs <- as.matrix(df_ord$log_nitrate_mean[1:n_obs])
 

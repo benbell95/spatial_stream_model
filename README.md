@@ -20,7 +20,7 @@ The riverline data comes from the Open Rivers Network, available from: [Open Riv
 
 Clone this repository to get the scripts. 
 
-Install the S3N package from Github:
+In R, install the S3N package from Github:
 
 ```
 # Install remotes (if needed)
@@ -68,7 +68,7 @@ spatial_stream_modelling
 └── src
 ```
 
-The scripts are run from the command line (rather than from within R/Python).
+The scripts are run from the command line (CLI) in your terminal, rather than from within R/Python (although this is also possible).
 
 You will need to run the preprocessing script first, to process the ORN riverline GIS data (if not already done so). This only needs to be done once.
 
@@ -91,7 +91,21 @@ Refer to the `usage_guide.md` file, found in the `docs` folder for full details 
 
 For example, you can plot any determinand in the dataset, by river basin, or even for a named river. You can also model the data by year, month and season. Full details available in the [usage guide](docs/usage_guide.md).
 
+You can also select which variables are used as fixed-effects in the model. By default, all variables are used. To see the available variables, refer to the [ORN variable reference](docs/orn_variables_reference.md) file, or use the following command in the terminal:
 
+```
+# List available variables
+Rscript scripts/run_s3n_determinand.R --list-vars
+```
+
+For example, to run the model using specific variables, use:
+
+```
+# Specify variables for the model run
+Rscript scripts/run_s3n_determinand.R --vars=elevation, slope, aquifer
+```
+
+A full list of commands is available in the [usage guide](docs/usage_guide.md).
 
 ## Requirements
 

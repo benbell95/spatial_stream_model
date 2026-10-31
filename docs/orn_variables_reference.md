@@ -69,5 +69,57 @@ The remaining ORN variables exported by [`scripts/01_preprocess_orn.py`](file://
 | **`name1` (`Main_River`)** | `ORN.name1` | Watercourse name of the highest-Shreve reach in each catchment ([line 633](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py#L633)). Saved as `Main_River` in [`rsn_catchments_lookup.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/rsn_catchments_lookup.csv) to support `--basin=<RiverName>` (e.g. `--basin=Eden`, `--basin="Great Ouse"`). |
 | **`length_km`** | `ORN.Shape` | Euclidean polyline length of the reach (km), computed by summing vertex segment lengths ([lines 638–644](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py#L638-L644)). Used during preprocessing to interpolate `(mid_X, mid_Y)` and `up_dist_mid_km`. |
 | **`Sinuosity`** | `ORN_Sampled_100m.Sinuosity` | Mean channel sinuosity ratio (`AVG(Sinuosity)`). Exported to [`england_rsn_reaches.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/england_rsn_reaches.csv) as an auxiliary hydromorphological attribute (not included in $\mathbf{X}$). |
-| **`SrcElevation`** | `ORN_Sampled_100m.OS_T50_SrcEle` | Mean source elevation (`AVG(OS_T50_SrcEle)`). Exported to [`england_rsn_reaches.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/england_rsn_reaches.csv) as an auxiliary attribute (not included in $\mathbf{X}$ to avoid collinearity with `Elevation`). |
+| **`SrcElevation`** | `ORN_Sampled_100m.OS_T50_SrcEle` | Mean source elevation (`AVG(OS_T50_SrcEle)`). Exported to [`england_rsn_reaches.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/england_rsn_reaches.csv) as an auxiliary attribute (available as an optional predictor via `--vars=+src_elevation`). |
+
+---
+
+## 5. Selecting & Comparing Fixed-Effect Covariates (`--vars=...` & `--list-vars`)
+
+Because [`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py) already exports all 15 candidate topographic, hydromorphological, geological, and coordinate variables into [`data/processed/england_rsn_reaches.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/england_rsn_reaches.csv), **you do not need to re-run preprocessing** to change which predictors enter the fixed-effect regression design matrix $\mathbf{X}$.
+
+Both [`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R) and [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R) accept `--vars=<list>` (or `--covariates=<list>`) and `--list-vars` (via [`build_design_matrix()`](file:///home/ben/code/r/spatial_stream_model/scripts/s3n_plot_functions.R#L823-L840) in [`scripts/s3n_plot_functions.R`](file:///home/ben/code/r/spatial_stream_model/scripts/s3n_plot_functions.R)):
+
+### 5.1 Available Fixed-Effect Terms
+| Model Term | Short CLI Aliases (`--vars=...`) | Default Status | Description |
+| :--- | :--- | :--- | :--- |
+| `Elevation_z` | `elevation`, `elev` | **Default (All domains)** | Mean channel elevation (`Elevation`, $z$-score) |
+| `Slope_z` | `slope` | **Default (All domains)** | Mean channel gradient (`Slope`, $z$-score) |
+| `log10_US_Accum_z` | `us_accum`, `accum` | **Default (All domains)** | $\log_{10}(\text{US\_Accum\_km})$ ($z$-score) |
+| `Is_Chalk_Limestone` | `chalk_limestone`, `chalk` | **Default (All England)** | Binary indicator (`0`/`1`) for Chalk / Limestone / Dolostone bedrock |
+| `Is_Sandstone` | `sandstone`, `sand` | **Default (All England)** | Binary indicator (`0`/`1`) for Sandstone aquifer bedrock |
+| `Is_Peat` | `peat` | **Default (All England)** | Binary indicator (`0`/`1`) for Peat superficial deposits |
+| `Is_Aquifer` | `aquifer` | **Default (Single-basin fits)** | Composite binary indicator (`0`/`1`) for Chalk/Limestone or Sandstone |
+| `Easting_z` | `easting`, `mid_x` | **Default (All domains)** | Reach midpoint BNG Easting (`mid_X`, $z$-score) |
+| `Northing_z` | `northing`, `mid_y` | **Default (All domains)** | Reach midpoint BNG Northing (`mid_Y`, $z$-score) |
+| `Sinuosity_z` | `sinuosity` | Optional (`--vars=+sinuosity`) | Mean channel sinuosity ratio (`Sinuosity`, $z$-score) |
+| `SrcElevation_z` | `src_elevation`, `src_elev` | Optional (`--vars=+src_elevation`) | Mean headwater source elevation (`SrcElevation`, $z$-score) |
+| `Dist2Mth_z` | `dist2mth` | Optional (`--vars=+dist2mth`) | Hydrologic distance to river mouth (`Dist2Mth_km`, $z$-score) |
+| `Length_z` | `length` | Optional (`--vars=+length`) | Reach polyline length (`length_km`, $z$-score) |
+| `log10_Shreve_z` | `shreve` | Optional (`--vars=+shreve`) | $\log_{10}(\text{Shreve})$ stream magnitude ($z$-score) |
+| `Strahler_z` | `strahler` | Optional (`--vars=+strahler`) | Strahler stream order (`Strahler`, $z$-score) |
+
+### 5.2 Example Commands for Comparing Fixed-Effect Specifications
+```bash
+# 1. List all available fixed-effect covariates and their aliases
+Rscript scripts/run_s3n_determinand.R --list-vars
+
+# 2. Default covariates (Elevation, Slope, US_Accum, Geology, Easting, Northing)
+Rscript scripts/run_s3n_determinand.R 0117
+
+# 3. Pick a custom subset of covariates (e.g. only topography + geology, no spatial coordinates)
+Rscript scripts/run_s3n_determinand.R 0117 --vars=elevation,slope,us_accum,chalk_limestone,sandstone,peat
+
+# 4. Relative removal (-var): start from the default set and drop Easting & Northing
+Rscript scripts/run_s3n_determinand.R 0117 --vars=-easting,-northing
+
+# 5. Relative addition (+var): start from the default set and add Sinuosity & Strahler order
+Rscript scripts/run_s3n_determinand.R 0117 --vars=+sinuosity,+strahler
+
+# 6. Intercept-only model (pure spatial stream network kriging with no environmental covariates)
+Rscript scripts/run_s3n_determinand.R 0117 --vars=none
+
+# 7. All 15 ORN covariates simultaneously
+Rscript scripts/run_s3n_determinand.R 0117 --vars=all
+```
+
 
