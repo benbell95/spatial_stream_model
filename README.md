@@ -14,7 +14,7 @@ River monitoring data comes from the EA NCEA project, available from: [Data.gov.
 
 The riverline data comes from the Open Rivers Network, available from: [Open Rivers](https://openrivers.net/)
 
-This process is fast. F
+This process is fast. Pre-processing the ORN water network (~90,000 reaches) took ~7 seconds, whilst the spatial modelling and plot generation took a further ~50 seconds.
 
 ℹ️ You can also use other river network datasets with this script (this script has also been testing using [EU-Hydro](https://land.copernicus.eu/en/products/eu-hydro/eu-hydro-river-network-database#download) data), and there are [instructions](docs/custom_water_network_guide.md) in the `docs` folder on how to use different river networks. 
 
