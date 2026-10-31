@@ -70,7 +70,28 @@ spatial_stream_modelling
 
 The scripts are run from the command line (rather than from within R/Python).
 
-Refer to the `usage_guide.md` file, found in the `docs` folder for full details on how to use these scripts.
+You will need to run the preprocessing script first, to process the ORN riverline GIS data (if not already done so). This only needs to be done once.
+
+From the terminal:
+
+```
+# Preprocess ORN data (default settings)
+python3 scripts/01_preprocess_orn.py
+```
+
+After which you can use the `run_s3n_determinand.R` script to run the spatial model:
+
+```
+# Run all spatial model + create plots (default settings)
+Rscript scripts/run_s3n_determinand.R 0117
+```
+
+Refer to the `usage_guide.md` file, found in the `docs` folder for full details on how to use these scripts, and all of the available [options](docs/usage_guide.md#22-complete-option-reference). 
+
+
+For example, you can plot any determinand in the dataset, by river basin, or even for a named river. You can also model the data by year, month and season. Full details available in the [usage guide](docs/usage_guide.md).
+
+
 
 ## Requirements
 
