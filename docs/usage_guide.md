@@ -12,6 +12,7 @@ This guide documents all scripts, command-line options, output directory convent
 | [`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py) | Python 3 | **Network & GIS preprocessor**: Parses [`gis/ORN_v2.gpkg`](file:///home/ben/code/r/spatial_stream_model/gis/ORN_v2.gpkg), snaps RSN stations to stream reaches within 250 m, builds directed river tree topology (`parent_dn`, `Dist2Mth_km`, `log_AFV`), and exports [`england_rsn_reaches.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/england_rsn_reaches.csv), [`rsn_sites.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/rsn_sites.csv), [`rsn_reach_periods.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/rsn_reach_periods.csv), and [`rsn_catchments_lookup.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/rsn_catchments_lookup.csv). |
 | [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R) | R + C | **Standalone model fitter**: Fits S3N Tail-Up, Tail-Down, and Combined models directly on whichever determinand/period is currently stored in [`data/processed/england_rsn_reaches.csv`](file:///home/ben/code/r/spatial_stream_model/data/processed/england_rsn_reaches.csv) and writes outputs to [`output/`](file:///home/ben/code/r/spatial_stream_model/output). |
 | [`scripts/03_generate_plots.R`](file:///home/ben/code/r/spatial_stream_model/scripts/03_generate_plots.R) | R | **Standalone figure generator**: Sources [`scripts/s3n_plot_functions.R`](file:///home/ben/code/r/spatial_stream_model/scripts/s3n_plot_functions.R) to render Figures 1–4 from saved CSV outputs in [`output/`](file:///home/ben/code/r/spatial_stream_model/output) or any determinand output directory (`--dir=output/det_0117`). |
+| [`scripts/04_compare_model_runs.R`](file:///home/ben/code/r/spatial_stream_model/scripts/04_compare_model_runs.R) | R | **Model run & network comparator**: Compares 2 or more model output directories (across networks such as `ORN v2` vs. `EU-Hydro`, covariate subsets, or temporal slices `year_*`/`season_*`/`month_*`), runs statistical hypothesis tests, writes `comparison_report.md` + CSV summary tables, and renders 4 base-R comparison figures (`fig_comp1`–`fig_comp4`). |
 | [`scripts/s3n_plot_functions.R`](file:///home/ben/code/r/spatial_stream_model/scripts/s3n_plot_functions.R) | R | **Shared modular plotting library**: Contains all base-R stream network and diagnostic plotting functions (`plot_stream_network`, `plot_fig1_england_map`, `plot_basin_map`, `plot_fig2_humber_map`, `plot_fig3_thames_severn_map`, `plot_fig4_diagnostics`) sourced by both [`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R) and [`scripts/03_generate_plots.R`](file:///home/ben/code/r/spatial_stream_model/scripts/03_generate_plots.R). |
 
 > [!TIP]
@@ -272,5 +273,50 @@ The entire S3N pipeline is engineered to minimize external software dependencies
 | **R Development Headers & BLAS/LAPACK** | `R-core-devel`, `openblas-devel`, `lapack-devel` | `r-base-dev`, `libopenblas-dev`, `liblapack-dev` | Provides `<R.h>`, `<Rinternals.h>`, `<R_ext/Lapack.h>`, and `<R_ext/BLAS.h>` for `S3N` and `s3n_fast_neighbors.so`. |
 | **Cairo Graphics** | `cairo`, `cairo-devel` | `libcairo2`, `libcairo2-dev` | Enables anti-aliased headless PNG rendering (`type = "cairo"`) in R without an X11 display server. |
 | **SQLite3** | `sqlite-libs` | `libsqlite3-0` | Underlying C library used by Python's built-in `sqlite3` module to read `ORN_v2.gpkg`. |
+
+---
+
+## 6. Comparing Model Runs & Cross-Determinand Relationships: [`scripts/04_compare_model_runs.R`](file:///home/ben/code/r/spatial_stream_model/scripts/04_compare_model_runs.R)
+
+[`scripts/04_compare_model_runs.R`](file:///home/ben/code/r/spatial_stream_model/scripts/04_compare_model_runs.R) compares two or more saved model output directories (or can be sourced in R to call `compare_s3n_runs()`). It automatically supports both **same-determinand comparisons** (e.g., ORN vs. EU-Hydro networks, default vs. custom covariates, or seasonal/yearly sub-runs) and **cross-determinand comparisons** (e.g., Nitrate `0117` vs. Orthophosphate `0180`, or Nitrate `0117` vs. RHS Habitat Quality `hqa_score`), producing:
+- A comprehensive Markdown report (`comparison_report.md`) covering:
+  - **Predictive performance & winner selection** (5-fold CV $R^2$, RMSE, MAE, Bias, and basin-by-basin CV breakdowns)
+  - **Descriptive statistics of model outputs** (`descriptive_stats_summary.csv` — mean, SD, CV%, geometric mean, skewness, excess kurtosis, percentiles `P05`–`P95`, IQR, MAD, plus Mann–Whitney $U$ and KS tests comparing monitored stations against full-network predictions)
+  - **Stratified environmental comparisons** (`stratified_results_summary.csv` — breakdown across Topography, Hydrogeology, Landscape Regime, Strahler Stream Order, and River Basin)
+  - **Reach-by-reach relationship & co-occurrence analysis** (`reach_relationship_summary.csv` — Pearson $r$, Spearman $\rho$, OLS scaling slopes, 4-quadrant co-occurrence with $\chi^2$ and Odds Ratio tests, `P75`/`P90` hotspot Jaccard overlap, and automatic `N:P` mass/molar stoichiometry and Redfield nutrient-limitation regimes when comparing Nitrogen vs. Phosphorus)
+  - **Formal statistical hypothesis tests** (`statistical_tests_summary.csv` — paired Wilcoxon, paired $t$-test, Levene's variance test, Kolmogorov–Smirnov test, and pairwise parameter Wald $Z$-tests)
+- **5 Base-R Diagnostic Figures**:
+  - `fig_comp1_cv_performance.png`: Out-of-sample 5-fold CV $R^2$, RMSE, MAE, and basin-level performance
+  - `fig_comp2_predictions_and_uncertainty.png`: Prediction boxplots, density curves, ECDF, and Kriging SE distributions
+  - `fig_comp3_parameter_forest.png`: Multi-run 95% bootstrap CI forest plot and variance component decomposition
+  - `fig_comp4_side_by_side_maps.png`: Side-by-side spatial prediction maps across the river network
+  - `fig_comp5_reach_relationships.png`: 4-panel reach-by-reach relationship suite — (A) bivariate hex/density scatter with OLS & major-axis trend lines and 4-quadrant classification, (B) spatial map of 4-quadrant co-occurrence regimes (`High/High`, `Low/Low`, `High/Low`, `Low/High`), (C) spatial map of molar `N:P` ratio (or standardized Z-score divergence $\Delta Z$), and (D) stratified boxplot by environmental regime alongside stoichiometric limitation breakdown
+
+```bash
+# 1. List all available model output directories under output/
+Rscript scripts/04_compare_model_runs.R --list
+
+# 2. Compare different determinands on the same river network (e.g., Nitrate 0117 vs. Orthophosphate 0180)
+Rscript scripts/04_compare_model_runs.R output/det_0117 output/det_0180_orn
+
+# 3. Compare ORN v2 vs. EU-Hydro (Thames) water networks
+Rscript scripts/04_compare_model_runs.R output/det_0117 output/det_0117_euhydro_thames
+
+# 4. Compare default 8 covariates vs. custom covariate subset
+Rscript scripts/04_compare_model_runs.R output/det_0117 output/det_0117_vars_elev_slope_aquifer
+
+# 5. Compare multiple runs simultaneously with custom labels and custom output directory
+Rscript scripts/04_compare_model_runs.R \
+  output/det_0117 output/det_0117_vars_elev_slope_aquifer output/det_0117_euhydro_thames \
+  --labels="ORN (Default),ORN (3 Vars),EU-Hydro (Thames)" \
+  --out=output/comparisons/three_way_nitrate
+
+# 6. Automatically compare all seasonal, yearly, or monthly subdirectories inside a parent run folder
+Rscript scripts/04_compare_model_runs.R output/det_0117 --by=season
+Rscript scripts/04_compare_model_runs.R output/det_0117 --by=year
+Rscript scripts/04_compare_model_runs.R output/det_0117 --by=month
+```
+
+
 
 
