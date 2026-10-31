@@ -7,7 +7,7 @@ This guide explains what is required in a river/stream network dataset to work w
 ## 1. Overview & Architecture
 
 The `S3N` R package models spatial autocorrelation along river networks using two moving-average covariance structures:
-- **Tail-Up (TU)**: Flow-connected covariance that requires a **strictly converging directed tree** per catchment (every reach has at most **1 downstream child**, and no loops/cycles exist) plus **additive function values (`afv`, $\pi_i$)** that split weights proportionally at confluences.
+- **Tail-Up (TU)**: Flow-connected covariance that requires a **strictly converging directed tree** per catchment (every reach has at most **1 downstream child**, and no loops/cycles exist) plus **additive function values (`afv`, πᵢ)** that split weights proportionally at confluences.
 - **Tail-Down (TD)**: Flow-connected and flow-unconnected covariance that requires the **hydrologic distance to the catchment outlet (`Dist2Mth_km`)** for every reach.
 
 To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS Open Rivers Network `ORN_v2.gpkg` or Copernicus `EU-Hydro`), the pipeline uses:
@@ -30,7 +30,7 @@ To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS 
 - **Geometry Type**: `LineString` or `MultiLineString` in standard OGC WKB or ISO WKB:
   - **2D (`XY`)**: Supported. Reach lengths, sinuosity, and endpoint coordinates are computed directly from the 2D vertices.
   - **3D (`XYZ` / `XYM`) & 4D (`XYZM`)**: Supported (e.g., EU-Hydro uses ISO `MultiLineStringZM`, WKB type `3005`). When `Z` coordinates are present on vertices, the preprocessor automatically extracts mean reach `Elevation` (m) and channel `Slope` (%).
-- **Digitized Flow Direction**: Polylines should ideally be digitized **upstream $\to$ downstream** (first vertex = upstream start node, last vertex = downstream end node).
+- **Digitized Flow Direction**: Polylines should ideally be digitized **upstream → downstream** (first vertex = upstream start node, last vertex = downstream end node).
   - *Automatic Orientation Repair*: If your dataset has any reaches digitized backwards relative to its topology pointers/nodes, `scripts/01_preprocess_orn.py` automatically detects when the start vertex is closer to the downstream reach than the end vertex and flips the vertex order.
 
 ### 2.3 Coordinate Reference System (CRS)
@@ -45,8 +45,8 @@ Your dataset must provide **at least one** of the following three ways to determ
 
 | Topology Mode | Required Columns in GIS Layer | How Routing is Built | Example Dataset |
 | :--- | :--- | :--- | :--- |
-| **`"nodes"`** | `from_node_col` (upstream junction ID) and `to_node_col` (downstream junction ID) | Reach $A$ flows into reach $B$ when $\text{to\_node}(A) = \text{from\_node}(B)$. | OS Open Rivers Network (`Fnode` $\to$ `Tnode`) |
-| **`"pointer"`** | `id_col` (unique reach ID) and `next_down_col` (downstream reach ID) | Reach $A$ flows directly into the reach whose `id_col` equals $\text{next\_down\_col}(A)$. | Copernicus EU-Hydro (`OBJECT_ID` $\to$ `NEXTDOWNID`) |
+| **`"nodes"`** | `from_node_col` (upstream junction ID) and `to_node_col` (downstream junction ID) | Reach A flows into reach B when `to_node(A) == from_node(B)`. | OS Open Rivers Network (`Fnode` → `Tnode`) |
+| **`"pointer"`** | `id_col` (unique reach ID) and `next_down_col` (downstream reach ID) | Reach A flows directly into the reach whose `id_col` equals `next_down_col(A)`. | Copernicus EU-Hydro (`OBJECT_ID` → `NEXTDOWNID`) |
 | **`"geometry"`** | *None* (uses polyline vertices only) | Snaps each reach's downstream endpoint `(end_X, end_Y)` to the nearest reach's upstream startpoint `(start_X, start_Y)` within tolerance (`snap_tol_m`, default `5.0m`). | Custom digitised polylines without node/pointer attributes |
 | **`"auto"`** | Automatically selects `"pointer"`, `"nodes"`, or `"geometry"` based on which columns exist in the layer. | — | Ad-hoc `.gpkg` files |
 
@@ -68,14 +68,14 @@ You do **not** need pre-computed Strahler orders, Shreve orders, distances to mo
 | **`NextDownID`** | S3N adjacency & tree | **Yes** (via `nodes`, `pointer`, or `geometry`) | `from_node_col`/`to_node_col` or `next_down_col` | Built from node matching, pointer lookup, or endpoint coordinate snapping |
 | **`CatchID`** | Catchment grouping | No | `topology.catch_id_col` | Weakly connected tree components are automatically assigned integer `CatchID`s |
 | **`Length_m`** | Routing & `US_Accum_km` | No | Computed from WKB polyline | Exact 2D/3D polyline arc length in meters |
-| **`Dist2Mth_km`** | **Tail-Down** distances | No | `attributes.dist_to_mouth_col` | Computed via root-to-leaf tree traversal: $\text{Dist2Mth}(u) = \text{Dist2Mth}(\text{down}(u)) + \text{Length}(u)$ |
-| **`US_Accum_km`** | **Tail-Up** `afv` & OLS | No | `attributes.afv_weight_col` | Computed via leaf-to-root tree traversal: $\text{US\_Accum}(u) = \text{Length}(u) + \sum_{p \in \text{up}(u)} \text{US\_Accum}(p)$ |
-| **`Shreve`** | Alt `afv` weight | No | `attributes.shreve_col` | Computed via leaf-to-root tree traversal ($1$ at headwaters, $\sum_{p \in \text{up}(u)} \text{Shreve}(p)$ downstream) |
+| **`Dist2Mth_km`** | **Tail-Down** distances | No | `attributes.dist_to_mouth_col` | Computed via root-to-leaf tree traversal: `Dist2Mth(u) = Dist2Mth(down(u)) + Length(u)` |
+| **`US_Accum_km`** | **Tail-Up** `afv` & OLS | No | `attributes.afv_weight_col` | Computed via leaf-to-root tree traversal: `US_Accum(u) = Length(u) + sum(US_Accum(p) for p in up(u))` |
+| **`Shreve`** | Alt `afv` weight | No | `attributes.shreve_col` | Computed via leaf-to-root tree traversal (`1` at headwaters, `sum(Shreve(p) for p in up(u))` downstream) |
 | **`Strahler`** | OLS covariate & map width | No | `attributes.strahler_col` | Computed via leaf-to-root Strahler stream ordering rules |
-| **`afv`** | **Tail-Up** weight ($\pi_i$) | No | Derived from `US_Accum_km` | Multiplicative root-to-leaf proportion $\pi_u = \pi_{\text{down}(u)} \cdot \frac{w_u}{\sum_{s \in \text{up}(\text{down}(u))} w_s}$ |
-| **`Sinuosity`** | OLS covariate | No | Computed from WKB polyline | $\text{Length\_m} / \max(\text{StraightLineDist\_m}, 1.0) \ge 1.0$ |
+| **`afv`** | **Tail-Up** weight (πᵢ) | No | Derived from `US_Accum_km` | Multiplicative root-to-leaf proportion: `afv(u) = afv(down(u)) * (w(u) / sum(w(s) for s in up(down(u))))` |
+| **`Sinuosity`** | OLS covariate | No | Computed from WKB polyline | `Length_m / max(StraightLineDist_m, 1.0) >= 1.0` |
 | **`Elevation`** | OLS covariate | No | `attributes.elevation_col` or `nodes_table` | Extracted from 3D WKB vertex `Z` coordinates, or spatially interpolated from nearest ORN reach |
-| **`Slope`** | OLS covariate | No | `attributes.slope_col` | Extracted from 3D WKB vertex $\Delta Z / \text{Length\_m} \times 100$, or spatially interpolated |
+| **`Slope`** | OLS covariate | No | `attributes.slope_col` | Extracted from 3D WKB vertex `dZ / Length_m * 100`, or spatially interpolated |
 | **`Pct_Chalk` .. `Pct_Peat`** | OLS geology covariates | No | `covariates.mode` | Transferred via fast spatial-hash nearest-reach lookup (`2 km` grid) from BGS catchment geology |
 
 ---
@@ -164,7 +164,7 @@ Create a new JSON configuration file in [`configs/networks/`](file:///home/ben/c
 - **`geom_col`**: Name of the GeoPackage WKB geometry column (typically `"Shape"` or `"geom"`).
 - **`crs_epsg`**: Integer EPSG code of the layer's native CRS (e.g., `27700` for British National Grid, `3035` for ETRS89-LAEA Europe).
 - **`topology`**:
-  - `mode`: `"nodes"` (matches `to_node_col` $\to$ `from_node_col`), `"pointer"` (matches `next_down_col` $\to$ `id_col`), `"geometry"` (snaps reach endpoints within `snap_tol_m` meters), or `"auto"`.
+  - `mode`: `"nodes"` (matches `to_node_col` → `from_node_col`), `"pointer"` (matches `next_down_col` → `id_col`), `"geometry"` (snaps reach endpoints within `snap_tol_m` meters), or `"auto"`.
   - `id_col`, `from_node_col`, `to_node_col`, `next_down_col`, `catch_id_col`: Column names in the GIS table (set any unused column to `null`).
 - **`attributes`**:
   - Set any attribute column that exists in your GIS layer, or set to `null` to have the preprocessor compute it automatically from the network tree and 3D geometry.

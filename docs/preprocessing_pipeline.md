@@ -18,8 +18,8 @@ This document provides complete technical documentation for the three-stage **Sc
   - Supports running on all data (default), by `--year`, by `--season`, or by `--month`, and exports `data/processed/rsn_reach_periods.csv` with reach-level aggregations for all periods (`all`, `year`, `season`, `month`, `year_season`).
 - **Configurable Left-Censored (`<`) Handling (`--censor-method {ros,ros_site,half_lod}`)**:
   - `ros` (default): Pooled **Robust Lognormal Regression on Order Statistics** (Hirsch & Stedinger 1987; Helsel & Cohn 1988) across multiple detection limits (`compute_ros_plotting_positions` and `fit_ros_ols`).
-  - `ros_site`: Station-level Robust Lognormal ROS within each station (when $\ge 3$ uncensored detections exist and $< 80\%$ censoring), with automatic fallback to the global ROS regression parameters.
-  - `half_lod`: Standard $0.5 \times \text{LOD}$ substitution (`0.5 * meas_result`).
+  - `ros_site`: Station-level Robust Lognormal ROS within each station (when ≥ 3 uncensored detections exist and < 80% censoring), with automatic fallback to the global ROS regression parameters.
+  - `half_lod`: Standard 0.5 × LOD substitution (`0.5 * meas_result`).
 
 ### 2. Zero-Dependency GeoPackage WKB Geometry Decoding (`parse_gpkg_multilinestring()` L35–L59)
 - Unpacks the OGC GeoPackage Binary (`GPB`) header (`flags = blob[3]`, `env_ind = (flags >> 1) & 0x07`) to read the 32-byte bounding box `[minx, maxx, miny, maxy]` at byte offset `8` (`struct.unpack_from("<4d", blob, 8)`) in 1 microsecond without decoding vertex arrays unless a monitoring station is nearby.
@@ -81,7 +81,7 @@ This document provides complete technical documentation for the three-stage **Sc
 The entire S3N pipeline was deliberately engineered to minimize external software dependencies so that it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
 
 ### 1. Python Environment & Packages ([`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py))
-- **Python Version**: **Python $\ge 3.8$** (tested on `Python 3.14.8`). Note: `statistics.NormalDist()` used in the Robust Lognormal ROS censored-value imputation was introduced in Python 3.8.
+- **Python Version**: **Python ≥ 3.8** (tested on `Python 3.14.8`). Note: `statistics.NormalDist()` used in the Robust Lognormal ROS censored-value imputation was introduced in Python 3.8.
 - **Third-Party Python Packages**: **None (Zero `pip` or `conda` dependencies)**.
 - **Standard Library Modules Used**:
   | Module | Role in [`01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py) |
@@ -94,7 +94,7 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
 ---
 
 ### 2. R Environment & Packages ([`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R), [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R), [`scripts/03_generate_plots.R`](file:///home/ben/code/r/spatial_stream_model/scripts/03_generate_plots.R))
-- **R Version**: **R $\ge 3.5.0$** (tested on `R 4.5.3` on `x86_64-redhat-linux-gnu`).
+- **R Version**: **R ≥ 3.5.0** (tested on `R 4.5.3` on `x86_64-redhat-linux-gnu`).
 - **Required R Packages** (installed in the default R package library):
   | Package | Version / Source | Location | Purpose |
   | :--- | :--- | :--- | :--- |
