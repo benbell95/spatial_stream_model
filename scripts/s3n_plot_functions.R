@@ -209,12 +209,14 @@ shorten_det_name <- function(det_name) {
 
 # Figure 1: Full England Stream Network Map
 plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_log, out_file,
-                                  reverse_color = FALSE, sc_val = NULL, sc_se = NULL) {
+                                  reverse_color = FALSE, sc_val = NULL, sc_se = NULL, vars_label = NULL) {
   eng_pred <- normalize_pred_df(eng_pred)
   pal_use  <- get_val_pal(reverse_color)
+  has_vars <- !is.null(vars_label) && nzchar(vars_label)
   png(out_file, width = 2600, height = 1450, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2), bg = "white")
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
+      oma = if (has_vars) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   if (is.null(sc_val)) sc_val <- compute_color_scale(eng_pred$pred_model_sc, use_log)
   if (is.null(sc_se))  sc_se  <- compute_se_scale(eng_pred$se_model_sc)
@@ -223,12 +225,17 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
   cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, det_unit)
+  sub_a <- if (has_vars) {
+    sprintf("S3N across %d catchments | Covariates: %s", length(unique(eng_pred$CatchID)), vars_label)
+  } else {
+    sprintf("Scalable Spatial Stream Network (S3N) model across %d monitored catchments",
+            length(unique(eng_pred$CatchID)))
+  }
 
   plot_stream_network(
     eng_pred, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
     main_title = sprintf("A. S3N Predicted %s Across England (%s Reaches)", det_short, format(n_tot_eng, big.mark = ",")),
-    sub_title  = sprintf("Scalable Spatial Stream Network (S3N) model across %d monitored catchments",
-                         length(unique(eng_pred$CatchID))),
+    sub_title  = sub_a,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
     show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
   )
@@ -248,27 +255,42 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
          col = "#111111", cex = 0.65, lwd = 0.5)
   legend("topleft", legend = sprintf("Observed RSN Station (colored by %s)", det_short),
          pch = 21, pt.bg = "#e67e22", col = "#111111", pt.cex = 1.0, bty = "n", cex = 0.80)
+  if (has_vars) {
+    mtext(sprintf("Fixed-Effect Regression Covariates: %s", vars_label),
+          side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  }
 }
 
 # Generic 2-Panel River Basin High-Resolution S3N Map (used for Figure 2 Humber & Figure 5+ Custom Basins)
 plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                           reverse_color = FALSE, sc_se = NULL) {
+                           reverse_color = FALSE, sc_se = NULL, vars_label = NULL) {
   basin_pred <- normalize_pred_df(basin_pred)
   cv_tab     <- normalize_cv_tab(cv_tab)
   pal_use    <- get_val_pal(reverse_color)
+  has_vars   <- !is.null(vars_label) && nzchar(vars_label)
   png(out_file, width = 2600, height = 1350, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2), bg = "white")
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
+      oma = if (has_vars) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   if (is.null(sc_se)) sc_se <- compute_se_scale(basin_pred$se_model_sc)
   n_obs_basin <- sum(basin_pred$has_obs == 1)
   det_short   <- shorten_det_name(det_name)
   cv_row      <- subset(cv_tab, Domain == domain_label & Model == "S3N Combined (Tail-Up + Tail-Down)")
   sub_a <- if (nrow(cv_row) > 0) {
-    sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | Circles show %d observed RSN stations",
-            cv_row$R2[1], cv_row$RMSE[1], n_obs_basin)
+    if (has_vars) {
+      sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | n = %d sites | Covariates: %s",
+              cv_row$R2[1], cv_row$RMSE[1], n_obs_basin, vars_label)
+    } else {
+      sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | Circles show %d observed RSN stations",
+              cv_row$R2[1], cv_row$RMSE[1], n_obs_basin)
+    }
   } else {
-    sprintf("England S3N model subset | Circles show %d observed RSN stations in %s", n_obs_basin, basin_title)
+    if (has_vars) {
+      sprintf("England S3N subset (n = %d sites) | Covariates: %s", n_obs_basin, vars_label)
+    } else {
+      sprintf("England S3N model subset | Circles show %d observed RSN stations in %s", n_obs_basin, basin_title)
+    }
   }
 
   plot_stream_network(
@@ -297,35 +319,53 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   }
   legend("topleft", legend = sprintf("RSN Monitoring Site Location (n = %d)", n_obs_basin),
          pch = 3, col = "#c0392b", pt.cex = 0.9, bty = "n", cex = 0.82)
+  if (has_vars) {
+    mtext(sprintf("Fixed-Effect Regression Covariates: %s", vars_label),
+          side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  }
 }
 
 # Figure 2: Humber River Basin High-Resolution S3N Map
 plot_fig2_humber_map <- function(hum_pred, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                                 reverse_color = FALSE, sc_se = NULL) {
+                                 reverse_color = FALSE, sc_se = NULL, vars_label = NULL) {
   plot_basin_map(hum_pred, "Humber Basin", "Humber Basin (CatchID=80)",
                  cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                 reverse_color = reverse_color, sc_se = sc_se)
+                 reverse_color = reverse_color, sc_se = sc_se, vars_label = vars_label)
 }
 
 # Figure 3: Thames & Severn River Basins S3N Maps
-plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, det_name, det_unit, use_log, out_file, reverse_color = FALSE) {
+plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, det_name, det_unit, use_log, out_file,
+                                        reverse_color = FALSE, vars_label = NULL) {
   tha_pred <- normalize_pred_df(tha_pred)
   sev_pred <- normalize_pred_df(sev_pred)
   pal_use  <- get_val_pal(reverse_color)
+  has_vars <- !is.null(vars_label) && nzchar(vars_label)
   png(out_file, width = 2600, height = 1250, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2), bg = "white")
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
+      oma = if (has_vars) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
   cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, det_unit)
+  sub_tha <- if (has_vars) {
+    sprintf("n = %d RSN sites | S3N Tail-Up | Covariates: %s", sum(tha_pred$has_obs == 1), vars_label)
+  } else {
+    sprintf("n = %d observed RSN stations | Flow-connected Tail-Up stream network predictions",
+            sum(tha_pred$has_obs == 1))
+  }
+  sub_sev <- if (has_vars) {
+    sprintf("n = %d RSN sites | S3N Combined | Covariates: %s", sum(sev_pred$has_obs == 1), vars_label)
+  } else {
+    sprintf("n = %d observed RSN stations | Combined Tail-Up + Tail-Down S3N predictions",
+            sum(sev_pred$has_obs == 1))
+  }
 
   plot_stream_network(
     tha_pred, "pred_tu_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
     main_title = sprintf("A. Thames Basin: S3N Tail-Up Predicted %s (%s Reaches)",
                          det_short, format(nrow(tha_pred), big.mark = ",")),
-    sub_title  = sprintf("n = %d observed RSN stations | Flow-connected Tail-Up stream network predictions",
-                         sum(tha_pred$has_obs == 1)),
+    sub_title  = sub_tha,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
     show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.40, max_lwd = 2.8
   )
@@ -334,11 +374,14 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
     sev_pred, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
     main_title = sprintf("B. Severn Basin: S3N Predicted %s (%s Reaches)",
                          det_short, format(nrow(sev_pred), big.mark = ",")),
-    sub_title  = sprintf("n = %d observed RSN stations | Combined Tail-Up + Tail-Down S3N predictions",
-                         sum(sev_pred$has_obs == 1)),
+    sub_title  = sub_sev,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
     show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.40, max_lwd = 2.8
   )
+  if (has_vars) {
+    mtext(sprintf("Fixed-Effect Regression Covariates: %s", vars_label),
+          side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
+  }
 }
 
 # Figure 4: 4-Panel Model Diagnostics, Cross-Validation & Parameter CIs
@@ -544,7 +587,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
 
 # Figure 5 (Temporal Multi-Panel Grid): All England S3N Comparison Across Seasons, Years, or Months
 plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_code, det_name, det_unit,
-                                            use_log, out_file, reverse_color = FALSE) {
+                                            use_log, out_file, reverse_color = FALSE, vars_label = NULL) {
   period_items <- Filter(Negate(is.null), period_items)
   n_pan <- length(period_items)
   if (n_pan == 0) return(invisible(NULL))
@@ -637,12 +680,14 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
 
   n_reaches_tot <- nrow(period_items[[1]]$eng_pred)
   n_catch_tot   <- length(unique(period_items[[1]]$eng_pred$CatchID))
+  has_vars      <- !is.null(vars_label) && nzchar(vars_label)
+  sub_outer <- sprintf("Unified color scale across all %d %s panels (%s reaches across %d monitored catchments)%s",
+                       n_pan, tolower(by_mode), format(n_reaches_tot, big.mark = ","), n_catch_tot,
+                       if (has_vars) paste0(" | Covariates: ", vars_label) else "")
   mtext(sprintf("All England S3N Stream Network Comparison by %s: %s (%s)",
                 mode_cap, det_short, det_unit),
         side = 3, line = 1.5, outer = TRUE, cex = 1.25, font = 2, col = "#111111")
-  mtext(sprintf("Unified color scale across all %d %s panels (%s reaches across %d monitored catchments)",
-                n_pan, tolower(by_mode), format(n_reaches_tot, big.mark = ","), n_catch_tot),
-        side = 3, line = 0.2, outer = TRUE, cex = 0.92, col = "#444444")
+  mtext(sub_outer, side = 3, line = 0.2, outer = TRUE, cex = 0.92, col = "#444444")
 }
 
 # ==============================================================================
@@ -874,5 +919,136 @@ build_design_matrix <- function(df, include_peat = TRUE, var_specs = NULL) {
     }
   }
   do.call(cbind, col_list)
+}
+
+COVARIATE_SHORT_SLUG <- c(
+  Elevation_z        = "elev",
+  Slope_z            = "slope",
+  log10_US_Accum_z   = "accum",
+  Is_Chalk_Limestone = "chalk",
+  Is_Sandstone       = "sand",
+  Is_Peat            = "peat",
+  Is_Aquifer         = "aquifer",
+  Easting_z          = "east",
+  Northing_z         = "north",
+  Sinuosity_z        = "sinuosity",
+  SrcElevation_z     = "srcelev",
+  Dist2Mth_z         = "dist2mth",
+  Length_z           = "length",
+  log10_Shreve_z     = "shreve",
+  Strahler_z         = "strahler"
+)
+
+COVARIATE_SHORT_LABEL <- c(
+  Elevation_z        = "Elevation",
+  Slope_z            = "Slope",
+  log10_US_Accum_z   = "US_Accum",
+  Is_Chalk_Limestone = "Chalk/Limestone",
+  Is_Sandstone       = "Sandstone",
+  Is_Peat            = "Peat",
+  Is_Aquifer         = "Aquifer",
+  Easting_z          = "Easting",
+  Northing_z         = "Northing",
+  Sinuosity_z        = "Sinuosity",
+  SrcElevation_z     = "SrcElevation",
+  Dist2Mth_z         = "Dist2Mth",
+  Length_z           = "Length",
+  log10_Shreve_z     = "Shreve",
+  Strahler_z         = "Strahler"
+)
+
+format_covariates_folder_tag <- function(var_specs = NULL) {
+  if (is.null(var_specs) || length(var_specs) == 0) return("")
+  specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
+  if (length(specs) == 0 || (length(specs) == 1 && tolower(specs[1]) == "default")) return("")
+  if (length(specs) == 1 && tolower(specs[1]) %in% c("none", "intercept", "null", "0")) return("vars_none")
+  if (length(specs) == 1 && tolower(specs[1]) == "all") return("vars_all")
+
+  is_mod <- grepl("^[+-]", specs)
+  if (all(is_mod)) {
+    parts <- sapply(specs, function(sp) {
+      op <- substr(sp, 1, 1)
+      nm <- match_covariate_token(substr(sp, 2, nchar(sp)))
+      sl <- unname(COVARIATE_SHORT_SLUG[nm])
+      paste0(if (op == "+") "add_" else "no_", sl)
+    })
+    return(paste0("vars_", paste(parts, collapse = "_")))
+  }
+
+  terms <- character(0)
+  for (sp in specs) {
+    sp_clean <- sub("^\\+", "", sp)
+    if (tolower(sp_clean) %in% c("intercept", "none")) next
+    nm <- match_covariate_token(sp_clean)
+    if (!(nm %in% terms)) terms <- c(terms, nm)
+  }
+  if (length(terms) == 0) return("vars_none")
+  slugs <- unname(COVARIATE_SHORT_SLUG[terms])
+  if (length(slugs) > 5) {
+    slugs <- c(slugs[1:4], paste0("plus", length(slugs) - 4))
+  }
+  paste0("vars_", paste(slugs, collapse = "_"))
+}
+
+format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
+  default_eng <- c("Elevation_z", "Slope_z", "log10_US_Accum_z",
+                   "Is_Chalk_Limestone", "Is_Sandstone", "Is_Peat",
+                   "Easting_z", "Northing_z")
+  default_bas <- c("Elevation_z", "Slope_z", "log10_US_Accum_z",
+                   "Is_Aquifer", "Easting_z", "Northing_z")
+
+  has_cli_vars <- !is.null(var_specs) && length(var_specs) > 0 &&
+                  !(length(var_specs) == 1 && tolower(trimws(var_specs[1])) == "default")
+
+  if (!is.null(param_tab) && nrow(param_tab) > 0) {
+    eng_p <- unique(as.character(param_tab$Parameter[
+      param_tab$Domain == "All England RSN Network" &
+      !(param_tab$Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi"))
+    ]))
+    if (!has_cli_vars && (identical(eng_p, default_eng) || identical(eng_p, default_bas))) {
+      return(NULL)
+    }
+    if (length(eng_p) == 0) {
+      return("None (Intercept-only spatial model)")
+    }
+    lbls <- ifelse(eng_p %in% names(COVARIATE_SHORT_LABEL), COVARIATE_SHORT_LABEL[eng_p], eng_p)
+    return(paste(lbls, collapse = ", "))
+  }
+
+  if (!has_cli_vars) return(NULL)
+  specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
+  if (length(specs) == 1 && tolower(specs[1]) %in% c("none", "intercept", "null", "0")) {
+    return("None (Intercept-only spatial model)")
+  }
+  if (length(specs) == 1 && tolower(specs[1]) == "all") {
+    return(paste(COVARIATE_SHORT_LABEL[names(COVARIATE_CATALOG) != "Is_Aquifer"], collapse = ", "))
+  }
+  is_mod <- grepl("^[+-]", specs)
+  terms <- default_eng
+  if (all(is_mod)) {
+    for (sp in specs) {
+      op <- substr(sp, 1, 1)
+      nm <- match_covariate_token(substr(sp, 2, nchar(sp)))
+      if (op == "+") {
+        if (!(nm %in% terms)) terms <- c(terms, nm)
+      } else {
+        if (nm == "Is_Aquifer") {
+          terms <- setdiff(terms, c("Is_Aquifer", "Is_Chalk_Limestone", "Is_Sandstone"))
+        } else {
+          terms <- setdiff(terms, nm)
+        }
+      }
+    }
+  } else {
+    terms <- character(0)
+    for (sp in specs) {
+      sp_clean <- sub("^\\+", "", sp)
+      if (tolower(sp_clean) %in% c("intercept", "none")) next
+      nm <- match_covariate_token(sp_clean)
+      if (!(nm %in% terms)) terms <- c(terms, nm)
+    }
+  }
+  if (length(terms) == 0) return("None (Intercept-only spatial model)")
+  paste(unname(COVARIATE_SHORT_LABEL[terms]), collapse = ", ")
 }
 

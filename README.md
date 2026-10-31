@@ -102,7 +102,7 @@ For example, to run the model using specific variables, use:
 
 ```
 # Specify variables for the model run
-Rscript scripts/run_s3n_determinand.R --vars=elevation, slope, aquifer
+Rscript scripts/run_s3n_determinand.R 0117 --vars=elevation,slope,aquifer
 ```
 
 A full list of commands is available in the [usage guide](docs/usage_guide.md).

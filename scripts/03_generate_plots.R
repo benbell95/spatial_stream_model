@@ -273,16 +273,20 @@ for (b in bundles) {
               formatC(if (b$use_log) exp(shared_sc_val$vmin) else shared_sc_val$vmin, format = "fg", digits = 3),
               formatC(if (b$use_log) exp(shared_sc_val$vmax) else shared_sc_val$vmax, format = "fg", digits = 3)))
 
+  vars_sub <- format_covariates_subtitle(param_tab = b$param_tab)
+
   plot_fig1_england_map(b$eng_pred, b$det_code, b$det_name, b$det_unit, b$use_log,
                         file.path(b$FIG_DIR, f1_name), reverse_color = reverse_color,
-                        sc_val = shared_sc_val, sc_se = shared_sc_se_e)
+                        sc_val = shared_sc_val, sc_se = shared_sc_se_e,
+                        vars_label = vars_sub)
 
   plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
                        file.path(b$FIG_DIR, f2_name), reverse_color = reverse_color,
-                       sc_se = shared_sc_se_h)
+                       sc_se = shared_sc_se_h, vars_label = vars_sub)
 
   plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
-                              file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color)
+                              file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color,
+                              vars_label = vars_sub)
 
   plot_fig4_diagnostics(b$eng_pred, b$eng_cv, b$hum_cv, b$cv_tab, b$param_tab,
                         b$det_code, b$det_name, b$det_unit, b$use_log,
@@ -309,12 +313,14 @@ for (m_type in c("season", "year", "month")) {
       list(label = lbl, eng_pred = b$eng_pred, cv_tab = b$cv_tab)
     })
     b0 <- m_bundles[[1]]
+    vars_sub_g <- format_covariates_subtitle(param_tab = b0$param_tab)
     fig5_path <- file.path(target_dir, sprintf("fig5_england_by_%s_%s_map.png", m_type, b0$det_code))
     cat(sprintf("Rendering Figure 5 (%d-panel All England %s comparison grid): %s...\n",
                 length(grid_items), m_type, fig5_path))
     plot_fig5_temporal_england_grid(grid_items, m_type, shared_sc_val,
                                     b0$det_code, b0$det_name, b0$det_unit, b0$use_log,
-                                    fig5_path, reverse_color = reverse_color)
+                                    fig5_path, reverse_color = reverse_color,
+                                    vars_label = vars_sub_g)
   }
 }
 

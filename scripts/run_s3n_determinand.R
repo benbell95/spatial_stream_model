@@ -254,14 +254,18 @@ suppressPackageStartupMessages({
 })
 dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
 
-out_folder_name <- if (ds_mode == "wq") paste0("det_", det_code) else paste0(ds_mode, "_", gsub("[^a-zA-Z0-9_]+", "_", det_code))
-OUT_DIR <- file.path(BASE_DIR, "output", out_folder_name)
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
-
 # ==============================================================================
 # SHARED BASE-R PLOTTING FUNCTIONS (FIGURES 1 - 4 & CUSTOM BASINS)
 # ==============================================================================
 source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+
+vars_tag <- format_covariates_folder_tag(var_specs)
+out_folder_name <- if (ds_mode == "wq") paste0("det_", det_code) else paste0(ds_mode, "_", gsub("[^a-zA-Z0-9_]+", "_", det_code))
+if (nzchar(vars_tag)) {
+  out_folder_name <- paste0(out_folder_name, "_", vars_tag)
+}
+OUT_DIR <- file.path(BASE_DIR, "output", out_folder_name)
+dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # ==============================================================================
 # DATA LOADING & MULTI-DOMAIN S3N ESTIMATION + 5-FOLD CV
@@ -822,13 +826,16 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   fig2_path <- file.path(out_subdir, sprintf("fig2_humber_basin_%s_map.png", det_code))
   fig3_path <- file.path(out_subdir, sprintf("fig3_thames_severn_%s_maps.png", det_code))
   fig4_path <- file.path(out_subdir, sprintf("fig4_cv_and_diagnostics_%s.png", det_code))
+  vars_sub  <- format_covariates_subtitle(var_specs = var_specs, param_tab = all_params)
 
   plot_fig1_england_map(eng_pred, det_code, det_title_name, det_unit, use_log, fig1_path,
-                        reverse_color = reverse_color, sc_val = sc_val, sc_se = sc_se_eng)
+                        reverse_color = reverse_color, sc_val = sc_val, sc_se = sc_se_eng,
+                        vars_label = vars_sub)
   plot_fig2_humber_map(hum_pred, all_cv, sc_val, det_code, det_title_name, det_unit, use_log, fig2_path,
-                       reverse_color = reverse_color, sc_se = sc_se_hum)
+                       reverse_color = reverse_color, sc_se = sc_se_hum,
+                       vars_label = vars_sub)
   plot_fig3_thames_severn_map(tha_pred, sev_pred, sc_val, det_code, det_title_name, det_unit, use_log, fig3_path,
-                              reverse_color = reverse_color)
+                              reverse_color = reverse_color, vars_label = vars_sub)
 
   extra_cv_for_fig4 <- lapply(extra_fits, function(ef) {
     list(
@@ -847,7 +854,7 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
       fig_k_path <- file.path(out_subdir, sprintf("fig%d_%s_basin_%s_map.png", 4L + k, ef$info$slug, det_code))
       plot_basin_map(ef$pred_df, ef$info$short_title, ef$info$domain_label,
                      all_cv, sc_val, det_code, det_title_name, det_unit, use_log, fig_k_path,
-                     reverse_color = reverse_color, sc_se = sc_se_hum)
+                     reverse_color = reverse_color, sc_se = sc_se_hum, vars_label = vars_sub)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
     }
   }
@@ -909,11 +916,13 @@ if (!is.na(by_mode)) {
   fig5_grid_path <- file.path(OUT_DIR, sprintf("fig5_england_by_%s_%s_map.png", by_mode, det_code))
   cat(sprintf("\nGenerating Figure 5 (%d-panel All England %s comparison grid): %s ...\n",
               length(grid_items), by_mode, fig5_grid_path))
-  plot_fig5_temporal_england_grid(grid_items, by_mode, shared_sc$sc_val,
-                                  det_code, det_name, det_unit, use_log,
-                                  fig5_grid_path, reverse_color = reverse_color)
   comb_cv <- do.call(rbind, lapply(batch_res, function(x) if (!is.null(x)) x$cv else NULL))
   comb_pa <- do.call(rbind, lapply(batch_res, function(x) if (!is.null(x)) x$params else NULL))
+  vars_sub_grid <- format_covariates_subtitle(var_specs = var_specs, param_tab = comb_pa)
+  plot_fig5_temporal_england_grid(grid_items, by_mode, shared_sc$sc_val,
+                                  det_code, det_name, det_unit, use_log,
+                                  fig5_grid_path, reverse_color = reverse_color,
+                                  vars_label = vars_sub_grid)
   write.csv(comb_cv, file.path(OUT_DIR, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
   write.csv(comb_pa, file.path(OUT_DIR, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
 } else {

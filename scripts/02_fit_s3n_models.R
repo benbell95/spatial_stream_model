@@ -44,9 +44,11 @@ suppressPackageStartupMessages({
 
 dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
 
-dir.create(file.path(BASE_DIR, "output/tables"), recursive = TRUE, showWarnings = FALSE)
-dir.create(file.path(BASE_DIR, "output/predictions"), recursive = TRUE, showWarnings = FALSE)
-dir.create(file.path(BASE_DIR, "output/models"), recursive = TRUE, showWarnings = FALSE)
+vars_tag <- format_covariates_folder_tag(var_specs)
+OUT_ROOT <- if (nzchar(vars_tag)) file.path(BASE_DIR, "output", vars_tag) else file.path(BASE_DIR, "output")
+dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)
 
 cat("======================================================================\n")
 cat("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline\n")
@@ -175,7 +177,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     se_log_combined    = round(se_comb, 5),
     pred_mgL_combined  = round(exp(pred_log_comb), 4)
   )
-  write.csv(pred_df, file.path(BASE_DIR, sprintf("output/predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
+  write.csv(pred_df, file.path(OUT_ROOT, sprintf("predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
 
   # 5. 5-Fold Out-of-Sample Cross-Validation
   set.seed(2026)
@@ -323,13 +325,13 @@ res_severn  <- analyze_domain(subset(df_full, CatchID == 2786), "severn",  "Seve
 all_cv <- rbind(res_england$cv_summary, res_humber$cv_summary, res_thames$cv_summary, res_severn$cv_summary)
 all_params <- rbind(res_england$param_df, res_humber$param_df, res_thames$param_df, res_severn$param_df)
 
-write.csv(all_cv, file.path(BASE_DIR, "output/tables/cv_model_comparison.csv"), row.names = FALSE)
-write.csv(all_params, file.path(BASE_DIR, "output/tables/s3n_parameter_estimates.csv"), row.names = FALSE)
-write.csv(res_england$cv_pts, file.path(BASE_DIR, "output/predictions/england_cv_predictions.csv"), row.names = FALSE)
-write.csv(res_humber$cv_pts, file.path(BASE_DIR, "output/predictions/humber_cv_predictions.csv"), row.names = FALSE)
+write.csv(all_cv, file.path(OUT_ROOT, "tables/cv_model_comparison.csv"), row.names = FALSE)
+write.csv(all_params, file.path(OUT_ROOT, "tables/s3n_parameter_estimates.csv"), row.names = FALSE)
+write.csv(res_england$cv_pts, file.path(OUT_ROOT, "predictions/england_cv_predictions.csv"), row.names = FALSE)
+write.csv(res_humber$cv_pts, file.path(OUT_ROOT, "predictions/humber_cv_predictions.csv"), row.names = FALSE)
 
 saveRDS(list(england = res_england, humber = res_humber, thames = res_thames, severn = res_severn),
-        file = file.path(BASE_DIR, "output/models/s3n_model_results.rds"))
+        file = file.path(OUT_ROOT, "models/s3n_model_results.rds"))
 
 cat(sprintf("\n======================================================================\n"))
 cat(sprintf("  All S3N models, bootstrap CIs, CV, and predictions finished in %.2f sec.\n",

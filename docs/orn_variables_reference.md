@@ -122,4 +122,19 @@ Rscript scripts/run_s3n_determinand.R 0117 --vars=none
 Rscript scripts/run_s3n_determinand.R 0117 --vars=all
 ```
 
+### 5.3 Plot Subtitles & Differentiated Output Folders When `--vars` Is Used
+When `--vars=<spec>` is set to anything other than `default`:
+1. **Plot Subtitles on Figures 1–3 (and Custom Basin / Temporal Grid Maps)**:
+   - Figures 1, 2, and 3 (as well as any custom `--basin` maps and Figure 5 temporal comparison grids) automatically display the active fixed-effect covariates in both the panel subtitle (`Covariates: Elevation, Slope, Aquifer`) and a figure-level top header (`Fixed-Effect Regression Covariates: ...`).
+   - [`scripts/03_generate_plots.R`](file:///home/ben/code/r/spatial_stream_model/scripts/03_generate_plots.R) also detects non-default covariate sets directly from `parameters_<code>.csv` when re-rendering figures from a saved folder.
+2. **Differentiated Output Folder Names**:
+   - Instead of overwriting the default output directory (`output/det_0117/`), [`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R) appends a descriptive `_vars_<tag>` suffix to the output directory name:
+     - `--vars=elevation,slope,aquifer` $\to$ `output/det_0117_vars_elev_slope_aquifer/`
+     - `--vars=-easting,-northing` $\to$ `output/det_0117_vars_no_east_north/`
+     - `--vars=+sinuosity,+strahler` $\to$ `output/det_0117_vars_add_sinuosity_add_strahler/`
+     - `--vars=none` $\to$ `output/det_0117_vars_none/`
+     - `--vars=all` $\to$ `output/det_0117_vars_all/`
+   - Similarly, [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R) writes to `output/vars_<tag>/` when `--vars` is passed.
+
+
 
