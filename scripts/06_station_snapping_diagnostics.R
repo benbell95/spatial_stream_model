@@ -381,7 +381,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   # ============================================================================
   # PANEL A: Full Catchment River Network, Snapped Reaches & Station Locations
   # ============================================================================
-  par(mar = c(4.2, 4.2, 4.2, 1.5), bg = "#FFFFFF")
+  par(mar = c(4.2, 4.2, 4.8, 1.5), bg = "#FFFFFF")
   all_x <- c(sub_r$start_X, sub_r$end_X, sub_s$station_X)
   all_y <- c(sub_r$start_Y, sub_r$end_Y, sub_s$station_Y)
   xr <- range(all_x, na.rm = TRUE)
@@ -395,13 +395,14 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#F8FAFC", border = "#CBD5E1")
   grid(col = "#E2E8F0", lty = 1, lwd = 0.7)
 
-  title(main = sprintf("A. %s%s [CatchID = %d] — Station Snapping Map", c_name, r_name, cid),
-        cex.main = 1.28, font.main = 2, line = 2.2)
-  mtext(sprintf("%s | %s total reaches | %d snapped reaches | %d stations (<=250m: %d, >250m: %d)",
-                net_label, format(nrow(sub_r), big.mark = ","),
-                length(unique(sub_s$snapped_RivID[sub_s$included_250m == 1L])),
-                nrow(sub_s), sum(sub_s$included_250m == 1L), sum(sub_s$included_250m == 0L)),
-        side = 3, line = 0.6, cex = 0.88, col = "#334155")
+  draw_plot_header(
+    main_title = sprintf("A. %s%s [CatchID = %d] — Station Snapping Map", c_name, r_name, cid),
+    sub_title  = sprintf("%s | %s total reaches | %d snapped reaches | %d stations (<=250m: %d, >250m: %d)",
+                         net_label, format(nrow(sub_r), big.mark = ","),
+                         length(unique(sub_s$snapped_RivID[sub_s$included_250m == 1L])),
+                         nrow(sub_s), sum(sub_s$included_250m == 1L), sum(sub_s$included_250m == 0L)),
+    max_main = 120, max_sub = 160, cex_main = 1.15, cex_sub = 0.84, adj = 0.5
+  )
 
   # 1. Draw all unmonitored reaches in light grey (2-segment polylines: start -> mid -> end)
   unmon_r <- sub_r[!(sub_r$RivID %in% sub_s$snapped_RivID), ]
@@ -474,7 +475,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   brks <- seq(0, max(25, ceiling(max(d_plot, na.rm = TRUE) * 1.05)), length.out = 22)
 
   hist(d_plot, breaks = brks, col = "#38BDF8", border = "#0369A1",
-       main = sprintf("B. Snapping Distance Distribution (%s, n = %d)", c_name, length(d_plot)),
+       main = wrap_title(sprintf("B. Snapping Distance Distribution (%s, n = %d)", c_name, length(d_plot)), 80),
        xlab = "Station-to-Reach Snapping Distance (metres)", ylab = "Number of Stations",
        cex.main = 1.12, cex.lab = 1.0)
   grid(col = "#E2E8F0", lty = 1)
@@ -516,7 +517,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   }
 
   for (k in 1:4) {
-    par(mar = c(3.6, 3.8, 2.9, 1.0), mgp = c(2.0, 0.6, 0))
+    par(mar = c(3.6, 3.8, 3.6, 1.0), mgp = c(2.0, 0.6, 0))
     if (k > length(sel_idx)) {
       plot.new()
       next
@@ -529,9 +530,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
 
     plot(NA, xlim = c(cx - span, cx + span), ylim = c(cy - span, cy + span),
          asp = 1, xlab = "Easting (m)", ylab = "Northing (m)",
-         main = sprintf("C%d. Zoom: %s -> Reach %d (d = %.2f m)",
-                        k, st$site_id, st$snapped_RivID, st$snap_dist_m),
-         cex.main = 0.94, cex.lab = 0.85, cex.axis = 0.78)
+         main = "", cex.lab = 0.85, cex.axis = 0.78)
     rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#F8FAFC", border = "#CBD5E1")
     grid(col = "#E2E8F0", lty = 1)
 
@@ -576,10 +575,14 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
     text(st$station_X, st$station_Y, labels = st$site_id, pos = 3, offset = 0.55, cex = 0.76, font = 2, col = "#0F172A")
     text(st$snap_reach_X, st$snap_reach_Y, labels = sprintf("RivID %d", st$snapped_RivID), pos = 1, offset = 0.55, cex = 0.74, col = "#0369A1", font = 2)
 
-    # Annotate coordinates and distance
-    mtext(sprintf("Stn: (%.1f, %.1f) | SnapPt: (%.1f, %.1f)",
-                  st$station_X, st$station_Y, st$snap_reach_X, st$snap_reach_Y),
-          side = 3, line = 0.12, cex = 0.66, col = "#475569")
+    # Header: multi-line title and coordinate subtitle rendered dynamically
+    draw_plot_header(
+      main_title = sprintf("C%d. Zoom: %s -> Reach %d (d = %.2f m)",
+                           k, st$site_id, st$snapped_RivID, st$snap_dist_m),
+      sub_title  = sprintf("Stn: (%.1f, %.1f) | SnapPt: (%.1f, %.1f)",
+                           st$station_X, st$station_Y, st$snap_reach_X, st$snap_reach_Y),
+      max_main = 68, max_sub = 85, cex_main = 0.88, cex_sub = 0.68, adj = 0.5
+    )
     if (k == 1) {
       legend("bottomleft",
              legend = c("Snapped Reach", "Snap Point", "Reach Midpt", "Station", "Snap Vector"),
@@ -602,14 +605,15 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
   png(out_png, width = 2400, height = 1750, res = 150, type = "cairo")
   on.exit(dev.off(), add = TRUE)
 
-  par(mfrow = c(2, 2), mar = c(4.5, 4.8, 3.8, 1.8), bg = "#FFFFFF")
+  par(mfrow = c(2, 2), mar = c(4.5, 4.8, 4.2, 1.8), bg = "#FFFFFF")
 
   # Panel A: Spatial Map of All Stations Colored by Snapping Distance Tier
   xr <- range(snap_df$station_X, na.rm = TRUE)
   yr <- range(snap_df$station_Y, na.rm = TRUE)
+  s_lbl <- if (exists("source_label") && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
   plot(NA, xlim = xr, ylim = yr, asp = 1,
        xlab = "Easting (m, BNG EPSG:27700)", ylab = "Northing (m, BNG EPSG:27700)",
-       main = sprintf("A. All RSN Monitoring Stations by Snapping Distance (%s)", net_label),
+       main = wrap_title(sprintf("A. All %s Monitoring Stations by Snapping Distance (%s)", s_lbl, net_label), 80),
        cex.main = 1.15, cex.lab = 1.0)
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#F8FAFC", border = "#CBD5E1")
   grid(col = "#E2E8F0", lty = 1)
@@ -641,7 +645,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
   # Panel B: Empirical CDF & Histogram of Included Station Snapping Distances (0 - 250 m)
   d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L]
   hist(d_inc, breaks = 30, col = "#38BDF8", border = "#0284C7",
-       main = sprintf("B. Snapping Distance Distribution (Included <= 250 m, n = %d)", length(d_inc)),
+       main = wrap_title(sprintf("B. Snapping Distance Distribution (Included <= 250 m, n = %d)", length(d_inc)), 80),
        xlab = "Snapping Distance to Nearest River Reach (metres)", ylab = "Station Count",
        cex.main = 1.15, cex.lab = 1.0)
   grid(col = "#E2E8F0", lty = 1)
@@ -668,15 +672,18 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
     boxplot(snap_dist_m ~ ord_fac, data = sub_inc,
             col = c("#E0F2FE", "#BAE6FD", "#7DD3FC", "#38BDF8", "#0284C7", "#0369A1")[seq_along(ord_lvls)],
             border = "#0F172A", outline = FALSE,
-            main = "C. Station Snapping Distance by Strahler Stream Order",
+            main = "",
             xlab = "Strahler Stream Order of Snapped Reach",
             ylab = "Snapping Distance (metres, outliers hidden)",
-            cex.main = 1.15, cex.lab = 1.0)
+            cex.lab = 1.0)
     grid(col = "#E2E8F0", lty = 1)
     abline(h = med_inc, col = "#DC2626", lty = 2, lwd = 1.8)
     cnts <- table(ord_fac)
-    mtext(sprintf("n = %s", paste(paste0("Ord ", names(cnts), ": ", cnts), collapse = " | ")),
-          side = 3, line = 0.3, cex = 0.78, col = "#475569")
+    draw_plot_header(
+      main_title = "C. Station Snapping Distance by Strahler Stream Order",
+      sub_title  = sprintf("n = %s", paste(paste0("Ord ", names(cnts), ": ", cnts), collapse = " | ")),
+      max_main = 80, max_sub = 130, cex_main = 1.15, cex_sub = 0.78, adj = 0.5
+    )
   } else {
     plot.new()
   }
@@ -690,7 +697,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
     bp <- barplot(top_c$Stations_Included, names.arg = lbls, horiz = TRUE, las = 1,
                   col = "#0284C7", border = "#0F172A",
                   xlim = c(0, max(top_c$Stations_Included) * 1.28),
-                  main = "D. Top 12 Catchments by Snapped Stations (with Median Snap m)",
+                  main = wrap_title("D. Top 12 Catchments by Snapped Stations (with Median Snap m)", 80),
                   xlab = "Number of Included Monitoring Stations (<= 250 m)",
                   cex.names = 0.84, cex.main = 1.12, cex.lab = 1.0)
     grid(nx = NULL, ny = NA, col = "#E2E8F0", lty = 1)
@@ -903,7 +910,7 @@ if (sys.nframe() == 0L) {
 
   src_cli <- parse_source_arg(args)
   if ("--list-sources" %in% args) {
-    print_available_sources()
+    print_available_sources(base_dir = BASE_DIR)
     quit(save = "no", status = 0)
   }
 
@@ -914,7 +921,7 @@ if (sys.nframe() == 0L) {
     cat("Usage:\n")
     cat("  Rscript scripts/06_station_snapping_diagnostics.R [OPTIONS] [CATCHMENTS...]\n\n")
     cat("Options:\n")
-    cat("  --source=rsn|ssn|rss                      Monitoring network dataset (default: rsn)\n")
+    cat("  --source=<rsn|ssn|rss|custom...>          Monitoring network dataset (default: rsn)\n")
     cat("  --list-sources                            List supported station data sources\n")
     cat("  --list, --list-catchments, --list-basins  List all catchments and snapping counts\n")
     cat("  --catchment=<ID_or_Name[,ID2...]>         Catchment ID(s), river name(s), or 'all'\n")

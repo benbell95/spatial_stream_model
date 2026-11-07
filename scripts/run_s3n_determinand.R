@@ -26,19 +26,32 @@ GIS_DIR        <- dir_cfg$gis_dir
 DATA_DIR       <- dir_cfg$data_dir
 OUT_BASE       <- dir_cfg$out_dir
 
+# Custom sample / site arguments
+custom_samples_arg <- grep("^--custom-samples=", args, value = TRUE)
+custom_samples_cli <- if (length(custom_samples_arg) > 0) sub("^--custom-samples=", "", custom_samples_arg[1]) else NULL
+custom_sites_arg   <- grep("^--custom-sites=", args, value = TRUE)
+custom_sites_cli   <- if (length(custom_sites_arg) > 0) sub("^--custom-sites=", "", custom_sites_arg[1]) else NULL
+custom_dir_arg     <- grep("^--custom-dir=", args, value = TRUE)
+custom_dir_cli     <- if (length(custom_dir_arg) > 0) sub("^--custom-dir=", "", custom_dir_arg[1]) else NULL
+custom_name_arg    <- grep("^--custom-name=", args, value = TRUE)
+custom_name_cli    <- if (length(custom_name_arg) > 0) sub("^--custom-name=", "", custom_name_arg[1]) else "custom"
+
 src_cli        <- parse_source_arg(args)
-source_cli     <- resolve_source_tag(src_cli)
-source_abbr    <- format_source_abbr(source_cli)
-source_label   <- format_source_label(source_cli)
+source_cli     <- resolve_source_tag(src_cli, base_dir = BASE_DIR)
+source_abbr    <- format_source_abbr(src_cli, base_dir = BASE_DIR)
+source_label   <- format_source_label(src_cli, base_dir = BASE_DIR)
 source_tag     <- format_source_folder_tag(source_cli)
 
-src_dirs       <- resolve_data_source_dirs(DATA_DIR, source = source_cli)
+src_dirs       <- resolve_data_source_dirs(DATA_DIR, source = src_cli, base_dir = BASE_DIR,
+                                          custom_dir = custom_dir_cli,
+                                          custom_samples = custom_samples_cli,
+                                          custom_sites = custom_sites_cli)
 RSN_DIR        <- src_dirs$rsn_dir
 SSN_DIR        <- src_dirs$ssn_dir
 WQ_DIR         <- if (source_cli == "ssn") SSN_DIR else RSN_DIR
 
 if ("--list-sources" %in% args) {
-  print_available_sources()
+  print_available_sources(base_dir = BASE_DIR)
   quit(save = "no", status = 0)
 }
 
@@ -427,22 +440,109 @@ cat(sprintf("===================================================================
 
 ds_info <- DATASET_FILES[[ds_mode]]
 
+find_first_col <- function(cols, candidates) {
+  cols_low <- tolower(trimws(cols))
+  for (cand in candidates) {
+    hit <- which(cols_low == tolower(trimws(cand)))
+    if (length(hit) > 0) return(cols[hit[1]])
+  }
+  NULL
+}
+
 if (ds_mode == "wq") {
   sample_dfs <- list()
   for (s_name in names(src_dirs$active_dirs)) {
     s_dir  <- src_dirs$active_dirs[[s_name]]
     f_path <- file.path(s_dir, paste0(toupper(s_name), " Water Quality Samples.csv"))
+    if (!file.exists(f_path)) f_path <- file.path(s_dir, "samples.csv")
+    if (!file.exists(f_path)) f_path <- file.path(s_dir, "Water Quality Samples.csv")
+    if (!file.exists(f_path) && !is.null(custom_samples_cli) && file.exists(custom_samples_cli)) {
+      f_path <- custom_samples_cli
+    }
+    if (!file.exists(f_path) && dir.exists(s_dir)) {
+      cands <- list.files(s_dir, pattern = "(sample|wq).*\\.csv$", ignore.case = TRUE, full.names = TRUE)
+      if (length(cands) > 0) f_path <- cands[1]
+    }
+
     if (file.exists(f_path)) {
-      raw <- read.csv(f_path, stringsAsFactors = FALSE, colClasses = c(det_code = "character"), fileEncoding = "UTF-8-BOM")
-      sub_samples <- raw[raw$det_code == det_code,
-                         c("network_id", "sample_datetime", "det_desc", "meas_sign", "meas_result", "unit_short_desc")]
+      raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+      fnames <- colnames(raw)
+      id_c   <- find_first_col(fnames, c("network_id", "site_id", "station_id", "id", "location_id", "site"))
+      dt_c   <- find_first_col(fnames, c("sample_datetime", "datetime", "date_time", "date", "survey_date", "timestamp"))
+      val_c  <- find_first_col(fnames, c("meas_result", "result", "value", "val", "reading", "score", "concentration"))
+      det_c  <- find_first_col(fnames, c("det_code", "determinand_code", "param_code", "cas_number", "determinand", "code", "metric_name"))
+      desc_c <- find_first_col(fnames, c("det_desc", "det_name", "compound_name", "description", "determinand"))
+      sign_c <- find_first_col(fnames, c("meas_sign", "less_than_flag", "censored", "is_censored", "qualifier"))
+      unit_c <- find_first_col(fnames, c("unit_short_desc", "unit", "units"))
+
+      if (is.null(id_c)) id_c <- fnames[1]
+      keep_rows <- rep(FALSE, nrow(raw))
+
+      if (!is.null(det_c)) {
+        det_vals <- as.character(raw[[det_c]])
+        det_clean <- sub("^0+", "", det_vals)
+        tgt_clean <- sub("^0+", "", det_code)
+        keep_rows <- (det_vals == det_code) | (det_clean == tgt_clean) | grepl(paste0("^", det_code, "$"), det_vals, ignore.case = TRUE)
+      } else if (det_code %in% fnames) {
+        val_c <- det_code
+        keep_rows <- !is.na(raw[[det_code]])
+      } else if (!is.null(val_c)) {
+        keep_rows <- !is.na(raw[[val_c]])
+      }
+
+      sub_raw <- raw[keep_rows, , drop = FALSE]
       rm(raw)
-      if (nrow(sub_samples) > 0) {
-        sub_samples$data_source <- toupper(s_name)
+      if (nrow(sub_raw) > 0) {
+        sub_samples <- data.frame(
+          network_id      = as.character(sub_raw[[id_c]]),
+          sample_datetime = if (!is.null(dt_c)) as.character(sub_raw[[dt_c]]) else rep("2023-06-01", nrow(sub_raw)),
+          det_desc        = if (!is.null(desc_c)) as.character(sub_raw[[desc_c]]) else rep(det_code, nrow(sub_raw)),
+          meas_sign       = if (!is.null(sign_c)) as.character(sub_raw[[sign_c]]) else rep("=", nrow(sub_raw)),
+          meas_result     = as.character(sub_raw[[val_c]]),
+          unit_short_desc = if (!is.null(unit_c)) as.character(sub_raw[[unit_c]]) else rep("mg/L", nrow(sub_raw)),
+          data_source     = toupper(s_name),
+          stringsAsFactors = FALSE
+        )
         sample_dfs[[s_name]] <- sub_samples
       }
     }
   }
+
+  # Direct custom samples injection if specified via CLI
+  if (!is.null(custom_samples_cli) && file.exists(custom_samples_cli) && !"custom" %in% names(sample_dfs)) {
+    c_raw <- read.csv(custom_samples_cli, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+    c_fnames <- colnames(c_raw)
+    c_id_c   <- find_first_col(c_fnames, c("network_id", "site_id", "station_id", "id"))
+    c_dt_c   <- find_first_col(c_fnames, c("sample_datetime", "datetime", "date_time", "date"))
+    c_val_c  <- find_first_col(c_fnames, c("meas_result", "result", "value", "val"))
+    c_det_c  <- find_first_col(c_fnames, c("det_code", "determinand_code", "determinand", "code"))
+    c_desc_c <- find_first_col(c_fnames, c("det_desc", "det_name", "description"))
+    c_sign_c <- find_first_col(c_fnames, c("meas_sign", "less_than_flag"))
+    c_unit_c <- find_first_col(c_fnames, c("unit_short_desc", "unit", "units"))
+
+    if (is.null(c_id_c)) c_id_c <- c_fnames[1]
+    c_keep <- rep(TRUE, nrow(c_raw))
+    if (!is.null(c_det_c)) {
+      c_det_vals <- as.character(c_raw[[c_det_c]])
+      c_keep <- (c_det_vals == det_code) | (sub("^0+", "", c_det_vals) == sub("^0+", "", det_code)) | grepl(det_code, c_det_vals, ignore.case = TRUE)
+    } else if (det_code %in% c_fnames) {
+      c_val_c <- det_code
+    }
+    c_sub <- c_raw[c_keep, , drop = FALSE]
+    if (nrow(c_sub) > 0) {
+      sample_dfs[["custom"]] <- data.frame(
+        network_id      = as.character(c_sub[[c_id_c]]),
+        sample_datetime = if (!is.null(c_dt_c)) as.character(c_sub[[c_dt_c]]) else rep("2023-06-01", nrow(c_sub)),
+        det_desc        = if (!is.null(c_desc_c)) as.character(c_sub[[c_desc_c]]) else rep(det_code, nrow(c_sub)),
+        meas_sign       = if (!is.null(c_sign_c)) as.character(c_sub[[c_sign_c]]) else rep("=", nrow(c_sub)),
+        meas_result     = as.character(c_sub[[c_val_c]]),
+        unit_short_desc = if (!is.null(c_unit_c)) as.character(c_sub[[c_unit_c]]) else rep("mg/L", nrow(c_sub)),
+        data_source     = "CUSTOM",
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
   if (length(sample_dfs) == 0) {
     stop(sprintf("No water quality samples found for det_code = '%s' in %s. Run with --list to see valid codes.",
                  det_code, source_label))
@@ -450,8 +550,8 @@ if (ds_mode == "wq") {
   det_samples <- do.call(rbind, sample_dfs)
   det_name <- det_samples$det_desc[1]
   det_unit <- det_samples$unit_short_desc[1]
-  raw_vals <- as.numeric(det_samples$meas_result)
-  is_cens  <- (det_samples$meas_sign == "<")
+  raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
+  is_cens  <- (det_samples$meas_sign %in% c("<", "yes", "true", "1"))
 } else if (ds_mode == "lcms") {
   if (source_cli == "ssn") {
     stop("LCMS/GCMS Organic Pollutants are only monitored on RSN and are not available in Small Streams Network (SSN). Use --source=rsn or --source=rss.")
@@ -477,14 +577,25 @@ if (ds_mode == "wq") {
   for (s_name in names(src_dirs$active_dirs)) {
     s_dir  <- src_dirs$active_dirs[[s_name]]
     f_path <- file.path(s_dir, paste0(toupper(s_name), " ", ds_info$file))
+    if (!file.exists(f_path)) f_path <- file.path(s_dir, ds_info$file)
+    if (!file.exists(f_path)) f_path <- file.path(s_dir, "samples.csv")
+    if (!file.exists(f_path) && !is.null(custom_samples_cli) && file.exists(custom_samples_cli)) {
+      f_path <- custom_samples_cli
+    }
+
     if (file.exists(f_path)) {
       raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
-      if (det_code %in% colnames(raw)) {
-        dt_col <- ds_info$dt_col
+      fnames <- colnames(raw)
+      id_c   <- find_first_col(fnames, c("network_id", "site_id", "station_id", "id"))
+      dt_c   <- find_first_col(fnames, c(ds_info$dt_col, "sample_datetime", "datetime", "date_time", "date", "survey_date"))
+
+      if (is.null(id_c)) id_c <- fnames[1]
+
+      if (det_code %in% fnames) {
         sub_df <- data.frame(
-          network_id      = raw$network_id,
-          sample_datetime = raw[[dt_col]],
-          meas_result     = raw[[det_code]],
+          network_id      = as.character(raw[[id_c]]),
+          sample_datetime = if (!is.null(dt_c)) as.character(raw[[dt_c]]) else rep("2023-06-01", nrow(raw)),
+          meas_result     = as.character(raw[[det_code]]),
           data_source     = toupper(s_name),
           stringsAsFactors = FALSE
         )
@@ -868,9 +979,10 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   severn_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "severn")
 
   eng_domain_label <- switch(source_cli,
+    rsn = "All England RSN Network",
     ssn = "All England SSN Network",
     rss = "All England RSS Combined Network",
-    "All England RSN Network"
+    sprintf("All England %s Network", source_abbr)
   )
   res_eng <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = n_boot)
   if (is.null(res_eng)) return(NULL)

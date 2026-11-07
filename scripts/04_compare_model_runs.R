@@ -981,7 +981,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
 
   png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(2, 2), mar = c(5.2, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
+  par(mfrow = c(2, 2), mar = c(5.2, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Core domains present across runs
   core_doms <- c("All England Stream Network", "All England RSN Network", "Humber Basin", "Thames Basin", "Severn Basin")
@@ -1009,7 +1009,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   ymax_a  <- max(0.85, max(r2_plot, na.rm = TRUE) * 1.22)
   bp_a <- matrix(barplot(r2_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(0, ymax_a), ylab = "5-Fold Cross-Validation R2",
-                         main = sprintf("A. Out-of-Sample S3N Combined CV R2 (%s)", det_short),
+                         main = wrap_title(sprintf("A. Out-of-Sample S3N Combined CV R2 (%s)", det_short), 80),
                          cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
                  nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1031,7 +1031,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   ymax_b <- max(rmse_plot, na.rm = TRUE) * 1.25
   bp_b <- matrix(barplot(rmse_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(0, ymax_b), ylab = "5-Fold CV RMSE (Model Scale)",
-                         main = sprintf("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)"),
+                         main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)", 80),
                          cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
                  nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1056,8 +1056,8 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
     plot(NULL, xlim = c(0, xmax_c), ylim = c(0, 1),
          xlab = "Absolute Out-of-Sample CV Error |y_obs - y_cv| (Model Scale)",
          ylab = "Cumulative Proportion of Stations",
-         main = "C. Empirical CDF of Station CV Errors (All England)",
-         cex.main = 1.12, cex.lab = 1.0, las = 1)
+         main = "",
+         cex.lab = 1.0, las = 1)
     grid(col = "#e0e0e0", lty = "dotted")
     for (i in which(has_cv_pts)) {
       ec <- ecdf(err_list[[i]])
@@ -1068,13 +1068,17 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
       sprintf("%s (Med |e| = %.3f, n = %d)", run_labels[i], median(err_list[[i]], na.rm = TRUE), length(err_list[[i]]))
     })
     legend("bottomright", legend = leg_c, col = run_cols[which(has_cv_pts)], lwd = 2.5, bty = "n", cex = 0.80)
-    if (!is.null(pair12_cv_match) && nrow(pair12_cv_match) >= 10) {
+    sub_c_txt <- if (!is.null(pair12_cv_match) && nrow(pair12_cv_match) >= 10) {
       wt_p <- safe_paired_wilcox(pair12_cv_match$abs_e2, pair12_cv_match$abs_e1)$p.value
       dm_p <- safe_paired_ttest(pair12_cv_match$sq_e2, pair12_cv_match$sq_e1)$p.value
-      mtext(sprintf("Co-located Stations (n = %d): Paired Wilcoxon p = %s (%s) | Paired MSE t-test p = %s (%s)",
-                    nrow(pair12_cv_match), fmt_pval(wt_p), sig_stars(wt_p), fmt_pval(dm_p), sig_stars(dm_p)),
-            side = 3, line = 0.25, cex = 0.78, col = "#333333")
-    }
+      sprintf("Co-located Stations (n = %d): Paired Wilcoxon p = %s (%s) | Paired MSE t-test p = %s (%s)",
+              nrow(pair12_cv_match), fmt_pval(wt_p), sig_stars(wt_p), fmt_pval(dm_p), sig_stars(dm_p))
+    } else NULL
+    draw_plot_header(
+      main_title = "C. Empirical CDF of Station CV Errors (All England)",
+      sub_title  = sub_c_txt,
+      max_main = 80, max_sub = 120, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
+    )
   } else {
     plot.new()
   }
@@ -1086,7 +1090,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   bp_d <- matrix(barplot(gain_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(min(0, yr_d[1] - pad_d), yr_d[2] + pad_d),
                          ylab = "Delta CV R2 (S3N Combined minus OLS)",
-                         main = "D. Spatial Network Gain Over Non-Spatial OLS (Delta R2)",
+                         main = wrap_title("D. Spatial Network Gain Over Non-Spatial OLS (Delta R2)", 80),
                          cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
                  nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1103,7 +1107,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   legend("topright", legend = run_labels, fill = run_cols, border = "#222222",
          bty = "n", cex = 0.82)
 
-  mtext(sprintf("S3N Model Run Comparison: Cross-Validation Performance (%s)", det_short),
+  mtext(wrap_title(sprintf("S3N Model Run Comparison: Cross-Validation Performance (%s)", det_short), 180),
         side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
 }
 
@@ -1118,7 +1122,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
 
   png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(2, 2), mar = c(4.8, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
+  par(mfrow = c(2, 2), mar = c(4.8, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Co-located Reach Scatter Plot (Run 1 vs Run 2)
   if (!is.null(pair12_pred_match) && nrow(pair12_pred_match) >= 10) {
@@ -1138,8 +1142,8 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
          xlim = xlim_a, ylim = ylim_a, pch = 16, cex = 0.45, col = rgb(0.12, 0.47, 0.71, 0.25),
          xlab = sprintf("Run 1: %s [%s]", run_labels[1], u1_lbl),
          ylab = sprintf("Run 2: %s [%s]", run_labels[2], u2_lbl),
-         main = sprintf("A. Co-located Reach Predictions (n = %s matched reaches)",
-                        format(nrow(pm), big.mark = ",")),
+         main = wrap_title(sprintf("A. Co-located Reach Predictions (n = %s matched reaches)",
+                                  format(nrow(pm), big.mark = ",")), 80),
          cex.main = 1.12, cex.lab = 0.95, las = 1)
     grid(col = "#e0e0e0", lty = "dotted")
     fit_a <- lm(pred2_sc ~ pred1_sc, data = pm)
@@ -1195,8 +1199,8 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   plot(NULL, xlim = xr_b, ylim = yr_b,
        xlab = xlab_b,
        ylab = "Probability Density Across Reaches",
-       main = main_b,
-       cex.main = 1.12, cex.lab = 0.95, las = 1)
+       main = "",
+       cex.lab = 0.95, las = 1)
   grid(col = "#e0e0e0", lty = "dotted")
   for (i in seq_len(K)) {
     lines(dens_list[[i]]$x, dens_list[[i]]$y, col = run_cols[i], lwd = 2.5)
@@ -1210,9 +1214,12 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   })
   legend("topright", legend = leg_b, col = run_cols, lwd = 2.5, bty = "n", cex = 0.78)
   ks_p <- suppressWarnings(ks.test(bundles[[1]]$eng_pred$pred_model_sc, bundles[[2]]$eng_pred$pred_model_sc))
-  mtext(sprintf("Two-Sample KS Test (Run 1 vs Run 2): D = %.4f, p = %s (%s)",
-                ks_p$statistic, fmt_pval(ks_p$p.value), sig_stars(ks_p$p.value)),
-        side = 3, line = 0.25, cex = 0.78, col = "#333333")
+  draw_plot_header(
+    main_title = main_b,
+    sub_title  = sprintf("Two-Sample KS Test (Run 1 vs Run 2): D = %.4f, p = %s (%s)",
+                         ks_p$statistic, fmt_pval(ks_p$p.value), sig_stars(ks_p$p.value)),
+    max_main = 80, max_sub = 120, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
+  )
 
   # Panel C: Boxplot Comparison of Kriging Standard Error (se_model_sc) Across Runs
   se_list <- lapply(bundles, function(b) b$eng_pred$se_model_sc)
@@ -1224,16 +1231,19 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   bp_c <- boxplot(se_list, col = adjustcolor(run_cols, alpha.f = 0.65), border = "#222222",
                   outline = FALSE, las = 1, ylim = ylim_c,
                   ylab = if (same_det && use_log) "Kriging Standard Error (log scale)" else "Kriging Standard Error (Model Scale)",
-                  main = "C. Kriging Prediction Uncertainty (se_model_sc) Across Runs",
-                  cex.main = 1.12, cex.lab = 0.95, cex.axis = 0.85)
+                  main = "",
+                  cex.lab = 0.95, cex.axis = 0.85)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   se_means <- sapply(se_list, mean, na.rm = TRUE)
   points(seq_len(K), se_means, pch = 18, cex = 1.5, col = "#111111")
   text(seq_len(K), bp_c$stats[5, ], labels = sprintf("Mean = %.3f", se_means), pos = 3, cex = 0.80, font = 2)
   wt_se_p <- suppressWarnings(wilcox.test(se_list[[1]], se_list[[2]], paired = FALSE))$p.value
-  mtext(sprintf("Mann-Whitney U Test on Kriging SE (Run 1 vs Run 2): p = %s (%s)",
-                fmt_pval(wt_se_p), sig_stars(wt_se_p)),
-        side = 3, line = 0.25, cex = 0.78, col = "#333333")
+  draw_plot_header(
+    main_title = "C. Kriging Prediction Uncertainty (se_model_sc) Across Runs",
+    sub_title  = sprintf("Mann-Whitney U Test on Kriging SE (Run 1 vs Run 2): p = %s (%s)",
+                         fmt_pval(wt_se_p), sig_stars(wt_se_p)),
+    max_main = 80, max_sub = 120, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
+  )
 
   # Panel D: Spatial Map of Co-located Prediction Differences (Run 2 minus Run 1 or Z2 - Z1)
   if (!is.null(pair12_pred_match) && nrow(pair12_pred_match) >= 20) {
@@ -1247,7 +1257,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     max_abs <- max(0.1, as.numeric(q_d))
     div_pal <- colorRampPalette(c("#2166ac", "#67a9cf", "#d1e5f0", "#f7f7f7", "#fddbc7", "#ef8a62", "#b2182b"))(100)
 
-    par(mar = c(1.5, 1.5, 3.6, 1.5))
+    par(mar = c(1.5, 1.5, 4.0, 1.5))
     xr <- range(c(pm$start_X, pm$end_X), na.rm = TRUE)
     yr <- range(c(pm$start_Y, pm$end_Y), na.rm = TRUE)
     pad_x <- diff(xr) * 0.16
@@ -1258,7 +1268,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     }
     plot(NULL, xlim = c(xr[1] - diff(xr) * 0.03, xr[2] + pad_x), ylim = yr,
          asp = 1, axes = FALSE, xlab = "", ylab = "",
-         main = main_d, cex.main = 1.08)
+         main = "", cex.main = 1.08)
     rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#dcdcdc")
     cols_d <- map_to_colors(diff_vec, -max_abs, max_abs, div_pal)
     lwds_d <- pmin(2.2, 0.35 + 0.35 * log10(pmax(1, pm$Shreve)))
@@ -1272,13 +1282,16 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
                   vmin = -max_abs, vmax = max_abs, pal = div_pal,
                   ticks = ticks_d, tick_labels = lbls_d,
                   title_txt = if (same_det) "Run 2 - Run 1" else "Z(R2) - Z(R1)")
-    mtext(sprintf("Red = Relatively Higher in %s | Blue = Relatively Higher in %s", run_labels[2], run_labels[1]),
-          side = 3, line = 0.2, cex = 0.76, col = "#333333")
+    draw_plot_header(
+      main_title = main_d,
+      sub_title  = sprintf("Red = Relatively Higher in %s | Blue = Relatively Higher in %s", run_labels[2], run_labels[1]),
+      max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.76, adj = 0.5
+    )
   } else {
     plot.new()
   }
 
-  mtext(sprintf("S3N Model Run Comparison: Predictions & Uncertainty (%s)", det_short),
+  mtext(wrap_title(sprintf("S3N Model Run Comparison: Predictions & Uncertainty (%s)", det_short), 180),
         side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
 }
 
@@ -1305,7 +1318,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
     pad_a  <- 0.15 * max(0.2, diff(xlim_a))
     plot(NULL, xlim = c(xlim_a[1] - pad_a, xlim_a[2] + pad_a), ylim = c(0.4, n_p + 1.45),
          yaxt = "n", xlab = "Standardized Regression Coefficient (Estimate & 95% Bootstrap CI)",
-         ylab = "", main = "A. Fixed-Effect Drivers (All England S3N Tail-Up)",
+         ylab = "", main = wrap_title("A. Fixed-Effect Drivers (All England S3N Tail-Up)", 85),
          cex.main = 1.10, cex.lab = 0.95, las = 1)
     grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
     abline(v = 0, col = "#c0392b", lwd = 1.5, lty = 2)
@@ -1362,7 +1375,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
     bp_b <- barplot(bar_vals, names.arg = bar_names, col = c("#2980b9", "#f39c12"),
                     border = "#222222", ylim = c(0, ymax_b), las = 2,
                     ylab = "Variance Component Estimate (Model Scale)",
-                    main = "B. Spatial Sill (sigma^2) vs. Nugget (tau^2) Partitioning",
+                    main = wrap_title("B. Spatial Sill (sigma^2) vs. Nugget (tau^2) Partitioning", 85),
                     cex.main = 1.10, cex.lab = 0.95, cex.names = 0.85)
     grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
     tot_v <- colSums(bar_vals)
@@ -1375,7 +1388,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
     plot.new()
   }
 
-  mtext(sprintf("S3N Model Run Comparison: Fixed-Effect & Covariance Parameters (%s)", det_short),
+  mtext(wrap_title(sprintf("S3N Model Run Comparison: Fixed-Effect & Covariance Parameters (%s)", det_short), 180),
         side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
 }
 
@@ -1438,7 +1451,7 @@ plot_comp4_side_by_side_maps <- function(bundles, out_file) {
   } else {
     sprintf("Side-by-Side All England S3N Comparison: %s", paste(sapply(bundles, function(b) shorten_det_name(b$det_name)), collapse = " vs. "))
   }
-  mtext(outer_title, side = 3, line = 0.5, outer = TRUE, cex = 1.20, font = 2, col = "#111111")
+  mtext(wrap_title(outer_title, 180), side = 3, line = 0.5, outer = TRUE, cex = 1.20, font = 2, col = "#111111")
 }
 
 # Figure 5: 4-Panel Reach-by-Reach Relationship, Stratified Results & Co-Occurrence Map
@@ -1451,7 +1464,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
 
   png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(2, 2), mar = c(5.0, 4.8, 3.8, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
+  par(mfrow = c(2, 2), mar = c(5.0, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   q_cols <- c(
     "Q1_High_High"  = "#c0392b",
@@ -1473,9 +1486,8 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
        xlim = xlim_a, ylim = ylim_a, pch = 16, cex = 0.48, col = pt_cols,
        xlab = sprintf("Run 1: %s [%s]", b1$label, u1_lbl),
        ylab = sprintf("Run 2: %s [%s]", b2$label, u2_lbl),
-       main = sprintf("A. Reach-by-Reach Relationship & Co-Occurrence Quadrants (n = %s)",
-                      format(nrow(pm), big.mark = ",")),
-       cex.main = 1.10, cex.lab = 0.95, las = 1)
+       main = "",
+       cex.lab = 0.95, las = 1)
   grid(col = "#e0e0e0", lty = "dotted")
   abline(v = rel_info$med1_sc, col = "#333333", lty = 2, lwd = 1.4)
   abline(h = rel_info$med2_sc, col = "#333333", lty = 2, lwd = 1.4)
@@ -1492,10 +1504,14 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
          ),
          col = c(q_cols, "#111111"), pch = c(16, 16, 16, 16, NA), lwd = c(NA, NA, NA, NA, 2.4),
          bty = "n", cex = 0.78)
-  mtext(sprintf("r = %.4f (Spearman rho = %.4f) | Concordance = %.1f%% (OR = %.2f, ChiSq p = %s) | P75 Jaccard = %.3f",
-                rel_info$r_sc, rel_info$rho_sc, rel_info$pct_concordant, rel_info$odds_ratio,
-                fmt_pval(rel_info$chisq_p), rel_info$jaccard_75),
-        side = 3, line = 0.25, cex = 0.72, col = "#333333")
+  draw_plot_header(
+    main_title = sprintf("A. Reach-by-Reach Relationship & Co-Occurrence Quadrants (n = %s)",
+                         format(nrow(pm), big.mark = ",")),
+    sub_title  = sprintf("r = %.4f (Spearman rho = %.4f) | Concordance = %.1f%% (OR = %.2f, ChiSq p = %s) | P75 Jaccard = %.3f",
+                         rel_info$r_sc, rel_info$rho_sc, rel_info$pct_concordant, rel_info$odds_ratio,
+                         fmt_pval(rel_info$chisq_p), rel_info$jaccard_75),
+    max_main = 80, max_sub = 120, cex_main = 1.10, cex_sub = 0.72, adj = 0.5
+  )
 
   # Panel B: Stratified Comparison Across Landscape Regimes & Strahler Stream Orders
   target_strata <- c(
@@ -1525,7 +1541,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
   bp_b  <- matrix(barplot(z_mat, beside = TRUE, col = run_cols, border = "#222222",
                           ylim = c(yr_b[1] - pad_b, yr_b[2] + pad_b),
                           ylab = "Mean Standardized Prediction Z-Score ((y - mean) / SD)",
-                          main = "B. Stratified Output Profile by Landscape Regime & Stream Order",
+                          main = wrap_title("B. Stratified Output Profile by Landscape Regime & Stream Order", 80),
                           cex.main = 1.10, cex.lab = 0.95, cex.names = 0.84, las = 1),
                   nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1545,14 +1561,13 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
          fill = c(run_cols, NA), border = c(rep("#222222", K), NA), bty = "n", cex = 0.78)
 
   # Panel C: Spatial Map of 4-Quadrant Co-Occurrence Across England
-  par(mar = c(1.5, 1.5, 3.8, 1.5))
+  par(mar = c(1.5, 1.5, 4.0, 1.5))
   xr <- range(c(pm$start_X, pm$end_X), na.rm = TRUE)
   yr <- range(c(pm$start_Y, pm$end_Y), na.rm = TRUE)
   pad_x <- diff(xr) * 0.24
   plot(NULL, xlim = c(xr[1] - diff(xr) * 0.03, xr[2] + pad_x), ylim = yr,
        asp = 1, axes = FALSE, xlab = "", ylab = "",
-       main = "C. Spatial Co-Occurrence Map Across Stream Reaches (4 Quadrants)",
-       cex.main = 1.08)
+       main = "", cex.main = 1.08)
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#dcdcdc")
   cols_c <- q_cols[pm$quadrant]
   lwds_c <- pmin(2.1, 0.32 + 0.34 * log10(pmax(1, pm$Shreve)))
@@ -1567,12 +1582,15 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
            sprintf("Low R1 & High R2 (%.1f%%)",  rel_info$pct_q4)
          ),
          fill = q_cols, border = "#222222", bty = "n", cex = 0.78)
-  mtext(sprintf("Concordant Reaches (High/High + Low/Low): %.1f%% | Top-Quartile Hotspot Overlap (Jaccard): %.3f",
-                rel_info$pct_concordant, rel_info$jaccard_75),
-        side = 3, line = 0.2, cex = 0.75, col = "#333333")
+  draw_plot_header(
+    main_title = "C. Spatial Co-Occurrence Map Across Stream Reaches (4 Quadrants)",
+    sub_title  = sprintf("Concordant Reaches (High/High + Low/Low): %.1f%% | Top-Quartile Hotspot Overlap (Jaccard): %.3f",
+                         rel_info$pct_concordant, rel_info$jaccard_75),
+    max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+  )
 
   # Panel D: Basin & Regime Distribution of Stoichiometric N:P Ratio or Z-Score Divergence
-  par(mar = c(5.2, 4.8, 3.8, 1.8))
+  par(mar = c(5.2, 4.8, 4.2, 1.8))
   grp_masks <- list(
     "All Eng"     = rep(TRUE, nrow(pm)),
     "Humber"      = if (!is.na(b2$hum_cid)) (pm$CatchID_2 == b2$hum_cid) else rep(FALSE, nrow(pm)),
@@ -1593,8 +1611,8 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
     bp_d <- boxplot(box_d, col = adjustcolor(pal_d, alpha.f = 0.65), border = "#222222",
                     outline = FALSE, yaxt = "n", las = 2, ylim = ylim_d,
                     ylab = "Atomic / Molar N:P Ratio (mol N : mol P, log scale)",
-                    main = "D. Reach Stoichiometric N:P Molar Ratio Across Basins & Regimes",
-                    cex.main = 1.08, cex.lab = 0.95, cex.axis = 0.85)
+                    main = "",
+                    cex.lab = 0.95, cex.axis = 0.85)
     grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
     np_ticks <- c(2, 5, 10, 16, 20, 50, 100, 200, 500, 1000)
     axis(2, at = log10(np_ticks), labels = paste0(np_ticks, ":1"), las = 1, cex.axis = 0.82)
@@ -1603,9 +1621,12 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
     abline(h = log10(10), col = "#27ae60", lwd = 1.4, lty = 3)
     meds_np <- sapply(grp_masks, function(m) median(pm$np_molar_ratio[m], na.rm = TRUE))
     text(seq_along(grp_masks), bp_d$stats[5, ], labels = sprintf("%.0f:1", meds_np), pos = 3, cex = 0.76, font = 2)
-    mtext(sprintf("All England: %.1f%% P-Limited (>20:1), %.1f%% Co-Limited (10-20:1), %.1f%% N-Limited (<10:1) | Redfield = 16:1",
-                  rel_info$np_info$pct_p_limited, rel_info$np_info$pct_co_limited, rel_info$np_info$pct_n_limited),
-          side = 3, line = 0.25, cex = 0.75, col = "#333333")
+    draw_plot_header(
+      main_title = "D. Reach Stoichiometric N:P Molar Ratio Across Basins & Regimes",
+      sub_title  = sprintf("All England: %.1f%% P-Limited (>20:1), %.1f%% Co-Limited (10-20:1), %.1f%% N-Limited (<10:1) | Redfield = 16:1",
+                           rel_info$np_info$pct_p_limited, rel_info$np_info$pct_co_limited, rel_info$np_info$pct_n_limited),
+      max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+    )
   } else {
     box_d <- lapply(grp_masks, function(m) pm$z_diff[m])
     bp_tmp <- boxplot(box_d, plot = FALSE)
@@ -1614,20 +1635,23 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
     bp_d <- boxplot(box_d, col = adjustcolor(pal_d, alpha.f = 0.65), border = "#222222",
                     outline = FALSE, las = 2, ylim = ylim_d,
                     ylab = "Standardized Difference: Z(Run 2) minus Z(Run 1)",
-                    main = "D. Relative Dominance (Z2 - Z1) Across Basins & Landscape Regimes",
-                    cex.main = 1.08, cex.lab = 0.95, cex.axis = 0.85)
+                    main = "",
+                    cex.lab = 0.95, cex.axis = 0.85)
     grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
     abline(h = 0, col = "#c0392b", lwd = 1.8, lty = 2)
     mns_z <- sapply(box_d, mean, na.rm = TRUE)
     points(seq_along(grp_masks), mns_z, pch = 18, cex = 1.3, col = "#111111")
     text(seq_along(grp_masks), bp_d$stats[5, ], labels = sprintf("%+.2f", mns_z), pos = 3, cex = 0.76, font = 2)
-    mtext(sprintf("Positive (>0) = Relatively Higher in %s | Negative (<0) = Relatively Higher in %s",
-                  b2$label, b1$label),
-          side = 3, line = 0.25, cex = 0.75, col = "#333333")
+    draw_plot_header(
+      main_title = "D. Relative Dominance (Z2 - Z1) Across Basins & Landscape Regimes",
+      sub_title  = sprintf("Positive (>0) = Relatively Higher in %s | Negative (<0) = Relatively Higher in %s",
+                           b2$label, b1$label),
+      max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+    )
   }
 
-  mtext(sprintf("S3N Output Descriptive & Reach-Level Relationship Analysis: %s vs. %s",
-                b1$label, b2$label),
+  mtext(wrap_title(sprintf("S3N Output Descriptive & Reach-Level Relationship Analysis: %s vs. %s",
+                           b1$label, b2$label), 180),
         side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
 }
 

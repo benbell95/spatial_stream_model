@@ -66,6 +66,29 @@ format_rel_display_path <- function(p, base_dir = ".") {
   p_clean
 }
 
+# ==============================================================================
+# TITLE & TEXT WRAPPING ENGINE
+# ==============================================================================
+# Wraps titles and long labels across multiple lines at whitespace boundaries.
+# Prevents long titles from overflowing into adjacent panels or being clipped.
+wrap_title <- function(text, max_len = 85) {
+  if (is.null(text) || length(text) == 0 || all(is.na(text))) return("")
+  if (length(text) > 1) {
+    return(vapply(text, function(t) wrap_title(t, max_len = max_len), character(1), USE.NAMES = FALSE))
+  }
+  str <- as.character(text)[1]
+  if (!nzchar(str) || is.na(str)) return("")
+  if (is.null(max_len) || is.na(max_len) || max_len <= 0) return(str)
+
+  lines <- strsplit(str, "\n", fixed = TRUE)[[1]]
+  wrapped_lines <- unlist(lapply(lines, function(l) {
+    if (nchar(l) <= max_len) return(l)
+    w <- strwrap(l, width = max_len)
+    if (length(w) > 0) paste(w, collapse = "\n") else l
+  }))
+  paste(wrapped_lines, collapse = "\n")
+}
+
 parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
   gis_dir  <- Sys.getenv("S3N_GIS_DIR", unset = "")
   data_dir <- Sys.getenv("S3N_DATA_DIR", unset = "")
@@ -116,31 +139,203 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
 }
 
 # ==============================================================================
-# DATA SOURCE MANAGEMENT (RSN, SSN, RSS)
+# DATA SOURCE MANAGEMENT (REGISTRY, MULTI-SOURCE & CUSTOM DATASETS)
 # ==============================================================================
 
-resolve_source_tag <- function(source = "rsn") {
+parse_source_config_file <- function(filepath) {
+  if (!file.exists(filepath)) return(NULL)
+  lines <- readLines(filepath, warn = FALSE)
+  txt <- paste(lines, collapse = " ")
+  get_field <- function(key, default = "") {
+    pat <- paste0('"', key, '"\\s*:\\s*"([^"]*)"')
+    if (grepl(pat, txt)) sub(paste0('^.*?', pat, '.*$'), "\\1", txt) else default
+  }
+  get_array <- function(key, default = character(0)) {
+    pat <- paste0('"', key, '"\\s*:\\s*\\[([^]]*)\\]')
+    if (grepl(pat, txt)) {
+      m <- regmatches(txt, regexec(pat, txt))[[1]]
+      if (length(m) > 1) {
+        items <- unlist(regmatches(m[2], gregexpr('"([^"]*)"', m[2])))
+        gsub('"', '', items)
+      } else default
+    } else default
+  }
+  list(
+    name        = tolower(get_field("name", sub("\\.json$", "", basename(filepath)))),
+    abbr        = get_field("abbr", toupper(sub("\\.json$", "", basename(filepath)))),
+    label       = get_field("label", get_field("name")),
+    description = get_field("description", ""),
+    data_dir    = get_field("data_dir", ""),
+    sites_file  = get_field("sites_file", ""),
+    sources     = get_array("sources")
+  )
+}
+
+load_source_registry <- function(base_dir = NULL) {
+  if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
+  cfg_dir <- rel_path(base_dir, "configs", "sources")
+  sources <- list()
+  composites <- list()
+
+  # Baseline official sources
+  sources$rsn <- list(
+    name        = "rsn",
+    abbr        = "RSN",
+    label       = "River Surveillance Network (RSN)",
+    description = "Environment Agency River Surveillance Network (1,382 stations)",
+    data_dir    = "data/NCEA_River_Surveillance_Network_ARD_Open",
+    sites_file  = "RSN Water Quality Sample Points.csv"
+  )
+  sources$ssn <- list(
+    name        = "ssn",
+    abbr        = "SSN",
+    label       = "Small Streams Network (SSN)",
+    description = "Environment Agency Small Streams Network (313 headwater stations)",
+    data_dir    = "data/NCEA_Small_Streams_Network_ARD_Open",
+    sites_file  = "SSN Water Quality Sample Points.csv"
+  )
+
+  # Baseline composites
+  composites$rss <- list(
+    name        = "rss",
+    abbr        = "RSS",
+    label       = "Combined River Surveillance & Small Streams (RSS)",
+    description = "Integrated River Surveillance Network and Small Streams Network",
+    sources     = c("rsn", "ssn")
+  )
+  composites$all <- list(
+    name        = "all",
+    abbr        = "ALL",
+    label       = "All Registered Monitoring Networks",
+    description = "Union of all active monitoring networks",
+    sources     = c("rsn", "ssn")
+  )
+
+  # Scan configs/sources/*.json
+  if (dir.exists(cfg_dir)) {
+    j_files <- list.files(cfg_dir, pattern = "\\.json$", full.names = TRUE)
+    for (jf in j_files) {
+      fname <- basename(jf)
+      if (fname == "composites.json") next
+      parsed <- parse_source_config_file(jf)
+      if (!is.null(parsed) && nzchar(parsed$name)) {
+        sources[[parsed$name]] <- parsed
+      }
+    }
+  }
+
+  # Auto-discover data/custom/* directories
+  cust_root <- rel_path(base_dir, "data", "custom")
+  if (dir.exists(cust_root)) {
+    sub_dirs <- list.dirs(cust_root, recursive = FALSE, full.names = FALSE)
+    for (sd in sub_dirs) {
+      s_key <- tolower(sd)
+      if (!s_key %in% names(sources)) {
+        sources[[s_key]] <- list(
+          name        = s_key,
+          abbr        = toupper(s_key),
+          label       = paste("Custom Dataset:", sd),
+          description = paste("User-supplied custom dataset in", file.path("data/custom", sd)),
+          data_dir    = file.path("data/custom", sd),
+          sites_file  = "sites.csv"
+        )
+      }
+    }
+  }
+
+  list(sources = sources, composites = composites)
+}
+
+resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
   if (is.null(source) || !nzchar(trimws(as.character(source)))) return("rsn")
-  s <- tolower(trimws(as.character(source)))
+  raw_orig <- trimws(as.character(source))
+  if (grepl("\\(([A-Za-z0-9_]+)\\)", raw_orig)) {
+    inner <- tolower(sub(".*\\(([A-Za-z0-9_]+)\\).*", "\\1", raw_orig))
+    if (inner %in% c("rsn", "ssn", "rss")) return(inner)
+    reg <- load_source_registry(base_dir)
+    for (k in names(reg$sources)) {
+      if (tolower(reg$sources[[k]]$abbr) == inner || k == inner) return(k)
+    }
+    for (k in names(reg$composites)) {
+      if (tolower(reg$composites[[k]]$abbr) == inner || k == inner) return(k)
+    }
+  }
+  raw_s <- tolower(raw_orig)
+
+  # Multi-source delimiter splitting (e.g. "rsn+ssn", "rsn,ssn", "rsn+custom")
+  tokens <- unlist(strsplit(raw_s, "[,+ ]+"))
+  tokens <- tokens[nzchar(tokens)]
+  if (length(tokens) > 1) {
+    if (setequal(tokens, c("rsn", "ssn"))) return("rss")
+    # Normalize tokens
+    norm_tokens <- vapply(tokens, function(tk) {
+      if (tk %in% c("ssn", "small_stream", "small_streams", "small-stream", "small-streams")) "ssn"
+      else if (tk %in% c("rsn", "river_surveillance")) "rsn"
+      else tk
+    }, character(1))
+    return(paste(norm_tokens, collapse = "_"))
+  }
+
+  # Single source resolution
+  s <- tokens[1]
   if (s %in% c("ssn", "small_stream", "small_streams", "small-streams", "small-stream")) {
     "ssn"
   } else if (s %in% c("rss", "combined", "both", "all", "rsn_ssn", "ssn_rsn", "rsn+ssn")) {
     "rss"
   } else {
-    "rsn"
+    reg <- load_source_registry(base_dir)
+    if (s %in% names(reg$composites)) {
+      s
+    } else if (s %in% names(reg$sources)) {
+      s
+    } else {
+      # Treat as generic custom source slug
+      gsub("[^a-z0-9_]+", "_", s)
+    }
   }
 }
 
-format_source_abbr <- function(source = "rsn") {
-  toupper(resolve_source_tag(source))
+format_source_abbr <- function(source = "rsn", base_dir = NULL) {
+  s <- resolve_source_tag(source, base_dir = base_dir)
+  if (s == "rsn") return("RSN")
+  if (s == "ssn") return("SSN")
+  if (s == "rss") return("RSS")
+
+  reg <- load_source_registry(base_dir)
+  if (s %in% names(reg$composites)) return(reg$composites[[s]]$abbr)
+  if (s %in% names(reg$sources)) return(reg$sources[[s]]$abbr)
+
+  raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
+  raw_tokens <- raw_tokens[nzchar(raw_tokens)]
+  if (length(raw_tokens) > 1) {
+    tok_abbrs <- vapply(raw_tokens, function(tk) {
+      if (tk %in% names(reg$sources)) reg$sources[[tk]]$abbr else toupper(tk)
+    }, character(1))
+    return(paste(tok_abbrs, collapse = "+"))
+  }
+  toupper(s)
 }
 
-format_source_label <- function(source = "rsn") {
-  s <- resolve_source_tag(source)
+format_source_label <- function(source = "rsn", base_dir = NULL) {
+  s <- resolve_source_tag(source, base_dir = base_dir)
   switch(s,
+    rsn = "River Surveillance Network (RSN)",
     ssn = "Small Streams Network (SSN)",
     rss = "Combined River Surveillance & Small Streams (RSS)",
-    "River Surveillance Network (RSN)"
+    {
+      reg <- load_source_registry(base_dir)
+      if (s %in% names(reg$composites)) return(reg$composites[[s]]$label)
+      if (s %in% names(reg$sources)) return(reg$sources[[s]]$label)
+      raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
+      raw_tokens <- raw_tokens[nzchar(raw_tokens)]
+      if (length(raw_tokens) > 1) {
+        tok_labels <- vapply(raw_tokens, function(tk) {
+          if (tk %in% names(reg$sources)) reg$sources[[tk]]$label else paste("Custom:", toupper(tk))
+        }, character(1))
+        return(paste("Combined Monitoring Sources:", paste(tok_labels, collapse = " + ")))
+      }
+      paste0("Custom Monitoring Source (", toupper(s), ")")
+    }
   )
 }
 
@@ -158,44 +353,132 @@ parse_source_arg <- function(args) {
   if (length(src_idx) > 0 && src_idx[1] < length(args)) {
     return(resolve_source_tag(args[src_idx[1] + 1]))
   }
+  # Check if custom sites or samples were supplied without an explicit source
+  if (any(grepl("^--(custom-samples|custom-sites|custom-dir)=", args))) {
+    cust_name_arg <- grep("^--custom-name=", args, value = TRUE)
+    if (length(cust_name_arg) > 0) {
+      return(resolve_source_tag(sub("^--custom-name=", "", cust_name_arg[1])))
+    }
+    return("custom")
+  }
   "rsn"
 }
 
-resolve_data_source_dirs <- function(data_dir, source = "rsn") {
-  src_tag  <- resolve_source_tag(source)
+resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, custom_dir = NULL, custom_samples = NULL, custom_sites = NULL) {
+  if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
+  src_tag  <- resolve_source_tag(source, base_dir = base_dir)
+  reg      <- load_source_registry(base_dir = base_dir)
+
   rsn_cand <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
   rsn_dir  <- if (dir.exists(rsn_cand)) rsn_cand else if (file.exists(rel_path(data_dir, "RSN Water Quality Samples.csv"))) data_dir else rsn_cand
   ssn_cand <- rel_path(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
   ssn_dir  <- if (dir.exists(ssn_cand)) ssn_cand else if (file.exists(rel_path(data_dir, "SSN Water Quality Samples.csv"))) data_dir else ssn_cand
 
+  raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
+  raw_tokens <- raw_tokens[nzchar(raw_tokens)]
+
+  # Determine individual constituent source names
+  source_tokens <- if (src_tag == "rss") {
+    c("rsn", "ssn")
+  } else if (src_tag %in% names(reg$composites)) {
+    reg$composites[[src_tag]]$sources
+  } else if (length(raw_tokens) > 1) {
+    raw_tokens
+  } else if (!src_tag %in% names(reg$sources) && grepl("_", src_tag)) {
+    # Check if decomposing by underscore matches registered sources
+    parts <- strsplit(src_tag, "_")[[1]]
+    if (all(parts %in% names(reg$sources))) {
+      parts
+    } else {
+      # Try greedy prefix matching (e.g. rsn + example_study)
+      matched <- character(0)
+      rem <- src_tag
+      while (nzchar(rem)) {
+        found <- FALSE
+        for (sn in names(reg$sources)) {
+          if (startsWith(rem, sn)) {
+            matched <- c(matched, sn)
+            rem <- sub(paste0("^", sn, "_?"), "", rem)
+            found <- TRUE
+            break
+          }
+        }
+        if (!found) {
+          matched <- c(matched, rem)
+          break
+        }
+      }
+      if (length(matched) > 1) matched else src_tag
+    }
+  } else {
+    src_tag
+  }
+
+  active_dirs <- list()
+  for (tk in source_tokens) {
+    if (tk == "rsn") {
+      active_dirs[["rsn"]] <- rsn_dir
+    } else if (tk == "ssn") {
+      active_dirs[["ssn"]] <- ssn_dir
+    } else if (!is.null(custom_dir) && nzchar(custom_dir) && dir.exists(custom_dir)) {
+      active_dirs[[tk]] <- custom_dir
+    } else if (tk %in% names(reg$sources)) {
+      cfg_d <- reg$sources[[tk]]$data_dir
+      cand_d <- if (is.null(cfg_d) || !nzchar(cfg_d)) {
+        rel_path(data_dir, "custom", tk)
+      } else if (dir.exists(cfg_d)) {
+        cfg_d
+      } else {
+        rel_path(base_dir, cfg_d)
+      }
+      active_dirs[[tk]] <- if (dir.exists(cand_d)) cand_d else rel_path(data_dir, "custom", tk)
+    } else {
+      # Fallback to data/custom/<tk>
+      cand_custom <- rel_path(data_dir, "custom", tk)
+      active_dirs[[tk]] <- cand_custom
+    }
+  }
+
   list(
-    source       = src_tag,
-    source_abbr  = format_source_abbr(src_tag),
-    source_label = format_source_label(src_tag),
-    folder_tag   = format_source_folder_tag(src_tag),
-    rsn_dir      = rsn_dir,
-    ssn_dir      = ssn_dir,
-    active_dirs  = switch(src_tag,
-      rsn = list(rsn = rsn_dir),
-      ssn = list(ssn = ssn_dir),
-      rss = list(rsn = rsn_dir, ssn = ssn_dir)
-    )
+    source         = src_tag,
+    source_abbr    = format_source_abbr(src_tag, base_dir = base_dir),
+    source_label   = format_source_label(src_tag, base_dir = base_dir),
+    folder_tag     = format_source_folder_tag(src_tag),
+    rsn_dir        = rsn_dir,
+    ssn_dir        = ssn_dir,
+    active_dirs    = active_dirs,
+    custom_samples = custom_samples,
+    custom_sites   = custom_sites
   )
 }
 
-print_available_sources <- function() {
+print_available_sources <- function(base_dir = NULL) {
+  if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
+  reg <- load_source_registry(base_dir = base_dir)
+
   cat("Available Monitoring Data Sources:\n\n")
-  cat(sprintf("  %-6s | %-48s | %-12s\n", "Source", "Description", "Default"))
-  cat(strrep("-", 73), "\n")
-  cat(sprintf("  %-6s | %-48s | %-12s\n", "rsn", "River Surveillance Network (1,382 WQ stations)", "YES (Default)"))
-  cat(sprintf("  %-6s | %-48s | %-12s\n", "ssn", "Small Streams Network (520 headwater stations)", "No"))
-  cat(sprintf("  %-6s | %-48s | %-12s\n", "rss", "Combined River Surveillance & Small Streams (RSS)", "No"))
-  cat("\nUsage:\n")
+  cat(sprintf("  %-18s | %-6s | %-44s | %-12s\n", "Source", "Abbr", "Description", "Type"))
+  cat(strrep("-", 88), "\n")
+  cat(sprintf("  %-18s | %-6s | %-44s | %-12s\n", "rsn", "RSN", "River Surveillance Network (1,382 stations)", "YES (Default)"))
+  cat(sprintf("  %-18s | %-6s | %-44s | %-12s\n", "ssn", "SSN", "Small Streams Network (313 headwaters)", "Registered"))
+  cat(sprintf("  %-18s | %-6s | %-44s | %-12s\n", "rss", "RSS", "Combined River Surveillance & Small Streams", "Composite"))
+
+  # Print additional registered sources from configs/sources/
+  for (s_name in names(reg$sources)) {
+    if (s_name %in% c("rsn", "ssn")) next
+    s_info <- reg$sources[[s_name]]
+    desc <- if (nzchar(s_info$description)) s_info$description else s_info$label
+    cat(sprintf("  %-18s | %-6s | %-44s | %-12s\n",
+                substr(s_name, 1, 18), substr(s_info$abbr, 1, 6), substr(desc, 1, 44), "Configured"))
+  }
+
+  cat("\nUsage & Multi-Source Syntax:\n")
   cat("  Rscript scripts/run_s3n_determinand.R 0117                  # Default RSN\n")
   cat("  Rscript scripts/run_s3n_determinand.R 0117 --source=ssn      # Small Streams Network only\n")
   cat("  Rscript scripts/run_s3n_determinand.R 0117 --source=rss      # Combined RSN + SSN\n")
-  cat("  python3 scripts/01_preprocess_orn.py --source=ssn           # Preprocess SSN reaches\n")
-  cat("  python3 scripts/01_preprocess_orn.py --source=rss           # Preprocess combined RSS reaches\n\n")
+  cat("  Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn  # On-the-fly combination syntax (+ or ,)\n")
+  cat("  Rscript scripts/run_s3n_determinand.R 0117 --source=custom_example # Registered custom dataset\n")
+  cat("  Rscript scripts/run_s3n_determinand.R 0117 --custom-samples=data/custom/example_study/samples.csv\n\n")
 }
 
 # ==============================================================================
@@ -730,9 +1013,53 @@ normalize_cv_tab <- function(cv_tab) {
   cv_tab
 }
 
+draw_plot_header <- function(main_title = NULL, sub_title = NULL,
+                             max_main = 85, max_sub = 110,
+                             cex_main = 0.96, cex_sub = 0.80,
+                             font_main = 2, font_sub = 1,
+                             col_main = "#111111", col_sub = "#444444",
+                             adj = 0.5,
+                             main_base = NULL, sub_base = 0.18) {
+  main_w <- if (!is.null(main_title) && nzchar(main_title)) {
+    strsplit(wrap_title(main_title, max_len = max_main), "\n", fixed = TRUE)[[1]]
+  } else character(0)
+  sub_w  <- if (!is.null(sub_title) && nzchar(sub_title)) {
+    strsplit(wrap_title(sub_title, max_len = max_sub), "\n", fixed = TRUE)[[1]]
+  } else character(0)
+
+  n_sub <- length(sub_w)
+  step_sub  <- cex_sub * 1.10
+  step_main <- cex_main * 1.18
+
+  if (n_sub > 0) {
+    for (s_i in seq_len(n_sub)) {
+      s_line <- sub_base + (n_sub - s_i) * step_sub
+      mtext(sub_w[s_i], side = 3, line = s_line, adj = adj, cex = cex_sub, font = font_sub, col = col_sub)
+    }
+  }
+
+  if (is.null(main_base)) {
+    gap <- 0.65 + 0.30 * cex_main
+    main_base <- if (n_sub > 0) {
+      sub_base + (n_sub - 1) * step_sub + gap
+    } else {
+      if (adj == 0) 0.35 else 0.70
+    }
+  }
+
+  n_main <- length(main_w)
+  if (n_main > 0) {
+    for (m_i in seq_len(n_main)) {
+      m_line <- main_base + (n_main - m_i) * step_main
+      mtext(main_w[m_i], side = 3, line = m_line, adj = adj, cex = cex_main, font = font_main, col = col_main)
+    }
+  }
+}
+
 plot_stream_network <- function(df, val_col, vmin, vmax, pal, main_title, sub_title,
                                 cbar_ticks, cbar_labels, cbar_title,
-                                show_obs = FALSE, obs_col = NULL, base_lwd = 0.35, max_lwd = 2.6) {
+                                show_obs = FALSE, obs_col = NULL, base_lwd = 0.35, max_lwd = 2.6,
+                                max_main_chars = 85, max_sub_chars = 110) {
   ord <- order(df$Shreve)
   d   <- df[ord, ]
 
@@ -775,8 +1102,12 @@ plot_stream_network <- function(df, val_col, vmin, vmax, pal, main_title, sub_ti
   cb_y1 <- yr[1] + 0.72 * dy
   draw_colorbar(cb_x0, cb_y0, cb_x1, cb_y1, vmin, vmax, pal, cbar_ticks, cbar_labels, cbar_title)
 
-  mtext(main_title, side = 3, line = 1.2, adj = 0, cex = 0.96, font = 2, col = "#111111")
-  mtext(sub_title,  side = 3, line = 0.15, adj = 0, cex = 0.80, col = "#444444")
+  # Wrap and render multi-line titles without overlapping or clipping
+  draw_plot_header(
+    main_title = main_title, sub_title = sub_title,
+    max_main = max_main_chars, max_sub = max_sub_chars,
+    cex_main = 0.96, cex_sub = 0.80, adj = 0
+  )
 }
 
 shorten_det_name <- function(det_name) {
@@ -791,7 +1122,7 @@ shorten_det_name <- function(det_name) {
   paste0(substr(s, 1, 22), tag)
 }
 
-format_top_banner <- function(network_label = NULL, vars_label = NULL, source_label = NULL) {
+format_top_banner <- function(network_label = NULL, vars_label = NULL, source_label = NULL, max_len = 180) {
   parts <- character(0)
   if (!is.null(network_label) && nzchar(network_label)) {
     parts <- c(parts, sprintf("Water Network: %s", network_label))
@@ -802,7 +1133,28 @@ format_top_banner <- function(network_label = NULL, vars_label = NULL, source_la
   if (!is.null(vars_label) && nzchar(vars_label)) {
     parts <- c(parts, sprintf("Fixed-Effect Regression Covariates: %s", vars_label))
   }
-  paste(parts, collapse = "   |   ")
+  raw_banner <- paste(parts, collapse = "   |   ")
+  wrap_title(raw_banner, max_len = max_len)
+}
+
+get_banner_oma <- function(banner) {
+  if (is.null(banner) || !nzchar(banner)) return(c(0, 0, 0, 0))
+  n_b <- length(strsplit(banner, "\n", fixed = TRUE)[[1]])
+  c(0, 0, if (n_b > 1) 3.2 else 2.2, 0)
+}
+
+draw_top_banner <- function(banner, cex = 0.88, col = "#2c3e50") {
+  if (is.null(banner) || !nzchar(banner)) return(invisible(NULL))
+  b_splits <- strsplit(banner, "\n", fixed = TRUE)[[1]]
+  n_b <- length(b_splits)
+  if (n_b == 1) {
+    mtext(b_splits[1], side = 3, line = 0.6, outer = TRUE, cex = cex, font = 3, col = col)
+  } else {
+    for (i in seq_len(n_b)) {
+      b_line <- 0.35 + (n_b - i) * 0.90
+      mtext(b_splits[i], side = 3, line = b_line, outer = TRUE, cex = cex * 0.95, font = 3, col = col)
+    }
+  }
 }
 
 # Figure 1: Full England Stream Network Map
@@ -817,8 +1169,8 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   banner   <- format_top_banner(network_label, vars_label, source_label)
   png(out_file, width = 2600, height = 1450, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
-      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
 
   if (is.null(sc_val)) sc_val <- compute_color_scale(eng_pred$pred_model_sc, tr)
   if (is.null(sc_se))  sc_se  <- compute_se_scale(eng_pred$se_model_sc)
@@ -863,9 +1215,7 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
          col = "#111111", cex = 0.65, lwd = 0.5)
   legend("topleft", legend = sprintf("Observed %s Station (colored by %s)", src_tag, det_short),
          pch = 21, pt.bg = "#e67e22", col = "#111111", pt.cex = 1.0, bty = "n", cex = 0.80)
-  if (nzchar(banner)) {
-    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
-  }
+  draw_top_banner(banner)
 }
 
 # Generic 2-Panel River Basin High-Resolution S3N Map (used for Figure 2 Humber & Figure 5+ Custom Basins)
@@ -880,8 +1230,8 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   banner     <- format_top_banner(network_label, vars_label, source_label)
   png(out_file, width = 2600, height = 1350, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
-      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
 
   if (is.null(sc_se)) sc_se <- compute_se_scale(basin_pred$se_model_sc)
   n_obs_basin <- sum(basin_pred$has_obs == 1)
@@ -934,9 +1284,7 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   }
   legend("topleft", legend = sprintf("%s Monitoring Site Location (n = %d)", src_tag, n_obs_basin),
          pch = 3, col = "#c0392b", pt.cex = 0.9, bty = "n", cex = 0.82)
-  if (nzchar(banner)) {
-    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
-  }
+  draw_top_banner(banner)
 }
 
 # Figure 2: Humber River Basin High-Resolution S3N Map
@@ -959,8 +1307,8 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
   banner   <- format_top_banner(network_label, vars_label, source_label)
   png(out_file, width = 2600, height = 1250, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
-      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
 
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
@@ -997,9 +1345,7 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
     show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.40, max_lwd = 2.8
   )
-  if (nzchar(banner)) {
-    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
-  }
+  draw_top_banner(banner)
 }
 
 # Figure 4: 4-Panel Model Diagnostics, Cross-Validation & Parameter CIs
@@ -1015,8 +1361,8 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
 
   png(out_file, width = 2400, height = 1800, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(2, 2), mar = c(4.5, 5.2, 3.2, 1.8),
-      oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
+  par(mfrow = c(2, 2), mar = c(4.5, 5.2, 3.8, 1.8),
+      oma = get_banner_oma(banner), bg = "white")
 
   det_short <- shorten_det_name(det_name)
   sc_lbl <- if (tr$type == "none") {
@@ -1039,7 +1385,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
        xlim = lims, ylim = lims,
        xlab = paste("Observed", sc_lbl),
        ylab = paste("5-Fold CV Predicted", sc_lbl),
-       main = "A. Out-of-Sample 5-Fold Cross-Validation Accuracy")
+       main = wrap_title("A. Out-of-Sample 5-Fold Cross-Validation Accuracy", 80))
   grid(col = "#e0e0e0", lty = "dotted")
   if (!is.null(hum_cv) && nrow(hum_cv) > 0) {
     points(hum_cv$obs_y, hum_cv$cv_comb, pch = 21, bg = rgb(0.90, 0.49, 0.13, 0.75), col = "#222222", cex = 0.95, lwd = 0.6)
@@ -1132,7 +1478,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   bp <- barplot(r2_mat, beside = TRUE, ylim = c(0, ymax_b),
                 col = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"),
                 border = "#222222", cex.names = cex_names_b, ylab = "5-Fold Cross-Validation R2",
-                main = "B. Out-of-Sample Variance Explained (R2) by Model")
+                main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 80))
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   text(bp, r2_mat + 0.03 * ymax_b, labels = sprintf("%.2f", r2_mat), cex = cex_txt_b, font = 2)
   legend("topright",
@@ -1177,12 +1523,12 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   np <- nrow(eng_td_p)
   y_pos <- rev(seq_len(np))
   par_MAR_old <- par("mar")
-  par(mar = c(4.5, 10.2, 3.2, 1.5))
+  par(mar = c(4.5, 10.2, 3.8, 1.5))
   xr_ci <- range(c(eng_tu_p$CI_Lower, eng_tu_p$CI_Upper, eng_td_p$CI_Lower, eng_td_p$CI_Upper, -0.2, 0.2), na.rm = TRUE)
   xr_pad <- 0.12 * diff(xr_ci)
   plot(NA, xlim = c(xr_ci[1] - xr_pad, xr_ci[2] + xr_pad), ylim = c(0.4, np + 0.6),
        yaxt = "n", xlab = sprintf("Effect Size on %s [95%% Bootstrap CI]", sc_lbl), ylab = "",
-       main = sprintf("C. Environmental Drivers of %s (England S3N)", det_short))
+       main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 80))
   grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
   abline(v = 0, col = "#c0392b", lty = 2, lwd = 1.5)
   lbls_c <- ifelse(eng_td_p$Parameter %in% names(nice_labels), nice_labels[eng_td_p$Parameter], eng_td_p$Parameter)
@@ -1213,8 +1559,8 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
                   cex.axis = 0.84,
                   ylab = sprintf("S3N Predicted %s (%s)", det_short, det_unit),
                   xlab = "Overall Network vs. Hydrogeological & Topographic Regime",
-                  main = sprintf("D. Predicted %s Across %s Reaches by Regime",
-                                 det_short, format(nrow(eng_pred), big.mark = ",")))
+                  main = wrap_title(sprintf("D. Predicted %s Across %s Reaches by Regime",
+                                           det_short, format(nrow(eng_pred), big.mark = ",")), 80))
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   abline(v = 1.5, col = "#7f8c8d", lty = 2, lwd = 1.3)
   medians <- sapply(box_list, median, na.rm = TRUE)
@@ -1222,9 +1568,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   y_txt <- pmin(par("usr")[4] - 0.07 * yr_d, bp_d$stats[4, ] + 0.07 * yr_d)
   text(1:4, y_txt, labels = sprintf("Median:\n%s %s", formatC(medians, format = "fg", digits = 3), det_unit),
        font = 2, cex = 0.78, col = "#111111")
-  if (nzchar(banner)) {
-    mtext(banner, side = 3, line = 0.3, outer = TRUE, cex = 0.88, font = 3, col = "#2c3e50")
-  }
+  draw_top_banner(banner)
 }
 
 # Figure 5 (Temporal Multi-Panel Grid): All England S3N Comparison Across Seasons, Years, or Months
@@ -1265,7 +1609,7 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
 
   png(out_file, width = w_px, height = h_px, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(nrow_g, ncol_g), mar = c(1.0, 1.0, 2.8, 1.0), oma = c(0.5, 0.5, 3.4, 0.5), bg = "white")
+  par(mfrow = c(nrow_g, ncol_g), mar = c(1.0, 1.0, 3.6, 1.0), oma = c(0.5, 0.5, 3.8, 0.5), bg = "white")
 
   month_names <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -1312,12 +1656,15 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
                       format(n_obs_i, big.mark = ","), r2_str,
                       formatC(med_raw, format = "fg", digits = 3), det_unit)
 
+    max_m_t <- if (ncol_g >= 3) 68 else 85
+    max_s_t <- if (ncol_g >= 3) 80 else 110
     plot_stream_network(
       eng_df, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
       main_title = main_t,
       sub_title  = sub_t,
       cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
-      show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
+      show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6,
+      max_main_chars = max_m_t, max_sub_chars = max_s_t
     )
   }
 
@@ -1332,10 +1679,10 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
                        if (has_src) paste0(" | Source: ", src_tag) else "",
                        if (has_net) paste0(" | Network: ", network_label) else "",
                        if (has_vars) paste0(" | Covariates: ", vars_label) else "")
-  mtext(sprintf("All England S3N Stream Network Comparison by %s: %s (%s)",
-                mode_cap, det_short, det_unit),
-        side = 3, line = 1.5, outer = TRUE, cex = 1.25, font = 2, col = "#111111")
-  mtext(sub_outer, side = 3, line = 0.2, outer = TRUE, cex = 0.92, col = "#444444")
+  mtext(wrap_title(sprintf("All England S3N Stream Network Comparison by %s: %s (%s)",
+                           mode_cap, det_short, det_unit), 180),
+        side = 3, line = 1.6, outer = TRUE, cex = 1.20, font = 2, col = "#111111")
+  mtext(wrap_title(sub_outer, 190), side = 3, line = 0.2, outer = TRUE, cex = 0.90, col = "#444444")
 }
 
 # ==============================================================================

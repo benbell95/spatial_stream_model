@@ -38,8 +38,12 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
 | `<code_or_var>` | *(Required)* | Either a 4-digit EA RSN determinand code (e.g., `0117` for Nitrate, `0180` for Orthophosphate, `0061` for pH) **or** an ecological/habitat metric column name (e.g., `whpt_aspt`, `whpt_ntaxa`, `life_family_index`, `psi_family_score`, `rmni`, `hqa_score`). |
-| `--source=<name>` | `rsn` | Selects the monitoring station network data source:<br>• `rsn`: **River Surveillance Network** ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the default nationwide surveillance network (1,382 monitoring stations across wider rivers)<br>• `ssn`: **Small Streams Network** ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), dedicated to headwaters and smaller tributaries (313 monitoring stations; saves outputs to `output/det_<code>_<net>_src_ssn/`)<br>• `rss`: **Combined River Surveillance & Small Streams** ([`RSS`](../data/processed/orn_rss/)), merging RSN + SSN into a single integrated dataset (1,695 stations, 1,384 snapped observed reaches on ORN v2; saves outputs to `output/det_<code>_<net>_src_rss/`). |
-| `--list-sources` | — | Prints all supported monitoring network data sources (`rsn`, `ssn`, `rss`), abbreviations, full descriptive labels, and resolved data directories. |
+| `--source=<name>` | `rsn` | Selects the monitoring station network data source:<br>• `rsn`: **River Surveillance Network** ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the default nationwide surveillance network (1,382 monitoring stations across wider rivers)<br>• `ssn`: **Small Streams Network** ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), dedicated to headwaters and smaller tributaries (313 monitoring stations; saves outputs to `output/det_<code>_<net>_src_ssn/`)<br>• `rss`: **Combined River Surveillance & Small Streams** ([`RSS`](../data/processed/orn_rss/)), merging RSN + SSN into a single integrated dataset (1,695 stations, 1,384 snapped observed reaches on ORN v2; saves outputs to `output/det_<code>_<net>_src_rss/`)<br>• **Custom or registered source**: e.g. `--source=my_study`, `--source=riverfly`, `--source=river_guardians`<br>• **Multi-source delimiter combination**: e.g. `--source=rsn+my_study` or `--source=rsn,ssn,riverfly`. See [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md). |
+| `--custom-samples=<path>` | *(None)* | Direct path to a custom sample observations CSV file (e.g., containing `site_id`, `sample_datetime`, `meas_result`). Ingests custom measurements into the modeling pipeline. |
+| `--custom-sites=<path>` | *(None)* | Direct path to a custom station points CSV file (e.g., containing `site_id`, `easting`, `northing`). Automatically snaps custom points to reaches. |
+| `--custom-dir=<path>` | *(None)* | Path to a custom directory containing `sites.csv` and/or `samples.csv`. |
+| `--custom-name=<name>` | `custom` | Custom dataset tag/name used in directory paths and plot titles (default: `custom`). |
+| `--list-sources` | — | Prints all supported and configured monitoring network data sources (`rsn`, `ssn`, `rss`, custom profiles), abbreviations, full descriptive labels, and resolved data directories. |
 | `--dataset=<name>` | Auto-detected (`wq` for 4-digit codes) | Selects which dataset to model:<br>• `wq`: Water Quality Samples (`Water Quality Samples.csv`)<br>• `inverts`: Macroinvertebrate Samples (`Macroinvertebrate Samples.csv`)<br>• `diatoms`: Diatom Samples (`Diatom Samples.csv`)<br>• `macrophytes`: Macrophyte Samples (`Macrophyte Samples.csv`)<br>• `rhs`: River Habitat Surveys (`River Habitat Surveys.csv`, RSN only)<br>• `lcms`: LCMS/GCMS Organic Pollutants (`LCMS GCMS Samples.csv`, RSN only)<br>*(Note: If omitted, the script automatically detects `inverts`, `diatoms`, `macrophytes`, or `rhs` when you pass a column name like `whpt_aspt` or `rmni`)*. |
 | `--list`, `-h`, `--help` | — | Lists available variables, sample counts, descriptions, and units for the selected `--dataset` (defaults to top 25 water quality determinands; combine with `--dataset=inverts`, `--dataset=diatoms`, `--dataset=macrophytes`, `--dataset=rhs`, or `--dataset=lcms`). |
 | `--list-basins` | — | Prints all 11 Environment Agency River Basin Districts (`RBD_ID`, `RBD_Name`) and the top 30 individual catchments (`CatchID`, `Main_River`, `RBD_Name`, total reaches, and monitored reaches) from [`data/processed/rsn_catchments_lookup.csv`](../data/processed/rsn_catchments_lookup.csv). |
@@ -159,15 +163,20 @@ flowchart TD
 
 ---
 
-### 2.6 Multi-Network Monitoring Data Sources (`--source=rsn|ssn|rss`)
+### 2.6 Multi-Network Monitoring Data Sources & Custom Datasets (`--source=<name>`)
 
-The pipeline supports three monitoring dataset configurations via `--source=<name>`:
+The pipeline supports official statutory networks, custom field campaigns, and arbitrary multi-network combinations via `--source=<name>`:
 
 | Source Flag | Abbreviation | Monitoring Network | Focus / Character | Total Stations | Snapped Reaches (ORN v2) | Total Reaches | Output Folder Tag |
 | :---: | :---: | :--- | :--- | ---: | ---: | ---: | :--- |
 | `--source=rsn` *(default)* | `RSN` | **River Surveillance Network** | Nationwide network across wider rivers and mainstems | 1,382 | 1,210 | 90,876 | `output/det_<code>_<net>/` |
 | `--source=ssn` | `SSN` | **Small Streams Network** | Dedicated headwater streams (< 20 km² drainage) | 313 | 177 | 76,242 | `output/det_<code>_<net>_src_ssn/` |
 | `--source=rss` | `RSS` | **Combined Surveillance & Small Streams** | Integrated nationwide surveillance + headwater monitoring | 1,695 | 1,384 | 91,118 | `output/det_<code>_<net>_src_rss/` |
+| `--source=<custom>` | User-defined | **Custom User / Field Dataset** | Field study or local monitoring campaign | Variable | Variable | Monitored catchments | `output/det_<code>_<net>_src_<custom>/` |
+| `--source=<A>+<B>` | `<A>+<B>` | **Multi-Source Combination** | Merged union of multiple registered or custom sources | Variable | Variable | Union of catchments | `output/det_<code>_<net>_src_<A>_<B>/` |
+
+> [!TIP]
+> **Complete Custom Data Guide**: For comprehensive instructions on bringing your own point observation datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
 
 > [!NOTE]
 > **Dataset Availability Across Sources**:
@@ -312,8 +321,13 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
-| `--source <rsn\|ssn\|rss>` | `rsn` | Monitoring network data source:<br>• `rsn`: River Surveillance Network (`RSN`, default nationwide surveillance dataset)<br>• `ssn`: Small Streams Network (`SSN`, dedicated headwater and tributary dataset)<br>• `rss`: Combined River Surveillance & Small Streams (`RSS`, integrated nationwide dataset). Preprocessed outputs are saved to `data/processed/<net>_<source>/` (while default `rsn` preserves backward compatibility at `data/processed/<net>/` and `data/processed/`). |
-| `--list-sources` | — | Prints supported monitoring network data sources, descriptions, and data paths, then exits. |
+| `--source <NAME>` | `rsn` | Monitoring network data source:<br>• `rsn`: River Surveillance Network (`RSN`, default nationwide surveillance dataset)<br>• `ssn`: Small Streams Network (`SSN`, dedicated headwater and tributary dataset)<br>• `rss`: Combined River Surveillance & Small Streams (`RSS`, integrated nationwide dataset)<br>• `<custom>`: Any configured profile in `configs/sources/<name>.json` or custom directory in `data/custom/<name>/`<br>• Multi-source combination: e.g. `--source=rsn+custom` or `--source=rsn,ssn,custom`. Preprocessed outputs are saved to `data/processed/<net>_<source>/` (while default `rsn` preserves backward compatibility at `data/processed/<net>/` and `data/processed/`). See [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md). |
+| `--custom-sites <PATH>` | `None` | Direct path to a custom monitoring station points CSV file (e.g. with `site_id`, `easting`, `northing`). Automatically snaps custom points to reaches. |
+| `--custom-samples <PATH>` | `None` | Direct path to a custom sample observations CSV file (e.g. with `site_id`, `sample_datetime`, `meas_result`). |
+| `--custom-dir <DIR>` | `None` | Path to a custom directory containing `sites.csv` and/or `samples.csv`. |
+| `--custom-name <NAME>` | `custom` | Short dataset tag/name used in directory paths and metadata (default: `custom`). |
+| `--custom-crs <EPSG>` | `27700` | EPSG coordinate system code for custom points (`27700` for British National Grid meters; `4326` for WGS84 decimal degrees, which are automatically projected to BNG meters). |
+| `--list-sources` | — | Prints supported and configured monitoring network data sources, descriptions, and data paths, then exits. |
 | `--max-snap-dist <METRES>` | `250.0` | **Maximum snapping distance tolerance in metres** from monitoring stations to river reach polylines. Stations with Euclidean snapping distance `d ≤ max_snap_dist` are retained as monitored reaches (`has_obs = 1`); stations farther than this threshold are marked `included_250m = 0` (or `included_<dist>m`) and excluded from reach observation targets to prevent spurious topological associations. |
 | `--dataset <NAME>` | `wq` | RSN monitoring dataset to extract:<br>• `wq`: Water Quality Samples ([`RSN Water Quality Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Water%20Quality%20Samples.csv))<br>• `inverts`: Macroinvertebrate Samples<br>• `diatoms`: Diatom Samples<br>• `macrophytes`: Macrophyte Samples<br>• `rhs`: River Habitat Surveys<br>• `lcms`: LCMS/GCMS Organic Pollutant Samples. |
 | `--det-code <CODE>` | `0117` | 4-digit EA RSN determinand code (for `--dataset wq`, e.g. `0117` Nitrate, `0180` Orthophosphate) or column metric name (for ecological datasets, e.g. `whpt_aspt`, `rmni`, `hqa_score`). |
@@ -550,7 +564,7 @@ Rscript scripts/04_compare_model_runs.R output/det_0117 --by=month
 For any water network (`--network=orn`, `--network=euhydro_thames`, etc.), it writes outputs to `output/station_snapping_<network>/` (or a custom `--out=<dir>`):
 - **`station_snapping_all.csv` & `station_snapping_catchment_<CatchID>_<name>.csv`**:
   Complete station-level table containing:
-  - Station identifiers (`site_id`, `wims_id`, `wims_region_code`) and catchment metadata (`CatchID`, `Catchment_Name`, `RBD_Name`)
+  - Station identifiers (`site_id`, station attributes) and catchment metadata (`CatchID`, `Catchment_Name`, `RBD_Name`)
   - Station coordinates (`station_X`, `station_Y` in British National Grid `EPSG:27700` metres)
   - Snapped river reach ID (`snapped_RivID`)
   - Snapped reach coordinates (`snap_reach_X`, `snap_reach_Y` for the orthogonal snapped point on the reach; `reach_mid_X`, `reach_mid_Y` for the reach midpoint; and `reach_start_X/Y`, `reach_end_X/Y` for the upstream and downstream reach nodes)

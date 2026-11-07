@@ -13,20 +13,26 @@ This document provides complete technical documentation for the three-stage **Sc
 
 [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~13–15 seconds** using pure Python standard library modules (`sqlite3`, `struct`, `math`, `csv`).
 
-### 1. Multi-Network Monitoring Data Ingestion (`--source=rsn|ssn|rss`)
-The preprocessor supports three monitoring dataset configurations via `--source=<name>`:
+### 1. Multi-Network Monitoring Data Ingestion (`--source=<name>`)
+The preprocessor supports official statutory networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
 - `rsn` (*default*): Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 baseline stations across England's mainstems and major tributaries.
 - `ssn`: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations (< 20 km² catchment area).
 - `rss`: **Combined River Surveillance + Small Streams Network** integrating both datasets (1,695 unique monitoring stations) for complete headwater-to-mouth stream network coverage.
+- `<custom>`: Any custom monitoring dataset registered in `configs/sources/<name>.json`, placed in `data/custom/<name>/`, or supplied ad-hoc via `--custom-sites` and `--custom-samples`.
+- `<A>+<B>`: On-the-fly combination merging multiple sources (e.g. `--source=rsn+my_study` or `--source=rsn,ssn,custom`).
+
+> **Complete Custom Data Guide**: For complete instructions on bringing your own point observation datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
 
 ```bash
 # List supported monitoring sources and data directories
 python3 scripts/01_preprocess_orn.py --list-sources
 
-# Run preprocessing for RSN (default), SSN, or combined RSS
+# Run preprocessing for RSN (default), SSN, combined RSS, or custom sources
 python3 scripts/01_preprocess_orn.py                       # data/processed/orn/ (default)
 python3 scripts/01_preprocess_orn.py --source=ssn          # data/processed/orn_ssn/
 python3 scripts/01_preprocess_orn.py --source=rss          # data/processed/orn_rss/
+python3 scripts/01_preprocess_orn.py --source=rsn+my_study # data/processed/orn_rsn_my_study/
+python3 scripts/01_preprocess_orn.py --custom-sites=path/to/sites.csv --custom-samples=path/to/samples.csv
 ```
 
 - **Station Lookup (`load_monitoring_stations_and_records`)**: Reads `*Water Quality Sample Points.csv` from the active source directories and maps each `network_id` to its British National Grid (`EPSG:27700`) coordinates `(ngr_easting, ngr_northing)` in meters, tracking the origin network (`source = RSN` or `source = SSN`).

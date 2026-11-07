@@ -417,9 +417,10 @@ thames_info <- resolve_core_basin(df_full, catch_lu, net_meta, "thames")
 severn_info <- resolve_core_basin(df_full, catch_lu, net_meta, "severn")
 
 eng_domain_label <- switch(source_cli,
+  rsn = "All England RSN Network",
   ssn = "All England SSN Network",
   rss = "All England RSS Combined Network",
-  "All England RSN Network"
+  sprintf("All England %s Network", source_abbr)
 )
 res_england <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = 100L)
 res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = 100L)

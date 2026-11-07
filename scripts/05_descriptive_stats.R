@@ -828,7 +828,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   # Figure 1: 4-Panel Distributions, Representativeness, Tail-Up vs Tail-Down & Uncertainty
   fig1_file <- file.path(out_dir, "fig_desc1_distributions_and_representativeness.png")
   png(fig1_file, width = 2600, height = 2000, res = 200, type = "cairo")
-  par(mfrow = c(2, 2), mar = c(4.8, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
+  par(mfrow = c(2, 2), mar = c(4.8, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Kernel Density of Full Network Predictions vs. Observed Monitoring Stations
   obs_sc   <- ep$obs_model_sc[ep$has_obs == 1 & !is.na(ep$obs_model_sc)]
@@ -842,8 +842,8 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   plot(NULL, xlim = xr_a, ylim = yr_a,
        xlab = sprintf("%s [%s]", det_short, u_lbl),
        ylab = "Probability Density",
-       main = "A. Network Predictions vs. Observed Monitoring Stations",
-       cex.main = 1.10, cex.lab = 0.95, las = 1)
+       main = "",
+       cex.lab = 0.95, las = 1)
   grid(col = "#e0e0e0", lty = "dotted")
   polygon(c(d_all$x, rev(d_all$x)), c(d_all$y, rep(0, length(d_all$y))),
           col = adjustcolor("#1f77b4", alpha.f = 0.22), border = NA)
@@ -861,12 +861,16 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
          ),
          col = c("#1f77b4", "#2ca02c", "#d62728"), lty = c(1, 2, 1), lwd = c(2.6, 2.0, 2.6),
          bty = "n", cex = 0.78)
-  if (!is.null(rep_df) && nrow(rep_df) > 0) {
-    mtext(sprintf("Pred/Obs Median Ratio = %.2fx | Mann-Whitney p = %s (%s) | KS D = %.3f (p = %s)",
-                  rep_df$Pred_to_Obs_Med_Ratio[1], fmt_pval(rep_df$MW_P_Value[1]),
-                  rep_df$Significance[1], rep_df$KS_D_Stat[1], fmt_pval(rep_df$KS_P_Value[1])),
-          side = 3, line = 0.25, cex = 0.76, col = "#333333")
-  }
+  sub_a_txt <- if (!is.null(rep_df) && nrow(rep_df) > 0) {
+    sprintf("Pred/Obs Median Ratio = %.2fx | Mann-Whitney p = %s (%s) | KS D = %.3f (p = %s)",
+            rep_df$Pred_to_Obs_Med_Ratio[1], fmt_pval(rep_df$MW_P_Value[1]),
+            rep_df$Significance[1], rep_df$KS_D_Stat[1], fmt_pval(rep_df$KS_P_Value[1]))
+  } else NULL
+  draw_plot_header(
+    main_title = "A. Network Predictions vs. Observed Monitoring Stations",
+    sub_title  = sub_a_txt,
+    max_main = 80, max_sub = 120, cex_main = 1.10, cex_sub = 0.76, adj = 0.5
+  )
 
   # Panel B: Empirical CDF Comparing S3N Combined, Tail-Up, Tail-Down & Observed Stations
   tu_sc <- if ("pred_tu_sc" %in% names(ep)) ep$pred_tu_sc else if (use_log) log(pmax(1e-6, ep$pred_tu)) else ep$pred_tu
@@ -876,7 +880,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   plot(NULL, xlim = xr_b, ylim = c(0, 1),
        xlab = sprintf("%s [%s]", det_short, u_lbl),
        ylab = "Cumulative Proportion",
-       main = "B. Empirical CDF: S3N Combined, Tail-Up, Tail-Down & Observed",
+       main = wrap_title("B. Empirical CDF: S3N Combined, Tail-Up, Tail-Down & Observed", 80),
        cex.main = 1.10, cex.lab = 0.95, las = 1)
   grid(col = "#e0e0e0", lty = "dotted")
   lines(xs_b, ecdf(ep$pred_model_sc)(xs_b), col = "#1f77b4", lwd = 2.5, lty = 1)
@@ -903,8 +907,8 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
        xlim = lim_c, ylim = lim_c, pch = 16, cex = 0.45, col = rgb(0.16, 0.50, 0.73, 0.25),
        xlab = sprintf("S3N Tail-Up Prediction [%s]", u_lbl),
        ylab = sprintf("S3N Tail-Down Prediction [%s]", u_lbl),
-       main = sprintf("C. S3N Tail-Up vs. Tail-Down Component Agreement (n = %s)",
-                      format(nrow(ep), big.mark = ",")),
+       main = wrap_title(sprintf("C. S3N Tail-Up vs. Tail-Down Component Agreement (n = %s)",
+                                format(nrow(ep), big.mark = ",")), 80),
        cex.main = 1.10, cex.lab = 0.95, las = 1)
   grid(col = "#e0e0e0", lty = "dotted")
   abline(0, 1, col = "#c0392b", lwd = 2.0, lty = 2)
@@ -939,15 +943,15 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   bp_d <- boxplot(se_groups, col = adjustcolor(cols_d, alpha.f = 0.65), border = "#222222",
                   outline = FALSE, las = 1, ylim = ylim_d,
                   ylab = sprintf("Kriging Standard Error (%s)", if (use_log) "log scale" else det_unit),
-                  main = "D. Kriging Prediction Uncertainty (se_model_sc) Breakdown",
+                  main = wrap_title("D. Kriging Prediction Uncertainty (se_model_sc) Breakdown", 80),
                   cex.main = 1.10, cex.lab = 0.95, cex.axis = 0.84)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   se_mns <- sapply(se_groups, mean, na.rm = TRUE)
   points(seq_along(se_groups), se_mns, pch = 18, cex = 1.4, col = "#111111")
   text(seq_along(se_groups), bp_d$stats[5, ], labels = sprintf("Mean=%.3f", se_mns), pos = 3, cex = 0.76, font = 2)
 
-  mtext(sprintf("S3N Single-Run Descriptive Diagnostics: %s (%s — %s)",
-                b1$det_name, b1$label, b1$dir_name),
+  mtext(wrap_title(sprintf("S3N Single-Run Descriptive Diagnostics: %s (%s — %s)",
+                           b1$det_name, b1$label, b1$dir_name), 180),
         side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
   dev.off()
 
@@ -974,7 +978,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
     bp_a <- boxplot(reg_list, col = adjustcolor(c("#2980b9", "#27ae60", "#e67e22"), alpha.f = 0.65),
                     border = "#222222", outline = FALSE, las = 1, ylim = ylim_a,
                     ylab = sprintf("Predicted %s [%s]", det_short, u_lbl),
-                    main = "A. Predictions Across Landscape & Hydrogeological Regimes",
+                    main = wrap_title("A. Predictions Across Landscape & Hydrogeological Regimes", 80),
                     cex.main = 1.10, cex.lab = 0.95, cex.axis = 0.88)
     grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
     text(1:3, bp_a$stats[5, ], labels = sprintf("Med = %.3g %s\n(n = %s)", raw_meds_a, det_unit,
@@ -998,7 +1002,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
     bp_b <- boxplot(ord_list, col = adjustcolor(pal_b, alpha.f = 0.70), border = "#222222",
                     outline = FALSE, las = 1, ylim = ylim_b,
                     ylab = sprintf("Predicted %s [%s]", det_short, u_lbl),
-                    main = "B. Longitudinal Gradient Across Strahler Stream Orders",
+                    main = wrap_title("B. Longitudinal Gradient Across Strahler Stream Orders", 80),
                     cex.main = 1.10, cex.lab = 0.95, cex.axis = 0.86)
     grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
     text(seq_along(ord_list), bp_b$stats[5, ], labels = sprintf("%.3g", raw_meds_b),
@@ -1024,7 +1028,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   bp_c <- boxplot(bas_list, col = adjustcolor(cols_c, alpha.f = 0.65), border = "#222222",
                   outline = FALSE, las = 1, ylim = ylim_c,
                   ylab = sprintf("Predicted %s [%s]", det_short, u_lbl),
-                  main = "C. Regional Comparison Across Major River Basins",
+                  main = wrap_title("C. Regional Comparison Across Major River Basins", 80),
                   cex.main = 1.10, cex.lab = 0.95, cex.axis = 0.88)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   text(seq_along(bas_list), bp_c$stats[5, ],
@@ -1050,7 +1054,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
            ylim = c(0, max(y_q75, na.rm = TRUE) * 1.15),
            xlab = "Reach Elevation Decile Midpoint (m AOD)",
            ylab = sprintf("Predicted %s (%s, Median & IQR)", det_short, det_unit),
-           main = "D. Altitudinal Gradient (Decile Median & IQR Profile)",
+           main = wrap_title("D. Altitudinal Gradient (Decile Median & IQR Profile)", 80),
            cex.main = 1.10, cex.lab = 0.95, las = 1)
       grid(col = "#e0e0e0", lty = "dotted")
       polygon(c(el_mid, rev(el_mid)), c(y_q25, rev(y_q75)),
@@ -1068,8 +1072,8 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
     plot.new()
   }
 
-  mtext(sprintf("S3N Stratified Environmental & Topological Gradients: %s (%s)",
-                b1$det_name, b1$label),
+  mtext(wrap_title(sprintf("S3N Stratified Environmental & Topological Gradients: %s (%s)",
+                           b1$det_name, b1$label), 180),
         side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
   dev.off()
 

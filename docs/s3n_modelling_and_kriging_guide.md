@@ -78,16 +78,20 @@ flowchart TD
 
 ### 2.1 Multi-Network Monitoring Data Sources & Domain Naming Conventions
 
-The S3N modeling framework supports three monitoring network sources via `--source=<rsn|ssn|rss>`:
+The S3N modeling framework supports official statutory networks, custom field campaigns, and arbitrary multi-network combinations via `--source=<name>`:
 1. **`rsn` (*default*)**: Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 stations across mainstems and major tributaries (1,210 snapped reaches on ORN v2; 90,876 reaches in 141 monitored catchments). Output directory: `output/det_<code>_<net>/`.
 2. **`ssn`**: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations with catchment areas < 20 km² (177 snapped reaches on ORN v2; 76,242 reaches in 58 monitored catchments). Output directory: `output/det_<code>_<net>_src_ssn/`.
 3. **`rss`**: **Combined Surveillance + Small Streams Network** integrating both RSN and SSN (1,695 unique stations; 1,384 snapped reaches on ORN v2; 91,118 reaches in 150 monitored catchments). Output directory: `output/det_<code>_<net>_src_rss/`.
+4. **Custom Sources & Combinations**: User-supplied or registered custom datasets (e.g. `--source=my_study`, `--source=riverfly`, or on-the-fly combination syntax `--source=rsn+my_study`). Output directory: `output/det_<code>_<net>_src_<source>/`.
+
+> **Bring Your Own Monitoring Dataset Guide**: For comprehensive instructions on importing external field datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
 
 #### Domain Naming & Canonical Cross-Source Harmonization
 When models are estimated, each national model writes its domain descriptor into parameter and cross-validation summaries:
 - **RSN**: `"All England RSN Network"`
 - **SSN**: `"All England SSN Network"`
 - **RSS**: `"All England RSS Combined Network"`
+- **Custom / Combined**: `"All England <SOURCE> Network"`
 
 In multi-run comparative evaluations ([`scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R)) and stratified diagnostics ([`scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R)), the `canonical_domain()` function maps any domain matching `^All England` to `"All England Stream Network"`. This allows seamless cross-model comparison, forest plots, and hypothesis testing across runs fitted on different data sources without domain key mismatches.
 

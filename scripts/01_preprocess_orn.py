@@ -48,6 +48,7 @@ import glob
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
 import statistics
@@ -78,32 +79,237 @@ RSN_DIR = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
 SSN_DIR = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
 WQ_DIR = RSN_DIR
 CONFIG_DIR = _rel_join(BASE_DIR, "configs", "networks")
+SOURCE_CONFIG_DIR = _rel_join(BASE_DIR, "configs", "sources")
 OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or _rel_join(DATA_DIR, "processed")
 
 
-def resolve_source_tag(source="rsn"):
+def wgs84_to_bng(lat, lon):
+    """
+    Converts WGS84 decimal latitude and longitude into British National Grid
+    (OSGB36 / EPSG:27700) Eastings and Northings in meters using the standard
+    Airy 1830 ellipsoid and Transverse Mercator projection (pure Python standard library).
+    """
+    a, b = 6377563.396, 6356256.909
+    F0 = 0.9996012717
+    lat0 = math.radians(49.0)
+    lon0 = math.radians(-2.0)
+    N0, E0 = -100000.0, 400000.0
+    e2 = 1.0 - (b * b) / (a * a)
+    n = (a - b) / (a + b)
+
+    phi = math.radians(lat)
+    lam = math.radians(lon)
+
+    cos_phi = math.cos(phi)
+    sin_phi = math.sin(phi)
+    nu = a * F0 / math.sqrt(max(1e-12, 1.0 - e2 * sin_phi * sin_phi))
+    rho = a * F0 * (1.0 - e2) / (math.pow(max(1e-12, 1.0 - e2 * sin_phi * sin_phi), 1.5))
+    eta2 = max(0.0, nu / rho - 1.0)
+
+    M = b * F0 * (
+        (1.0 + n + 1.25 * (n ** 2) + 1.25 * (n ** 3)) * (phi - lat0)
+        - (3.0 * n + 3.0 * (n ** 2) + 2.625 * (n ** 3)) * math.sin(phi - lat0) * math.cos(phi + lat0)
+        + (1.875 * (n ** 2) + 1.875 * (n ** 3)) * math.sin(2.0 * (phi - lat0)) * math.cos(2.0 * (phi + lat0))
+        - (35.0 / 24.0 * (n ** 3)) * math.sin(3.0 * (phi - lat0)) * math.cos(3.0 * (phi + lat0))
+    )
+
+    I = M + N0
+    II = (nu / 2.0) * sin_phi * cos_phi
+    III = (nu / 24.0) * sin_phi * (cos_phi ** 3) * (5.0 - (math.tan(phi) ** 2) + 9.0 * eta2)
+    IIIA = (nu / 720.0) * sin_phi * (cos_phi ** 5) * (61.0 - 58.0 * (math.tan(phi) ** 2) + (math.tan(phi) ** 4))
+    IV = nu * cos_phi
+    V = (nu / 6.0) * (cos_phi ** 3) * (nu / rho - (math.tan(phi) ** 2))
+    VI = (nu / 120.0) * (cos_phi ** 5) * (5.0 - 18.0 * (math.tan(phi) ** 2) + (math.tan(phi) ** 4) + 14.0 * eta2 - 58.0 * (math.tan(phi) ** 2) * eta2)
+
+    d_lam = lam - lon0
+    N = I + II * (d_lam ** 2) + III * (d_lam ** 4) + IIIA * (d_lam ** 6)
+    E = E0 + IV * d_lam + V * (d_lam ** 3) + VI * (d_lam ** 5)
+    return round(E, 2), round(N, 2)
+
+
+def find_col(fieldnames, candidate_names):
+    """Case-insensitive matching of column names against candidate variants."""
+    if not fieldnames:
+        return None
+    cols_map = {str(c).lower().strip(): c for c in fieldnames if c}
+    for cand in candidate_names:
+        cand_low = cand.lower().strip()
+        if cand_low in cols_map:
+            return cols_map[cand_low]
+    return None
+
+
+def load_source_registry(base_dir=BASE_DIR):
+    """
+    Loads source configurations from `configs/sources/*.json` and auto-discovers
+    subdirectories in `data/custom/`.
+    """
+    cfg_dir = os.path.join(base_dir, "configs", "sources")
+    sources = {}
+    composites = {}
+
+    sources["rsn"] = {
+        "name": "rsn",
+        "abbr": "RSN",
+        "label": "River Surveillance Network (RSN)",
+        "description": "Environment Agency River Surveillance Network (1,382 stations)",
+        "data_dir": "data/NCEA_River_Surveillance_Network_ARD_Open",
+        "sites_file": "RSN Water Quality Sample Points.csv",
+        "id_col": "network_id",
+        "easting_col": "ngr_easting",
+        "northing_col": "ngr_northing",
+        "crs_epsg": 27700,
+    }
+    sources["ssn"] = {
+        "name": "ssn",
+        "abbr": "SSN",
+        "label": "Small Streams Network (SSN)",
+        "description": "Environment Agency Small Streams Network (313 headwater stations)",
+        "data_dir": "data/NCEA_Small_Streams_Network_ARD_Open",
+        "sites_file": "SSN Water Quality Sample Points.csv",
+        "id_col": "network_id",
+        "easting_col": "ngr_easting",
+        "northing_col": "ngr_northing",
+        "crs_epsg": 27700,
+    }
+
+    composites["rss"] = {
+        "name": "rss",
+        "abbr": "RSS",
+        "label": "Combined River Surveillance & Small Streams (RSS)",
+        "description": "Integrated River Surveillance Network and Small Streams Network",
+        "sources": ["rsn", "ssn"],
+    }
+    composites["all"] = {
+        "name": "all",
+        "abbr": "ALL",
+        "label": "All Registered Monitoring Networks",
+        "description": "Union of all active monitoring networks",
+        "sources": ["rsn", "ssn"],
+    }
+
+    if os.path.isdir(cfg_dir):
+        for f in glob.glob(os.path.join(cfg_dir, "*.json")):
+            fname = os.path.basename(f)
+            try:
+                with open(f, "r", encoding="utf-8") as jf:
+                    data = json.load(jf)
+                if fname == "composites.json" or "composites" in data:
+                    comps = data.get("composites", data)
+                    for c_name, c_info in comps.items():
+                        composites[c_name.lower()] = c_info
+                else:
+                    s_name = data.get("name", os.path.splitext(fname)[0]).lower()
+                    sources[s_name] = data
+            except Exception as e:
+                print(f"Warning: Failed to parse source config {f}: {e}")
+
+    # Auto-detect data/custom/* subdirectories
+    cust_dir = os.path.join(base_dir, "data", "custom")
+    if os.path.isdir(cust_dir):
+        for sd in os.listdir(cust_dir):
+            full_sd = os.path.join(cust_dir, sd)
+            if os.path.isdir(full_sd):
+                s_key = sd.lower()
+                if s_key not in sources:
+                    sources[s_key] = {
+                        "name": s_key,
+                        "abbr": s_key.upper(),
+                        "label": f"Custom Dataset: {sd}",
+                        "description": f"User custom dataset in data/custom/{sd}",
+                        "data_dir": full_sd,
+                        "sites_file": "sites.csv",
+                        "id_col": "site_id",
+                        "easting_col": "easting",
+                        "northing_col": "northing",
+                        "crs_epsg": 27700,
+                    }
+
+    return sources, composites
+
+
+def resolve_source_tag(source="rsn", registry=None):
+    """
+    Resolves source tags, aliases, composite groups, and delimiter combinations
+    (e.g., 'rsn+ssn', 'rsn,custom'). Returns (source_key, constituent_list, source_abbr, source_label).
+    """
     if not source:
-        return "rsn"
-    s = str(source).lower().strip()
+        return "rsn", ["rsn"], "RSN", "River Surveillance Network (RSN)"
+
+    if registry is None:
+        sources_reg, composites_reg = load_source_registry()
+    else:
+        sources_reg, composites_reg = registry
+
+    raw_s = str(source).lower().strip()
+    tokens = [t.strip().lower() for t in re.split(r"[,+ ]+", raw_s) if t.strip()]
+    if not tokens:
+        tokens = ["rsn"]
+
+    if len(tokens) > 1:
+        if set(tokens) == {"rsn", "ssn"}:
+            return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
+        # Expand composite tokens
+        expanded = []
+        for tk in tokens:
+            if tk in composites_reg:
+                expanded.extend(composites_reg[tk].get("sources", [tk]))
+            else:
+                expanded.append(tk)
+        unique_tokens = []
+        for t in expanded:
+            if t not in unique_tokens:
+                unique_tokens.append(t)
+        combo_key = "_".join(unique_tokens)
+        combo_abbr = "+".join(t.upper() for t in unique_tokens)
+        combo_label = f"Combined Monitoring Sources ({combo_abbr})"
+        return combo_key, unique_tokens, combo_abbr, combo_label
+
+    s = tokens[0]
     if s in ("ssn", "small_stream", "small_streams", "small-streams", "small-stream"):
-        return "ssn"
+        return "ssn", ["ssn"], "SSN", "Small Streams Network (SSN)"
     if s in ("rss", "combined", "both", "all", "rsn_ssn", "ssn_rsn", "rsn+ssn"):
-        return "rss"
-    return "rsn"
+        return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
+    if s in composites_reg:
+        c_info = composites_reg[s]
+        c_srcs = c_info.get("sources", ["rsn", "ssn"])
+        c_abbr = c_info.get("abbr", s.upper())
+        c_label = c_info.get("label", f"Composite: {s}")
+        return s, c_srcs, c_abbr, c_label
+    if s in sources_reg:
+        s_info = sources_reg[s]
+        s_abbr = s_info.get("abbr", s.upper())
+        s_label = s_info.get("label", f"Monitoring Source: {s}")
+        return s, [s], s_abbr, s_label
+
+    # Generic custom source
+    clean_tag = re.sub(r"[^a-z0-9_]+", "_", s)
+    return clean_tag, [clean_tag], clean_tag.upper(), f"Custom Monitoring Source ({clean_tag.upper()})"
 
 
-def print_available_sources():
+def print_available_sources(base_dir=BASE_DIR):
+    sources_reg, composites_reg = load_source_registry(base_dir=base_dir)
     print("Available Monitoring Data Sources:\n")
-    print(f"  {'Source':<6} | {'Description':<48} | {'Default':<12}")
-    print("-" * 73)
-    print(f"  {'rsn':<6} | {'River Surveillance Network (1,382 WQ stations)':<48} | {'YES (Default)':<12}")
-    print(f"  {'ssn':<6} | {'Small Streams Network (520 headwater stations)':<48} | {'No':<12}")
-    print(f"  {'rss':<6} | {'Combined River Surveillance & Small Streams (RSS)':<48} | {'No':<12}")
-    print("\nUsage:")
+    print(f"  {'Source':<18} | {'Abbr':<6} | {'Description':<44} | {'Type':<12}")
+    print("-" * 88)
+    print(f"  {'rsn':<18} | {'RSN':<6} | {'River Surveillance Network (1,382 stations)':<44} | {'YES (Default)':<12}")
+    print(f"  {'ssn':<18} | {'SSN':<6} | {'Small Streams Network (313 headwaters)':<44} | {'Registered':<12}")
+    print(f"  {'rss':<18} | {'RSS':<6} | {'Combined River Surveillance & Small Streams':<44} | {'Composite':<12}")
+
+    for s_name, s_info in sources_reg.items():
+        if s_name in ("rsn", "ssn"):
+            continue
+        desc = s_info.get("description") or s_info.get("label", s_name)
+        abbr = s_info.get("abbr", s_name.upper())
+        print(f"  {s_name[:18]:<18} | {abbr[:6]:<6} | {desc[:44]:<44} | {'Configured':<12}")
+
+    print("\nUsage & Multi-Source Syntax:")
     print("  python3 scripts/01_preprocess_orn.py --source=rsn           # River Surveillance Network (default)")
     print("  python3 scripts/01_preprocess_orn.py --source=ssn           # Small Streams Network only")
     print("  python3 scripts/01_preprocess_orn.py --source=rss           # Combined RSN + SSN")
-    print("  Rscript scripts/run_s3n_determinand.R 0117 --source=rss     # Fit S3N model on combined RSS\n")
+    print("  python3 scripts/01_preprocess_orn.py --source=rsn+ssn       # On-the-fly combination syntax (+ or ,)")
+    print("  python3 scripts/01_preprocess_orn.py --source=custom_example # Registered custom dataset")
+    print("  python3 scripts/01_preprocess_orn.py --custom-sites=path/to/sites.csv --custom-samples=path/to/samples.csv\n")
 
 
 def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
@@ -125,37 +331,211 @@ def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
     os.makedirs(OUT_DIR, exist_ok=True)
 
 
-def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", det_code="0117"):
+def load_monitoring_stations_and_records(
+    data_dir,
+    source="rsn",
+    dataset="wq",
+    det_code="0117",
+    custom_sites=None,
+    custom_samples=None,
+    custom_dir=None,
+    custom_name="custom",
+    custom_crs=27700
+):
     """
     Loads station coordinates (pts), station-to-source mapping (pts_source),
     core water quality sites for catchment discovery (core_wq_sites),
-    and observational sample records (all_records) across RSN, SSN, or combined RSS.
+    and observational sample records (all_records) across RSN, SSN, registered sources,
+    or custom user datasets.
     """
-    src_key = resolve_source_tag(source)
+    sources_reg, composites_reg = load_source_registry(base_dir=BASE_DIR)
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(source, (sources_reg, composites_reg))
+
     cand_rsn = _rel_join(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
     rsn_dir = cand_rsn if os.path.isdir(cand_rsn) else (data_dir if os.path.exists(os.path.join(data_dir, "RSN Water Quality Samples.csv")) else cand_rsn)
     cand_ssn = _rel_join(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
     ssn_dir = cand_ssn if os.path.isdir(cand_ssn) else (data_dir if os.path.exists(os.path.join(data_dir, "SSN Water Quality Samples.csv")) else cand_ssn)
-
-    targets = []
-    if src_key == "rsn":
-        targets.append(("RSN", rsn_dir, "RSN"))
-    elif src_key == "ssn":
-        targets.append(("SSN", ssn_dir, "SSN"))
-    elif src_key == "rss":
-        targets.append(("RSN", rsn_dir, "RSN"))
-        targets.append(("SSN", ssn_dir, "SSN"))
 
     pts = {}
     pts_source = {}
     core_wq_sites = set()
     all_records = []
 
-    for src_label, s_dir, prefix in targets:
+    for src_item in constituents:
+        src_label = src_item.upper()
+        # 1. Custom CLI override
+        if src_item in ("custom", custom_name.lower()) or custom_sites or custom_dir:
+            sites_p = custom_sites or (os.path.join(custom_dir, "sites.csv") if custom_dir else None)
+            samples_p = custom_samples or (os.path.join(custom_dir, "samples.csv") if custom_dir else None)
+            if not sites_p or not os.path.exists(sites_p):
+                # Check data/custom/<src_item>/sites.csv
+                cand_cs = os.path.join(data_dir, "custom", src_item, "sites.csv")
+                if os.path.exists(cand_cs):
+                    sites_p = cand_cs
+                    samples_p = samples_p or os.path.join(data_dir, "custom", src_item, "samples.csv")
+                else:
+                    raise FileNotFoundError(f"Custom sites file not found for source '{src_item}'. Specify --custom-sites=path/to/sites.csv")
+
+            print(f"   Loading custom stations from: {sites_p}")
+            with open(sites_p, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                fnames = reader.fieldnames or []
+                id_col = find_col(fnames, ["site_id", "network_id", "station_id", "id", "location_id", "site", "station", "code"])
+                x_col = find_col(fnames, ["ngr_easting", "easting", "eastings", "bng_easting", "x", "point_x", "bng_x", "longitude", "lon"])
+                y_col = find_col(fnames, ["ngr_northing", "northing", "northings", "bng_northing", "y", "point_y", "bng_y", "latitude", "lat"])
+                if not (id_col and x_col and y_col):
+                    raise ValueError(f"Could not find ID and Easting/Northing columns in {sites_p}. Found: {fnames}")
+
+                for r in reader:
+                    raw_id = r.get(id_col, "").strip()
+                    raw_x = r.get(x_col, "").strip()
+                    raw_y = r.get(y_col, "").strip()
+                    if not raw_id or not raw_x or not raw_y:
+                        continue
+                    try:
+                        px, py = float(raw_x), float(raw_y)
+                    except ValueError:
+                        continue
+
+                    # Auto-convert lat/lon in decimal degrees to British National Grid (EPSG:27700)
+                    if (abs(px) <= 180.0 and abs(py) <= 90.0) or (custom_crs == 4326):
+                        px, py = wgs84_to_bng(py, px)
+
+                    r_compat = {"wims_id": raw_id, "wims_region_code": "CUSTOM"}
+                    pts[raw_id] = (px, py, r_compat)
+                    pts_source[raw_id] = src_label
+                    core_wq_sites.add(raw_id)
+
+            if samples_p and os.path.exists(samples_p):
+                print(f"   Loading custom samples from: {samples_p}")
+                with open(samples_p, "r", encoding="utf-8-sig") as f:
+                    s_reader = csv.DictReader(f)
+                    s_fnames = s_reader.fieldnames or []
+                    s_id_col = find_col(s_fnames, ["site_id", "network_id", "station_id", "id", "location_id", "site"])
+                    dt_col = find_col(s_fnames, ["sample_datetime", "datetime", "date_time", "date", "survey_date", "timestamp"])
+                    val_col = find_col(s_fnames, ["meas_result", "result", "value", "val", "reading", "score", "concentration"])
+                    det_col_cand = find_col(s_fnames, ["det_code", "determinand_code", "param_code", "cas_number", "determinand", "code", "metric_name"])
+                    sign_col = find_col(s_fnames, ["meas_sign", "less_than_flag", "censored", "is_censored", "qualifier"])
+
+                    for r in s_reader:
+                        s_nid = r.get(s_id_col, "").strip()
+                        if not s_nid:
+                            continue
+                        if det_col_cand and det_code:
+                            row_det = r.get(det_col_cand, "").strip()
+                            if row_det and row_det != det_code and (det_code.lower() not in row_det.lower()):
+                                continue
+                        raw_val_str = r.get(val_col, "").strip()
+                        if not raw_val_str:
+                            continue
+                        try:
+                            val = float(raw_val_str)
+                        except ValueError:
+                            continue
+                        is_cens = False
+                        if sign_col:
+                            s_sign = r.get(sign_col, "").strip().lower()
+                            is_cens = (s_sign in ("<", "yes", "true", "1"))
+                        dt_str = r.get(dt_col, "").strip() if dt_col else "2023-06-01"
+                        yr = int(dt_str[0:4]) if len(dt_str) >= 4 and dt_str[0:4].isdigit() else 2023
+                        mo = int(dt_str[5:7]) if len(dt_str) >= 7 and dt_str[5:7].isdigit() else 6
+                        seas = MONTH_TO_SEASON.get(mo, "summer")
+                        all_records.append((s_nid, val, is_cens, yr, mo, seas))
+            continue
+
+        # 2. Registered Source Profile (from configs/sources/*.json)
+        if src_item in sources_reg and src_item not in ("rsn", "ssn"):
+            cfg_s = sources_reg[src_item]
+            s_dir = cfg_s.get("data_dir", "")
+            if not os.path.isabs(s_dir):
+                cand_a = _rel_join(data_dir, s_dir)
+                cand_b = _rel_join(BASE_DIR, s_dir)
+                s_dir = cand_a if os.path.isdir(cand_a) else (cand_b if os.path.isdir(cand_b) else s_dir)
+            if not os.path.isdir(s_dir):
+                raise FileNotFoundError(f"Data directory for source '{src_item}' not found at: {s_dir}")
+
+            sites_f = cfg_s.get("sites_file", "sites.csv")
+            sites_p = os.path.join(s_dir, sites_f)
+            if not os.path.exists(sites_p):
+                raise FileNotFoundError(f"Sites file '{sites_f}' not found in {s_dir}")
+
+            id_col_c = cfg_s.get("id_col", "site_id")
+            x_col_c = cfg_s.get("easting_col", "easting")
+            y_col_c = cfg_s.get("northing_col", "northing")
+            crs_s = int(cfg_s.get("crs_epsg", 27700))
+
+            with open(sites_p, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                fnames = reader.fieldnames or []
+                id_col = id_col_c if id_col_c in fnames else find_col(fnames, ["site_id", "network_id", "station_id", "id"])
+                x_col = x_col_c if x_col_c in fnames else find_col(fnames, ["ngr_easting", "easting", "x", "lon"])
+                y_col = y_col_c if y_col_c in fnames else find_col(fnames, ["ngr_northing", "northing", "y", "lat"])
+
+                for r in reader:
+                    raw_id = r.get(id_col, "").strip()
+                    raw_x = r.get(x_col, "").strip()
+                    raw_y = r.get(y_col, "").strip()
+                    if not raw_id or not raw_x or not raw_y:
+                        continue
+                    try:
+                        px, py = float(raw_x), float(raw_y)
+                    except ValueError:
+                        continue
+                    if (abs(px) <= 180.0 and abs(py) <= 90.0) or crs_s == 4326:
+                        px, py = wgs84_to_bng(py, px)
+
+                    r_compat = {"wims_id": raw_id, "wims_region_code": cfg_s.get("abbr", "SRC")}
+                    pts[raw_id] = (px, py, r_compat)
+                    pts_source[raw_id] = cfg_s.get("abbr", src_label)
+                    core_wq_sites.add(raw_id)
+
+            # Check samples dataset in registry
+            ds_cfg = cfg_s.get("datasets", {}).get(dataset, {})
+            samp_f = ds_cfg.get("file", "samples.csv")
+            samp_p = os.path.join(s_dir, samp_f)
+            if os.path.exists(samp_p):
+                with open(samp_p, "r", encoding="utf-8-sig") as f:
+                    s_reader = csv.DictReader(f)
+                    s_fnames = s_reader.fieldnames or []
+                    s_id_col = ds_cfg.get("id_col") or find_col(s_fnames, ["network_id", "site_id", "station_id", "id"])
+                    dt_col = ds_cfg.get("datetime_col") or find_col(s_fnames, ["sample_datetime", "datetime", "date", "survey_date"])
+                    val_col = ds_cfg.get("val_col") or find_col(s_fnames, ["meas_result", "result", "value", "val"])
+                    det_col_c = ds_cfg.get("det_col") or find_col(s_fnames, ["det_code", "determinand_code", "determinand", "code"])
+                    cens_col_c = ds_cfg.get("cens_col") or find_col(s_fnames, ["meas_sign", "less_than_flag", "is_censored"])
+                    cens_flg = ds_cfg.get("cens_flag", "<").lower()
+
+                    for r in s_reader:
+                        s_nid = r.get(s_id_col, "").strip()
+                        if not s_nid:
+                            continue
+                        if det_col_c and det_code:
+                            row_det = r.get(det_col_c, "").strip()
+                            if row_det and row_det != det_code and (det_code.lower() not in row_det.lower()):
+                                continue
+                        raw_v = r.get(val_col, "").strip()
+                        if not raw_v:
+                            continue
+                        try:
+                            val = float(raw_v)
+                        except ValueError:
+                            continue
+                        is_cens = False
+                        if cens_col_c:
+                            s_sign = r.get(cens_col_c, "").strip().lower()
+                            is_cens = (s_sign == cens_flg or s_sign in ("<", "yes", "true", "1"))
+                        dt_str = r.get(dt_col, "").strip() if dt_col else "2023-06-01"
+                        yr = int(dt_str[0:4]) if len(dt_str) >= 4 and dt_str[0:4].isdigit() else 2023
+                        mo = int(dt_str[5:7]) if len(dt_str) >= 7 and dt_str[5:7].isdigit() else 6
+                        seas = MONTH_TO_SEASON.get(mo, "summer")
+                        all_records.append((s_nid, val, is_cens, yr, mo, seas))
+            continue
+
+        # 3. Standard RSN / SSN official datasets
+        s_dir = rsn_dir if src_item == "rsn" else ssn_dir
+        prefix = "RSN" if src_item == "rsn" else "SSN"
         if not os.path.isdir(s_dir):
             raise FileNotFoundError(f"Directory for {src_label} data not found at: {s_dir}")
 
-        # 1. Station Points
         wq_pts_path = os.path.join(s_dir, f"{prefix} Water Quality Sample Points.csv")
         if os.path.exists(wq_pts_path):
             with open(wq_pts_path, "r", encoding="utf-8-sig") as f:
@@ -163,7 +543,7 @@ def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", d
                     if r.get("ngr_easting") and r.get("ngr_northing"):
                         nid = r["network_id"]
                         pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r)
-                        pts_source[nid] = src_label
+                        pts_source[nid] = prefix
 
         eco_pts_path = os.path.join(s_dir, f"{prefix} Ecology Sample Points.csv")
         if os.path.exists(eco_pts_path):
@@ -173,9 +553,8 @@ def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", d
                     if nid not in pts and r.get("ngr_easting") and r.get("ngr_northing"):
                         r_compat = {"wims_id": nid, "wims_region_code": ""}
                         pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r_compat)
-                        pts_source[nid] = src_label
+                        pts_source[nid] = prefix
 
-        # 2. Core WQ sites (used for identifying monitored catchments)
         wq_samples_path = os.path.join(s_dir, f"{prefix} Water Quality Samples.csv")
         if os.path.exists(wq_samples_path):
             with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
@@ -183,7 +562,6 @@ def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", d
                     if r.get("det_code") == "0117":
                         core_wq_sites.add(r["network_id"])
 
-        # 3. Observational Records
         if dataset == "wq":
             if os.path.exists(wq_samples_path):
                 with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
@@ -203,7 +581,7 @@ def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", d
         elif dataset == "lcms":
             lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
             if not os.path.exists(lcms_path):
-                if src_key == "ssn":
+                if src_item == "ssn":
                     raise ValueError("LCMS/GCMS data is only monitored on RSN and is not available in Small Streams Network (SSN).")
                 continue
             with open(lcms_path, "r", encoding="utf-8-sig") as f:
@@ -232,7 +610,7 @@ def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", d
             csv_name, dt_col = ds_files[dataset]
             csv_path = os.path.join(s_dir, csv_name)
             if not os.path.exists(csv_path):
-                if src_key == "ssn":
+                if src_item == "ssn":
                     raise ValueError(f"Dataset '{dataset}' is only monitored on RSN and is not available in Small Streams Network (SSN).")
                 continue
             col_key = "whpt_aspt" if (dataset == "inverts" and det_code == "0117") else det_code
@@ -1450,7 +1828,7 @@ def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
     Writes generated output files into `data/processed/<net_abbr>[_<source>]/` AND copies them
     into `data/processed/` when source is 'rsn' so downstream scripts work with or without `--network`.
     """
-    source_key = resolve_source_tag(source)
+    source_key, _, _, _ = resolve_source_tag(source)
     sub_name = net_abbr if source_key == "rsn" else f"{net_abbr}_{source_key}"
     net_dir = os.path.join(DATA_DIR, "processed", sub_name)
     os.makedirs(net_dir, exist_ok=True)
@@ -1539,13 +1917,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
     """
     if pts_source is None:
         pts_source = {}
-    source_key = resolve_source_tag(source_key)
-    source_abbr = "SSN" if source_key == "ssn" else ("RSS" if source_key == "rss" else "RSN")
-    source_label = (
-        "Small Streams Network (SSN)" if source_key == "ssn"
-        else ("Combined River Surveillance & Small Streams (RSS)" if source_key == "rss"
-              else "River Surveillance Network (RSN)")
-    )
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(source_key)
     net_abbr = cfg["abbr"]
     net_label = cfg.get("label", net_abbr)
     short_label = cfg.get("short_label", net_label)
@@ -2396,18 +2768,43 @@ def main():
     parser.add_argument(
         "--source",
         "--data-source",
-        choices=["rsn", "ssn", "rss"],
         default="rsn",
         help=(
-            "Monitoring network data source: 'rsn' = Environment Agency River Surveillance Network (default), "
-            "'ssn' = Environment Agency Small Streams Network, "
-            "'rss' = Combined River Surveillance & Small Streams Network (RSN + SSN)."
+            "Monitoring network data source: 'rsn' (default), 'ssn', 'rss' (combined RSN+SSN), "
+            "any configured source in configs/sources/<name>.json, data/custom/<name>/, "
+            "or delimiter combination (e.g. 'rsn+ssn', 'rsn+custom')."
         ),
+    )
+    parser.add_argument(
+        "--custom-sites",
+        default=None,
+        help="Path to custom monitoring station points CSV (e.g., with site_id, easting, northing).",
+    )
+    parser.add_argument(
+        "--custom-samples",
+        default=None,
+        help="Path to custom sample observations CSV (e.g., with site_id, sample_datetime, meas_result).",
+    )
+    parser.add_argument(
+        "--custom-dir",
+        default=None,
+        help="Path to directory containing custom 'sites.csv' and/or 'samples.csv'.",
+    )
+    parser.add_argument(
+        "--custom-name",
+        default="custom",
+        help="Short name/tag for the custom dataset (default: 'custom').",
+    )
+    parser.add_argument(
+        "--custom-crs",
+        type=int,
+        default=27700,
+        help="EPSG code for custom station coordinates (default: 27700 BNG; use 4326 for WGS84 lat/lon).",
     )
     parser.add_argument(
         "--list-sources",
         action="store_true",
-        help="List available monitoring data sources (RSN, SSN, RSS) and their station counts, then exit.",
+        help="List available monitoring data sources (RSN, SSN, RSS, custom) and their configuration, then exit.",
     )
     args = parser.parse_args()
     if args.list_transforms:
@@ -2417,13 +2814,11 @@ def main():
         print_available_sources()
         return
 
-    source_key = resolve_source_tag(args.source)
-    source_abbr = "SSN" if source_key == "ssn" else ("RSS" if source_key == "rss" else "RSN")
-    source_label = (
-        "Small Streams Network (SSN)" if source_key == "ssn"
-        else ("Combined River Surveillance & Small Streams (RSS)" if source_key == "rss"
-              else "River Surveillance Network (RSN)")
-    )
+    # Auto-route source to custom-name if custom paths supplied
+    if (args.custom_sites or args.custom_dir) and args.source == "rsn":
+        args.source = args.custom_name
+
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(args.source)
 
     configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
 
@@ -2475,7 +2870,15 @@ def main():
         f"censor_method='{args.censor_method}', period='{period_label}')..."
     )
     pts, pts_source, core_wq_sites, all_records = load_monitoring_stations_and_records(
-        DATA_DIR, source=source_key, dataset=args.dataset, det_code=args.det_code
+        DATA_DIR,
+        source=args.source,
+        dataset=args.dataset,
+        det_code=args.det_code,
+        custom_sites=args.custom_sites,
+        custom_samples=args.custom_samples,
+        custom_dir=args.custom_dir,
+        custom_name=args.custom_name,
+        custom_crs=args.custom_crs,
     )
 
     raw_all_by_site = defaultdict(list)
