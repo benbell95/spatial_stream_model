@@ -31,7 +31,7 @@ This document provides complete technical documentation for the three-stage **Sc
 - **2 km Spatial Hash Grid (`site_grid`)**: Buckets all 1,382 stations into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`.
 - **Orthogonal Segment Projection**: Projects candidate stations onto each segment `p_i -> p_{i+1}` (digitized upstream-to-downstream from `Fnode` to `Tnode`), computing Euclidean snapping distance `d` and cumulative distance `along` from the upstream `Fnode`.
 - **Exact Station Distance to River Mouth (`obs_up_dist_km`)**: Subtracting `along` from `Dist2Mth` yields the exact hydrologic distance from the snapped station to the sea/estuary mouth: `max(0.0, (Dist2Mth - along) / 1000.0)`.
-- **250 m Snapping Threshold**: Retains stations within `<= 250 m` of a reach (1,349 of 1,382 stations, median snap distance 8.0 m, spanning 1,210 unique observed reaches across 141 catchments).
+- **Configurable Snapping Threshold (`--max-snap-dist <meters>`, default 250 m)**: Retains stations within `d <= max_snap_dist` of a reach (at 250 m: 1,349 of 1,382 stations, median snap distance 8.0 m, spanning 1,210 unique observed reaches across 141 catchments). Can be relaxed (e.g. `--max-snap-dist 500`) for coarse networks or edge-case meander stations, or tightened (e.g. `--max-snap-dist 100`) for dense parallel ditch systems. Detailed snapping coordinates and diagnostic maps can be generated via `scripts/06_station_snapping_diagnostics.R`.
 
 ### 4. Subsetting to Monitored Catchments & Aggregating 100 m Covariates (`main()` L181–L236)
 - Aggregates the 5.98M-row `ORN_Sampled_100m` table via SQL `GROUP BY PolylineID` across the 141 monitored catchments (90,876 reaches) to extract mean channel elevation (`Elevation`), gradient (`Slope`), sinuosity (`Sinuosity`), source elevation (`SrcElevation`), and BGS bedrock/superficial geology indicators (`Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`).
@@ -96,7 +96,7 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
 ---
 
 ### 2. R Environment & Packages ([`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R), [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R))
-- **R Version**: **R ≥ 3.5.0** (tested on `R 4.5.3` on `x86_64-redhat-linux-gnu`).
+- **R Version**: **R ≥ 3.5.0** (tested on `R 4.6.2` and `R 4.5.x` on `x86_64-redhat-linux-gnu`).
 - **Required R Packages** (installed in the default R package library):
   | Package | Version / Source | Location | Purpose |
   | :--- | :--- | :--- | :--- |

@@ -11,7 +11,7 @@ This guide documents all scripts, command-line options, output directory convent
 | Script | Language | Purpose |
 | :--- | :--- | :--- |
 | [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) | R + C | **Primary all-in-one runner**: Extracts any determinand (`det_code`), applies ROS or 0.5 × LOD censoring, filters or loops over time periods (`all`, `year`, `season`, `month`), fits S3N models (`England`, `Humber`, `Thames`, `Severn`, plus any custom `--basin`), runs 5-fold cross-validation, and generates all publication-quality base-R figures (`fig1`–`fig4` + custom `fig5+`). |
-| [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) | Python 3 | **Network & GIS preprocessor**: Parses [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), snaps RSN stations to stream reaches within 250 m, builds directed river tree topology (`parent_dn`, `Dist2Mth_km`, `log_AFV`), and exports [`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv), [`rsn_sites.csv`](../data/processed/rsn_sites.csv), [`rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv), and [`rsn_catchments_lookup.csv`](../data/processed/rsn_catchments_lookup.csv). |
+| [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) | Python 3 | **Network & GIS preprocessor**: Parses [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), snaps RSN stations to stream reaches within 250 m (configurable via `--max-snap-dist`), builds directed river tree topology (`parent_dn`, `Dist2Mth_km`, `log_AFV`), and exports [`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv), [`rsn_sites.csv`](../data/processed/rsn_sites.csv), [`rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv), and [`rsn_catchments_lookup.csv`](../data/processed/rsn_catchments_lookup.csv). |
 | [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) | R + C | **Standalone model fitter**: Fits S3N Tail-Up, Tail-Down, and Combined models directly on whichever determinand/period is currently stored in [`data/processed/england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv) and writes outputs to [`output/`](../output). |
 | [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R) | R | **Standalone figure generator**: Sources [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R) to render Figures 1–4 from saved CSV outputs in [`output/`](../output) or any determinand output directory (`--dir=output/det_0117`). |
 | [`scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R) | R | **Model run & network comparator**: Compares 2 or more model output directories (across networks such as `ORN v2` vs. `EU-Hydro`, covariate subsets, or temporal slices `year_*`/`season_*`/`month_*`), runs statistical hypothesis tests, writes `comparison_report.md` + CSV summary tables, and renders 5 base-R comparison figures (`fig_comp1`–`fig_comp5`). |
@@ -259,7 +259,7 @@ Rscript scripts/04_compare_model_runs.R det_0117 det_0180_orn --output-dir=custo
 
 ## 3. GIS & Network Preprocessor: [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)
 
-[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) builds the stream network topology from [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), snaps RSN sites to their nearest reach within 250 m, computes Shreve-based additive function values (`log_AFV`), and populates the reach-level water quality columns in [`data/processed/england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv) as well as multi-period summaries in [`data/processed/rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv).
+[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) builds the stream network topology from [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) (or any custom network profile), snaps RSN monitoring stations to their nearest reach polyline within a configurable distance tolerance (`--max-snap-dist`, default `250 m`), computes Shreve-based additive function values (`log_AFV`), and populates the reach-level water quality and covariate columns in [`data/processed/england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv) as well as multi-period summaries in [`data/processed/rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv).
 
 ### 3.1 Synopsis
 ```bash
@@ -270,27 +270,87 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
-| `--det-code <CODE>` | `0117` | 4-digit EA RSN determinand code to extract and attach to [`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv), [`rsn_sites.csv`](../data/processed/rsn_sites.csv), and [`rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv). |
+| `--max-snap-dist <METRES>` | `250.0` | **Maximum snapping distance tolerance in metres** from RSN monitoring stations to river reach polylines. Stations with Euclidean snapping distance `d ≤ max_snap_dist` are retained as monitored reaches (`has_obs = 1`); stations farther than this threshold are marked `included_250m = 0` (or `included_<dist>m`) and excluded from reach observation targets to prevent spurious topological associations. |
+| `--dataset <NAME>` | `wq` | RSN monitoring dataset to extract:<br>• `wq`: Water Quality Samples ([`RSN Water Quality Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Water%20Quality%20Samples.csv))<br>• `inverts`: Macroinvertebrate Samples<br>• `diatoms`: Diatom Samples<br>• `macrophytes`: Macrophyte Samples<br>• `rhs`: River Habitat Surveys<br>• `lcms`: LCMS/GCMS Organic Pollutant Samples. |
+| `--det-code <CODE>` | `0117` | 4-digit EA RSN determinand code (for `--dataset wq`, e.g. `0117` Nitrate, `0180` Orthophosphate) or column metric name (for ecological datasets, e.g. `whpt_aspt`, `rmni`, `hqa_score`). |
+| `--transform <TYPE>` | `log` | Data transformation algorithm applied to determinand observations: `log`, `sqrt`, `cbrt`, `log1p`, `log10`, `fourthrt`, `boxcox`, `yeojohnson`, `reciprocal`, `asin`, `logit`, `none`/`raw`. |
+| `--transform-lambda <VAL>` | Auto (Profile MLE) | Power parameter \(\lambda\) for Box-Cox or Yeo-Johnson transformations. If omitted, \(\hat{\lambda}\) is automatically estimated from observed station samples. |
+| `--list-transforms` | — | Prints the full catalog of supported data transformations, formulas, and recommendations, then exits. |
 | `--censor-method <METHOD>` | `ros` | Left-censored (`<`) value handling:<br>• `ros`: Pooled Robust Lognormal Regression on Order Statistics across all stations.<br>• `ros_site`: Within-station Lognormal ROS for stations with ≥ 5 uncensored samples (falling back to global ROS slope/intercept when a station has < 5 uncensored points).<br>• `half_lod`: Substitution with 0.5 × LOD. |
 | `--year <YYYY>` | `None` (all years) | Filters the primary reach table ([`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv)) to samples from calendar year `<YYYY>`. Note: [`rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv) is always generated with all years, seasons, and months regardless of this filter. |
 | `--season <SEASON>` | `None` (all seasons) | Filters the primary reach table ([`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv)) to `winter`, `spring`, `summer`, or `autumn`/`fall`. |
 | `--month <MONTH>` | `None` (all months) | Filters the primary reach table ([`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv)) to a calendar month (`1`–`12` or `Jan`–`Dec`). |
 | `--network <NAME\|PATH>` | `orn` | Water network profile name (`orn`, `euhydro_thames`, `euhydro_tweed`, `euhydro`) or direct path to a GeoPackage (`.gpkg`), GeoParquet (`.parquet`/`.geoparquet`/`.pq`), or `.json` network config. |
+| `--network-config <PATH>` | `None` | Optional path to a custom network JSON configuration file. |
+| `--topology-mode <MODE>` | `auto` | Override how river reach connectivity is constructed: `auto` (uses profile), `nodes` (`Fnode`/`Tnode` pairs), `pointer` (`NEXTDOWNID`), or `geometry` (coordinate snapping). |
+| `--afv-col <COL>` | `None` | Override attribute column used for Additive Function Value (AFV) confluence weights (e.g. `UP_CELLS`, `CATCHMENT_AREA`). |
+| `--list-networks` | — | Lists all configured water network profiles and exits. |
 | `--convert-to-geoparquet <PATH>` | `None` | Converts the selected `--network` GeoPackage layer(s) into an OGC GeoParquet (`.parquet`) file and exits. |
 | `--gis-dir <DIR>` (or `--gis <DIR>`) | `gis` (or `$S3N_GIS_DIR`) | Custom directory containing input river network GeoPackage (`.gpkg`), GeoParquet (`.parquet`/`.geoparquet`), or `.zip` files. |
 | `--data-dir <DIR>` (or `--data <DIR>`) | `data` (or `$S3N_DATA_DIR`) | Custom root data directory containing `NCEA_River_Surveillance_Network_ARD_Open/` and `processed/`. |
 | `--out-dir <DIR>` (or `--output-dir <DIR>`) | `<data-dir>/processed` | Custom output directory for preprocessed network CSV files. |
 
-### 3.3 Practical Examples for [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)
+---
+
+### 3.3 Station-to-Reach Snapping Tolerance (`--max-snap-dist`)
+
+Spatial stream network models require monitoring station observations to be positioned directly on the directed river graph. Because GPS coordinates recorded at monitoring sites rarely fall on the exact 1D digitized polyline of the river centerline, the preprocessor performs sub-meter **orthogonal segment projection**:
+
+1. **Spatial Hash Grid Indexing**: All 1,382 RSN monitoring stations are indexed into a `2 km × 2 km` spatial hash grid `(int(px // 2000), int(py // 2000))` in British National Grid (`EPSG:27700`) meters. For each river reach polyline, only stations in overlapping or adjacent grid cells are tested.
+2. **Orthogonal Polyline Projection**: Each candidate station is projected orthogonally onto every line segment of the reach polyline, calculating:
+   - The Euclidean snapping distance \(d\) in meters from the station to the nearest point on the reach polyline.
+   - The along-reach distance `along_m` from the reach upstream node (`Fnode`) to the snapped point.
+   - The exact hydrologic distance to the sea/estuary mouth: `obs_up_dist_km = max(0.0, (Dist2Mth_m - along_m) / 1000.0)`.
+3. **Snapping Threshold Check (`d ≤ max_snap_dist`)**:
+   - Stations with \(d \le \text{max\_snap\_dist}\) are mapped to the reach, flagged as `included_250m = 1` in [`rsn_sites.csv`](../data/processed/rsn_sites.csv), and assigned to `has_obs = 1` in [`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv).
+   - Stations with \(d > \text{max\_snap\_dist}\) are flagged as `included_250m = 0` and are **not** assigned to any reach.
+
+#### When and Why to Adjust `--max-snap-dist`
+
+| Setting | Value | Recommended Use Cases |
+| :--- | :---: | :--- |
+| **Default Threshold** | `--max-snap-dist 250` (250 m) | **Standard for high-resolution networks (ORN v2, 1:25,000 scale)**.<br>• Retains 1,349 of 1,382 RSN water quality stations (**97.6%** network coverage).<br>• Network-wide median snapping distance is **8.0 m** (mean 23.4 m, IQR 3.8 m–24.1 m).<br>• Safely filters out terrestrial sites or borehole wells without risk of assigning them to distant surface streams. |
+| **Increased Threshold** | `--max-snap-dist 500` or `1000` (500–1,000 m) | **Recommended for coarse / generalized networks or edge-case stations**:<br>• **Coarse networks (e.g. EU-Hydro 1:100,000 / 1:250,000)**: Where minor headwater tributaries or winding meanders are omitted or cartographically smoothed.<br>• **Edge-case RSN stations**: Sites such as `rsn1127` sit ~295 m from the mapped ORN centerline due to a local meander bypass channel or wide floodplain offset. Increasing to `--max-snap-dist 350` or `500` recovers these stations into the model.<br>• **Large lake / estuary stations**: Where monitoring buoys are moored in the center of wide waterbodies hundreds of meters from the mapped centerline. |
+| **Reduced Threshold** | `--max-snap-dist 100` or `50` (50–100 m) | **Recommended for dense parallel ditch or canal networks**:<br>• In low-gradient agricultural fenlands (e.g. the Fens, Somerset Levels) or urban canals where parallel drainage channels run within 100–150 m of each other.<br>• Prevents a station from accidentally snapping across a levee bank or drainage divide into the wrong hydrologic channel. |
+
+#### Snapping Verification & Diagnostics
+
+You can inspect the exact snapping coordinates, distances, and zoomed map insets for any catchment using the standalone diagnostics tool [`scripts/06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R):
+
 ```bash
-# Default preprocessing (Nitrate 0117, all time periods, pooled Lognormal ROS)
+# 1. Generate network-wide snapping diagnostics and catchment summary tables
+Rscript scripts/06_station_snapping_diagnostics.R
+
+# 2. Inspect a specific catchment (e.g. Thames, Humber, or River Eden)
+Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
+```
+
+This outputs:
+- `station_snapping_all.csv`: Full coordinate table containing station coordinates (`station_X`, `station_Y`), snapped reach coordinates (`snap_reach_X`, `snap_reach_Y`, `reach_mid_X`, `reach_mid_Y`), and exact distance in meters (`snap_dist_m`).
+- `fig_snap_catchment_<CatchID>_<Name>.png`: Catchment map highlighting snapped reaches, distance histograms, and 4 high-resolution zoomed insets showing station markers, reach centerlines, and snapping vectors.
+
+---
+
+### 3.4 Practical Examples for [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)
+
+```bash
+# 1. Default preprocessing (Nitrate 0117, ORN v2 network, 250 m snapping tolerance)
 python3 scripts/01_preprocess_orn.py
 
-# Preprocess using station-level Lognormal ROS censoring
-python3 scripts/01_preprocess_orn.py --censor-method ros_site
+# 2. Increase snapping tolerance to 500 m to capture edge-case stations on wide floodplains
+python3 scripts/01_preprocess_orn.py --max-snap-dist 500
 
-# Preprocess Orthophosphate (0180) for Summer 2023 into england_rsn_reaches.csv
-python3 scripts/01_preprocess_orn.py --det-code 0180 --year 2023 --season summer
+# 3. Restrict snapping tolerance to 100 m for dense canal / ditch networks
+python3 scripts/01_preprocess_orn.py --max-snap-dist 100
+
+# 4. Preprocess with Square Root transformation for Nitrate
+python3 scripts/01_preprocess_orn.py --transform sqrt
+
+# 5. Preprocess Orthophosphate (0180) for Summer 2023 with custom 300 m snapping
+python3 scripts/01_preprocess_orn.py --det-code 0180 --year 2023 --season summer --max-snap-dist 300
+
+# 6. Preprocess an alternative network (EU-Hydro Thames) with 500 m snapping
+python3 scripts/01_preprocess_orn.py --network euhydro_thames --max-snap-dist 500
 ```
 
 ---
@@ -338,7 +398,7 @@ The entire S3N pipeline is engineered to minimize external software dependencies
   | `math`, `collections`, `csv`, `argparse`, `os`, `time` | Geometry projection, tree traversal, CSV I/O, and CLI argument parsing. |
 
 ### 5.2 R Environment & Packages ([`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R), [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R))
-- **R Version**: **R ≥ 3.5.0** (tested on `R 4.5.3` on `x86_64-redhat-linux-gnu`).
+- **R Version**: **R ≥ 3.5.0** (tested on `R 4.6.2` and `R 4.5.x` on `x86_64-redhat-linux-gnu`).
 - **Required R Packages** (installed in the default R package library):
   | Package | Version / Source | Location | Purpose |
   | :--- | :--- | :--- | :--- |

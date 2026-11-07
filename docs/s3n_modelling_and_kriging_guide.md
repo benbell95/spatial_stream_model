@@ -143,8 +143,8 @@ Monitoring station coordinates `(px, py)` (in British National Grid `EPSG:27700`
    - For each line segment `e_k = v_{k+1} - v_k`, the station point `p` is projected orthogonally via the clamped scalar projection parameter:
      `t_k = max(0, min(1, ((p - v_k) · e_k) / ||e_k||²))`
    - The closest point on segment `k` is `proj_k = v_k + t_k × e_k`, yielding perpendicular Euclidean snap distance `d_snap = ||p - proj_k||` and cumulative along-reach distance `along_m` measured from the upstream `Fnode` `v_0` to `proj_k`.
-3. **250 m Acceptance Threshold & Exact Station Mouth Distance (`obs_up_dist_km`)**:
-   - Stations with `min(d_snap) ≤ 250 m` are linked to their nearest reach (`RivID`). (Across England on ORN v2, the median snapping distance is just **`8.0 m`**.)
+3. **Configurable Acceptance Threshold (`--max-snap-dist`, default `≤ 250 m`) & Exact Station Mouth Distance (`obs_up_dist_km`)**:
+   - Stations with `min(d_snap) ≤ max_snap_dist` (default 250 m) are linked to their nearest reach (`RivID`). (Across England on ORN v2, the median snapping distance is just **`8.0 m`**). The threshold can be adjusted via `--max-snap-dist` in [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) (e.g. relaxed to 500 m for coarse networks or tightened to 100 m for dense canal systems).
    - Rather than approximating the station's position by the reach midpoint, its **exact hydrologic distance to the river mouth** is recorded as:
      `obs_up_dist_km = max(0, (Dist2Mth_m - along_m) / 1000.0)`
    - During `S3N` modelling, every reach `i` uses `up_dist[i] = obs_up_dist_km[i]` if monitored (`has_obs == 1`), and `up_dist[i] = up_dist_mid_km[i]` if unmonitored (`has_obs == 0`).
