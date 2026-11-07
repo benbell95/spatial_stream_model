@@ -45,7 +45,11 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | `--network=<name>` | `orn` | Selects the river network dataset (`orn`, `euhydro_thames`, `euhydro_tweed`, `euhydro`, or a custom GeoPackage `.gpkg`, GeoParquet `.parquet`/`.geoparquet`, or JSON profile). Automatically preprocesses the network if not yet cached in `data/processed/<name>/`, appends the network abbreviation to the output directory (e.g., `output/det_0117_orn/`, `output/det_0117_euhydro_thames/`), and displays the network name on all figures. See [`docs/custom_water_network_guide.md`](./custom_water_network_guide.md) for instructions on adding new water networks. |
 | `--list-vars` (or `--list-covariates`) | — | Lists all 15 available fixed-effect regression covariates, their short CLI aliases, transformations, and default inclusion status. |
 | `--vars=<spec>` (or `--covariates=<spec>`) | `default` | Selects which fixed-effect predictors enter the regression design matrix `X` (without needing to re-run [`01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)):<br>• `default`: `Elevation_z`, `Slope_z`, `log10_US_Accum_z`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Peat` (or `Is_Aquifer` for single basins), `Easting_z`, `Northing_z` (saves to `output/det_<code>_<net>/`)<br>• **Explicit subset**: e.g. `--vars=elevation,slope,aquifer` (saves to `output/det_<code>_<net>_vars_elev_slope_aquifer/` and adds covariate names to the subtitles of Figures 1–4)<br>• **Relative add/remove (`+var`/`-var`)**: e.g. `--vars=-easting,-northing` (saves to `output/det_<code>_<net>_vars_no_east_no_north/`) or `--vars=+sinuosity,+strahler`<br>• `none` (or `intercept`): Intercept-only model (`X = 1`, saves to `output/det_<code>_<net>_vars_none/`)<br>• `all`: All available covariates (saves to `output/det_<code>_<net>_vars_all/`). |
-| `--raw` / `--log` | `log` for `wq`/`lcms`; `raw` for ecology (`inverts`, `diatoms`, `macrophytes`, `rhs`) | Controls response variable transformation:<br>• `--raw`: Forces untransformed scale `Y` (recommended for bounded/index variables like `0061` pH, `whpt_aspt`, `life_family_index`, `psi_family_score`, `rmni`, `hqa_score`).<br>• `--log`: Forces natural log scale `log(Y)` (default for skewed chemical concentrations and organic micropollutants). |
+| `--list-transforms` | — | Prints a comprehensive reference table of all available data transformation algorithms, mathematical formulas \(z = f(y)\), valid domains, and scientific recommendations across [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R), and [`01_preprocess_orn.py`](../scripts/01_preprocess_orn.py). |
+| `--transform=<type>` | `log` (`wq`/`lcms`), `none` (ecology) | Selects the mathematical response transformation applied prior to spatial covariance estimation and universal stream kriging. Supported options: `log`, `sqrt`, `cbrt`, `log1p`, `log10`, `fourthrt`, `boxcox`, `yeojohnson`, `reciprocal`, `asin`, `logit`, `none` (or `raw`). When a non-default transformation is specified, the output directory is tagged automatically (e.g. `output/det_0117_orn_trans_sqrt/`). |
+| `--lambda=<val>` | Auto (Profile MLE) | Power parameter \(\lambda\) for Box-Cox and Yeo-Johnson transformations. If omitted, the optimal parameter \(\hat{\lambda}\) is automatically estimated from observed samples via Profile Maximum Likelihood over \([-2, 2]\). |
+| `--scale=<val>` | `1.0` (proportions) / `100.0` (%) | Upper bound scale parameter for bounded angular (`asin`) and logistic (`logit`) transformations. |
+| `--raw` / `--log` | `log` for `wq`/`lcms`; `raw` for ecology | Backward-compatible convenience flags equivalent to `--transform=none` and `--transform=log`. |
 | `--reverse-color` (or `--reverse-colour`) | `FALSE` (blue = low, red = high) | Reverses the map color palette (`val_cols_rev`) so that **low values are warm red/orange and high values are cool blue/teal** — useful for ecological/habitat quality metrics where higher scores indicate better condition (e.g., `hqa_score`, `whpt_aspt`, `life_family_index`, `psi_family_score`). Also supported in [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R). |
 | `--vmin=<val>` / `--vmax=<val>` | Auto-shared across periods | Optional explicit minimum and maximum scale bar bounds (in raw measurement units, e.g., `--vmin=0.2 --vmax=20`). Note: When running seasonal, yearly, or monthly plots (`--by=season|year|month` or individual period slices), scale bars are **automatically synchronized** across all periods even without `--vmin`/`--vmax`. |
 | `--censor=<method>` | `ros` | Method for imputing left-censored (`<`) observations below the limit of detection:<br>• `ros`: **Robust Lognormal Regression on Order Statistics** (Helsel & Cohn, 1988; Hirsch & Stedinger, 1987). Fits a log-normal quantile regression above the detection limit(s) and imputes censored values via Weibull/Kaplan–Meier plotting positions.<br>• `half_lod`: Simple substitution of `< L` with `0.5 * L`. |
@@ -102,7 +106,58 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 
 ---
 
-### 2.5 Practical Examples for [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)
+### 2.5 Universal Data Transformation Engine (`--transform=<type>`)
+
+Geostatistical spatial stream network kriging assumes that the stochastic error process follows a multivariate Gaussian distribution. For many stream determinands, raw observations exhibit marked skewness or heteroscedasticity. The pipeline provides a universal transformation framework supporting 12 analytical transformations with exact inverse back-transformation, automatic Profile Maximum Likelihood parameter estimation (\(\hat{\lambda}\)), and color scale generation.
+
+```bash
+# Print the full transformation catalog from the command line
+Rscript scripts/run_s3n_determinand.R --list-transforms
+```
+
+#### Supported Transformations Catalog
+
+| Transform (`--transform=`) | Aliases | Forward Formula \(z = f(y)\) | Inverse Formula \(y = f^{-1}(z)\) | Domain | Scientific Application & Suitability |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `log` | `ln` | \(\ln(y)\) | \(\exp(z)\) | \(y > 0\) | **Default for chemical & LCMS determinands**. Best for multiplicative concentrations spanning \(2+\) orders of magnitude (e.g. Orthophosphate `0180`, Dissolved Organic Carbon `0301`, Conductivity `0077`). |
+| `sqrt` | `square_root` | \(\sqrt{y}\) | \(z^2\) | \(y \ge 0\) | **Strongly recommended for moderately skewed concentrations and taxa counts**. Ideal for UK Nitrate `0117` (reduces skewness from \(+1.00\) to \(+0.09\)), Alkalinity `0162`, and macroinvertebrate taxa richness `whpt_ntaxa`. Avoids over-penalizing clean upland headwaters. |
+| `cbrt` | `cube_root` | \(\text{sign}(y) \cdot \|y\|^{1/3}\) | \(z^3\) | All real \(y\) | **Wilson-Hilferty transformation for Gamma-distributed hydrological variables**. Compresses extreme flood peaks while preserving low-flow headwater observations without crushing near-zero readings. |
+| `log1p` | `log_1p` | \(\ln(1 + y)\) | \(\exp(z) - 1\) | \(y \ge 0\) | **Zero-tolerant logarithmic transformation**. Accommodates true zero values (\(y = 0\)) without requiring arbitrary limit-of-detection substitutions. Excellent for low taxa counts or trace pollutant occurrences. |
+| `log10` | `log_10` | \(\log_{10}(y)\) | \(10^z\) | \(y > 0\) | **Base-10 order-of-magnitude scaling**. Standard for environmental health metrics spanning multiple orders of magnitude (e.g. pathogen indicator counts, electrical conductivity). |
+| `fourthrt` | `qtrt` | \(y^{1/4}\) | \(z^4\) | \(y \ge 0\) | **Quartic root power transform**. Classic ecological community standard for heavy-tailed abundance and macroinvertebrate biomass distributions. Intermediate between square root and natural log. |
+| `boxcox` | `bc`, `box_cox` | \((y^\lambda - 1)/\lambda\) | \((\lambda z + 1)^{1/\lambda}\) | \(y > 0\) | **Profile Maximum Likelihood Gaussian optimization**. Analytically estimates the optimal power parameter \(\hat{\lambda} \in [-2, 2]\) from observed station samples. |
+| `yeojohnson` | `yj` | Yeo-Johnson(\(\lambda\)) | Inverse YJ(\(z, \lambda\)) | All real \(y\) | **Zero- and negative-tolerant power transformation**. Extension of Box-Cox that continuously maps all real values including zeros and standardized anomaly indices. Auto-estimates \(\hat{\lambda}\) via Profile MLE. |
+| `reciprocal` | `inv` | \(-1 / y\) | \(-1 / z\) | \(y > 0\) | **Rate-dilution process modeling**. Monotonically transforms dilution rates while preserving positive spatial gradient direction (higher raw \(y\) corresponds to higher \(z\)). |
+| `asin` | `arcsin` | \(\arcsin(\sqrt{y / \text{scale}})\) | \(\text{scale} \cdot \sin^2(z)\) | \(0 \le y \le \text{scale}\) | **Angular transformation for bounded proportions and percentages**. Standard for substrate silt cover (`percent_silt`), diatom guild relative abundances, and percentage saturation. |
+| `logit` | `logistic` | \(\ln(p / (1 - p))\) | \(\text{scale} / (1 + \exp(-z))\) | \(0 < y < \text{scale}\) | **Logistic transformation for bounded proportions**. S-shaped stretching of tails for bounded sediment percentages and proportional indices. |
+| `none` | `raw`, `identity` | \(y\) | \(z\) | All real \(y\) | **Default for multimetric ecological indices**. Standard for indices that are already approximately interval/normal (e.g. WHPT ASPT `whpt_aspt`, LIFE Flow Index `life_family_index`, RHS `hqa_score`). |
+
+#### Which Transformation is Best for My Data?
+
+```mermaid
+flowchart TD
+    Q1{"Is the metric bounded\nas a proportion or %?"}
+    Q1 -- Yes --> B1["Use --transform=asin or --transform=logit\n(e.g., sediment silt cover, diatom valences)"]
+    Q1 -- No --> Q2{"Is it an ecological multimetric\nindex with interval scaling?"}
+    Q2 -- Yes --> B2["Use --transform=none (--raw)\n(e.g., WHPT ASPT, LIFE index, RHS HQA)"]
+    Q2 -- No --> Q3{"Does the metric span\n> 2 orders of magnitude\nwith multiplicative error?"}
+    Q3 -- Yes --> B3["Use --transform=log (Default for wq/lcms)\n(e.g., Orthophosphate 0180, DOC 0301, Conductivity 0077)"]
+    Q3 -- No --> Q4{"Does the metric contain\ntrue zeros (y = 0)?"}
+    Q4 -- Yes --> B4["Use --transform=log1p or --transform=sqrt\n(e.g., taxa counts, zero-inflated chemicals)"]
+    Q4 -- No --> Q5{"Is it moderately right-skewed\n(skewness between +0.5 and +1.5)?"}
+    Q5 -- Yes --> B5["Use --transform=sqrt (Strongly Recommended!)\n(e.g., UK Nitrate 0117, Alkalinity 0162, Taxa Richness)"]
+    Q5 -- No --> B6["Use --transform=boxcox\n(Auto-estimates optimal lambda via Profile MLE)"]
+```
+
+> [!TIP]
+> **Why Square Root (`sqrt`) is superior to Logarithm (`log`) for UK Nitrate (`0117`):**
+> Raw UK Nitrate observations in [`data/processed/england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv) have moderate right skewness (\(+1.001\)). 
+> - Applying a **log transform** (\(\ln y\)) over-compresses the distribution, flipping the skewness to a long negative tail (\(-1.128\)). This over-magnifies small measurement differences in pristine upland headwaters and pulls predictions toward \(-\infty\).
+> - In contrast, the **square root transform** (\(y^{0.5}\)) eliminates skewness almost entirely (\(+0.092\)), producing near-ideal Gaussian residual symmetry, lower cross-validation root mean square error (CV RMSE = `0.5837` vs `0.7996`), and significantly reduced kriging standard errors across England.
+
+---
+
+### 2.6 Practical Examples for [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)
 
 #### A. Discovery Commands
 ```bash

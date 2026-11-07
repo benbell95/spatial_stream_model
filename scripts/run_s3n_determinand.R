@@ -104,6 +104,11 @@ if ("--list-vars" %in% args || "--list-covariates" %in% args) {
   quit(save = "no", status = 0)
 }
 
+if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
+  print_available_transforms()
+  quit(save = "no", status = 0)
+}
+
 PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR)
 net_meta       <- load_network_metadata(PROC_DIR)
 REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
@@ -226,14 +231,29 @@ if (!(ds_mode %in% names(DATASET_FILES))) {
   stop(sprintf("Invalid --dataset='%s'. Choose from: %s", ds_mode, paste(names(DATASET_FILES), collapse = ", ")))
 }
 
-# Default scale: log for water chemistry / LCMS (unless --raw), raw for ecological indices (unless --log)
-if ("--raw" %in% args) {
-  use_log <- FALSE
-} else if ("--log" %in% args) {
-  use_log <- TRUE
-} else {
-  use_log <- (ds_mode %in% c("wq", "lcms"))
+# Default scale & transformation:
+# --transform=<type> (log, sqrt, cbrt, fourthrt, log1p, log10, reciprocal, boxcox, yeojohnson, asin, logit, none/raw)
+# --lambda=<val> (optional Box-Cox / Yeo-Johnson power parameter override; auto-estimated by default)
+trans_arg  <- grep("^--(transform|trans|transformation)=", args, value = TRUE)
+trans_cli  <- if (length(trans_arg) > 0) tolower(sub("^--(transform|trans|transformation)=", "", trans_arg[1])) else NA_character_
+lambda_arg <- grep("^--(lambda|transform-lambda)=", args, value = TRUE)
+lambda_cli <- if (length(lambda_arg) > 0) as.numeric(sub("^--(lambda|transform-lambda)=", "", lambda_arg[1])) else NULL
+scale_arg  <- grep("^--(scale|transform-scale)=", args, value = TRUE)
+scale_cli  <- if (length(scale_arg) > 0) as.numeric(sub("^--(scale|transform-scale)=", "", scale_arg[1])) else NULL
+
+if (is.na(trans_cli)) {
+  if ("--raw" %in% args) {
+    trans_cli <- "none"
+  } else if ("--log" %in% args) {
+    trans_cli <- "log"
+  } else {
+    trans_cli <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
+  }
 }
+
+trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
+use_log   <- trans_obj$is_log
+
 reverse_color <- any(args %in% c("--reverse-color", "--reverse-colour", "--rev-color", "--rev-colour", "--reverse-scale"))
 vmin_arg   <- grep("^--vmin=", args, value = TRUE)
 vmin_raw   <- if (length(vmin_arg) > 0) as.numeric(sub("^--vmin=", "", vmin_arg[1])) else NULL
@@ -268,9 +288,15 @@ var_specs <- if (length(vars_args) > 0) {
 }
 var_specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
 
-user_lib <- Sys.getenv("R_LIBS_USER")
-if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
-  .libPaths(c(user_lib, .libPaths()))
+cand_libs <- c(
+  Sys.getenv("R_LIBS_USER"),
+  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.6"),
+  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.5")
+)
+for (cl in cand_libs) {
+  if (nzchar(cl) && dir.exists(cl) && !(normalizePath(cl, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
+    .libPaths(c(cl, .libPaths()))
+  }
 }
 
 suppressPackageStartupMessages({
@@ -278,9 +304,14 @@ suppressPackageStartupMessages({
 })
 dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 
-vars_tag <- format_covariates_folder_tag(var_specs)
+default_trans   <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
+trans_tag       <- format_transform_folder_tag(trans_obj, default_type = default_trans)
+vars_tag        <- format_covariates_folder_tag(var_specs)
 out_folder_name <- if (ds_mode == "wq") paste0("det_", det_code) else paste0(ds_mode, "_", gsub("[^a-zA-Z0-9_]+", "_", det_code))
 out_folder_name <- paste0(out_folder_name, "_", net_meta$abbr)
+if (nzchar(trans_tag)) {
+  out_folder_name <- paste0(out_folder_name, "_", trans_tag)
+}
 if (nzchar(vars_tag)) {
   out_folder_name <- paste0(out_folder_name, "_", vars_tag)
 }
@@ -405,10 +436,17 @@ if (ds_mode == "wq") {
   is_cens  <- rep(FALSE, length(raw_vals))
 }
 
-valid_k     <- !is.na(raw_vals) & nchar(trimws(det_samples$sample_datetime)) >= 7 & (if (use_log) raw_vals > 0 else TRUE)
+valid_k     <- !is.na(raw_vals) & nchar(trimws(det_samples$sample_datetime)) >= 7 & trans_obj$valid_fn(raw_vals)
 det_samples <- det_samples[valid_k, ]
 raw_vals    <- raw_vals[valid_k]
 is_cens     <- is_cens[valid_k]
+
+# Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson if not explicitly supplied
+if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
+  trans_obj <- build_transformer(trans_cli, y_obs = raw_vals, lambda = lambda_cli, scale = scale_cli)
+  cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for %s (%s)\n",
+              trans_obj$lambda, det_name, trans_obj$label))
+}
 
 if (any(is_cens) && censor_m == "ros") {
   det_samples$val <- impute_censored_ros(raw_vals, is_cens)
@@ -522,9 +560,9 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     pred_td_sc    = pr_td$prediction,
     pred_model_sc = pred_comb,
     se_model_sc   = se_comb,
-    pred_tu       = if (use_log) exp(pr_tu$prediction) else pr_tu$prediction,
-    pred_td       = if (use_log) exp(pr_td$prediction) else pr_td$prediction,
-    pred_combined = if (use_log) exp(pred_comb) else pred_comb
+    pred_tu       = trans_obj$inv(pr_tu$prediction),
+    pred_td       = trans_obj$inv(pr_td$prediction),
+    pred_combined = trans_obj$inv(pred_comb)
   )
 
   # 5-Fold Cross-Validation
@@ -747,7 +785,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   reach_means <- aggregate(val ~ RivID, data = det_WithRiv, FUN = mean)
   reach_up    <- aggregate(obs_up_dist_km ~ RivID, data = det_WithRiv, FUN = mean)
   reach_agg   <- merge(reach_means, reach_up, by = "RivID")
-  reach_agg$y_resp <- if (use_log) log(reach_agg$val) else reach_agg$val
+  reach_agg$y_resp <- trans_obj$fwd(reach_agg$val)
 
   df_full <- df_reaches
   df_full$has_obs <- ifelse(df_full$RivID %in% reach_agg$RivID, 1L, 0L)
@@ -787,12 +825,18 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_cv$Determinand_Code <- det_code
   all_cv$Determinand_Name <- det_title_name
   all_cv$Unit             <- det_unit
-  all_cv$Scale            <- if (use_log) "log" else "raw"
+  all_cv$Scale            <- if (trans_obj$is_transformed) trans_obj$short_label else "raw"
+  all_cv$Transform_Type   <- trans_obj$type
+  all_cv$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
+  all_cv$Transform_Label  <- trans_obj$label
   all_cv$Network_Abbr     <- net_meta$abbr
   all_cv$Network_Label    <- net_meta$short_label
-  all_params$Period       <- period_tag
-  all_params$Network_Abbr  <- net_meta$abbr
-  all_params$Network_Label <- net_meta$short_label
+  all_params$Period           <- period_tag
+  all_params$Transform_Type   <- trans_obj$type
+  all_params$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
+  all_params$Transform_Label  <- trans_obj$label
+  all_params$Network_Abbr     <- net_meta$abbr
+  all_params$Network_Label    <- net_meta$short_label
 
   write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
   write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)
@@ -847,8 +891,8 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   n_figs <- 4L + length(extra_fits)
   cat(sprintf("\nGenerating %d publication-quality figures in %s (shared scale [%.3f, %.3f]) ...\n",
               n_figs, out_subdir,
-              if (use_log) exp(sc_val$vmin) else sc_val$vmin,
-              if (use_log) exp(sc_val$vmax) else sc_val$vmax))
+              trans_obj$inv(sc_val$vmin),
+              trans_obj$inv(sc_val$vmax)))
 
   fig1_path <- file.path(out_subdir, sprintf("fig1_england_stream_%s_map.png", det_code))
   fig2_path <- file.path(out_subdir, sprintf("fig2_humber_basin_%s_map.png", det_code))
@@ -857,13 +901,13 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   vars_sub  <- format_covariates_subtitle(var_specs = var_specs, param_tab = all_params)
   net_lbl   <- net_meta$short_label
 
-  plot_fig1_england_map(eng_pred, det_code, det_title_name, det_unit, use_log, fig1_path,
+  plot_fig1_england_map(eng_pred, det_code, det_title_name, det_unit, trans_obj, fig1_path,
                         reverse_color = reverse_color, sc_val = sc_val, sc_se = sc_se_eng,
                         vars_label = vars_sub, network_label = net_lbl)
-  plot_fig2_humber_map(hum_pred, all_cv, sc_val, det_code, det_title_name, det_unit, use_log, fig2_path,
+  plot_fig2_humber_map(hum_pred, all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig2_path,
                        reverse_color = reverse_color, sc_se = sc_se_hum,
                        vars_label = vars_sub, network_label = net_lbl)
-  plot_fig3_thames_severn_map(tha_pred, sev_pred, sc_val, det_code, det_title_name, det_unit, use_log, fig3_path,
+  plot_fig3_thames_severn_map(tha_pred, sev_pred, sc_val, det_code, det_title_name, det_unit, trans_obj, fig3_path,
                               reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl)
 
   extra_cv_for_fig4 <- lapply(extra_fits, function(ef) {
@@ -874,7 +918,7 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
     )
   })
   plot_fig4_diagnostics(eng_pred, res_eng$cv_pts, if (!is.null(res_hum)) res_hum$cv_pts else NULL,
-                        all_cv, all_params, det_code, det_title_name, det_unit, use_log, fig4_path,
+                        all_cv, all_params, det_code, det_title_name, det_unit, trans_obj, fig4_path,
                         extra_cv_list = extra_cv_for_fig4, lims_a = lims_a, ylim_d = ylim_d,
                         vars_label = vars_sub, network_label = net_lbl)
 
@@ -883,7 +927,7 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
       ef <- extra_fits[[k]]
       fig_k_path <- file.path(out_subdir, sprintf("fig%d_%s_basin_%s_map.png", 4L + k, ef$info$slug, det_code))
       plot_basin_map(ef$pred_df, ef$info$short_title, ef$info$domain_label,
-                     all_cv, sc_val, det_code, det_title_name, det_unit, use_log, fig_k_path,
+                     all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig_k_path,
                      reverse_color = reverse_color, sc_se = sc_se_hum,
                      vars_label = vars_sub, network_label = net_lbl)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
@@ -900,7 +944,7 @@ compute_batch_scales <- function(slice_list) {
   all_cv_vals   <- unlist(lapply(valid_s, function(s) c(s$res_eng$cv_pts$obs_y, s$res_eng$cv_pts$cv_comb)))
   all_raw_preds <- unlist(lapply(valid_s, function(s) quantile(s$eng_pred$pred_combined, probs = c(0.01, 0.96), na.rm = TRUE)))
 
-  sc_val    <- compute_color_scale(all_pred_vals, use_log, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+  sc_val    <- compute_color_scale(all_pred_vals, trans_obj, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
   sc_se_eng <- compute_se_scale(all_se_eng)
   sc_se_hum <- compute_se_scale(all_se_hum)
 
@@ -951,7 +995,7 @@ if (!is.na(by_mode)) {
   comb_pa <- do.call(rbind, lapply(batch_res, function(x) if (!is.null(x)) x$params else NULL))
   vars_sub_grid <- format_covariates_subtitle(var_specs = var_specs, param_tab = comb_pa)
   plot_fig5_temporal_england_grid(grid_items, by_mode, shared_sc$sc_val,
-                                  det_code, det_name, det_unit, use_log,
+                                  det_code, det_name, det_unit, trans_obj,
                                   fig5_grid_path, reverse_color = reverse_color,
                                   vars_label = vars_sub_grid, network_label = net_meta$short_label)
   write.csv(comb_cv, file.path(OUT_DIR, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
@@ -995,7 +1039,7 @@ if (!is.na(by_mode)) {
         }
       }
     }
-    sc_val_one <- compute_color_scale(sib_vals, use_log, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+    sc_val_one <- compute_color_scale(sib_vals, trans_obj, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
     sc_se_e1   <- compute_se_scale(sib_se_e)
     sc_se_h1   <- compute_se_scale(sib_se_h)
     plot_temporal_slice(sl_one, sc_val_one, sc_se_e1, sc_se_h1)

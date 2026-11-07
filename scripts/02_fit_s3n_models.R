@@ -38,6 +38,10 @@ if ("--list-vars" %in% args || "--list-covariates" %in% args) {
   print_available_covariates()
   quit(save = "no", status = 0)
 }
+if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
+  print_available_transforms()
+  quit(save = "no", status = 0)
+}
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
 PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR)
@@ -51,9 +55,35 @@ var_specs <- if (length(vars_args) > 0) {
 }
 var_specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
 
-user_lib <- Sys.getenv("R_LIBS_USER")
-if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
-  .libPaths(c(user_lib, .libPaths()))
+trans_arg  <- grep("^--(transform|trans|transformation)=", args, value = TRUE)
+trans_cli  <- if (length(trans_arg) > 0) tolower(sub("^--(transform|trans|transformation)=", "", trans_arg[1])) else NA_character_
+lambda_arg <- grep("^--(lambda|transform-lambda)=", args, value = TRUE)
+lambda_cli <- if (length(lambda_arg) > 0) as.numeric(sub("^--(lambda|transform-lambda)=", "", lambda_arg[1])) else NULL
+scale_arg  <- grep("^--(scale|transform-scale)=", args, value = TRUE)
+scale_cli  <- if (length(scale_arg) > 0) as.numeric(sub("^--(scale|transform-scale)=", "", scale_arg[1])) else NULL
+
+if (is.na(trans_cli)) {
+  if ("--raw" %in% args) {
+    trans_cli <- "none"
+  } else if ("--log" %in% args) {
+    trans_cli <- "log"
+  } else {
+    trans_cli <- "log"
+  }
+}
+
+trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
+use_log   <- trans_obj$is_log
+
+cand_libs <- c(
+  Sys.getenv("R_LIBS_USER"),
+  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.6"),
+  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.5")
+)
+for (cl in cand_libs) {
+  if (nzchar(cl) && dir.exists(cl) && !(normalizePath(cl, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
+    .libPaths(c(cl, .libPaths()))
+  }
 }
 
 suppressPackageStartupMessages({
@@ -62,8 +92,12 @@ suppressPackageStartupMessages({
 
 dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 
-vars_tag <- format_covariates_folder_tag(var_specs)
-sub_tag  <- if (net_meta$abbr != "orn") paste0("net_", net_meta$abbr) else ""
+trans_tag <- format_transform_folder_tag(trans_obj, default_type = "log")
+vars_tag  <- format_covariates_folder_tag(var_specs)
+sub_tag   <- if (net_meta$abbr != "orn") paste0("net_", net_meta$abbr) else ""
+if (nzchar(trans_tag)) {
+  sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", trans_tag) else trans_tag
+}
 if (nzchar(vars_tag)) {
   sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", vars_tag) else vars_tag
 }
@@ -83,6 +117,15 @@ catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
 } else {
   NULL
 }
+
+# Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson if not explicitly supplied
+if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
+  obs_raw <- df_full$nitrate_mean[df_full$has_obs == 1 & !is.na(df_full$nitrate_mean)]
+  trans_obj <- build_transformer(trans_cli, y_obs = obs_raw, lambda = lambda_cli, scale = scale_cli)
+  cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for Nitrate (%s)\n",
+              trans_obj$lambda, trans_obj$label))
+}
+
 cat(sprintf("Loaded %d stream reaches (%d with RSN Nitrate observations) across %d catchments.\n",
             nrow(df_full), sum(df_full$has_obs == 1), length(unique(df_full$CatchID))))
 
@@ -110,7 +153,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"), var_specs = var_specs)
   cat(sprintf("  Fixed-effect covariates (%d): %s\n", ncol(X_all), paste(colnames(X_all), collapse = ", ")))
   X_obs <- X_all[1:n_obs, , drop = FALSE]
-  y_obs <- as.matrix(df_ord$log_nitrate_mean[1:n_obs])
+  y_obs <- as.matrix(trans_obj$fwd(df_ord$nitrate_mean[1:n_obs]))
 
   # 1. Build Tree & Neighbors (Tail-Up and Tail-Down)
   t0 <- proc.time()
@@ -193,16 +236,26 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     Is_Aquifer         = df_ord$Is_Aquifer,
     has_obs            = df_ord$has_obs,
     obs_nitrate_mgL    = df_ord$nitrate_mean,
-    obs_log_nitrate    = df_ord$log_nitrate_mean,
+    obs_model_sc       = as.numeric(y_obs),
+    pred_tu_sc         = round(pr_tu$prediction, 5),
+    se_tu_sc           = round(se_tu, 5),
+    pred_td_sc         = round(pr_td$prediction, 5),
+    se_td_sc           = round(se_td, 5),
+    pred_model_sc      = round(pred_log_comb, 5),
+    se_model_sc        = round(se_comb, 5),
+    pred_tu            = round(trans_obj$inv(pr_tu$prediction), 4),
+    pred_td            = round(trans_obj$inv(pr_td$prediction), 4),
+    pred_combined      = round(trans_obj$inv(pred_log_comb), 4),
+    obs_log_nitrate    = as.numeric(y_obs),
     pred_log_tu        = round(pr_tu$prediction, 5),
     se_log_tu          = round(se_tu, 5),
-    pred_mgL_tu        = round(exp(pr_tu$prediction), 4),
+    pred_mgL_tu        = round(trans_obj$inv(pr_tu$prediction), 4),
     pred_log_td        = round(pr_td$prediction, 5),
     se_log_td          = round(se_td, 5),
-    pred_mgL_td        = round(exp(pr_td$prediction), 4),
+    pred_mgL_td        = round(trans_obj$inv(pr_td$prediction), 4),
     pred_log_combined  = round(pred_log_comb, 5),
     se_log_combined    = round(se_comb, 5),
-    pred_mgL_combined  = round(exp(pred_log_comb), 4)
+    pred_mgL_combined  = round(trans_obj$inv(pred_log_comb), 4)
   )
   write.csv(pred_df, file.path(OUT_ROOT, sprintf("predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
 
@@ -355,10 +408,18 @@ res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), 
 
 all_cv <- rbind(res_england$cv_summary, res_humber$cv_summary, res_thames$cv_summary, res_severn$cv_summary)
 all_params <- rbind(res_england$param_df, res_humber$param_df, res_thames$param_df, res_severn$param_df)
-all_cv$Network_Abbr      <- net_meta$abbr
-all_cv$Network_Label     <- net_meta$short_label
-all_params$Network_Abbr  <- net_meta$abbr
-all_params$Network_Label <- net_meta$short_label
+all_cv$Transform_Type       <- trans_obj$type
+all_cv$Transform_Lambda     <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
+all_cv$Transform_Label      <- trans_obj$label
+all_cv$Scale                <- if (trans_obj$is_transformed) trans_obj$short_label else "raw"
+all_cv$Network_Abbr         <- net_meta$abbr
+all_cv$Network_Label        <- net_meta$short_label
+
+all_params$Transform_Type   <- trans_obj$type
+all_params$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
+all_params$Transform_Label  <- trans_obj$label
+all_params$Network_Abbr     <- net_meta$abbr
+all_params$Network_Label    <- net_meta$short_label
 
 write.csv(all_cv, file.path(OUT_ROOT, "tables/cv_model_comparison.csv"), row.names = FALSE)
 write.csv(all_params, file.path(OUT_ROOT, "tables/s3n_parameter_estimates.csv"), row.names = FALSE)

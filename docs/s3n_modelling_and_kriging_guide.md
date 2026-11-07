@@ -100,9 +100,22 @@ Both [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and [`
      `log(y_i) = α̂_ROS + β̂_ROS × z_i`
    - Each censored measurement `i ∈ C_j` is then imputed at its expected lognormal order statistic, capped strictly at its physical detection limit `LOD_i`:
      `ŷ_i = min(LOD_i, exp(α̂_ROS + β̂_ROS × Φ⁻¹(pp_i)))`
-5. **Station & Reach Aggregation**:
+5. **Station & Reach Aggregation and Universal Response Transformation**:
    - After imputation (and any optional `--year`, `--season`, or `--month` filter), all samples at a station are averaged to form the station arithmetic mean `obs_val`.
-   - For right-skewed water quality variables (`use_log == TRUE`), the model-scale response `obs_y` is the mean of log-transformed concentrations (`mean(log(y))`); for symmetric ecological indices (`WHPT ASPT`, `LIFE`, `PSI`, `RMNI`, `RHS HQA`, where `use_log == FALSE`), `obs_y = obs_val`.
+   - **Universal Transformation Engine**: Because S3N Gaussian process estimation and kriging assume normally distributed residuals, the pipeline provides a mathematical transformation engine (`--transform=<type>`, defaulting to `log` for water chemistry and LCMS, and `none` for ecological indices):
+     - **Natural Logarithm (`log`)**: \(z = \ln(y)\), back-transform \(\hat{y} = \exp(\hat{z})\). Ideal for multiplicative concentrations spanning orders of magnitude (`0180` Orthophosphate, `0301` DOC, `0077` Conductivity).
+     - **Square Root (`sqrt`)**: \(z = \sqrt{y}\), back-transform \(\hat{y} = \hat{z}^2\). **Recommended for moderately skewed concentrations** (e.g. UK Nitrate `0117`, reducing skewness from \(+1.00\) to \(+0.09\)) and macroinvertebrate taxa richness (`whpt_ntaxa`). Unlike \(\ln y\), square root avoids over-stretching low clean headwater concentrations toward \(-\infty\).
+     - **Cube Root (`cbrt`)**: \(z = \text{sign}(y) \cdot |y|^{1/3}\), back-transform \(\hat{y} = \hat{z}^3\). Wilson-Hilferty transformation for Gamma-distributed hydrological variables.
+     - **Zero-Tolerant Logarithm (`log1p`)**: \(z = \ln(1 + y)\), back-transform \(\hat{y} = \exp(\hat{z}) - 1\). Accommodates true zeros (\(y = 0\)) without arbitrary LOD substitution.
+     - **Base-10 Logarithm (`log10`)**: \(z = \log_{10}(y)\), back-transform \(\hat{y} = 10^{\hat{z}}\). Order-of-magnitude scaling.
+     - **Fourth Root (`fourthrt`)**: \(z = y^{1/4}\), back-transform \(\hat{y} = \hat{z}^4\). Classic ecological power transform for heavy-tailed community abundances.
+     - **Box-Cox (`boxcox`)**: \(z = (y^\lambda - 1)/\lambda\) (or \(\ln y\) when \(\lambda = 0\)). Maximizes Gaussian profile likelihood \(L(\lambda) = -0.5 n \ln(\hat{\sigma}^2(\lambda)) + (\lambda - 1) \sum \ln(y_i)\) over \(\lambda \in [-2, 2]\) via Golden Section search if `--lambda` is omitted.
+     - **Yeo-Johnson (`yeojohnson`)**: Continuous extension of Box-Cox supporting zero and negative observations, optimized via Profile MLE.
+     - **Reciprocal (`reciprocal`)**: \(z = -1/y\), back-transform \(\hat{y} = -1/\hat{z}\). Preserves positive spatial gradient direction for rate-dilution modeling.
+     - **Arcsine Square Root (`asin`)**: \(z = \arcsin(\sqrt{y / \text{scale}})\). Angular transformation for bounded \([0, 1]\) or \([0, 100]\%\) proportions (e.g. sediment silt cover, diatom valences).
+     - **Logit (`logit`)**: \(z = \ln(p / (1 - p))\). S-shaped logistic stretching for bounded proportions.
+     - **Identity / Raw (`none` / `raw`)**: \(z = y\). Standard for multimetric ecological indices that are already approximately interval/normal (`WHPT ASPT`, `LIFE`, `PSI`, `RMNI`, `RHS HQA`).
+   - Multiple stations on the same reach are aggregated into a single reach observation `obs_y = mean(z_k)`. Predictions at unmonitored reaches are mapped back to natural units via \(\hat{y} = f^{-1}(\hat{z})\).
 
 ---
 

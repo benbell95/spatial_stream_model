@@ -123,6 +123,152 @@ def resolve_gis_path(rel_p, gis_dir=None):
         return cand_gis
     return _rel_join(BASE_DIR, rel_p)
 
+def estimate_boxcox_lambda(vals, lower=-2.0, upper=2.0):
+    pos = [v for v in vals if v is not None and v > 0]
+    n = len(pos)
+    if n < 10:
+        return 0.5
+    log_vals = [math.log(v) for v in pos]
+    sum_log = sum(log_vals)
+
+    def ll(lam):
+        if abs(lam) < 1e-4:
+            z = log_vals
+        else:
+            z = [(math.pow(v, lam) - 1.0) / lam for v in pos]
+        mz = statistics.mean(z)
+        vz = statistics.mean([(x - mz) ** 2 for x in z])
+        if vz < 1e-12:
+            return -1e12
+        return -0.5 * n * math.log(vz) + (lam - 1.0) * sum_log
+
+    gr = (math.sqrt(5.0) - 1.0) / 2.0
+    a, b = lower, upper
+    c = b - gr * (b - a)
+    d = a + gr * (b - a)
+    while abs(b - a) > 1e-4:
+        if ll(c) > ll(d):
+            b = d
+        else:
+            a = c
+        c = b - gr * (b - a)
+        d = a + gr * (b - a)
+    return round((b + a) / 2.0, 4)
+
+
+def estimate_yeojohnson_lambda(vals, lower=-2.0, upper=2.0):
+    clean = [v for v in vals if v is not None and not math.isnan(v)]
+    n = len(clean)
+    if n < 10:
+        return 0.5
+
+    def ll(lam):
+        z = []
+        jac = 0.0
+        for y in clean:
+            if y >= 0:
+                if abs(lam) < 1e-4:
+                    zv = math.log(y + 1.0)
+                else:
+                    zv = (math.pow(y + 1.0, lam) - 1.0) / lam
+                jac += (lam - 1.0) * math.log(y + 1.0)
+            else:
+                if abs(2.0 - lam) < 1e-4:
+                    zv = -math.log(-y + 1.0)
+                else:
+                    zv = -((math.pow(-y + 1.0, 2.0 - lam) - 1.0) / (2.0 - lam))
+                jac += (1.0 - lam) * -math.log(-y + 1.0)
+            z.append(zv)
+        mz = statistics.mean(z)
+        vz = statistics.mean([(x - mz) ** 2 for x in z])
+        if vz < 1e-12:
+            return -1e12
+        return -0.5 * n * math.log(vz) + jac
+
+    gr = (math.sqrt(5.0) - 1.0) / 2.0
+    a, b = lower, upper
+    c = b - gr * (b - a)
+    d = a + gr * (b - a)
+    while abs(b - a) > 1e-4:
+        if ll(c) > ll(d):
+            b = d
+        else:
+            a = c
+        c = b - gr * (b - a)
+        d = a + gr * (b - a)
+    return round((b + a) / 2.0, 4)
+
+
+def apply_forward_transform(val, ttype="log", lam=None, scale=1.0):
+    if val is None:
+        return None
+    try:
+        val = float(val)
+    except (ValueError, TypeError):
+        return None
+    if math.isnan(val):
+        return None
+    t = (ttype or "log").lower().strip()
+    if t in ("log", "ln"):
+        return math.log(max(1e-9, val)) if val > 0 else None
+    elif t == "log10":
+        return math.log10(max(1e-9, val)) if val > 0 else None
+    elif t == "log1p":
+        return math.log1p(max(0.0, val)) if val >= 0 else None
+    elif t in ("sqrt", "square_root"):
+        return math.sqrt(max(0.0, val)) if val >= 0 else None
+    elif t in ("cbrt", "cube_root"):
+        return math.copysign(math.pow(abs(val), 1.0 / 3.0), val)
+    elif t in ("fourthrt", "qtrt"):
+        return math.pow(max(0.0, val), 0.25) if val >= 0 else None
+    elif t in ("reciprocal", "inv"):
+        return -1.0 / max(1e-6, val) if val > 0 else None
+    elif t in ("boxcox", "bc"):
+        if val <= 0:
+            return None
+        l_val = lam if lam is not None else 0.5
+        if abs(l_val) < 1e-4:
+            return math.log(val)
+        return (math.pow(val, l_val) - 1.0) / l_val
+    elif t in ("yeojohnson", "yj"):
+        l_val = lam if lam is not None else 0.5
+        if val >= 0:
+            return math.log(val + 1.0) if abs(l_val) < 1e-4 else (math.pow(val + 1.0, l_val) - 1.0) / l_val
+        else:
+            return -math.log(-val + 1.0) if abs(2.0 - l_val) < 1e-4 else -((math.pow(-val + 1.0, 2.0 - l_val) - 1.0) / (2.0 - l_val))
+    elif t in ("asin", "arcsin", "arcsine", "asin_sqrt"):
+        p = min(1.0, max(0.0, val / scale))
+        return math.asin(math.sqrt(p))
+    elif t == "logit":
+        p = min(1.0 - 1e-4, max(1e-4, val / scale))
+        return math.log(p / (1.0 - p))
+    else:
+        return float(val)
+
+
+def print_available_transforms():
+    rows = [
+        ("log", "ln", "ln(y)", "y > 0", "Default for water chemistry & LCMS. Multiplicative concentrations spanning orders of magnitude."),
+        ("sqrt", "square_root", "y^(1/2)", "y >= 0", "Strongly recommended for moderately skewed concentrations (e.g. UK Nitrate, skewness drop +1.00 -> +0.09) and taxa counts."),
+        ("cbrt", "cube_root", "sign(y)*|y|^(1/3)", "All real y", "Wilson-Hilferty transformation for Gamma-distributed hydrological variables. Compresses high values without crushing near-zero observations."),
+        ("log1p", "log_1p", "ln(1 + y)", "y >= 0", "Accommodates true zeros (y=0) without arbitrary LOD substitution. Gentle log compression for small values."),
+        ("log10", "log_10", "log10(y)", "y > 0", "Order-of-magnitude chemical concentrations (e.g. pathogen counts, electrical conductivity)."),
+        ("fourthrt", "qtrt", "y^(1/4)", "y >= 0", "Intermediate between square root and log; classic ecological standard for heavy-tailed abundance and biomass."),
+        ("boxcox", "bc, box_cox", "(y^lambda-1)/lam", "y > 0", "Analytically optimizes residual normality via Profile Maximum Likelihood lambda in [-2, 2] (or custom --lambda)."),
+        ("yeojohnson", "yj", "Yeo-Johnson(lam)", "All real y", "Extension of Box-Cox supporting zero and negative values. Automatic Profile MLE estimation of lambda."),
+        ("reciprocal", "inv, inverse", "-1 / y", "y > 0", "Monotonic rate-dilution processes. Preserves positive spatial gradient direction (higher y -> higher z)."),
+        ("asin", "arcsin, arcsine", "asin(sqrt(y/sc))", "0 <= y <= scale", "Angular transformation for bounded proportions and percentages (e.g. silt cover, diatom valences)."),
+        ("logit", "logit", "ln(p / (1 - p))", "0 < y < scale", "S-shaped logistic transformation for bounded proportions and sediment percentages."),
+        ("none", "raw, identity", "y", "All real y", "Default for ecological indices (WHPT ASPT, LIFE index, RHS scores) that are already normally distributed.")
+    ]
+    print("\nAvailable Data Transformations (--transform=<type> [--transform-lambda=<val>]):\n")
+    print(f"{'Type':<12} | {'Short Aliases':<16} | {'Formula z = f(y)':<18} | {'Valid Domain':<16} | {'Best Applied When'}")
+    print("-" * 125)
+    for t_type, alias, formula, domain, note in rows:
+        print(f"{t_type:<12} | {alias:<16} | {formula:<18} | {domain:<16} | {note}")
+    print()
+
+
 _STD_NORM = statistics.NormalDist()
 
 
@@ -1214,7 +1360,7 @@ def query_orn_spatial_grid(grid, mx, my):
     return best_rec
 
 
-def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0):
+def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0, trans_type="log", eff_lambda=None):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
@@ -1747,8 +1893,13 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                 m_val = statistics.mean(vals)
                 med_val = statistics.median(vals)
                 sd_val = statistics.stdev(vals) if len(vals) > 1 else 0.0
-                log_m = round(math.log(m_val), 5) if m_val > 0 else ""
-                m_log = round(statistics.mean(math.log(v) for v in vals if v > 0), 5) if any(v > 0 for v in vals) else ""
+                trans_m_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
+                log_m = round(trans_m_val, 5) if trans_m_val is not None else ""
+                trans_clean = [
+                    tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda) for v in vals)
+                    if tv is not None
+                ]
+                m_log = round(statistics.mean(trans_clean), 5) if trans_clean else ""
                 if inc:
                     site_by_reach[riv_id].append((nid, d, along_m, vals))
                 w.writerow([
@@ -1793,7 +1944,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
             m_v = statistics.mean(vals)
             med_v = statistics.median(vals)
-            log_mv = round(math.log(m_v), 5) if m_v > 0 else ""
+            trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
+            log_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
             w.writerow([
                 riv_id, u_info["catch_id"], p_type, p_val,
                 round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv
@@ -1869,7 +2021,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                 obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
                 m_no3 = statistics.mean(all_vals)
                 med_no3 = statistics.median(all_vals)
-                log_no3 = round(math.log(m_no3), 5) if m_no3 > 0 else ""
+                trans_no3_val = apply_forward_transform(m_no3, ttype=trans_type, lam=eff_lambda)
+                log_no3 = round(trans_no3_val, 5) if trans_no3_val is not None else ""
                 row_out = [
                     riv_id, u_info["catch_id"], u_info["rbd_id"], parent_dn.get(riv_id, 0),
                     round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(u_info["us_accum_km"], 5),
@@ -1907,6 +2060,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "n_catchments": len(catch_reaches),
         "core_basins": cfg.get("core_basins", {}),
         "extra_numeric_cols": extra_num_cols,
+        "transform_type": trans_type,
+        "transform_lambda": eff_lambda,
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta_obj, f, indent=2)
@@ -2034,7 +2189,29 @@ def main():
         default=None,
         help="Optional calendar month filter (1..12 or Jan..Dec). Default: all months.",
     )
+    parser.add_argument(
+        "--transform",
+        choices=["log", "log10", "log1p", "sqrt", "cbrt", "fourthrt", "reciprocal", "boxcox", "yeojohnson", "asin", "logit", "none", "raw"],
+        default="log",
+        help="Data transformation applied to determinand values (default: 'log').",
+    )
+    parser.add_argument(
+        "--transform-lambda",
+        dest="transform_lambda",
+        type=float,
+        default=None,
+        help="Power parameter lambda for Box-Cox or Yeo-Johnson transformations (default: auto-estimated via Profile MLE).",
+    )
+    parser.add_argument(
+        "--list-transforms",
+        action="store_true",
+        help="List all supported data transformations and their mathematical properties, then exit.",
+    )
     args = parser.parse_args()
+    if args.list_transforms:
+        print_available_transforms()
+        return
+
     configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
 
     if args.list_networks:
@@ -2182,9 +2359,22 @@ def main():
         f"[{100.0 * n_slice_cens / max(1, n_slice_samples):.2f}%] imputed via '{args.censor_method}')."
     )
 
+    # Resolve transformation type and Profile Maximum Likelihood lambda
+    trans_type = (args.transform or "log").lower().strip()
+    all_sample_vals = [v for s_vals in nitrate_by_site.values() for v in s_vals if v is not None]
+    if trans_type in ("boxcox", "bc"):
+        eff_lambda = args.transform_lambda if args.transform_lambda is not None else estimate_boxcox_lambda(all_sample_vals)
+        print(f"   Estimated Profile Maximum Likelihood lambda = {eff_lambda:.4f} for Box-Cox transformation.")
+    elif trans_type in ("yeojohnson", "yj"):
+        eff_lambda = args.transform_lambda if args.transform_lambda is not None else estimate_yeojohnson_lambda(all_sample_vals)
+        print(f"   Estimated Profile Maximum Likelihood lambda = {eff_lambda:.4f} for Yeo-Johnson transformation.")
+    else:
+        eff_lambda = args.transform_lambda
+
     # Dispatch to generic network pipeline if not using standard ORN fast path
     if cfg.get("covariates", {}).get("mode") != "orn_100m_table" or args.topology_mode != "auto" or args.afv_col:
-        preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0)
+        preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
+                                   trans_type=trans_type, eff_lambda=eff_lambda)
         return
 
     # Standard ORN v2 fast path
@@ -2257,8 +2447,13 @@ def main():
                 m_val = statistics.mean(vals)
                 med_val = statistics.median(vals)
                 sd_val = statistics.stdev(vals) if len(vals) > 1 else 0.0
-                log_m = round(math.log(m_val), 5) if m_val > 0 else ""
-                m_log = round(statistics.mean(math.log(v) for v in vals if v > 0), 5) if any(v > 0 for v in vals) else ""
+                trans_m_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
+                log_m = round(trans_m_val, 5) if trans_m_val is not None else ""
+                trans_clean = [
+                    tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda) for v in vals)
+                    if tv is not None
+                ]
+                m_log = round(statistics.mean(trans_clean), 5) if trans_clean else ""
                 if inc:
                     site_by_reach[riv_id].append((nid, d, along, vals))
                 w.writerow([
@@ -2305,7 +2500,8 @@ def main():
             obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
             m_v = statistics.mean(vals)
             med_v = statistics.median(vals)
-            log_mv = round(math.log(m_v), 5) if m_v > 0 else ""
+            trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
+            log_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
             w.writerow([
                 riv_id, reach_catch_map[riv_id], p_type, p_val,
                 round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv
@@ -2461,7 +2657,8 @@ def main():
                 obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
                 m_no3 = statistics.mean(all_vals)
                 med_no3 = statistics.median(all_vals)
-                log_no3 = round(math.log(m_no3), 5) if m_no3 > 0 else ""
+                trans_no3_val = apply_forward_transform(m_no3, ttype=trans_type, lam=eff_lambda)
+                log_no3 = round(trans_no3_val, 5) if trans_no3_val is not None else ""
                 w.writerow([
                     riv_id, r[3], r[4], parent_dn.get(riv_id, 0),
                     round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(r[6] / 1000.0, 5),
@@ -2498,6 +2695,8 @@ def main():
         "n_catchments": len(monitored_catchments),
         "core_basins": cfg.get("core_basins", {"humber": 80, "thames": 3055, "severn": 2786}),
         "extra_numeric_cols": [],
+        "transform_type": trans_type,
+        "transform_lambda": eff_lambda,
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta_obj, f, indent=2)

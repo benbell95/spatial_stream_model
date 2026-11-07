@@ -268,6 +268,26 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
     (length(obs_pos) > 0 && max(abs(log(obs_pos) - sc_pos), na.rm = TRUE) < 1e-2)
   }
 
+  trans_type <- if ("Transform_Type" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Type[1]))) {
+    as.character(cv_tab$Transform_Type[1])
+  } else if (use_log) {
+    "log"
+  } else {
+    "none"
+  }
+  trans_lambda <- if ("Transform_Lambda" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Lambda[1]))) {
+    as.numeric(cv_tab$Transform_Lambda[1])
+  } else {
+    NA_real_
+  }
+  trans_label <- if ("Transform_Label" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Label[1]))) {
+    as.character(cv_tab$Transform_Label[1])
+  } else if (use_log) {
+    "Natural Logarithm ln(y)"
+  } else {
+    "Untransformed (raw)"
+  }
+
   vars_sub <- format_covariates_subtitle(param_tab = param_tab)
   user_supplied_label <- (!is.null(custom_label) && nzchar(custom_label))
 
@@ -279,8 +299,13 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
       custom_label <- sprintf("%s (%s)", p_clean, net_lbl)
     } else if (!is.null(vars_sub) && nzchar(vars_sub)) {
       custom_label <- sprintf("%s [Vars: %s]", net_lbl, vars_sub)
+    } else if (trans_type != "log" && trans_type != "none") {
+      custom_label <- sprintf("%s [%s]", net_lbl, trans_label)
     } else {
       custom_label <- net_lbl
+    }
+    if (grepl("_trans_", bname) && !grepl(trans_type, custom_label, ignore.case = TRUE)) {
+      custom_label <- sprintf("%s [%s]", custom_label, trans_label)
     }
   }
 
@@ -304,6 +329,9 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
     det_name            = det_name,
     det_unit            = det_unit,
     use_log             = use_log,
+    trans_type          = trans_type,
+    trans_lambda        = trans_lambda,
+    trans_label         = trans_label,
     vars_label          = if (is.null(vars_sub)) "Default (All 8 standard)" else vars_sub,
     hum_cid             = hum_cid,
     tha_cid             = tha_cid,
@@ -1045,6 +1073,9 @@ write_descriptive_markdown_report <- function(b1, desc_df, rep_df, strat_df, sta
   add_line("")
   add_line("- **Determinand**: `%s` — **%s** (`%s`, %s scale)",
            b1$det_code, b1$det_name, b1$det_unit, if (b1$use_log) "log" else "raw")
+  add_line("- **Data Transformation**: **%s** (`%s`%s)",
+           b1$trans_label, b1$trans_type,
+           if (!is.na(b1$trans_lambda)) sprintf(", λ = %.4f", b1$trans_lambda) else "")
   add_line("- **Water Network**: %s (`%s` reaches across `%d` catchments, `%d` observed monitoring sites)",
            b1$net_label, format(nrow(b1$eng_pred), big.mark = ","),
            length(unique(b1$eng_pred$CatchID)), sum(b1$eng_pred$has_obs == 1))

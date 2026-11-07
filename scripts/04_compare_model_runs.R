@@ -431,6 +431,20 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     }
   }
 
+  # When comparing runs with different transformations, include transformation in default labels
+  diff_trans <- (length(unique(sapply(bundles, function(b) paste0(b$trans_type, "_", b$trans_lambda)))) > 1L)
+  if (diff_trans) {
+    for (i in seq_len(K)) {
+      if (!isTRUE(bundles[[i]]$user_supplied_label)) {
+        if (same_det_all) {
+          bundles[[i]]$label <- sprintf("%s [%s]", bundles[[i]]$net_label, bundles[[i]]$trans_label)
+        } else {
+          bundles[[i]]$label <- sprintf("%s [%s, %s]", bundles[[i]]$label, bundles[[i]]$trans_type, bundles[[i]]$net_label)
+        }
+      }
+    }
+  }
+
   run_labels <- sapply(bundles, function(b) b$label)
   # Ensure unique labels
   if (any(duplicated(run_labels))) {
@@ -483,9 +497,13 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     df$Dir_Name         <- b$dir_name
     df$Network_Label    <- b$net_label
     df$Covariates       <- b$vars_label
+    df$Transform_Type   <- b$trans_type
+    df$Transform_Lambda <- ifelse(is.na(b$trans_lambda), "", as.character(round(b$trans_lambda, 4)))
+    df$Transform_Label  <- b$trans_label
     df$Delta_R2_vs_OLS  <- df$R2 - ols_r2[df$Canon_Domain]
     df$Pct_RMSE_Red_OLS <- 100.0 * (ols_rmse[df$Canon_Domain] - df$RMSE) / ols_rmse[df$Canon_Domain]
     df[, c("Run_Index", "Run_Label", "Determinand_Code", "Determinand_Name", "Unit",
+           "Transform_Type", "Transform_Lambda", "Transform_Label",
            "Dir_Name", "Network_Label", "Covariates",
            "Canon_Domain", "Domain", "n_obs", "n_reaches", "Canon_Model", "Model",
            "R2", "RMSE", "MAE", "Delta_R2_vs_OLS", "Pct_RMSE_Red_OLS")]
@@ -510,7 +528,10 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
       Determinand_Code = b$det_code,
       Determinand_Name = b$det_name,
       Unit             = b$det_unit,
-      Scale            = if (b$use_log) "log" else "raw",
+      Scale            = if (b$use_log) "log" else b$trans_type,
+      Transform_Type   = b$trans_type,
+      Transform_Lambda = ifelse(is.na(b$trans_lambda), "", as.character(round(b$trans_lambda, 4))),
+      Transform_Label  = b$trans_label,
       Network_Label    = b$net_label,
       Period           = b$period,
       Covariates       = b$vars_label,
@@ -1647,13 +1668,14 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
   add_line("")
   add_line("## 1. Overview of Compared Model Runs")
   add_line("")
-  add_line("| Run | Run Label | Determinand | Unit (Scale) | Water Network | Period | Covariates | Reaches | Catchments | Observed Sites |")
-  add_line("| :---: | :--- | :--- | :---: | :--- | :---: | :--- | ---: | ---: | ---: |")
+  add_line("| Run | Run Label | Determinand | Transformation | Unit (Scale) | Water Network | Period | Covariates | Reaches | Catchments | Observed Sites |")
+  add_line("| :---: | :--- | :--- | :--- | :---: | :--- | :---: | :--- | ---: | ---: | ---: |")
   for (i in seq_len(K)) {
     b <- bundles[[i]]
-    add_line("| **Run %d** | **%s** | %s (`%s`) | `%s` (%s) | %s | `%s` | %s | %s | %d | %d |",
-             i, b$label, b$det_name, b$det_code, b$det_unit,
-             if (b$use_log) "log" else "raw",
+    trans_str <- if (!is.na(b$trans_lambda)) sprintf("%s (λ=%.4f)", b$trans_label, b$trans_lambda) else b$trans_label
+    add_line("| **Run %d** | **%s** | %s (`%s`) | %s | `%s` (%s) | %s | `%s` | %s | %s | %d | %d |",
+             i, b$label, b$det_name, b$det_code, trans_str, b$det_unit,
+             if (b$use_log) "log" else b$trans_type,
              b$net_label, b$period, b$vars_label,
              format(nrow(b$eng_pred), big.mark = ","),
              length(unique(b$eng_pred$CatchID)),

@@ -115,6 +115,395 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
   )
 }
 
+# ==============================================================================
+# DATA TRANSFORMATION ENGINE (--transform=<type>)
+# ==============================================================================
+
+estimate_boxcox_lambda <- function(y, lower = -2.0, upper = 2.0) {
+  y_pos <- y[!is.na(y) & y > 0]
+  n <- length(y_pos)
+  if (n < 10) return(0.5)
+  log_y <- log(y_pos)
+  sum_log_y <- sum(log_y)
+
+  ll_fn <- function(lam) {
+    z <- if (abs(lam) < 1e-4) log_y else ((y_pos^lam) - 1.0) / lam
+    z_mean <- mean(z)
+    var_z  <- mean((z - z_mean)^2)
+    if (var_z < 1e-12) return(-1e12)
+    -0.5 * n * log(var_z) + (lam - 1.0) * sum_log_y
+  }
+
+  opt <- tryCatch(
+    optimize(ll_fn, interval = c(lower, upper), maximum = TRUE),
+    error = function(e) list(maximum = 0.5)
+  )
+  round(opt$maximum, 4)
+}
+
+estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
+  y_val <- y[!is.na(y) & is.finite(y)]
+  n <- length(y_val)
+  if (n < 10) return(0.5)
+  pos <- (y_val >= 0)
+  neg <- (!pos)
+
+  ll_fn <- function(lam) {
+    z <- numeric(n)
+    if (any(pos)) {
+      yp <- y_val[pos]
+      z[pos] <- if (abs(lam) < 1e-4) log(yp + 1.0) else (((yp + 1.0)^lam) - 1.0) / lam
+    }
+    if (any(neg)) {
+      yn <- y_val[neg]
+      z[neg] <- if (abs(2.0 - lam) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam)) - 1.0) / (2.0 - lam)
+    }
+    z_mean <- mean(z)
+    var_z  <- mean((z - z_mean)^2)
+    if (var_z < 1e-12) return(-1e12)
+    jac <- sum(sign(y_val) * log(abs(y_val) + 1.0) * ifelse(pos, lam - 1.0, 1.0 - lam))
+    -0.5 * n * log(var_z) + jac
+  }
+
+  opt <- tryCatch(
+    optimize(ll_fn, interval = c(lower, upper), maximum = TRUE),
+    error = function(e) list(maximum = 0.5)
+  )
+  round(opt$maximum, 4)
+}
+
+build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NULL, scale = NULL) {
+  t_raw <- tolower(trimws(as.character(transform_type)))
+  if (!nzchar(t_raw)) t_raw <- "log"
+
+  alias_map <- c(
+    ln = "log", log = "log",
+    log10 = "log10", log_10 = "log10",
+    log1p = "log1p", log_1p = "log1p",
+    sqrt = "sqrt", square_root = "sqrt", squareroot = "sqrt",
+    cbrt = "cbrt", cube_root = "cbrt", cuberoot = "cbrt",
+    fourthrt = "fourthrt", fourth_root = "fourthrt", qtrt = "fourthrt",
+    reciprocal = "reciprocal", inv = "reciprocal", inverse = "reciprocal",
+    boxcox = "boxcox", box_cox = "boxcox", bc = "boxcox",
+    yeojohnson = "yeojohnson", yeo_johnson = "yeojohnson", yj = "yeojohnson",
+    asin = "asin", arcsin = "asin", arcsine = "asin", asin_sqrt = "asin",
+    logit = "logit",
+    none = "none", raw = "none", identity = "none"
+  )
+  ttype <- if (t_raw %in% names(alias_map)) unname(alias_map[t_raw]) else t_raw
+
+  # 1. Natural Logarithm (Default for wq / lcms)
+  if (ttype == "log") {
+    return(list(
+      type           = "log",
+      label          = "Natural Logarithm (ln)",
+      short_label    = "log",
+      fn_prefix      = "log",
+      folder_tag     = "log",
+      is_transformed = TRUE,
+      is_log         = TRUE,
+      lambda         = NA_real_,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) log(pmax(1e-9, y)),
+      inv            = function(z) exp(z)
+    ))
+  }
+
+  # 2. Base-10 Logarithm
+  if (ttype == "log10") {
+    return(list(
+      type           = "log10",
+      label          = "Base-10 Logarithm (log10)",
+      short_label    = "log10",
+      fn_prefix      = "log10",
+      folder_tag     = "log10",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) log10(pmax(1e-9, y)),
+      inv            = function(z) 10^z
+    ))
+  }
+
+  # 3. Shifted Logarithm (ln(1 + y), handles exact zero)
+  if (ttype == "log1p") {
+    return(list(
+      type           = "log1p",
+      label          = "Shifted Logarithm ln(1+y)",
+      short_label    = "log1p",
+      fn_prefix      = "log1p",
+      folder_tag     = "log1p",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) log1p(pmax(0.0, y)),
+      inv            = function(z) pmax(0.0, expm1(z))
+    ))
+  }
+
+  # 4. Square Root
+  if (ttype == "sqrt") {
+    return(list(
+      type           = "sqrt",
+      label          = "Square Root (sqrt)",
+      short_label    = "sqrt",
+      fn_prefix      = "sqrt",
+      folder_tag     = "sqrt",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = 0.5,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) sqrt(pmax(0.0, y)),
+      inv            = function(z) (pmax(0.0, z))^2
+    ))
+  }
+
+  # 5. Cube Root (Wilson-Hilferty Gamma normalizer)
+  if (ttype == "cbrt") {
+    return(list(
+      type           = "cbrt",
+      label          = "Cube Root (cbrt)",
+      short_label    = "cbrt",
+      fn_prefix      = "cbrt",
+      folder_tag     = "cbrt",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = 1.0 / 3.0,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y),
+      fwd            = function(y) sign(y) * (abs(y))^(1.0 / 3.0),
+      inv            = function(z) z^3
+    ))
+  }
+
+  # 6. Fourth Root (Biomass / Abundance normalizer)
+  if (ttype == "fourthrt") {
+    return(list(
+      type           = "fourthrt",
+      label          = "Fourth Root (fourthrt)",
+      short_label    = "fourthrt",
+      fn_prefix      = "fourthrt",
+      folder_tag     = "fourthrt",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = 0.25,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) (pmax(0.0, y))^0.25,
+      inv            = function(z) (pmax(0.0, z))^4
+    ))
+  }
+
+  # 7. Monotonic Negative Reciprocal (-1/y)
+  if (ttype == "reciprocal") {
+    return(list(
+      type           = "reciprocal",
+      label          = "Negative Reciprocal (-1/y)",
+      short_label    = "reciprocal",
+      fn_prefix      = "recip",
+      folder_tag     = "reciprocal",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = -1.0,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) -1.0 / pmax(1e-6, y),
+      inv            = function(z) -1.0 / pmin(-1e-6, z)
+    ))
+  }
+
+  # 8. Box-Cox Power Transformation
+  if (ttype == "boxcox") {
+    lam_val <- if (!is.null(lambda) && !is.na(as.numeric(lambda))) {
+      as.numeric(lambda)
+    } else if (!is.null(y_obs) && length(y_obs) > 0) {
+      estimate_boxcox_lambda(y_obs)
+    } else {
+      0.5
+    }
+    lbl <- sprintf("Box-Cox (lambda = %.2f)", lam_val)
+    f_tag <- sprintf("boxcox_lam%.2f", lam_val)
+    return(list(
+      type           = "boxcox",
+      label          = lbl,
+      short_label    = sprintf("boxcox[%.2f]", lam_val),
+      fn_prefix      = sprintf("boxcox[lambda=%.2f]", lam_val),
+      folder_tag     = f_tag,
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = lam_val,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) {
+        if (abs(lam_val) < 1e-4) log(pmax(1e-9, y)) else ((pmax(1e-9, y)^lam_val) - 1.0) / lam_val
+      },
+      inv            = function(z) {
+        if (abs(lam_val) < 1e-4) {
+          exp(z)
+        } else {
+          inner <- pmax(1e-9, lam_val * z + 1.0)
+          pmax(0.0, inner^(1.0 / lam_val))
+        }
+      }
+    ))
+  }
+
+  # 9. Yeo-Johnson Transformation (Handles zeros and negative values)
+  if (ttype == "yeojohnson") {
+    lam_val <- if (!is.null(lambda) && !is.na(as.numeric(lambda))) {
+      as.numeric(lambda)
+    } else if (!is.null(y_obs) && length(y_obs) > 0) {
+      estimate_yeojohnson_lambda(y_obs)
+    } else {
+      0.5
+    }
+    lbl <- sprintf("Yeo-Johnson (lambda = %.2f)", lam_val)
+    f_tag <- sprintf("yeojohnson_lam%.2f", lam_val)
+    return(list(
+      type           = "yeojohnson",
+      label          = lbl,
+      short_label    = sprintf("yeojohnson[%.2f]", lam_val),
+      fn_prefix      = sprintf("yeojohnson[lambda=%.2f]", lam_val),
+      folder_tag     = f_tag,
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = lam_val,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y),
+      fwd            = function(y) {
+        pos <- (y >= 0)
+        z <- numeric(length(y))
+        if (any(pos)) {
+          yp <- y[pos]
+          z[pos] <- if (abs(lam_val) < 1e-4) log(yp + 1.0) else (((yp + 1.0)^lam_val) - 1.0) / lam_val
+        }
+        if (any(!pos)) {
+          yn <- y[!pos]
+          z[!pos] <- if (abs(2.0 - lam_val) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam_val)) - 1.0) / (2.0 - lam_val)
+        }
+        z
+      },
+      inv            = function(z) {
+        pos <- (z >= 0)
+        y <- numeric(length(z))
+        if (any(pos)) {
+          zp <- z[pos]
+          y[pos] <- if (abs(lam_val) < 1e-4) exp(zp) - 1.0 else (pmax(1e-9, zp * lam_val + 1.0))^(1.0 / lam_val) - 1.0
+        }
+        if (any(!pos)) {
+          zn <- z[!pos]
+          y[!pos] <- if (abs(2.0 - lam_val) < 1e-4) 1.0 - exp(-zn) else 1.0 - (pmax(1e-9, -zn * (2.0 - lam_val) + 1.0))^(1.0 / (2.0 - lam_val))
+        }
+        y
+      }
+    ))
+  }
+
+  # 10. Arcsine-Square-Root (Angular transform for bounded percentages / fractions)
+  if (ttype == "asin") {
+    sc_val <- if (!is.null(scale)) as.numeric(scale) else if (!is.null(y_obs) && max(y_obs, na.rm = TRUE) > 1.05) 100.0 else 1.0
+    return(list(
+      type           = "asin",
+      label          = sprintf("Arcsine-Square-Root (0..%g)", sc_val),
+      short_label    = "asin_sqrt",
+      fn_prefix      = "asin_sqrt",
+      folder_tag     = "asin",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = sc_val,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) asin(sqrt(pmin(1.0, pmax(0.0, y / sc_val)))),
+      inv            = function(z) sc_val * (sin(pmin(pi / 2.0, pmax(0.0, z))))^2
+    ))
+  }
+
+  # 11. Logit (Percentages / Proportions)
+  if (ttype == "logit") {
+    sc_val <- if (!is.null(scale)) as.numeric(scale) else if (!is.null(y_obs) && max(y_obs, na.rm = TRUE) > 1.05) 100.0 else 1.0
+    return(list(
+      type           = "logit",
+      label          = sprintf("Logit (0..%g)", sc_val),
+      short_label    = "logit",
+      fn_prefix      = "logit",
+      folder_tag     = "logit",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = sc_val,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) {
+        p <- pmin(1.0 - 1e-4, pmax(1e-4, y / sc_val))
+        qlogis(p)
+      },
+      inv            = function(z) sc_val * plogis(z)
+    ))
+  }
+
+  # 12. None / Raw (Identity transform - Default for inverts / diatoms / macrophytes / rhs)
+  list(
+    type           = "none",
+    label          = "Untransformed (Raw / Identity)",
+    short_label    = "raw",
+    fn_prefix      = "",
+    folder_tag     = "raw",
+    is_transformed = FALSE,
+    is_log         = FALSE,
+    lambda         = NA_real_,
+    scale          = 1.0,
+    valid_fn       = function(y) !is.na(y),
+    fwd            = function(y) y,
+    inv            = function(z) z
+  )
+}
+
+as_transformer <- function(obj, y_obs = NULL, lambda = NULL) {
+  if (is.list(obj) && !is.null(obj$fwd) && !is.null(obj$inv)) {
+    return(obj)
+  }
+  if (is.logical(obj)) {
+    return(if (isTRUE(obj)) build_transformer("log") else build_transformer("none"))
+  }
+  build_transformer(as.character(obj), y_obs = y_obs, lambda = lambda)
+}
+
+print_available_transforms <- function() {
+  cat("Available Data Transformations (--transform=<type> [--lambda=<val>]):\n\n")
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "Type", "Short Aliases", "Formula z = f(y)", "Valid Domain", "Best Applied When"))
+  cat(strrep("-", 125), "\n")
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "log", "ln", "ln(y)", "y > 0", "Default for water chemistry & LCMS. Multiplicative concentrations spanning orders of magnitude."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "sqrt", "square_root", "y^(1/2)", "y >= 0", "Strongly recommended for moderately skewed concentrations (e.g. UK Nitrate, skewness drop +1.00 -> +0.09) and taxa counts."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "cbrt", "cube_root", "sign(y)*|y|^(1/3)", "All real y", "Wilson-Hilferty transformation for Gamma-distributed hydrological variables. Compresses high values without crushing near-zero observations."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "log1p", "log_1p", "ln(1 + y)", "y >= 0", "Accommodates true zeros (y=0) without arbitrary LOD substitution. Gentle log compression for small values."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "log10", "log_10", "log10(y)", "y > 0", "Order-of-magnitude chemical concentrations (e.g. pathogen counts, electrical conductivity)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "fourthrt", "qtrt", "y^(1/4)", "y >= 0", "Intermediate between square root and log; classic ecological standard for heavy-tailed abundance and biomass."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "boxcox", "bc, box_cox", "(y^lambda-1)/lam", "y > 0", "Analytically optimizes residual normality via Profile Maximum Likelihood lambda in [-2, 2] (or custom --lambda)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "yeojohnson", "yj", "Yeo-Johnson(lam)", "All real y", "Extension of Box-Cox supporting zero and negative values. Automatic Profile MLE estimation of lambda."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "reciprocal", "inv, inverse", "-1 / y", "y > 0", "Monotonic rate-dilution processes. Preserves positive spatial gradient direction (higher y -> higher z)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "asin", "arcsin, arcsine", "asin(sqrt(y/sc))", "0 <= y <= scale", "Angular transformation for bounded proportions and percentages (e.g. silt cover, diatom valences)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "logit", "logit", "ln(p / (1 - p))", "0 < y < scale", "S-shaped logistic transformation for bounded proportions and sediment percentages."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "none", "raw, identity", "y", "All real y", "Default for ecological indices (WHPT ASPT, LIFE index, RHS scores) that are already normally distributed."))
+}
+
 val_cols     <- colorRampPalette(c("#1b4f72", "#2874a6", "#1abc9c", "#f4d03f", "#e67e22", "#c0392b", "#641e16"))(256)
 val_cols_rev <- rev(val_cols)
 uncert_cols  <- colorRampPalette(c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"))(256)
@@ -147,34 +536,50 @@ draw_colorbar <- function(x0, y0, x1, y1, vmin, vmax, pal, ticks, tick_labels, t
 }
 
 compute_color_scale <- function(vals_model_sc, use_log, vmin_raw = NULL, vmax_raw = NULL) {
+  tr <- as_transformer(use_log)
   qs <- quantile(vals_model_sc, probs = c(0.01, 0.99), na.rm = TRUE)
   vmin <- as.numeric(qs[1])
   vmax <- as.numeric(qs[2])
   if (!is.null(vmin_raw) && !is.na(vmin_raw)) {
-    vmin <- if (use_log) log(max(1e-9, as.numeric(vmin_raw))) else as.numeric(vmin_raw)
+    vmin <- tr$fwd(as.numeric(vmin_raw))
   }
   if (!is.null(vmax_raw) && !is.na(vmax_raw)) {
-    vmax <- if (use_log) log(max(1e-9, as.numeric(vmax_raw))) else as.numeric(vmax_raw)
+    vmax <- tr$fwd(as.numeric(vmax_raw))
   }
-  if (vmax - vmin < 1e-4) {
-    vmin <- vmin - 0.5
-    vmax <- vmax + 0.5
+  if (!is.finite(vmin) || !is.finite(vmax) || vmax - vmin < 1e-4) {
+    vmin <- ifelse(is.finite(vmin), vmin, 0.0) - 0.5
+    vmax <- ifelse(is.finite(vmax), vmax, 0.0) + 0.5
   }
-  if (use_log) {
-    cands <- c(0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5,
-               1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
-    raw_in <- cands[cands >= exp(vmin) * 0.95 & cands <= exp(vmax) * 1.05]
+  if (tr$is_transformed) {
+    raw_min <- tr$inv(vmin)
+    raw_max <- tr$inv(vmax)
+    if (raw_max < raw_min) {
+      tmp <- raw_min; raw_min <- raw_max; raw_max <- tmp
+    }
+    if (tr$type %in% c("log", "log10", "reciprocal") ||
+        (tr$type %in% c("boxcox", "yeojohnson") && !is.na(tr$lambda) && tr$lambda <= 0.15)) {
+      cands <- c(0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5,
+                 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+    } else {
+      p_ticks <- pretty(c(raw_min, raw_max), n = 6)
+      log_cands <- c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 20, 30, 50, 100, 200, 500, 1000)
+      cands <- sort(unique(c(p_ticks, log_cands)))
+      cands <- cands[tr$valid_fn(cands)]
+    }
+    lo_b <- if (raw_min > 0) raw_min * 0.95 else raw_min - 0.02 * max(1e-6, raw_max - raw_min)
+    hi_b <- if (raw_max > 0) raw_max * 1.05 else raw_max + 0.02 * max(1e-6, raw_max - raw_min)
+    raw_in <- cands[cands >= lo_b & cands <= hi_b]
     if (length(raw_in) > 7) {
       raw_in <- raw_in[unique(round(seq(1, length(raw_in), length.out = 6)))]
     }
     if (length(raw_in) >= 3) {
-      ticks <- log(raw_in)
+      ticks <- tr$fwd(raw_in)
       labels <- formatC(raw_in, format = "fg", digits = 2)
       if (is.null(vmin_raw) || is.na(vmin_raw)) vmin <- min(vmin, min(ticks))
       if (is.null(vmax_raw) || is.na(vmax_raw)) vmax <- max(vmax, max(ticks))
     } else {
       ticks <- seq(vmin, vmax, length.out = 6)
-      labels <- formatC(exp(ticks), format = "fg", digits = 2)
+      labels <- formatC(tr$inv(ticks), format = "fg", digits = 2)
     }
   } else {
     ticks <- pretty(c(vmin, vmax), n = 6)
@@ -321,6 +726,7 @@ format_top_banner <- function(network_label = NULL, vars_label = NULL) {
 plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_log, out_file,
                                   reverse_color = FALSE, sc_val = NULL, sc_se = NULL,
                                   vars_label = NULL, network_label = NULL) {
+  tr       <- as_transformer(use_log)
   eng_pred <- normalize_pred_df(eng_pred)
   pal_use  <- get_val_pal(reverse_color)
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
@@ -331,7 +737,7 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 3.0, 1.2),
       oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
-  if (is.null(sc_val)) sc_val <- compute_color_scale(eng_pred$pred_model_sc, use_log)
+  if (is.null(sc_val)) sc_val <- compute_color_scale(eng_pred$pred_model_sc, tr)
   if (is.null(sc_se))  sc_se  <- compute_se_scale(eng_pred$se_model_sc)
   n_obs_eng <- sum(eng_pred$has_obs == 1)
   n_tot_eng <- nrow(eng_pred)
@@ -355,13 +761,16 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
     show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
   )
 
+  se_scale_txt <- if (tr$type == "none") det_unit else sprintf("%s scale", tr$short_label)
+  se_cbar_txt  <- if (tr$type == "none") sprintf("Kriging SE\n(%s)", det_unit) else sprintf("Kriging SE\n(%s scale)", tr$short_label)
+
   plot_stream_network(
     eng_pred, "se_model_sc", vmin = sc_se$vmin, vmax = sc_se$vmax, pal = uncert_cols,
     main_title = sprintf("B. S3N Prediction Uncertainty & RSN Stations (n = %s)", format(n_obs_eng, big.mark = ",")),
     sub_title  = sprintf("Kriging standard error (%s) with observed RSN stations overlaid%s",
-                         if (use_log) "log scale" else det_unit, net_tag),
+                         se_scale_txt, net_tag),
     cbar_ticks = sc_se$ticks, cbar_labels = sc_se$labels,
-    cbar_title = if (use_log) "Kriging SE\n(log scale)" else sprintf("Kriging SE\n(%s)", det_unit),
+    cbar_title = se_cbar_txt,
     show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
   )
   obs_eng <- eng_pred[eng_pred$has_obs == 1, ]
@@ -378,6 +787,7 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
 # Generic 2-Panel River Basin High-Resolution S3N Map (used for Figure 2 Humber & Figure 5+ Custom Basins)
 plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
                            reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL) {
+  tr         <- as_transformer(use_log)
   basin_pred <- normalize_pred_df(basin_pred)
   cv_tab     <- normalize_cv_tab(cv_tab)
   pal_use    <- get_val_pal(reverse_color)
@@ -423,12 +833,14 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   legend("topleft", legend = "Observed RSN Station (same color scale)",
          pch = 21, pt.bg = "#f4d03f", col = "#111111", pt.cex = 1.1, bty = "n", cex = 0.82)
 
+  se_cbar_txt <- if (tr$type == "none") sprintf("Kriging SE\n(%s)", det_unit) else sprintf("Kriging SE\n(%s scale)", tr$short_label)
+
   plot_stream_network(
     basin_pred, "se_model_sc", vmin = sc_se$vmin, vmax = sc_se$vmax, pal = uncert_cols,
     main_title = sprintf("B. %s: S3N Kriging Standard Error (%s)", basin_title, det_short),
     sub_title  = sprintf("Lower along monitored flow-connected paths, higher in headwaters%s", net_tag),
     cbar_ticks = sc_se$ticks, cbar_labels = sc_se$labels,
-    cbar_title = if (use_log) "Kriging SE\n(log scale)" else sprintf("Kriging SE\n(%s)", det_unit),
+    cbar_title = se_cbar_txt,
     show_obs = FALSE, base_lwd = 0.35, max_lwd = 2.8
   )
   obs_b <- basin_pred[basin_pred$has_obs == 1, ]
@@ -508,6 +920,7 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
 plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, det_code, det_name, det_unit, use_log, out_file,
                                   extra_cv_list = list(), lims_a = NULL, ylim_d = NULL,
                                   vars_label = NULL, network_label = NULL) {
+  tr       <- as_transformer(use_log)
   eng_pred <- normalize_pred_df(eng_pred)
   eng_cv   <- normalize_cv_pts(eng_cv)
   hum_cv   <- normalize_cv_pts(hum_cv)
@@ -520,7 +933,11 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
       oma = if (nzchar(banner)) c(0, 0, 1.8, 0) else c(0, 0, 0, 0), bg = "white")
 
   det_short <- shorten_det_name(det_name)
-  sc_lbl    <- if (use_log) sprintf("log(%s, %s)", det_short, det_unit) else sprintf("%s (%s)", det_short, det_unit)
+  sc_lbl <- if (tr$type == "none") {
+    sprintf("%s (%s)", det_short, det_unit)
+  } else {
+    sprintf("%s(%s, %s)", tr$fn_prefix, det_short, det_unit)
+  }
 
   # Panel A: Observed vs Predicted (5-Fold CV) on Humber, Custom Basin(s) & All England
   if (is.null(lims_a)) {
@@ -1117,6 +1534,13 @@ format_covariates_folder_tag <- function(var_specs = NULL) {
     slugs <- c(slugs[1:4], paste0("plus", length(slugs) - 4))
   }
   paste0("vars_", paste(slugs, collapse = "_"))
+}
+
+format_transform_folder_tag <- function(trans_obj, default_type = "log") {
+  if (is.null(trans_obj)) return("")
+  tr <- as_transformer(trans_obj)
+  if (tr$type == default_type) return("")
+  paste0("trans_", tr$folder_tag)
 }
 
 format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
