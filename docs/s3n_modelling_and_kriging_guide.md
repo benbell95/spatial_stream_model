@@ -17,24 +17,25 @@ To respect river topology, Ver Hoef, Peterson & Theobald (2006) and Ver Hoef & P
 The **Scalable Spatial Stream Network (`S3N`)** R package (Kunke, Olden & McCormick, 2024/2026; `https://github.com/jpierkunke/S3N`) overcomes this `O(n³)` bottleneck by embedding stream-network moving-average covariance functions inside a **Nearest-Neighbor Gaussian Process (`NNGP`)** framework (Datta et al., 2016) powered by the C++/OpenMP **`BRISC`** engine (Saha & Datta, 2018):
 - Instead of conditioning each reach on all `n` stations simultaneously, `S3N` orders stations topologically along the river tree and conditions each station on at most **`m = 15` nearest stream-network neighbors**.
 - This replaces the dense `n × n` matrix inversion with `n` independent **`m × m` (`15 × 15`) linear systems**, reducing computational complexity from **`O(n³)` and `O(q n²)` down to `O(n m³)` for estimation and `O(q m³)` for universal stream kriging**—scales that grow **linearly** with both the number of stations `n` and the number of river reaches `q`.
-- In this codebase, we pair the `S3N` package's core estimation, kriging, and bootstrap engines (`BRISC_estimation_stream`, `BRISC_prediction_stream`, `BRISC_bootstrap`) with a custom OpenMP C++ Euler-tour tree neighbor engine ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)), enabling full national model fitting, parametric bootstrapping, 5-fold cross-validation, and universal kriging across **`37,396–90,876` reaches and `1,210–8,401` observed stations in ~15–25 seconds**.
+- In this codebase, we pair the `S3N` package's core estimation, kriging, and bootstrap engines (`BRISC_estimation_stream`, `BRISC_prediction_stream`, `BRISC_bootstrap`) with a custom OpenMP C++ Euler-tour tree neighbor engine ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)), enabling full national model fitting, parametric bootstrapping, 5-fold cross-validation, and universal kriging across **`37,396–91,118` reaches and `177–1,384` observed reaches across England in ~15–25 seconds**.
+- Models can be fitted to either the standard **River Surveillance Network (`RSN`)**, the headwater-focused **Small Streams Network (`SSN`)**, or their pooled combination **(`RSS`)** using `--source=<rsn|ssn|rss>`.
 
 ---
 
-## 2. End-to-End Architecture: From Raw GIS & RSN Data to Modelled Output
+## 2. End-to-End Architecture: From Raw GIS & Monitoring Data to Modelled Output
 
 The diagram below traces the complete data and mathematical pipeline from raw files on disk to final reach predictions, kriging standard errors, and diagnostic reports:
 
 ```mermaid
 flowchart TD
-    subgraph Stage1["Stage 1: GIS & RSN Preprocessing (scripts/01_preprocess_orn.py)"]
+    subgraph Stage1["Stage 1: GIS & Multi-Source Preprocessing (scripts/01_preprocess_orn.py)"]
         A1["Raw River Network Geometry\n(ORN_v2.gpkg / EU-Hydro .gpkg / .parquet)"]
-        A2["EA RSN Monitoring Datasets\n(Water Quality, Inverts, Diatoms,\nMacrophytes, RHS, LCMS/GCMS)"]
+        A2["EA Monitoring Datasets (--source=rsn|ssn|rss)\n(Water Quality, Inverts, Diatoms,\nMacrophytes, RHS, LCMS/GCMS)"]
         B1["1.1 Censored Value Imputation\n(Robust Lognormal ROS / 0.5 LOD)\n& Temporal Filtering (Year/Season/Month)"]
         B2["1.2 Directed River Forest Graph\n(Fnode -> Tnode, parent_dn, CatchID,\nDist2Mth_km, US_Accum_km)"]
         B3["1.3 2 km Grid Orthogonal Snapping (<= 250 m)\n& Exact Station Mouth Distance (obs_up_dist_km)"]
         B4["1.4 Confluence Additive Function Values\n(log_AFV proportional to US_Accum)\n& 100 m Covariate Aggregation"]
-        C1["Model-Ready Topological Reach Table\n(data/processed/england_rsn_reaches.csv)"]
+        C1["Model-Ready Topological Reach Table\n(data/processed/<net>_<source>/england_rsn_reaches.csv)"]
         A1 --> B2
         A2 --> B1
         B1 --> B3
@@ -75,13 +76,28 @@ flowchart TD
     end
 ```
 
+### 2.1 Multi-Network Monitoring Data Sources & Domain Naming Conventions
+
+The S3N modeling framework supports three monitoring network sources via `--source=<rsn|ssn|rss>`:
+1. **`rsn` (*default*)**: Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 stations across mainstems and major tributaries (1,210 snapped reaches on ORN v2; 90,876 reaches in 141 monitored catchments). Output directory: `output/det_<code>_<net>/`.
+2. **`ssn`**: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations with catchment areas < 20 km² (177 snapped reaches on ORN v2; 76,242 reaches in 58 monitored catchments). Output directory: `output/det_<code>_<net>_src_ssn/`.
+3. **`rss`**: **Combined Surveillance + Small Streams Network** integrating both RSN and SSN (1,695 unique stations; 1,384 snapped reaches on ORN v2; 91,118 reaches in 150 monitored catchments). Output directory: `output/det_<code>_<net>_src_rss/`.
+
+#### Domain Naming & Canonical Cross-Source Harmonization
+When models are estimated, each national model writes its domain descriptor into parameter and cross-validation summaries:
+- **RSN**: `"All England RSN Network"`
+- **SSN**: `"All England SSN Network"`
+- **RSS**: `"All England RSS Combined Network"`
+
+In multi-run comparative evaluations ([`scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R)) and stratified diagnostics ([`scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R)), the `canonical_domain()` function maps any domain matching `^All England` to `"All England Stream Network"`. This allows seamless cross-model comparison, forest plots, and hypothesis testing across runs fitted on different data sources without domain key mismatches.
+
 ---
 
-## 3. Stage 1: From Raw River Network & RSN Samples to a Directed Topological Graph
+## 3. Stage 1: From Raw River Network & Monitoring Samples to a Directed Topological Graph
 
 Before any statistical model can be fitted, [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) (and the dynamic sample loader in [`../scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)) converts raw GIS vector geometries and point water quality measurements into a mathematically valid **directed dendritic graph** (`G = (V, E)`).
 
-### 3.1 Step 1.1: RSN Sample Ingestion & Left-Censored (`< LOD`) Imputation via Robust Lognormal ROS
+### 3.1 Step 1.1: Multi-Source Sample Ingestion & Left-Censored (`< LOD`) Imputation via Robust Lognormal ROS
 Water chemistry datasets frequently contain **left-censored observations** reported as `< LOD` (below the analytical Limit of Detection, where `meas_sign == "<"`), often with multiple historical detection limits (`d_1 < d_2 < ... < d_J`) as laboratory methods improved over time. Simply discarding `< LOD` samples biases station means upward, while substituting `0.5 × LOD` distorts variance when censoring exceeds `10%–15%`.
 
 Both [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and [`../scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) implement **Multi-Threshold Robust Lognormal Regression on Order Statistics (`ROS`)** (Hirsch & Stedinger, 1987; Helsel & Cohn, 1988):

@@ -27,6 +27,17 @@ GIS_DIR  <- dir_cfg$gis_dir
 DATA_DIR <- dir_cfg$data_dir
 OUT_BASE <- dir_cfg$out_dir
 
+src_cli      <- parse_source_arg(args)
+source_cli   <- resolve_source_tag(src_cli)
+source_abbr  <- format_source_abbr(source_cli)
+source_label <- format_source_label(source_cli)
+source_tag   <- format_source_folder_tag(source_cli)
+
+if ("--list-sources" %in% args) {
+  print_available_sources()
+  quit(save = "no", status = 0)
+}
+
 if ("--list-networks" %in% args) {
   py_cmd <- sprintf("python3 %s --list-networks --gis-dir=%s",
                     shQuote(rel_path(BASE_DIR, "scripts", "01_preprocess_orn.py")),
@@ -44,7 +55,7 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
 }
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
-PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR)
+PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli)
 net_meta    <- load_network_metadata(PROC_DIR)
 
 vars_args <- grep("^--(vars|covariates)=", args, value = TRUE)
@@ -95,6 +106,9 @@ dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 trans_tag <- format_transform_folder_tag(trans_obj, default_type = "log")
 vars_tag  <- format_covariates_folder_tag(var_specs)
 sub_tag   <- if (net_meta$abbr != "orn") paste0("net_", net_meta$abbr) else ""
+if (nzchar(source_tag)) {
+  sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", source_tag) else source_tag
+}
 if (nzchar(trans_tag)) {
   sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", trans_tag) else trans_tag
 }
@@ -107,7 +121,8 @@ dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = 
 dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)
 
 cat("======================================================================\n")
-cat(sprintf("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline [%s]\n", net_meta$label))
+cat(sprintf("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline [%s | Source: %s]\n",
+            net_meta$label, source_label))
 cat("======================================================================\n\n")
 
 t_start <- proc.time()
@@ -401,13 +416,20 @@ humber_info <- resolve_core_basin(df_full, catch_lu, net_meta, "humber")
 thames_info <- resolve_core_basin(df_full, catch_lu, net_meta, "thames")
 severn_info <- resolve_core_basin(df_full, catch_lu, net_meta, "severn")
 
-res_england <- analyze_domain(df_full, "england", "All England RSN Network", m_neighbors = 15L, n_boot = 100L)
+eng_domain_label <- switch(source_cli,
+  ssn = "All England SSN Network",
+  rss = "All England RSS Combined Network",
+  "All England RSN Network"
+)
+res_england <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = 100L)
 res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = 100L)
 res_thames  <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = 100L)
 res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = 100L)
 
 all_cv <- rbind(res_england$cv_summary, res_humber$cv_summary, res_thames$cv_summary, res_severn$cv_summary)
 all_params <- rbind(res_england$param_df, res_humber$param_df, res_thames$param_df, res_severn$param_df)
+all_cv$Source               <- source_abbr
+all_cv$Source_Desc          <- source_label
 all_cv$Transform_Type       <- trans_obj$type
 all_cv$Transform_Lambda     <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
 all_cv$Transform_Label      <- trans_obj$label
@@ -415,6 +437,8 @@ all_cv$Scale                <- if (trans_obj$is_transformed) trans_obj$short_lab
 all_cv$Network_Abbr         <- net_meta$abbr
 all_cv$Network_Label        <- net_meta$short_label
 
+all_params$Source           <- source_abbr
+all_params$Source_Desc      <- source_label
 all_params$Transform_Type   <- trans_obj$type
 all_params$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
 all_params$Transform_Label  <- trans_obj$label

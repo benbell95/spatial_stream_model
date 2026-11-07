@@ -74,30 +74,187 @@ def _rel_join(base, *parts):
 
 GIS_DIR = os.environ.get("S3N_GIS_DIR") or _rel_join(BASE_DIR, "gis")
 DATA_DIR = os.environ.get("S3N_DATA_DIR") or _rel_join(BASE_DIR, "data")
-WQ_DIR = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+RSN_DIR = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+SSN_DIR = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
+WQ_DIR = RSN_DIR
 CONFIG_DIR = _rel_join(BASE_DIR, "configs", "networks")
 OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or _rel_join(DATA_DIR, "processed")
 
 
+def resolve_source_tag(source="rsn"):
+    if not source:
+        return "rsn"
+    s = str(source).lower().strip()
+    if s in ("ssn", "small_stream", "small_streams", "small-streams", "small-stream"):
+        return "ssn"
+    if s in ("rss", "combined", "both", "all", "rsn_ssn", "ssn_rsn", "rsn+ssn"):
+        return "rss"
+    return "rsn"
+
+
+def print_available_sources():
+    print("Available Monitoring Data Sources:\n")
+    print(f"  {'Source':<6} | {'Description':<48} | {'Default':<12}")
+    print("-" * 73)
+    print(f"  {'rsn':<6} | {'River Surveillance Network (1,382 WQ stations)':<48} | {'YES (Default)':<12}")
+    print(f"  {'ssn':<6} | {'Small Streams Network (520 headwater stations)':<48} | {'No':<12}")
+    print(f"  {'rss':<6} | {'Combined River Surveillance & Small Streams (RSS)':<48} | {'No':<12}")
+    print("\nUsage:")
+    print("  python3 scripts/01_preprocess_orn.py --source=rsn           # River Surveillance Network (default)")
+    print("  python3 scripts/01_preprocess_orn.py --source=ssn           # Small Streams Network only")
+    print("  python3 scripts/01_preprocess_orn.py --source=rss           # Combined RSN + SSN")
+    print("  Rscript scripts/run_s3n_determinand.R 0117 --source=rss     # Fit S3N model on combined RSS\n")
+
+
 def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
-    """Updates global GIS_DIR, DATA_DIR, WQ_DIR, and OUT_DIR from CLI or environment overrides."""
-    global GIS_DIR, DATA_DIR, WQ_DIR, OUT_DIR
+    """Updates global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, and OUT_DIR from CLI or environment overrides."""
+    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, OUT_DIR
     if gis_dir:
         GIS_DIR = gis_dir
     if data_dir:
         DATA_DIR = data_dir
-        cand_wq = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
-        if os.path.isdir(cand_wq):
-            WQ_DIR = cand_wq
-        elif os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")):
-            WQ_DIR = DATA_DIR
-        else:
-            WQ_DIR = cand_wq
+        cand_rsn = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+        RSN_DIR = cand_rsn if os.path.isdir(cand_rsn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")) else cand_rsn)
+        cand_ssn = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
+        SSN_DIR = cand_ssn if os.path.isdir(cand_ssn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "SSN Water Quality Samples.csv")) else cand_ssn)
+        WQ_DIR = RSN_DIR
         if not out_dir:
             OUT_DIR = _rel_join(DATA_DIR, "processed")
     if out_dir:
         OUT_DIR = out_dir
     os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def load_monitoring_stations_and_records(data_dir, source="rsn", dataset="wq", det_code="0117"):
+    """
+    Loads station coordinates (pts), station-to-source mapping (pts_source),
+    core water quality sites for catchment discovery (core_wq_sites),
+    and observational sample records (all_records) across RSN, SSN, or combined RSS.
+    """
+    src_key = resolve_source_tag(source)
+    cand_rsn = _rel_join(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
+    rsn_dir = cand_rsn if os.path.isdir(cand_rsn) else (data_dir if os.path.exists(os.path.join(data_dir, "RSN Water Quality Samples.csv")) else cand_rsn)
+    cand_ssn = _rel_join(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
+    ssn_dir = cand_ssn if os.path.isdir(cand_ssn) else (data_dir if os.path.exists(os.path.join(data_dir, "SSN Water Quality Samples.csv")) else cand_ssn)
+
+    targets = []
+    if src_key == "rsn":
+        targets.append(("RSN", rsn_dir, "RSN"))
+    elif src_key == "ssn":
+        targets.append(("SSN", ssn_dir, "SSN"))
+    elif src_key == "rss":
+        targets.append(("RSN", rsn_dir, "RSN"))
+        targets.append(("SSN", ssn_dir, "SSN"))
+
+    pts = {}
+    pts_source = {}
+    core_wq_sites = set()
+    all_records = []
+
+    for src_label, s_dir, prefix in targets:
+        if not os.path.isdir(s_dir):
+            raise FileNotFoundError(f"Directory for {src_label} data not found at: {s_dir}")
+
+        # 1. Station Points
+        wq_pts_path = os.path.join(s_dir, f"{prefix} Water Quality Sample Points.csv")
+        if os.path.exists(wq_pts_path):
+            with open(wq_pts_path, "r", encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    if r.get("ngr_easting") and r.get("ngr_northing"):
+                        nid = r["network_id"]
+                        pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r)
+                        pts_source[nid] = src_label
+
+        eco_pts_path = os.path.join(s_dir, f"{prefix} Ecology Sample Points.csv")
+        if os.path.exists(eco_pts_path):
+            with open(eco_pts_path, "r", encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    nid = r["network_id"]
+                    if nid not in pts and r.get("ngr_easting") and r.get("ngr_northing"):
+                        r_compat = {"wims_id": nid, "wims_region_code": ""}
+                        pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r_compat)
+                        pts_source[nid] = src_label
+
+        # 2. Core WQ sites (used for identifying monitored catchments)
+        wq_samples_path = os.path.join(s_dir, f"{prefix} Water Quality Samples.csv")
+        if os.path.exists(wq_samples_path):
+            with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    if r.get("det_code") == "0117":
+                        core_wq_sites.add(r["network_id"])
+
+        # 3. Observational Records
+        if dataset == "wq":
+            if os.path.exists(wq_samples_path):
+                with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
+                    for r in csv.DictReader(f):
+                        if r.get("det_code") == det_code:
+                            try:
+                                val = float(r["meas_result"])
+                            except (ValueError, TypeError):
+                                continue
+                            is_cens = (r.get("meas_sign") == "<")
+                            dt = r.get("sample_datetime", "")
+                            if len(dt) >= 7:
+                                yr = int(dt[0:4])
+                                mo = int(dt[5:7])
+                                seas = MONTH_TO_SEASON[mo]
+                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas))
+        elif dataset == "lcms":
+            lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
+            if not os.path.exists(lcms_path):
+                if src_key == "ssn":
+                    raise ValueError("LCMS/GCMS data is only monitored on RSN and is not available in Small Streams Network (SSN).")
+                continue
+            with open(lcms_path, "r", encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    if r.get("cas_number") == det_code or (r.get("compound_name") and det_code.lower() in r["compound_name"].lower()):
+                        if not r.get("meas_result"):
+                            continue
+                        try:
+                            val = float(r["meas_result"])
+                        except (ValueError, TypeError):
+                            continue
+                        is_cens = (r.get("less_than_flag", "").strip().lower() == "yes")
+                        dt = r.get("sample_datetime", "")
+                        if len(dt) >= 7:
+                            yr = int(dt[0:4])
+                            mo = int(dt[5:7])
+                            seas = MONTH_TO_SEASON[mo]
+                            all_records.append((r["network_id"], val, is_cens, yr, mo, seas))
+        else:
+            ds_files = {
+                "inverts": (f"{prefix} Macroinvertebrate Samples.csv", "sample_datetime"),
+                "diatoms": (f"{prefix} Diatom Samples.csv", "sample_datetime"),
+                "macrophytes": (f"{prefix} Macrophyte Samples.csv", "sample_datetime"),
+                "rhs": (f"{prefix} River Habitat Surveys.csv", "survey_date"),
+            }
+            csv_name, dt_col = ds_files[dataset]
+            csv_path = os.path.join(s_dir, csv_name)
+            if not os.path.exists(csv_path):
+                if src_key == "ssn":
+                    raise ValueError(f"Dataset '{dataset}' is only monitored on RSN and is not available in Small Streams Network (SSN).")
+                continue
+            col_key = "whpt_aspt" if (dataset == "inverts" and det_code == "0117") else det_code
+            with open(csv_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                if col_key not in reader.fieldnames:
+                    raise ValueError(f"Column '{col_key}' not found in {csv_name}. Available: {reader.fieldnames}")
+                for r in reader:
+                    raw_s = r.get(col_key, "").strip()
+                    dt = r.get(dt_col, "").strip()
+                    if not raw_s or not dt or len(dt) < 7:
+                        continue
+                    try:
+                        val = float(raw_s)
+                    except (ValueError, TypeError):
+                        continue
+                    yr = int(dt[0:4])
+                    mo = int(dt[5:7])
+                    seas = MONTH_TO_SEASON[mo]
+                    all_records.append((r["network_id"], val, False, yr, mo, seas))
+
+    return pts, pts_source, core_wq_sites, all_records
 
 
 def resolve_gis_path(rel_p, gis_dir=None):
@@ -1288,17 +1445,27 @@ def ensure_gpkg_paths(cfg):
     return resolved
 
 
-def write_outputs_to_dirs(net_abbr, files_dict):
+def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
     """
-    Writes generated output files into `data/processed/<net_abbr>/` AND copies them
-    into `data/processed/` so downstream scripts work with or without `--network`.
+    Writes generated output files into `data/processed/<net_abbr>[_<source>]/` AND copies them
+    into `data/processed/` when source is 'rsn' so downstream scripts work with or without `--network`.
     """
-    net_dir = os.path.join(OUT_DIR, net_abbr)
+    source_key = resolve_source_tag(source)
+    sub_name = net_abbr if source_key == "rsn" else f"{net_abbr}_{source_key}"
+    net_dir = os.path.join(DATA_DIR, "processed", sub_name)
     os.makedirs(net_dir, exist_ok=True)
     for fname, src_path in files_dict.items():
         dst_net = os.path.join(net_dir, fname)
         if os.path.abspath(src_path) != os.path.abspath(dst_net):
             shutil.copy2(src_path, dst_net)
+
+    # For default RSN, also ensure outputs are available at data/processed/ root
+    if source_key == "rsn":
+        proc_root = os.path.join(DATA_DIR, "processed")
+        for fname, src_path in files_dict.items():
+            dst_root = os.path.join(proc_root, fname)
+            if os.path.abspath(src_path) != os.path.abspath(dst_root):
+                shutil.copy2(src_path, dst_root)
 
 
 def load_orn_spatial_reference():
@@ -1308,7 +1475,11 @@ def load_orn_spatial_reference():
     can inherit BGS bedrock/superficial geology (`Is_Chalk_Limestone`, `Is_Sandstone`,
     `Is_Aquifer`, `Is_Peat`), `RBD_ID`, and fallback `Elevation`/`Slope` in < 0.2s.
     """
-    orn_csv = os.path.join(OUT_DIR, "orn", "england_rsn_reaches.csv")
+    orn_csv = os.path.join(DATA_DIR, "processed", "orn", "england_rsn_reaches.csv")
+    if not os.path.exists(orn_csv):
+        orn_csv = os.path.join(OUT_DIR, "england_rsn_reaches.csv")
+    if not os.path.exists(orn_csv):
+        orn_csv = os.path.join(DATA_DIR, "processed", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
         return None, {}
     grid = defaultdict(list)
@@ -1360,11 +1531,21 @@ def query_orn_spatial_grid(grid, mx, my):
     return best_rec
 
 
-def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0, trans_type="log", eff_lambda=None):
+def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
+                               trans_type="log", eff_lambda=None, pts_source=None, source_key="rsn"):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
     """
+    if pts_source is None:
+        pts_source = {}
+    source_key = resolve_source_tag(source_key)
+    source_abbr = "SSN" if source_key == "ssn" else ("RSS" if source_key == "rss" else "RSN")
+    source_label = (
+        "Small Streams Network (SSN)" if source_key == "ssn"
+        else ("Combined River Surveillance & Small Streams (RSS)" if source_key == "rss"
+              else "River Surveillance Network (RSN)")
+    )
     net_abbr = cfg["abbr"]
     net_label = cfg.get("label", net_abbr)
     short_label = cfg.get("short_label", net_label)
@@ -1875,7 +2056,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             "site_id", "wims_id", "wims_region_code",
             "easting", "northing", "snap_dist_m", "RivID", "CatchID",
             "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median",
-            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate", "included_250m"
+            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate", "included_250m",
+            "source"
         ])
         for nid in all_station_ids:
             px, py, meta = pts[nid]
@@ -1888,6 +2070,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             d2m_km = u_info["d2m_km"]
             obs_up_km = max(0.0, d2m_km - (along_m / 1000.0))
             inc = 1 if d <= max_snap_m else 0
+            src_str = pts_source.get(nid, "RSN")
             vals = nitrate_by_site.get(nid, [])
             if vals:
                 m_val = statistics.mean(vals)
@@ -1906,13 +2089,13 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
                     round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), log_m, m_log, inc
+                    round(sd_val, 4), log_m, m_log, inc, src_str
                 ])
             else:
                 w.writerow([
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), 0, "", "", "", "", "", inc
+                    round(obs_up_km, 5), 0, "", "", "", "", "", inc, src_str
                 ])
 
     reach_period_vals = defaultdict(list)
@@ -2052,6 +2235,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "abbr": net_abbr,
         "label": net_label,
         "short_label": short_label,
+        "source": source_key,
+        "source_abbr": source_abbr,
+        "source_label": source_label,
         "crs_epsg": crs_epsg,
         "topology_mode": topo_mode,
         "max_snap_dist_m": max_snap_m,
@@ -2072,8 +2258,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "rsn_reach_periods.csv": periods_csv_path,
         "rsn_catchments_lookup.csv": catch_lu_path,
         "network_metadata.json": meta_path,
-    })
-    print(f"Done in {time.time() - t0:.2f} seconds (saved to {os.path.join(OUT_DIR, net_abbr)}/ and {OUT_DIR}/).")
+    }, source=source_key)
+    print(f"Done in {time.time() - t0:.2f} seconds (saved to {OUT_DIR}/).")
 
 
 def main():
@@ -2207,10 +2393,37 @@ def main():
         action="store_true",
         help="List all supported data transformations and their mathematical properties, then exit.",
     )
+    parser.add_argument(
+        "--source",
+        "--data-source",
+        choices=["rsn", "ssn", "rss"],
+        default="rsn",
+        help=(
+            "Monitoring network data source: 'rsn' = Environment Agency River Surveillance Network (default), "
+            "'ssn' = Environment Agency Small Streams Network, "
+            "'rss' = Combined River Surveillance & Small Streams Network (RSN + SSN)."
+        ),
+    )
+    parser.add_argument(
+        "--list-sources",
+        action="store_true",
+        help="List available monitoring data sources (RSN, SSN, RSS) and their station counts, then exit.",
+    )
     args = parser.parse_args()
     if args.list_transforms:
         print_available_transforms()
         return
+    if args.list_sources:
+        print_available_sources()
+        return
+
+    source_key = resolve_source_tag(args.source)
+    source_abbr = "SSN" if source_key == "ssn" else ("RSS" if source_key == "rss" else "RSN")
+    source_label = (
+        "Small Streams Network (SSN)" if source_key == "ssn"
+        else ("Combined River Surveillance & Small Streams (RSS)" if source_key == "rss"
+              else "River Surveillance Network (RSN)")
+    )
 
     configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
 
@@ -2220,6 +2433,11 @@ def main():
 
     cfg = load_network_config(args.network, args.network_config)
     net_abbr = cfg["abbr"]
+
+    if not args.out_dir:
+        sub_name = net_abbr if source_key == "rsn" else f"{net_abbr}_{source_key}"
+        OUT_DIR = _rel_join(DATA_DIR, "processed", sub_name)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
     if args.convert_to_geoparquet:
         src_files = ensure_gpkg_paths(cfg)
@@ -2252,78 +2470,13 @@ def main():
 
     t0 = time.time()
     print(
-        f"1. Reading RSN Sample Points and Samples "
+        f"1. Reading Monitoring Sample Points and Samples [Source: {source_label}] "
         f"(network='{net_abbr}', dataset='{args.dataset}', variable='{args.det_code}', "
         f"censor_method='{args.censor_method}', period='{period_label}')..."
     )
-    pts = {}
-    with open(os.path.join(WQ_DIR, "RSN Water Quality Sample Points.csv"), "r", encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            if r["ngr_easting"] and r["ngr_northing"]:
-                pts[r["network_id"]] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r)
-    eco_pts_path = os.path.join(WQ_DIR, "RSN Ecology Sample Points.csv")
-    if os.path.exists(eco_pts_path):
-        with open(eco_pts_path, "r", encoding="utf-8-sig") as f:
-            for r in csv.DictReader(f):
-                nid = r["network_id"]
-                if nid not in pts and r["ngr_easting"] and r["ngr_northing"]:
-                    r_compat = {"wims_id": nid, "wims_region_code": ""}
-                    pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r_compat)
-
-    core_wq_sites = set()
-    with open(os.path.join(WQ_DIR, "RSN Water Quality Samples.csv"), "r", encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            if r["det_code"] == "0117":
-                core_wq_sites.add(r["network_id"])
-
-    all_records = []
-    if args.dataset == "wq":
-        with open(os.path.join(WQ_DIR, "RSN Water Quality Samples.csv"), "r", encoding="utf-8-sig") as f:
-            for r in csv.DictReader(f):
-                if r["det_code"] == args.det_code:
-                    val = float(r["meas_result"])
-                    is_cens = (r["meas_sign"] == "<")
-                    dt = r["sample_datetime"]
-                    yr = int(dt[0:4])
-                    mo = int(dt[5:7])
-                    seas = MONTH_TO_SEASON[mo]
-                    all_records.append((r["network_id"], val, is_cens, yr, mo, seas))
-    elif args.dataset == "lcms":
-        with open(os.path.join(WQ_DIR, "RSN LCMS GCMS Samples.csv"), "r", encoding="utf-8-sig") as f:
-            for r in csv.DictReader(f):
-                if r["cas_number"] == args.det_code or args.det_code.lower() in r["compound_name"].lower():
-                    if not r["meas_result"]:
-                        continue
-                    val = float(r["meas_result"])
-                    is_cens = (r["less_than_flag"].strip().lower() == "yes")
-                    dt = r["sample_datetime"]
-                    yr = int(dt[0:4])
-                    mo = int(dt[5:7])
-                    seas = MONTH_TO_SEASON[mo]
-                    all_records.append((r["network_id"], val, is_cens, yr, mo, seas))
-    else:
-        ds_files = {
-            "inverts": ("RSN Macroinvertebrate Samples.csv", "sample_datetime"),
-            "diatoms": ("RSN Diatom Samples.csv", "sample_datetime"),
-            "macrophytes": ("RSN Macrophyte Samples.csv", "sample_datetime"),
-            "rhs": ("RSN River Habitat Surveys.csv", "survey_date"),
-        }
-        csv_name, dt_col = ds_files[args.dataset]
-        col_key = "whpt_aspt" if (args.dataset == "inverts" and args.det_code == "0117") else args.det_code
-        with open(os.path.join(WQ_DIR, csv_name), "r", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            if col_key not in reader.fieldnames:
-                raise ValueError(f"Column '{col_key}' not found in {csv_name}. Available: {reader.fieldnames}")
-            for r in reader:
-                raw_s = r[col_key].strip()
-                dt = r[dt_col].strip()
-                if not raw_s or not dt:
-                    continue
-                val = float(raw_s)
-                yr = int(dt[0:4])
-                mo = int(dt[5:7])
-                seas = MONTH_TO_SEASON[mo]
-                all_records.append((r["network_id"], val, False, yr, mo, seas))
+    pts, pts_source, core_wq_sites, all_records = load_monitoring_stations_and_records(
+        DATA_DIR, source=source_key, dataset=args.dataset, det_code=args.det_code
+    )
 
     raw_all_by_site = defaultdict(list)
     for nid, val, is_cens, yr, mo, seas in all_records:
@@ -2374,13 +2527,14 @@ def main():
     # Dispatch to generic network pipeline if not using standard ORN fast path
     if cfg.get("covariates", {}).get("mode") != "orn_100m_table" or args.topology_mode != "auto" or args.afv_col:
         preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
-                                   trans_type=trans_type, eff_lambda=eff_lambda)
+                                   trans_type=trans_type, eff_lambda=eff_lambda,
+                                   pts_source=pts_source, source_key=source_key)
         return
 
     # Standard ORN v2 fast path
     max_snap_m = float(args.max_snap_dist if args.max_snap_dist is not None else cfg.get("max_snap_dist_m", 250.0))
     gpkg_path = ensure_gpkg_paths(cfg)[0]
-    print(f"2. Scanning {os.path.basename(gpkg_path)} geometry to snap RSN stations (<= {max_snap_m:.0f}m)...")
+    print(f"2. Scanning {os.path.basename(gpkg_path)} geometry to snap {source_abbr} stations (<= {max_snap_m:.0f}m)...")
     conn = sqlite3.connect(gpkg_path)
     c = conn.cursor()
 
@@ -2420,9 +2574,10 @@ def main():
             if d < best_snap[nid][0]:
                 best_snap[nid] = (d, riv_id, catch_id, along, d2m)
 
+    active_monitored_sites = set(nitrate_by_site.keys()) | core_wq_sites
     monitored_catchments = {
         best_snap[nid][2]
-        for nid in core_wq_sites
+        for nid in active_monitored_sites
         if nid in best_snap and best_snap[nid][0] <= max_snap_m
     }
     site_by_reach = defaultdict(list)
@@ -2433,7 +2588,8 @@ def main():
             "site_id", "wims_id", "wims_region_code",
             "easting", "northing", "snap_dist_m", "RivID", "CatchID",
             "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median",
-            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate", "included_250m"
+            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate", "included_250m",
+            "source"
         ])
         for nid in all_station_ids:
             px, py, meta = pts[nid]
@@ -2442,6 +2598,7 @@ def main():
                 continue
             obs_up_km = max(0.0, (d2m - along) / 1000.0)
             inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
+            src_str = pts_source.get(nid, "RSN")
             vals = nitrate_by_site.get(nid, [])
             if vals:
                 m_val = statistics.mean(vals)
@@ -2460,13 +2617,13 @@ def main():
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
                     round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), log_m, m_log, inc
+                    round(sd_val, 4), log_m, m_log, inc, src_str
                 ])
             else:
                 w.writerow([
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), 0, "", "", "", "", "", inc
+                    round(obs_up_km, 5), 0, "", "", "", "", "", inc, src_str
                 ])
 
     reach_period_vals = defaultdict(list)
@@ -2687,6 +2844,9 @@ def main():
         "abbr": net_abbr,
         "label": cfg.get("label", "OS Open Rivers Network (ORN v2)"),
         "short_label": cfg.get("short_label", "ORN v2"),
+        "source": source_key,
+        "source_abbr": source_abbr,
+        "source_label": source_label,
         "crs_epsg": 27700,
         "topology_mode": "nodes",
         "max_snap_dist_m": max_snap_m,
@@ -2707,8 +2867,8 @@ def main():
         "rsn_reach_periods.csv": periods_csv_path,
         "rsn_catchments_lookup.csv": catch_lu_path,
         "network_metadata.json": meta_path,
-    })
-    print(f"Done in {time.time() - t0:.2f} seconds.")
+    }, source=source_key)
+    print(f"Done in {time.time() - t0:.2f} seconds (saved to {OUT_DIR}/).")
 
 
 if __name__ == "__main__":

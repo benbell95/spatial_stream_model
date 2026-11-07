@@ -25,19 +25,30 @@ dir_cfg        <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 GIS_DIR        <- dir_cfg$gis_dir
 DATA_DIR       <- dir_cfg$data_dir
 OUT_BASE       <- dir_cfg$out_dir
-WQ_DIR         <- dir_cfg$wq_dir
-SAMPLES_CSV    <- rel_path(WQ_DIR, "RSN Water Quality Samples.csv")
-REACHES_CSV    <- rel_path( dir_cfg$proc_root, "england_rsn_reaches.csv")
-SITES_CSV      <- rel_path(dir_cfg$proc_root, "rsn_sites.csv")
-CATCHMENTS_CSV <- rel_path(dir_cfg$proc_root, "rsn_catchments_lookup.csv")
+
+src_cli        <- parse_source_arg(args)
+source_cli     <- resolve_source_tag(src_cli)
+source_abbr    <- format_source_abbr(source_cli)
+source_label   <- format_source_label(source_cli)
+source_tag     <- format_source_folder_tag(source_cli)
+
+src_dirs       <- resolve_data_source_dirs(DATA_DIR, source = source_cli)
+RSN_DIR        <- src_dirs$rsn_dir
+SSN_DIR        <- src_dirs$ssn_dir
+WQ_DIR         <- if (source_cli == "ssn") SSN_DIR else RSN_DIR
+
+if ("--list-sources" %in% args) {
+  print_available_sources()
+  quit(save = "no", status = 0)
+}
 
 DATASET_FILES <- list(
-  wq          = list(file = "RSN Water Quality Samples.csv",      dt_col = "sample_datetime", label = "Water Quality Samples"),
-  inverts     = list(file = "RSN Macroinvertebrate Samples.csv",  dt_col = "sample_datetime", label = "Macroinvertebrate Samples"),
-  diatoms     = list(file = "RSN Diatom Samples.csv",             dt_col = "sample_datetime", label = "Diatom Samples"),
-  macrophytes = list(file = "RSN Macrophyte Samples.csv",         dt_col = "sample_datetime", label = "Macrophyte Samples"),
-  rhs         = list(file = "RSN River Habitat Surveys.csv",      dt_col = "survey_date",     label = "River Habitat Surveys"),
-  lcms        = list(file = "RSN LCMS GCMS Samples.csv",          dt_col = "sample_datetime", label = "LCMS/GCMS Organic Pollutants")
+  wq          = list(file = "Water Quality Samples.csv",      dt_col = "sample_datetime", label = "Water Quality Samples"),
+  inverts     = list(file = "Macroinvertebrate Samples.csv",  dt_col = "sample_datetime", label = "Macroinvertebrate Samples"),
+  diatoms     = list(file = "Diatom Samples.csv",             dt_col = "sample_datetime", label = "Diatom Samples"),
+  macrophytes = list(file = "Macrophyte Samples.csv",         dt_col = "sample_datetime", label = "Macrophyte Samples"),
+  rhs         = list(file = "River Habitat Surveys.csv",      dt_col = "survey_date",     label = "River Habitat Surveys"),
+  lcms        = list(file = "LCMS GCMS Samples.csv",          dt_col = "sample_datetime", label = "LCMS/GCMS Organic Pollutants")
 )
 
 WIDE_VAR_META <- list(
@@ -109,15 +120,15 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
   quit(save = "no", status = 0)
 }
 
-PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR)
+PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli)
 net_meta       <- load_network_metadata(PROC_DIR)
 REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
 SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
 CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
 
 if ("--list-basins" %in% args) {
-  cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s)]:\n\n",
-              net_meta$label, net_meta$abbr))
+  cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s), Source: %s]:\n\n",
+              net_meta$label, net_meta$abbr, source_abbr))
   c_lu <- read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
   rbd_tab <- aggregate(cbind(n_reaches, n_obs_reaches) ~ RBD_ID + RBD_Name, data = c_lu, FUN = sum)
   rbd_tab <- rbd_tab[order(-rbd_tab$n_obs_reaches), ]
@@ -147,12 +158,22 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
     stop(sprintf("Unknown --dataset='%s'. Choose from: %s", list_ds, paste(names(DATASET_FILES), collapse = ", ")))
   }
   ds_info <- DATASET_FILES[[list_ds]]
-  csv_p   <- file.path(WQ_DIR, ds_info$file)
-  cat(sprintf("Scanning %s (--dataset=%s) for available variables...\n\n", ds_info$file, list_ds))
+  targets <- src_dirs$active_dirs
+  cat(sprintf("Scanning %s (--dataset=%s, --source=%s [%s]) for available variables...\n\n",
+              ds_info$label, list_ds, source_cli, source_label))
 
   if (list_ds == "wq") {
-    raw <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(det_code = "character"), fileEncoding = "UTF-8-BOM")
-    tab <- aggregate(network_id ~ det_code + det_desc + unit_short_desc, data = raw, FUN = length)
+    dfs <- list()
+    for (s_name in names(targets)) {
+      f_path <- file.path(targets[[s_name]], paste0(toupper(s_name), " Water Quality Samples.csv"))
+      if (file.exists(f_path)) {
+        raw <- read.csv(f_path, stringsAsFactors = FALSE, colClasses = c(det_code = "character"), fileEncoding = "UTF-8-BOM")
+        dfs[[s_name]] <- aggregate(network_id ~ det_code + det_desc + unit_short_desc, data = raw, FUN = length)
+        rm(raw)
+      }
+    }
+    tab_all <- do.call(rbind, dfs)
+    tab <- aggregate(network_id ~ det_code + det_desc + unit_short_desc, data = tab_all, FUN = sum)
     tab <- tab[order(-tab$network_id), ]
     tab <- head(tab, 25)
     cat(sprintf("%-8s | %-10s | %-44s | %-10s\n", "det_code", "Samples", "Determinand Description", "Units"))
@@ -162,6 +183,11 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
                   tab$det_code[i], tab$network_id[i], substr(tab$det_desc[i], 1, 44), tab$unit_short_desc[i]))
     }
   } else if (list_ds == "lcms") {
+    if (source_cli == "ssn") {
+      cat("LCMS/GCMS Organic Pollutants are only monitored on RSN and are not available in Small Streams Network (SSN).\n")
+      quit(save = "no", status = 0)
+    }
+    csv_p <- file.path(RSN_DIR, "RSN LCMS GCMS Samples.csv")
     raw <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
     tab <- aggregate(network_id ~ cas_number + compound_name + unit_short_desc, data = raw, FUN = length)
     tab <- tab[order(-tab$network_id), ]
@@ -173,34 +199,42 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
                   tab$cas_number[i], tab$network_id[i], substr(tab$compound_name[i], 1, 42), tab$unit_short_desc[i]))
     }
   } else {
-    raw <- read.csv(csv_p, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
-    skip_c <- c("network_id", "biosys_id", "ecosys_id", "sample_id", "survey_id",
-                "sample_version", "analysis_id", "survey_format")
-    cand_c <- setdiff(colnames(raw), skip_c)
+    dfs <- list()
+    for (s_name in names(targets)) {
+      f_path <- file.path(targets[[s_name]], paste0(toupper(s_name), " ", ds_info$file))
+      if (file.exists(f_path)) {
+        raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+        skip_c <- c("network_id", "biosys_id", "ecosys_id", "sample_id", "survey_id",
+                    "sample_version", "analysis_id", "survey_format")
+        cand_c <- setdiff(colnames(raw), skip_c)
+        counts <- sapply(cand_c, function(cn) sum(!is.na(suppressWarnings(as.numeric(raw[[cn]])))))
+        dfs[[s_name]] <- data.frame(Variable = names(counts), Count = as.integer(counts), stringsAsFactors = FALSE)
+        rm(raw)
+      }
+    }
+    tab_all <- do.call(rbind, dfs)
+    tab <- aggregate(Count ~ Variable, data = tab_all, FUN = sum)
+    tab <- tab[tab$Count >= 100, ]
+    tab <- tab[order(-tab$Count), ]
     cat(sprintf("%-26s | %-8s | %-40s | %-8s\n", "Variable Name", "Samples", "Description", "Units"))
     cat(strrep("-", 90), "\n")
-    for (cn in cand_c) {
-      v_num <- suppressWarnings(as.numeric(raw[[cn]]))
-      n_ok  <- sum(!is.na(v_num))
-      if (n_ok >= 100) {
-        m_info <- if (cn %in% names(WIDE_VAR_META)) WIDE_VAR_META[[cn]] else c(desc = cn, unit = "index")
-        cat(sprintf("%-26s | %-8d | %-40s | %-8s\n",
-                    cn, n_ok, substr(m_info["desc"], 1, 40), m_info["unit"]))
-      }
+    for (i in seq_len(nrow(tab))) {
+      cn <- tab$Variable[i]
+      m_info <- if (cn %in% names(WIDE_VAR_META)) WIDE_VAR_META[[cn]] else c(desc = cn, unit = "index")
+      cat(sprintf("%-26s | %-8d | %-40s | %-8s\n",
+                  cn, tab$Count[i], substr(m_info["desc"], 1, 40), m_info["unit"]))
     }
   }
   cat("\nUsage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
-  cat("        [--raw|--log] [--reverse-color] [--censor=ros|half_lod] [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins]\n")
-  cat("        [--vars=<Covariate_List>] [--list-vars] [--network=<name>] [--list-networks]\n")
-  cat("        [--gis-dir=<dir>] [--data-dir=<dir>] [--output-dir=<dir>]\n")
+  cat("        [--source=rsn|ssn|rss] [--list-sources] [--raw|--log] [--reverse-color] [--censor=ros|half_lod]\n")
+  cat("        [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins] [--vars=<Covariates>] [--list-vars]\n")
+  cat("        [--network=<name>] [--list-networks] [--gis-dir=<dir>] [--data-dir=<dir>] [--output-dir=<dir>]\n")
   cat("        [--year=YYYY] [--season=winter|spring|summer|autumn] [--month=1..12] [--by=year|season|month]\n")
   cat("Examples:\n")
-  cat("  Rscript scripts/run_s3n_determinand.R --list --dataset=inverts # List macroinvertebrate indices\n")
-  cat("  Rscript scripts/run_s3n_determinand.R whpt_aspt --reverse-color # Macroinvertebrate WHPT ASPT (reversed color scale)\n")
-  cat("  Rscript scripts/run_s3n_determinand.R life_family_index        # Macroinvertebrate LIFE Flow Index\n")
-  cat("  Rscript scripts/run_s3n_determinand.R psi_family_score         # Macroinvertebrate PSI Sediment Index\n")
-  cat("  Rscript scripts/run_s3n_determinand.R rmni --dataset=macrophytes # River Macrophyte Nutrient Index\n")
-  cat("  Rscript scripts/run_s3n_determinand.R hqa_score --reverse-color # River Habitat Survey HQA Score (higher = better)\n")
+  cat("  Rscript scripts/run_s3n_determinand.R 0117                   # Nitrate on RSN (default)\n")
+  cat("  Rscript scripts/run_s3n_determinand.R 0117 --source=ssn      # Nitrate on Small Streams Network (SSN)\n")
+  cat("  Rscript scripts/run_s3n_determinand.R 0117 --source=rss      # Nitrate on Combined RSN + SSN (RSS)\n")
+  cat("  Rscript scripts/run_s3n_determinand.R whpt_aspt --reverse-color # Macroinvertebrates ASPT\n")
   cat("  Rscript scripts/run_s3n_determinand.R 0117 --basin=Eden        # Nitrate + River Eden (CatchID=3125)\n")
   quit(save = "no", status = 0)
 }
@@ -309,6 +343,9 @@ trans_tag       <- format_transform_folder_tag(trans_obj, default_type = default
 vars_tag        <- format_covariates_folder_tag(var_specs)
 out_folder_name <- if (ds_mode == "wq") paste0("det_", det_code) else paste0(ds_mode, "_", gsub("[^a-zA-Z0-9_]+", "_", det_code))
 out_folder_name <- paste0(out_folder_name, "_", net_meta$abbr)
+if (nzchar(source_tag)) {
+  out_folder_name <- paste0(out_folder_name, "_", source_tag)
+}
 if (nzchar(trans_tag)) {
   out_folder_name <- paste0(out_folder_name, "_", trans_tag)
 }
@@ -389,21 +426,37 @@ cat(sprintf("  Running S3N Pipeline: dataset = '%s', variable = '%s' (log_scale 
 cat(sprintf("======================================================================\n"))
 
 ds_info <- DATASET_FILES[[ds_mode]]
-csv_p   <- file.path(WQ_DIR, ds_info$file)
 
 if (ds_mode == "wq") {
-  all_samples <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(det_code = "character"), fileEncoding = "UTF-8-BOM")
-  det_samples <- all_samples[all_samples$det_code == det_code,
-                             c("network_id", "sample_datetime", "det_desc", "meas_sign", "meas_result", "unit_short_desc")]
-  rm(all_samples)
-  if (nrow(det_samples) == 0) {
-    stop(sprintf("No water quality samples found for det_code = '%s'. Run with --list to see valid codes.", det_code))
+  sample_dfs <- list()
+  for (s_name in names(src_dirs$active_dirs)) {
+    s_dir  <- src_dirs$active_dirs[[s_name]]
+    f_path <- file.path(s_dir, paste0(toupper(s_name), " Water Quality Samples.csv"))
+    if (file.exists(f_path)) {
+      raw <- read.csv(f_path, stringsAsFactors = FALSE, colClasses = c(det_code = "character"), fileEncoding = "UTF-8-BOM")
+      sub_samples <- raw[raw$det_code == det_code,
+                         c("network_id", "sample_datetime", "det_desc", "meas_sign", "meas_result", "unit_short_desc")]
+      rm(raw)
+      if (nrow(sub_samples) > 0) {
+        sub_samples$data_source <- toupper(s_name)
+        sample_dfs[[s_name]] <- sub_samples
+      }
+    }
   }
+  if (length(sample_dfs) == 0) {
+    stop(sprintf("No water quality samples found for det_code = '%s' in %s. Run with --list to see valid codes.",
+                 det_code, source_label))
+  }
+  det_samples <- do.call(rbind, sample_dfs)
   det_name <- det_samples$det_desc[1]
   det_unit <- det_samples$unit_short_desc[1]
   raw_vals <- as.numeric(det_samples$meas_result)
   is_cens  <- (det_samples$meas_sign == "<")
 } else if (ds_mode == "lcms") {
+  if (source_cli == "ssn") {
+    stop("LCMS/GCMS Organic Pollutants are only monitored on RSN and are not available in Small Streams Network (SSN). Use --source=rsn or --source=rss.")
+  }
+  csv_p <- file.path(RSN_DIR, "RSN LCMS GCMS Samples.csv")
   all_samples <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
   keep_m      <- (all_samples$cas_number == det_code) | grepl(det_code, all_samples$compound_name, ignore.case = TRUE)
   det_samples <- all_samples[keep_m, c("network_id", "sample_datetime", "compound_name", "less_than_flag", "meas_result", "unit_short_desc")]
@@ -411,24 +464,40 @@ if (ds_mode == "wq") {
   if (nrow(det_samples) == 0) {
     stop(sprintf("No LCMS/GCMS samples found for '%s'. Run with --list --dataset=lcms to see valid compounds.", det_code))
   }
+  det_samples$data_source <- "RSN"
   det_name <- det_samples$compound_name[1]
   det_unit <- det_samples$unit_short_desc[1]
   raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
   is_cens  <- (tolower(trimws(det_samples$less_than_flag)) == "yes")
 } else {
-  all_samples <- read.csv(csv_p, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
-  if (!(det_code %in% colnames(all_samples))) {
-    stop(sprintf("Column '%s' not found in %s. Run with --list --dataset=%s to see available variables.",
-                 det_code, ds_info$file, ds_mode))
+  if (ds_mode == "rhs" && source_cli == "ssn") {
+    stop("River Habitat Surveys (RHS) are only surveyed on RSN and are not available in Small Streams Network (SSN). Use --source=rsn or --source=rss.")
   }
-  dt_col      <- ds_info$dt_col
-  det_samples <- data.frame(
-    network_id      = all_samples$network_id,
-    sample_datetime = all_samples[[dt_col]],
-    meas_result     = all_samples[[det_code]],
-    stringsAsFactors = FALSE
-  )
-  rm(all_samples)
+  sample_dfs <- list()
+  for (s_name in names(src_dirs$active_dirs)) {
+    s_dir  <- src_dirs$active_dirs[[s_name]]
+    f_path <- file.path(s_dir, paste0(toupper(s_name), " ", ds_info$file))
+    if (file.exists(f_path)) {
+      raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+      if (det_code %in% colnames(raw)) {
+        dt_col <- ds_info$dt_col
+        sub_df <- data.frame(
+          network_id      = raw$network_id,
+          sample_datetime = raw[[dt_col]],
+          meas_result     = raw[[det_code]],
+          data_source     = toupper(s_name),
+          stringsAsFactors = FALSE
+        )
+        sample_dfs[[s_name]] <- sub_df
+      }
+      rm(raw)
+    }
+  }
+  if (length(sample_dfs) == 0) {
+    stop(sprintf("Column '%s' not found in %s across %s. Run with --list --dataset=%s to see available variables.",
+                 det_code, ds_info$file, source_label, ds_mode))
+  }
+  det_samples <- do.call(rbind, sample_dfs)
   m_info   <- if (det_code %in% names(WIDE_VAR_META)) WIDE_VAR_META[[det_code]] else c(short = det_code, desc = det_code, unit = "index")
   det_name <- unname(m_info["short"])
   det_unit <- unname(m_info["unit"])
@@ -798,7 +867,12 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   thames_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "thames")
   severn_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "severn")
 
-  res_eng <- analyze_domain(df_full, "england", "All England RSN Network", m_neighbors = 15L, n_boot = n_boot)
+  eng_domain_label <- switch(source_cli,
+    ssn = "All England SSN Network",
+    rss = "All England RSS Combined Network",
+    "All England RSN Network"
+  )
+  res_eng <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = n_boot)
   if (is.null(res_eng)) return(NULL)
   res_hum <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
   res_tha <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
@@ -821,6 +895,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_cv     <- do.call(rbind, lapply(dom_list, function(x) if (!is.null(x)) x$cv_summary else NULL))
   all_params <- do.call(rbind, lapply(dom_list, function(x) if (!is.null(x)) x$param_df else NULL))
   det_title_name <- if (period_tag == "all") det_name else sprintf("%s [%s]", shorten_det_name(det_name), period_tag)
+  all_cv$Source           <- source_abbr
+  all_cv$Source_Desc      <- source_label
   all_cv$Period           <- period_tag
   all_cv$Determinand_Code <- det_code
   all_cv$Determinand_Name <- det_title_name
@@ -831,6 +907,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_cv$Transform_Label  <- trans_obj$label
   all_cv$Network_Abbr     <- net_meta$abbr
   all_cv$Network_Label    <- net_meta$short_label
+  all_params$Source           <- source_abbr
+  all_params$Source_Desc      <- source_label
   all_params$Period           <- period_tag
   all_params$Transform_Type   <- trans_obj$type
   all_params$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
@@ -903,12 +981,12 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
 
   plot_fig1_england_map(eng_pred, det_code, det_title_name, det_unit, trans_obj, fig1_path,
                         reverse_color = reverse_color, sc_val = sc_val, sc_se = sc_se_eng,
-                        vars_label = vars_sub, network_label = net_lbl)
+                        vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
   plot_fig2_humber_map(hum_pred, all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig2_path,
                        reverse_color = reverse_color, sc_se = sc_se_hum,
-                       vars_label = vars_sub, network_label = net_lbl)
+                       vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
   plot_fig3_thames_severn_map(tha_pred, sev_pred, sc_val, det_code, det_title_name, det_unit, trans_obj, fig3_path,
-                              reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl)
+                              reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
 
   extra_cv_for_fig4 <- lapply(extra_fits, function(ef) {
     list(
@@ -920,7 +998,7 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   plot_fig4_diagnostics(eng_pred, res_eng$cv_pts, if (!is.null(res_hum)) res_hum$cv_pts else NULL,
                         all_cv, all_params, det_code, det_title_name, det_unit, trans_obj, fig4_path,
                         extra_cv_list = extra_cv_for_fig4, lims_a = lims_a, ylim_d = ylim_d,
-                        vars_label = vars_sub, network_label = net_lbl)
+                        vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
 
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
@@ -929,7 +1007,7 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
       plot_basin_map(ef$pred_df, ef$info$short_title, ef$info$domain_label,
                      all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig_k_path,
                      reverse_color = reverse_color, sc_se = sc_se_hum,
-                     vars_label = vars_sub, network_label = net_lbl)
+                     vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
     }
   }
@@ -997,7 +1075,8 @@ if (!is.na(by_mode)) {
   plot_fig5_temporal_england_grid(grid_items, by_mode, shared_sc$sc_val,
                                   det_code, det_name, det_unit, trans_obj,
                                   fig5_grid_path, reverse_color = reverse_color,
-                                  vars_label = vars_sub_grid, network_label = net_meta$short_label)
+                                  vars_label = vars_sub_grid, network_label = net_meta$short_label,
+                                  source_label = source_label)
   write.csv(comb_cv, file.path(OUT_DIR, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
   write.csv(comb_pa, file.path(OUT_DIR, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
 } else {

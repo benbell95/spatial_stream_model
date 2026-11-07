@@ -615,8 +615,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     same_det <- (b1$det_code == b2$det_code)
 
     # A. Fisher's z-test on All England S3N Combined CV R2
-    r1_row <- subset(b1$cv_tab, Canon_Domain == "All England RSN Network" & Canon_Model == "S3N Combined")
-    r2_row <- subset(b2$cv_tab, Canon_Domain == "All England RSN Network" & Canon_Model == "S3N Combined")
+    r1_row <- subset(b1$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
+    r2_row <- subset(b2$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
     if (nrow(r1_row) > 0 && nrow(r2_row) > 0) {
       r2_1 <- r1_row$R2[1]; n1 <- r1_row$n_obs[1]
       r2_2 <- r2_row$R2[1]; n2 <- r2_row$n_obs[1]
@@ -984,10 +984,10 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   par(mfrow = c(2, 2), mar = c(5.2, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Core domains present across runs
-  core_doms <- c("All England RSN Network", "Humber Basin", "Thames Basin", "Severn Basin")
+  core_doms <- c("All England Stream Network", "All England RSN Network", "Humber Basin", "Thames Basin", "Severn Basin")
   avail_doms <- unique(cv_comp_df$Canon_Domain)
   doms_use <- c(intersect(core_doms, avail_doms), setdiff(avail_doms, core_doms))
-  dom_short <- sub(" RSN Network$", "", sub(" Basin$", "", doms_use))
+  dom_short <- sub(" (Stream|RSN|SSN|RSS Combined) Network$", "", sub(" Basin$", "", doms_use))
 
   # Panel A: S3N Combined 5-Fold CV R2 by Domain and Run
   r2_mat <- matrix(NA_real_, nrow = K, ncol = length(doms_use),
@@ -1295,7 +1295,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
 
   # Panel A: Forest Plot of All England Tail-Up Fixed-Effect Coefficients
   cov_names <- c("sigma.sq", "tau.sq", "phi")
-  fe_sub <- subset(param_comp_df, Canon_Domain == "All England RSN Network" &
+  fe_sub <- subset(param_comp_df, grepl("All England", Canon_Domain) &
                                   Canon_Model == "S3N Tail-Up" &
                                   !(Parameter %in% c("Intercept", cov_names)))
   if (nrow(fe_sub) > 0) {
@@ -1337,7 +1337,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
 
   # Panel B: Spatial Variance Partitioning (Partial Sill sigma.sq vs Nugget tau.sq)
   par(mar = c(5.0, 5.0, 3.8, 2.0))
-  cov_sub <- subset(param_comp_df, Canon_Domain == "All England RSN Network" & Parameter %in% c("sigma.sq", "tau.sq"))
+  cov_sub <- subset(param_comp_df, grepl("All England", Canon_Domain) & Parameter %in% c("sigma.sq", "tau.sq"))
   if (nrow(cov_sub) > 0) {
     mods_u <- c("S3N Tail-Up", "S3N Tail-Down")
     bar_vals <- matrix(0, nrow = 2, ncol = K * length(mods_u))
@@ -1414,7 +1414,7 @@ plot_comp4_side_by_side_maps <- function(bundles, out_file) {
       compute_color_scale(vals_i, b$use_log)
     }
     d_short_i <- shorten_det_name(b$det_name)
-    r_all <- subset(b$cv_tab, Canon_Domain == "All England RSN Network" & Canon_Model == "S3N Combined")
+    r_all <- subset(b$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
     sub_txt <- if (nrow(r_all) > 0) {
       sprintf("5-Fold CV R2 = %.3f (RMSE = %.3f) | Med = %.3g %s | %s reaches",
               r_all$R2[1], r_all$RMSE[1], median(b$eng_pred$pred_combined, na.rm = TRUE),
@@ -1668,15 +1668,16 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
   add_line("")
   add_line("## 1. Overview of Compared Model Runs")
   add_line("")
-  add_line("| Run | Run Label | Determinand | Transformation | Unit (Scale) | Water Network | Period | Covariates | Reaches | Catchments | Observed Sites |")
-  add_line("| :---: | :--- | :--- | :--- | :---: | :--- | :---: | :--- | ---: | ---: | ---: |")
+  add_line("| Run | Run Label | Determinand | Transformation | Unit (Scale) | Data Source | Water Network | Period | Covariates | Reaches | Catchments | Observed Sites |")
+  add_line("| :---: | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :--- | ---: | ---: | ---: |")
   for (i in seq_len(K)) {
     b <- bundles[[i]]
     trans_str <- if (!is.na(b$trans_lambda)) sprintf("%s (λ=%.4f)", b$trans_label, b$trans_lambda) else b$trans_label
-    add_line("| **Run %d** | **%s** | %s (`%s`) | %s | `%s` (%s) | %s | `%s` | %s | %s | %d | %d |",
+    src_abbr <- if (!is.null(b$source)) b$source else "RSN"
+    add_line("| **Run %d** | **%s** | %s (`%s`) | %s | `%s` (%s) | %s | %s | `%s` | %s | %s | %d | %d |",
              i, b$label, b$det_name, b$det_code, trans_str, b$det_unit,
              if (b$use_log) "log" else b$trans_type,
-             b$net_label, b$period, b$vars_label,
+             src_abbr, b$net_label, b$period, b$vars_label,
              format(nrow(b$eng_pred), big.mark = ","),
              length(unique(b$eng_pred$CatchID)),
              sum(b$eng_pred$has_obs == 1))
@@ -1689,7 +1690,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
   add_line("## 2. Executive Summary: Model Performance & Output Key Findings")
   add_line("")
 
-  eng_s3n <- subset(cv_comp_df, Canon_Domain == "All England RSN Network" & Canon_Model == "S3N Combined")
+  eng_s3n <- subset(cv_comp_df, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
   if (nrow(eng_s3n) >= 2) {
     best_r2_idx   <- which.max(eng_s3n$R2)
     best_rmse_idx <- which.min(eng_s3n$RMSE)
@@ -1988,7 +1989,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
     add_line("")
     add_line("| Model | Parameter | Run Label | Estimate | 95% Bootstrap CI | Diff vs Run 1 | Wald Z | p-value | Sig |")
     add_line("| :--- | :--- | :--- | ---: | :---: | ---: | ---: | ---: | :---: |")
-    eng_p <- subset(param_comp_df, Canon_Domain == "All England RSN Network")
+    eng_p <- subset(param_comp_df, grepl("All England", Canon_Domain))
     for (r_i in seq_len(nrow(eng_p))) {
       p <- eng_p[r_i, ]
       z_str <- if (is.na(p$Wald_Z)) "—" else sprintf("%.2f", p$Wald_Z)

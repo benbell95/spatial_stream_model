@@ -9,15 +9,30 @@ This document provides complete technical documentation for the three-stage **Sc
 
 ---
 
-## Part I: Python GIS & Water Quality Preprocessing (`01_preprocess_orn.py`)
+## Part I: Python GIS & Monitoring Preprocessing (`01_preprocess_orn.py`)
 
-[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency River Surveillance Network (`RSN`)** tables into a topologically ordered, model-ready spatial stream network dataset in **~13 seconds** using pure Python standard library modules (`sqlite3`, `struct`, `math`, `csv`).
+[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~13–15 seconds** using pure Python standard library modules (`sqlite3`, `struct`, `math`, `csv`).
 
-### 1. Water Quality Ingestion & Censored-Value Handling (`ROS` vs. `0.5 * LOD`)
-- **Station Lookup (`pts`)**: Reads `RSN Water Quality Sample Points.csv` and maps each `network_id` to its British National Grid (`EPSG:27700`) coordinates `(ngr_easting, ngr_northing)` in meters.
+### 1. Multi-Network Monitoring Data Ingestion (`--source=rsn|ssn|rss`)
+The preprocessor supports three monitoring dataset configurations via `--source=<name>`:
+- `rsn` (*default*): Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 baseline stations across England's mainstems and major tributaries.
+- `ssn`: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations (< 20 km² catchment area).
+- `rss`: **Combined River Surveillance + Small Streams Network** integrating both datasets (1,695 unique monitoring stations) for complete headwater-to-mouth stream network coverage.
+
+```bash
+# List supported monitoring sources and data directories
+python3 scripts/01_preprocess_orn.py --list-sources
+
+# Run preprocessing for RSN (default), SSN, or combined RSS
+python3 scripts/01_preprocess_orn.py                       # data/processed/orn/ (default)
+python3 scripts/01_preprocess_orn.py --source=ssn          # data/processed/orn_ssn/
+python3 scripts/01_preprocess_orn.py --source=rss          # data/processed/orn_rss/
+```
+
+- **Station Lookup (`load_monitoring_stations_and_records`)**: Reads `*Water Quality Sample Points.csv` from the active source directories and maps each `network_id` to its British National Grid (`EPSG:27700`) coordinates `(ngr_easting, ngr_northing)` in meters, tracking the origin network (`source = RSN` or `source = SSN`).
 - **Determinand & Temporal Filtering (`--det-code`, `--year`, `--season`, `--month`)**:
   - Parses ISO-8601 `sample_datetime` (`YYYY-MM-DDTHH:MM:SS`) into calendar `year` (`2021`–`2024`), `month` (`1..12`), and meteorological `season` (`winter` = Dec–Feb, `spring` = Mar–May, `summer` = Jun–Aug, `autumn` = Sep–Nov).
-  - Supports running on all data (default), by `--year`, by `--season`, or by `--month`, and exports `data/processed/rsn_reach_periods.csv` with reach-level aggregations for all periods (`all`, `year`, `season`, `month`, `year_season`).
+  - Supports running on all data (default), by `--year`, by `--season`, or by `--month`, and exports `rsn_reach_periods.csv` with reach-level aggregations for all periods (`all`, `year`, `season`, `month`, `year_season`).
 - **Configurable Left-Censored (`<`) Handling (`--censor-method {ros,ros_site,half_lod}`)**:
   - `ros` (default): Pooled **Robust Lognormal Regression on Order Statistics** (Hirsch & Stedinger 1987; Helsel & Cohn 1988) across multiple detection limits (`compute_ros_plotting_positions` and `fit_ros_ols`).
   - `ros_site`: Station-level Robust Lognormal ROS within each station (when ≥ 3 uncensored detections exist and < 80% censoring), with automatic fallback to the global ROS regression parameters.
@@ -28,13 +43,17 @@ This document provides complete technical documentation for the three-stage **Sc
 - Decodes little-endian `LineString` (`wkb_type = 2`) and `MultiLineString` (`wkb_type = 5`) double-precision vertex arrays directly via `struct.unpack_from`.
 
 ### 3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()` L62–L84, `main()` L106–L180)
-- **2 km Spatial Hash Grid (`site_grid`)**: Buckets all 1,382 stations into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`.
+- **2 km Spatial Hash Grid (`site_grid`)**: Buckets all candidate stations (1,382 for RSN; 313 for SSN; 1,695 for combined RSS) into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`.
 - **Orthogonal Segment Projection**: Projects candidate stations onto each segment `p_i -> p_{i+1}` (digitized upstream-to-downstream from `Fnode` to `Tnode`), computing Euclidean snapping distance `d` and cumulative distance `along` from the upstream `Fnode`.
 - **Exact Station Distance to River Mouth (`obs_up_dist_km`)**: Subtracting `along` from `Dist2Mth` yields the exact hydrologic distance from the snapped station to the sea/estuary mouth: `max(0.0, (Dist2Mth - along) / 1000.0)`.
-- **Configurable Snapping Threshold (`--max-snap-dist <meters>`, default 250 m)**: Retains stations within `d <= max_snap_dist` of a reach (at 250 m: 1,349 of 1,382 stations, median snap distance 8.0 m, spanning 1,210 unique observed reaches across 141 catchments). Can be relaxed (e.g. `--max-snap-dist 500`) for coarse networks or edge-case meander stations, or tightened (e.g. `--max-snap-dist 100`) for dense parallel ditch systems. Detailed snapping coordinates and diagnostic maps can be generated via `scripts/06_station_snapping_diagnostics.R`.
+- **Configurable Snapping Threshold (`--max-snap-dist <meters>`, default 250 m)**: Retains stations within `d <= max_snap_dist` of a reach:
+  - **RSN** (*default*): 1,349 of 1,382 stations snapped (median distance 8.0 m), spanning 1,210 unique observed reaches across 141 catchments (90,876 reaches total).
+  - **SSN**: 197 of 313 stations snapped (median distance 10.2 m), spanning 177 unique reaches across 58 catchments (76,242 reaches total).
+  - **Combined RSS**: 1,546 of 1,695 stations snapped (median distance 8.2 m), spanning 1,384 unique reaches across 150 catchments (91,118 reaches total).
+  - Threshold can be relaxed (e.g. `--max-snap-dist 500`) for coarse networks or edge-case meander stations, or tightened (e.g. `--max-snap-dist 100`) for dense parallel ditch systems. Detailed snapping coordinates and diagnostic maps can be generated via `scripts/06_station_snapping_diagnostics.R`.
 
 ### 4. Subsetting to Monitored Catchments & Aggregating 100 m Covariates (`main()` L181–L236)
-- Aggregates the 5.98M-row `ORN_Sampled_100m` table via SQL `GROUP BY PolylineID` across the 141 monitored catchments (90,876 reaches) to extract mean channel elevation (`Elevation`), gradient (`Slope`), sinuosity (`Sinuosity`), source elevation (`SrcElevation`), and BGS bedrock/superficial geology indicators (`Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`).
+- Aggregates the 5.98M-row `ORN_Sampled_100m` table via SQL `GROUP BY PolylineID` across monitored catchments (141 catchments / 90,876 reaches for RSN; 58 catchments / 76,242 reaches for SSN; 150 catchments / 91,118 reaches for RSS) to extract mean channel elevation (`Elevation`), gradient (`Slope`), sinuosity (`Sinuosity`), source elevation (`SrcElevation`), and BGS bedrock/superficial geology indicators (`Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`).
 - Walks halfway (`0.5 * reach_len`) along each reach polyline to interpolate the exact geometric midpoint `(mid_X, mid_Y)`.
 
 ### 5. Directed River Tree Construction & Additive Function Values (`main()` L238–L281)
@@ -129,7 +148,8 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
 ### 5. Input Data & Hardware Requirements
 - **Required Data Files**:
   1. [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) (~10.4 GB Ordnance Survey Open Rivers Network v2 GeoPackage — only required when running [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)).
-  2. [`data/NCEA_River_Surveillance_Network_ARD_Open/`](../data/NCEA_River_Surveillance_Network_ARD_Open) (~235 MB total across the EA RSN Water Quality, Macroinvertebrate, Diatom, Macrophyte, River Habitat Survey, and LCMS/GCMS CSV files).
+  2. [`data/NCEA_River_Surveillance_Network_ARD_Open/`](../data/NCEA_River_Surveillance_Network_ARD_Open) (~235 MB across EA RSN Water Quality, Macroinvertebrate, Diatom, Macrophyte, River Habitat Survey, and LCMS/GCMS CSV files).
+  3. [`data/NCEA_Small_Streams_Network_ARD_Open/`](../data/NCEA_Small_Streams_Network_ARD_Open) (~48 MB across EA SSN Small Streams Network CSV files — required when using `--source=ssn` or `--source=rss`).
 - **Memory & CPU**:
   - **RAM**: ~1.5 GB peak memory (fits comfortably on any laptop or standard VM).
   - **CPU**: Uses 4 OpenMP threads by default (`n_omp = 4L`); a full national + 3-basin S3N run with 5-fold cross-validation and 4 figures completes in **~18–25 seconds**.

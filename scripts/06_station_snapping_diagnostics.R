@@ -179,6 +179,7 @@ build_station_snapping_table <- function(proc_dir, include_excluded = TRUE) {
 
   snap_df <- data.frame(
     site_id          = sites_df$site_id,
+    source           = if ("source" %in% colnames(sites_df)) sites_df$source else "RSN",
     wims_id          = sites_df$wims_id,
     wims_region_code = sites_df$wims_region_code,
     CatchID          = sites_df$CatchID,
@@ -709,6 +710,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
 analyze_station_snapping <- function(
   catchment        = NULL,
   network          = "orn",
+  source           = "rsn",
   include_excluded = TRUE,
   max_catch_plots  = 4L,
   out_dir          = NULL,
@@ -721,17 +723,26 @@ analyze_station_snapping <- function(
   d_dir <- if (!is.null(data_dir) && nzchar(data_dir)) data_dir else rel_path(BASE_DIR, "data")
   o_root <- if (!is.null(output_root) && nzchar(output_root)) output_root else rel_path(BASE_DIR, "output")
 
-  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = d_dir, gis_dir = g_dir)
+  src_tag      <- resolve_source_tag(source)
+  source_abbr  <- format_source_abbr(src_tag)
+  source_label <- format_source_label(src_tag)
+  src_ftag     <- format_source_folder_tag(src_tag)
+
+  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = d_dir, gis_dir = g_dir, source = src_tag)
   net_meta <- load_network_metadata(proc_dir)
 
   if (is.null(out_dir) || !nzchar(out_dir)) {
-    out_dir <- rel_path(o_root, paste0("station_snapping_", net_meta$abbr))
+    folder_name <- paste0("station_snapping_", net_meta$abbr)
+    if (nzchar(src_ftag)) {
+      folder_name <- paste0(folder_name, "_", src_ftag)
+    }
+    out_dir <- rel_path(o_root, folder_name)
   }
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   if (verbose) {
     cat("======================================================================\n")
-    cat(sprintf("  Station-to-Reach Snapping Diagnostics [%s]\n", net_meta$label))
+    cat(sprintf("  Station-to-Reach Snapping Diagnostics [%s | Source: %s]\n", net_meta$label, source_label))
     cat("======================================================================\n")
   }
 
@@ -749,7 +760,7 @@ analyze_station_snapping <- function(
 
   # Render network-wide overview figure
   overview_png <- file.path(out_dir, sprintf("fig_snap_overview_%s.png", net_meta$abbr))
-  plot_network_snapping_overview(snap_df, catch_sum, net_meta$short_label, overview_png)
+  plot_network_snapping_overview(snap_df, catch_sum, paste0(net_meta$short_label, " [", source_abbr, "]"), overview_png)
 
   # Resolve which catchments to plot & export individual catchment tables for
   target_cids <- resolve_snapping_catchments(catchment, catch_sum)
@@ -789,13 +800,14 @@ analyze_station_snapping <- function(
   rep_path <- file.path(out_dir, "station_snapping_report.md")
   d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L]
   md_lines <- c(
-    sprintf("# Station-to-Reach Snapping Diagnostics Report — %s", net_meta$label),
+    sprintf("# Station-to-Reach Snapping Diagnostics Report — %s [%s]", net_meta$label, source_abbr),
     "",
     "## 1. Network-Wide Snapping Summary",
     "",
     sprintf("- **Water Network**: %s (`%s`)", net_meta$label, net_meta$abbr),
+    sprintf("- **Data Source**: %s (`%s`)", source_label, source_abbr),
     sprintf("- **Total Network Reaches**: `%s` across `%d` catchments", format(nrow(reaches_df), big.mark = ","), nrow(catch_sum)),
-    sprintf("- **Total RSN Stations Evaluated**: `%d`", nrow(snap_df)),
+    sprintf("- **Total %s Stations Evaluated**: `%d`", source_abbr, nrow(snap_df)),
     sprintf("- **Stations Snapped Within <= 250 m (`included_250m == 1`)**: `%d` (`%.1f%%`) across `%d` unique reaches",
             length(d_inc), 100 * length(d_inc) / max(1, nrow(snap_df)),
             length(unique(snap_df$snapped_RivID[snap_df$included_250m == 1L]))),
@@ -889,6 +901,12 @@ if (sys.nframe() == 0L) {
   args    <- commandArgs(trailingOnly = TRUE)
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
+  src_cli <- parse_source_arg(args)
+  if ("--list-sources" %in% args) {
+    print_available_sources()
+    quit(save = "no", status = 0)
+  }
+
   net_arg <- grep("^--network=", args, value = TRUE)
   network <- if (length(net_arg) > 0) sub("^--network=", "", net_arg[1]) else "orn"
 
@@ -896,6 +914,8 @@ if (sys.nframe() == 0L) {
     cat("Usage:\n")
     cat("  Rscript scripts/06_station_snapping_diagnostics.R [OPTIONS] [CATCHMENTS...]\n\n")
     cat("Options:\n")
+    cat("  --source=rsn|ssn|rss                      Monitoring network dataset (default: rsn)\n")
+    cat("  --list-sources                            List supported station data sources\n")
     cat("  --list, --list-catchments, --list-basins  List all catchments and snapping counts\n")
     cat("  --catchment=<ID_or_Name[,ID2...]>         Catchment ID(s), river name(s), or 'all'\n")
     cat("  --basin=<ID_or_Name[,ID2...]>             Alias for --catchment\n")
@@ -905,13 +925,14 @@ if (sys.nframe() == 0L) {
     cat("  --gis-dir=<dir> --data-dir=<dir> --output-dir=<dir>\n\n")
     cat("Examples:\n")
     cat("  Rscript scripts/06_station_snapping_diagnostics.R --list-catchments\n")
-    cat("  Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames\n")
+    cat("  Rscript scripts/06_station_snapping_diagnostics.R --source=ssn --list-catchments\n")
+    cat("  Rscript scripts/06_station_snapping_diagnostics.R --source=rss --catchment=Thames\n")
     cat("  Rscript scripts/06_station_snapping_diagnostics.R --catchment=Humber,Thames,Severn,Eden\n")
     cat("  Rscript scripts/06_station_snapping_diagnostics.R --network=euhydro_thames --catchment=306\n")
     quit(save = "no", status = 0)
   }
 
-  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = dir_cfg$data_dir, gis_dir = dir_cfg$gis_dir)
+  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = dir_cfg$data_dir, gis_dir = dir_cfg$gis_dir, source = src_cli)
   net_meta <- load_network_metadata(proc_dir)
 
   if (any(args %in% c("--list", "--list-catchments", "--list-basins"))) {
@@ -950,6 +971,7 @@ if (sys.nframe() == 0L) {
   analyze_station_snapping(
     catchment        = if (length(catch_specs) > 0) catch_specs else NULL,
     network          = network,
+    source           = src_cli,
     include_excluded = !only_inc,
     out_dir          = custom_out,
     gis_dir          = dir_cfg$gis_dir,

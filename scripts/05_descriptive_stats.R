@@ -63,6 +63,7 @@ canonical_domain <- function(dom_vec) {
   d <- as.character(dom_vec)
   d <- sub(" \\(CatchID=[0-9]+\\)$", "", d)
   d <- sub("^River ", "", d)
+  d[grepl("^All England", d)] <- "All England Stream Network"
   trimws(d)
 }
 
@@ -288,6 +289,20 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
     "Untransformed (raw)"
   }
 
+  source_abbr <- if ("Source" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source[1]))) {
+    as.character(cv_tab$Source[1])
+  } else {
+    bname <- basename(dir_p)
+    if (grepl("_src_ssn", bname)) "SSN"
+    else if (grepl("_src_rss", bname)) "RSS"
+    else "RSN"
+  }
+  source_label <- if ("Source_Desc" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source_Desc[1]))) {
+    as.character(cv_tab$Source_Desc[1])
+  } else {
+    format_source_label(source_abbr)
+  }
+
   vars_sub <- format_covariates_subtitle(param_tab = param_tab)
   user_supplied_label <- (!is.null(custom_label) && nzchar(custom_label))
 
@@ -307,6 +322,9 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
     if (grepl("_trans_", bname) && !grepl(trans_type, custom_label, ignore.case = TRUE)) {
       custom_label <- sprintf("%s [%s]", custom_label, trans_label)
     }
+    if (source_abbr != "RSN" && !grepl(source_abbr, custom_label, ignore.case = TRUE)) {
+      custom_label <- sprintf("%s [Source: %s]", custom_label, source_abbr)
+    }
   }
 
   # Attach coordinates to eng_cv via RivID lookup from eng_pred
@@ -324,6 +342,8 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
     user_supplied_label = user_supplied_label,
     net_abbr            = net_abbr,
     net_label           = net_lbl,
+    source              = source_abbr,
+    source_label        = source_label,
     period              = period_lbl,
     det_code            = det_code,
     det_name            = det_name,
@@ -363,7 +383,7 @@ list_available_model_runs <- function(out_root = rel_path(BASE_DIR, "output")) {
       rel_d <- format_rel_display_path(d, BASE_DIR)
       b <- tryCatch(load_model_run_bundle(d), error = function(e) NULL)
       if (!is.null(b)) {
-        r_all <- subset(b$cv_tab, Canon_Domain == "All England RSN Network" & Canon_Model == "S3N Combined")
+        r_all <- subset(b$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
         r2_str <- if (nrow(r_all) > 0) sprintf("CV R2 = %.3f, RMSE = %.3f", r_all$R2[1], r_all$RMSE[1]) else "N/A"
         cat(sprintf("  [%2d] %-45s | %-20s | %-22s | %6d reaches (%4d obs) | %s\n",
                     found, rel_d, b$net_label, substr(b$det_name, 1, 22),

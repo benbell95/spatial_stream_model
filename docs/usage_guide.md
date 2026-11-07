@@ -1,6 +1,6 @@
 # Scalable Spatial Stream Network (S3N) Pipeline — Usage & CLI Reference Guide
 
-This guide documents all scripts, command-line options, output directory conventions, and practical examples for running the Scalable Spatial Stream Network (S3N) water quality pipeline across the Ordnance Survey Open Rivers Network ([`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), 90,876 reaches across 141 monitored catchments) and the Environment Agency River Surveillance Network ([`data/NCEA_River_Surveillance_Network_ARD_Open/RSN Water Quality Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Water%20Quality%20Samples.csv)).
+This guide documents all scripts, command-line options, output directory conventions, and practical examples for running the Scalable Spatial Stream Network (S3N) water quality pipeline across the Ordnance Survey Open Rivers Network ([`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), 90,876 reaches across 141 monitored catchments), the Environment Agency River Surveillance Network ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the Small Streams Network ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), and the combined River Surveillance + Small Streams ([`RSS`](../data/processed/orn_rss/)) monitoring network.
 
 > **Mathematical & Algorithmic Deep-Dive**: For a step-by-step theoretical and mathematical explanation of how the `S3N` package, stream-network covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbor Gaussian Process (`NNGP`) estimation, and Universal Stream Kriging work, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
 
@@ -38,7 +38,9 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
 | `<code_or_var>` | *(Required)* | Either a 4-digit EA RSN determinand code (e.g., `0117` for Nitrate, `0180` for Orthophosphate, `0061` for pH) **or** an ecological/habitat metric column name (e.g., `whpt_aspt`, `whpt_ntaxa`, `life_family_index`, `psi_family_score`, `rmni`, `hqa_score`). |
-| `--dataset=<name>` | Auto-detected (`wq` for 4-digit codes) | Selects which RSN dataset to model:<br>• `wq`: [`RSN Water Quality Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Water%20Quality%20Samples.csv)<br>• `inverts`: [`RSN Macroinvertebrate Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Macroinvertebrate%20Samples.csv)<br>• `diatoms`: [`RSN Diatom Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Diatom%20Samples.csv)<br>• `macrophytes`: [`RSN Macrophyte Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Macrophyte%20Samples.csv)<br>• `rhs`: [`RSN River Habitat Surveys.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20River%20Habitat%20Surveys.csv)<br>• `lcms`: [`RSN LCMS GCMS Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20LCMS%20GCMS%20Samples.csv)<br>*(Note: If omitted, the script automatically detects `inverts`, `diatoms`, `macrophytes`, or `rhs` when you pass a column name like `whpt_aspt` or `rmni`)*. |
+| `--source=<name>` | `rsn` | Selects the monitoring station network data source:<br>• `rsn`: **River Surveillance Network** ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the default nationwide surveillance network (1,382 monitoring stations across wider rivers)<br>• `ssn`: **Small Streams Network** ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), dedicated to headwaters and smaller tributaries (313 monitoring stations; saves outputs to `output/det_<code>_<net>_src_ssn/`)<br>• `rss`: **Combined River Surveillance & Small Streams** ([`RSS`](../data/processed/orn_rss/)), merging RSN + SSN into a single integrated dataset (1,695 stations, 1,384 snapped observed reaches on ORN v2; saves outputs to `output/det_<code>_<net>_src_rss/`). |
+| `--list-sources` | — | Prints all supported monitoring network data sources (`rsn`, `ssn`, `rss`), abbreviations, full descriptive labels, and resolved data directories. |
+| `--dataset=<name>` | Auto-detected (`wq` for 4-digit codes) | Selects which dataset to model:<br>• `wq`: Water Quality Samples (`Water Quality Samples.csv`)<br>• `inverts`: Macroinvertebrate Samples (`Macroinvertebrate Samples.csv`)<br>• `diatoms`: Diatom Samples (`Diatom Samples.csv`)<br>• `macrophytes`: Macrophyte Samples (`Macrophyte Samples.csv`)<br>• `rhs`: River Habitat Surveys (`River Habitat Surveys.csv`, RSN only)<br>• `lcms`: LCMS/GCMS Organic Pollutants (`LCMS GCMS Samples.csv`, RSN only)<br>*(Note: If omitted, the script automatically detects `inverts`, `diatoms`, `macrophytes`, or `rhs` when you pass a column name like `whpt_aspt` or `rmni`)*. |
 | `--list`, `-h`, `--help` | — | Lists available variables, sample counts, descriptions, and units for the selected `--dataset` (defaults to top 25 water quality determinands; combine with `--dataset=inverts`, `--dataset=diatoms`, `--dataset=macrophytes`, `--dataset=rhs`, or `--dataset=lcms`). |
 | `--list-basins` | — | Prints all 11 Environment Agency River Basin Districts (`RBD_ID`, `RBD_Name`) and the top 30 individual catchments (`CatchID`, `Main_River`, `RBD_Name`, total reaches, and monitored reaches) from [`data/processed/rsn_catchments_lookup.csv`](../data/processed/rsn_catchments_lookup.csv). |
 | `--list-networks` | — | Lists all configured water network profiles (`orn`, `euhydro_thames`, `euhydro_tweed`, `euhydro`) in [`configs/networks/`](../configs/networks). |
@@ -157,12 +159,35 @@ flowchart TD
 
 ---
 
-### 2.6 Practical Examples for [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)
+### 2.6 Multi-Network Monitoring Data Sources (`--source=rsn|ssn|rss`)
+
+The pipeline supports three monitoring dataset configurations via `--source=<name>`:
+
+| Source Flag | Abbreviation | Monitoring Network | Focus / Character | Total Stations | Snapped Reaches (ORN v2) | Total Reaches | Output Folder Tag |
+| :---: | :---: | :--- | :--- | ---: | ---: | ---: | :--- |
+| `--source=rsn` *(default)* | `RSN` | **River Surveillance Network** | Nationwide network across wider rivers and mainstems | 1,382 | 1,210 | 90,876 | `output/det_<code>_<net>/` |
+| `--source=ssn` | `SSN` | **Small Streams Network** | Dedicated headwater streams (< 20 km² drainage) | 313 | 177 | 76,242 | `output/det_<code>_<net>_src_ssn/` |
+| `--source=rss` | `RSS` | **Combined Surveillance & Small Streams** | Integrated nationwide surveillance + headwater monitoring | 1,695 | 1,384 | 91,118 | `output/det_<code>_<net>_src_rss/` |
+
+> [!NOTE]
+> **Dataset Availability Across Sources**:
+> - **Water Quality (`--dataset=wq`)**, **Macroinvertebrates (`--dataset=inverts`)**, **Diatoms (`--dataset=diatoms`)**, and **Macrophytes (`--dataset=macrophytes`)** are monitored on **both RSN and SSN**. They can be modeled independently (`--source=rsn`, `--source=ssn`) or integrated seamlessly (`--source=rss`).
+> - **LCMS/GCMS Organic Pollutants (`--dataset=lcms`)** and **River Habitat Surveys (`--dataset=rhs`)** are monitored exclusively on RSN. If requested with `--source=ssn`, the pipeline halts with an informative message; if requested with `--source=rss`, it uses available RSN observations.
+
+---
+
+### 2.7 Practical Examples for [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)
 
 #### A. Discovery Commands
 ```bash
-# List the top 25 water quality determinands and their 4-digit codes
-Rscript scripts/run_s3n_determinand.R --list
+# List supported monitoring network sources and data paths
+Rscript scripts/run_s3n_determinand.R --list-sources
+python3 scripts/01_preprocess_orn.py --list-sources
+
+# List the top 25 water quality determinands across monitoring sources
+Rscript scripts/run_s3n_determinand.R --list                   # RSN (default)
+Rscript scripts/run_s3n_determinand.R --list --source=ssn      # SSN
+Rscript scripts/run_s3n_determinand.R --list --source=rss      # Combined RSS
 
 # List available variables in the Macroinvertebrate, Diatom, Macrophyte, or RHS datasets
 Rscript scripts/run_s3n_determinand.R --list --dataset=inverts
@@ -172,27 +197,44 @@ Rscript scripts/run_s3n_determinand.R --list --dataset=rhs
 
 # List all 11 River Basin Districts and top 30 individual catchments
 Rscript scripts/run_s3n_determinand.R --list-basins
+Rscript scripts/run_s3n_determinand.R --list-basins --source=ssn
+Rscript scripts/run_s3n_determinand.R --list-basins --source=rss
 ```
 
 #### B. Running Water Chemistry & Ecological / Macroinvertebrate Variables
 ```bash
-# 1. Nitrate as N (0117) across all data using default Lognormal ROS censoring
-Rscript scripts/run_s3n_determinand.R 0117
+# 1. Nitrate as N (0117) on RSN (default), SSN, and Combined RSS
+Rscript scripts/run_s3n_determinand.R 0117                   # RSN (default nationwide network)
+Rscript scripts/run_s3n_determinand.R 0117 --source=ssn      # Small Streams Network (SSN headwaters)
+Rscript scripts/run_s3n_determinand.R 0117 --source=rss      # Combined RSN + SSN (RSS integrated network)
 
-# 2. Macroinvertebrate WHPT ASPT, LIFE Flow Index, or PSI Sediment Score (auto-detects --dataset=inverts)
+# 2. Macroinvertebrate WHPT ASPT across headwater streams (SSN)
+Rscript scripts/run_s3n_determinand.R whpt_aspt --source=ssn --reverse-color
+
+# 3. Macroinvertebrate WHPT ASPT across combined RSS surveillance network
+Rscript scripts/run_s3n_determinand.R whpt_aspt --source=rss --reverse-color
+
+# 4. Compare RSN vs. SSN vs. RSS models directly in scripts/04_compare_model_runs.R
+Rscript scripts/04_compare_model_runs.R \
+  output/det_0117 \
+  output/det_0117_orn_src_ssn \
+  output/det_0117_orn_src_rss \
+  --out=output/comparisons/nitrate_rsn_vs_ssn_vs_rss
+
+# 5. Macroinvertebrate WHPT ASPT, LIFE Flow Index, or PSI Sediment Score (auto-detects --dataset=inverts)
 Rscript scripts/run_s3n_determinand.R whpt_aspt
 Rscript scripts/run_s3n_determinand.R life_family_index
 Rscript scripts/run_s3n_determinand.R psi_family_score
 
-# 3. River Macrophyte Nutrient Index (RMNI) and River Habitat Survey Quality (HQA)
+# 6. River Macrophyte Nutrient Index (RMNI) and River Habitat Survey Quality (HQA)
 Rscript scripts/run_s3n_determinand.R rmni --dataset=macrophytes
 Rscript scripts/run_s3n_determinand.R hqa_score --dataset=rhs
 
-# 4. Orthophosphate as P (0180) comparing ROS vs. 0.5 * LOD substitution
+# 7. Orthophosphate as P (0180) comparing ROS vs. 0.5 * LOD substitution
 Rscript scripts/run_s3n_determinand.R 0180 --censor=ros
 Rscript scripts/run_s3n_determinand.R 0180 --censor=half_lod
 
-# 5. In-situ pH (0061) modeled on its natural (raw) scale
+# 8. In-situ pH (0061) modeled on its natural (raw) scale
 Rscript scripts/run_s3n_determinand.R 0061 --raw
 ```
 
@@ -270,7 +312,9 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
-| `--max-snap-dist <METRES>` | `250.0` | **Maximum snapping distance tolerance in metres** from RSN monitoring stations to river reach polylines. Stations with Euclidean snapping distance `d ≤ max_snap_dist` are retained as monitored reaches (`has_obs = 1`); stations farther than this threshold are marked `included_250m = 0` (or `included_<dist>m`) and excluded from reach observation targets to prevent spurious topological associations. |
+| `--source <rsn\|ssn\|rss>` | `rsn` | Monitoring network data source:<br>• `rsn`: River Surveillance Network (`RSN`, default nationwide surveillance dataset)<br>• `ssn`: Small Streams Network (`SSN`, dedicated headwater and tributary dataset)<br>• `rss`: Combined River Surveillance & Small Streams (`RSS`, integrated nationwide dataset). Preprocessed outputs are saved to `data/processed/<net>_<source>/` (while default `rsn` preserves backward compatibility at `data/processed/<net>/` and `data/processed/`). |
+| `--list-sources` | — | Prints supported monitoring network data sources, descriptions, and data paths, then exits. |
+| `--max-snap-dist <METRES>` | `250.0` | **Maximum snapping distance tolerance in metres** from monitoring stations to river reach polylines. Stations with Euclidean snapping distance `d ≤ max_snap_dist` are retained as monitored reaches (`has_obs = 1`); stations farther than this threshold are marked `included_250m = 0` (or `included_<dist>m`) and excluded from reach observation targets to prevent spurious topological associations. |
 | `--dataset <NAME>` | `wq` | RSN monitoring dataset to extract:<br>• `wq`: Water Quality Samples ([`RSN Water Quality Samples.csv`](../data/NCEA_River_Surveillance_Network_ARD_Open/RSN%20Water%20Quality%20Samples.csv))<br>• `inverts`: Macroinvertebrate Samples<br>• `diatoms`: Diatom Samples<br>• `macrophytes`: Macrophyte Samples<br>• `rhs`: River Habitat Surveys<br>• `lcms`: LCMS/GCMS Organic Pollutant Samples. |
 | `--det-code <CODE>` | `0117` | 4-digit EA RSN determinand code (for `--dataset wq`, e.g. `0117` Nitrate, `0180` Orthophosphate) or column metric name (for ecological datasets, e.g. `whpt_aspt`, `rmni`, `hqa_score`). |
 | `--transform <TYPE>` | `log` | Data transformation algorithm applied to determinand observations: `log`, `sqrt`, `cbrt`, `log1p`, `log10`, `fourthrt`, `boxcox`, `yeojohnson`, `reciprocal`, `asin`, `logit`, `none`/`raw`. |
@@ -519,10 +563,14 @@ For any water network (`--network=orn`, `--network=euhydro_thames`, etc.), it wr
 
 ```bash
 # 1. List all catchments in the network with station counts and median/max snapping distances (m)
-Rscript scripts/06_station_snapping_diagnostics.R --list-catchments
+Rscript scripts/06_station_snapping_diagnostics.R --list-catchments              # RSN (default)
+Rscript scripts/06_station_snapping_diagnostics.R --source=ssn --list-catchments # SSN headwaters
+Rscript scripts/06_station_snapping_diagnostics.R --source=rss --list-catchments # Combined RSS
 
 # 2. Run snapping diagnostics for a specific catchment by name or CatchID
 Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
+Rscript scripts/06_station_snapping_diagnostics.R --source=ssn --catchment=Humber
+Rscript scripts/06_station_snapping_diagnostics.R --source=rss --catchment=Eden
 Rscript scripts/06_station_snapping_diagnostics.R --catchment=3125
 
 # 3. Run snapping diagnostics across multiple catchments
