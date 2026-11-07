@@ -20,12 +20,14 @@
 #   Rscript scripts/03_generate_plots.R --dir=output/det_0117 --vmin=0.2 --vmax=20
 # ==============================================================================
 
-BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
+BASE_DIR <- if (file.exists("scripts/s3n_plot_functions.R")) "." else if (file.exists("s3n_plot_functions.R")) ".." else "."
 source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+BASE_DIR <- resolve_base_dir()
 
-args <- commandArgs(trailingOnly = TRUE)
+args    <- commandArgs(trailingOnly = TRUE)
+dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
-target_dir    <- file.path(BASE_DIR, "output")
+target_dir    <- dir_cfg$out_dir
 det_code_cli  <- NULL
 det_name_cli  <- NULL
 det_unit_cli  <- NULL
@@ -36,9 +38,9 @@ vmax_raw      <- NULL
 custom_basins <- character(0)
 
 for (a in args) {
-  if (grepl("^--dir=", a)) {
-    d_val <- sub("^--dir=", "", a)
-    target_dir <- if (grepl("^/", d_val)) d_val else file.path(BASE_DIR, d_val)
+  if (grepl("^--(dir|out-dir|output-dir|out|output)=", a)) {
+    d_val <- sub("^--(dir|out-dir|output-dir|out|output)=", "", a)
+    target_dir <- if (grepl("^/", d_val)) d_val else rel_path(BASE_DIR, d_val)
   } else if (grepl("^--code=", a)) {
     det_code_cli <- sub("^--code=", "", a)
   } else if (grepl("^--name=", a)) {

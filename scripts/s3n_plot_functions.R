@@ -19,6 +19,102 @@
 #       * plot_fig4_diagnostics()
 # ==============================================================================
 
+# ==============================================================================
+# RELATIVE PATH & CUSTOM DIRECTORY RESOLUTION HELPERS
+# ==============================================================================
+
+resolve_base_dir <- function() {
+  if (file.exists("scripts/s3n_plot_functions.R") || dir.exists("configs/networks")) {
+    return(".")
+  }
+  if (file.exists("s3n_plot_functions.R") && dir.exists("../configs/networks")) {
+    return("..")
+  }
+  full_args <- commandArgs(trailingOnly = FALSE)
+  file_arg  <- grep("^--file=", full_args, value = TRUE)
+  if (length(file_arg) > 0) {
+    script_p  <- sub("^--file=", "", file_arg[1])
+    cand_root <- dirname(dirname(script_p))
+    if (nzchar(cand_root) && dir.exists(cand_root)) {
+      return(cand_root)
+    }
+  }
+  "."
+}
+
+rel_path <- function(base_dir, ...) {
+  parts <- c(list(...))
+  parts <- as.character(unlist(parts))
+  parts <- parts[nzchar(parts)]
+  if (length(parts) == 0) return(base_dir)
+  p <- if (is.null(base_dir) || !nzchar(base_dir) || base_dir == ".") {
+    do.call(file.path, as.list(parts))
+  } else {
+    do.call(file.path, as.list(c(base_dir, parts)))
+  }
+  sub("^\\./", "", p)
+}
+
+format_rel_display_path <- function(p, base_dir = ".") {
+  p_clean <- sub("^\\./", "", p)
+  if (!is.null(base_dir) && nzchar(base_dir) && base_dir != ".") {
+    prefix <- paste0(gsub("/+$", "", base_dir), "/")
+    if (startsWith(p_clean, prefix)) {
+      p_clean <- substr(p_clean, nchar(prefix) + 1L, nchar(p_clean))
+    }
+  }
+  p_clean
+}
+
+parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
+  gis_dir  <- Sys.getenv("S3N_GIS_DIR", unset = "")
+  data_dir <- Sys.getenv("S3N_DATA_DIR", unset = "")
+  out_dir  <- Sys.getenv("S3N_OUTPUT_DIR", unset = "")
+  has_custom_out <- nzchar(out_dir)
+
+  for (a in args) {
+    if (grepl("^--(gis-dir|gis)=", a)) {
+      gis_dir <- sub("^--(gis-dir|gis)=", "", a)
+    } else if (grepl("^--(data-dir|data)=", a)) {
+      data_dir <- sub("^--(data-dir|data)=", "", a)
+    } else if (grepl("^--(out-dir|output-dir|out|output)=", a)) {
+      out_dir <- sub("^--(out-dir|output-dir|out|output)=", "", a)
+      has_custom_out <- TRUE
+    }
+  }
+
+  if (!nzchar(gis_dir))  gis_dir  <- rel_path(base_dir, "gis")
+  if (!nzchar(data_dir)) data_dir <- rel_path(base_dir, "data")
+  if (!nzchar(out_dir))  out_dir  <- rel_path(base_dir, "output")
+
+  cand_wq <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
+  wq_dir <- if (dir.exists(cand_wq)) {
+    cand_wq
+  } else if (file.exists(rel_path(data_dir, "RSN Water Quality Samples.csv"))) {
+    data_dir
+  } else {
+    cand_wq
+  }
+
+  cand_proc <- rel_path(data_dir, "processed")
+  proc_root <- if (dir.exists(cand_proc)) {
+    cand_proc
+  } else if (file.exists(rel_path(data_dir, "england_rsn_reaches.csv"))) {
+    data_dir
+  } else {
+    cand_proc
+  }
+
+  list(
+    gis_dir        = sub("^\\./", "", gis_dir),
+    data_dir       = sub("^\\./", "", data_dir),
+    wq_dir         = sub("^\\./", "", wq_dir),
+    proc_root      = sub("^\\./", "", proc_root),
+    out_dir        = sub("^\\./", "", out_dir),
+    has_custom_out = has_custom_out
+  )
+}
+
 val_cols     <- colorRampPalette(c("#1b4f72", "#2874a6", "#1abc9c", "#f4d03f", "#e67e22", "#c0392b", "#641e16"))(256)
 val_cols_rev <- rev(val_cols)
 uncert_cols  <- colorRampPalette(c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"))(256)
@@ -1117,40 +1213,66 @@ parse_json_int_field <- function(lines, key, default = NA_integer_) {
   as.integer(sub(paste0('^.*', pat, '.*$'), "\\1", hit[1]))
 }
 
-resolve_network_processed_dir <- function(base_dir, network_arg = NULL) {
-  proc_root <- file.path(base_dir, "data/processed")
+resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir = NULL, gis_dir = NULL) {
+  proc_root <- if (!is.null(data_dir) && nzchar(data_dir)) {
+    cand_p <- rel_path(data_dir, "processed")
+    if (dir.exists(cand_p)) cand_p else if (file.exists(rel_path(data_dir, "england_rsn_reaches.csv"))) data_dir else cand_p
+  } else {
+    rel_path(base_dir, "data", "processed")
+  }
+
   if (is.null(network_arg) || !nzchar(trimws(network_arg))) {
-    # Check active network_metadata.json in data/processed/, defaulting to 'orn'
-    meta_p <- file.path(proc_root, "network_metadata.json")
+    # Check active network_metadata.json in proc_root, defaulting to 'orn'
+    meta_p <- rel_path(proc_root, "network_metadata.json")
     if (file.exists(meta_p)) {
       lines <- readLines(meta_p, warn = FALSE)
       abbr  <- parse_json_string_field(lines, "abbr", "orn")
-      sub_d <- file.path(proc_root, abbr)
-      if (dir.exists(sub_d) && file.exists(file.path(sub_d, "england_rsn_reaches.csv"))) {
+      sub_d <- rel_path(proc_root, abbr)
+      if (dir.exists(sub_d) && file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
         return(sub_d)
       }
     }
-    if (dir.exists(file.path(proc_root, "orn")) &&
-        file.exists(file.path(proc_root, "orn", "england_rsn_reaches.csv"))) {
-      return(file.path(proc_root, "orn"))
+    if (dir.exists(rel_path(proc_root, "orn")) &&
+        file.exists(rel_path(proc_root, "orn", "england_rsn_reaches.csv"))) {
+      return(rel_path(proc_root, "orn"))
     }
     return(proc_root)
   }
 
-  raw_net <- tolower(trimws(network_arg))
-  abbr <- if (raw_net %in% names(NETWORK_ALIAS_MAP)) unname(NETWORK_ALIAS_MAP[raw_net]) else raw_net
-  sub_d <- file.path(proc_root, abbr)
-  if (!file.exists(file.path(sub_d, "england_rsn_reaches.csv"))) {
-    cat(sprintf("Preprocessing water network '%s' via scripts/01_preprocess_orn.py...\n", abbr))
-    cmd <- sprintf("python3 %s --network=%s",
-                   shQuote(file.path(base_dir, "scripts/01_preprocess_orn.py")),
-                   shQuote(abbr))
+  raw_net_orig <- trimws(network_arg)
+  raw_net <- tolower(raw_net_orig)
+  if (raw_net %in% names(NETWORK_ALIAS_MAP)) {
+    abbr <- unname(NETWORK_ALIAS_MAP[raw_net])
+    net_cli_arg <- abbr
+  } else if (grepl("\\.(gpkg|parquet|geoparquet|pq|json)$", raw_net)) {
+    stem <- sub("\\.(gpkg|parquet|geoparquet|pq|json)$", "", basename(raw_net))
+    stem <- sub("\\.geo$", "", stem)
+    abbr <- tolower(stem)
+    net_cli_arg <- raw_net_orig
+  } else {
+    abbr <- raw_net
+    net_cli_arg <- raw_net_orig
+  }
+  sub_d <- rel_path(proc_root, abbr)
+  if (!file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
+    cat(sprintf("Preprocessing water network '%s' via scripts/01_preprocess_orn.py...\n", net_cli_arg))
+    extra_py_args <- ""
+    if (!is.null(gis_dir) && nzchar(gis_dir)) {
+      extra_py_args <- paste0(extra_py_args, " --gis-dir=", shQuote(gis_dir))
+    }
+    if (!is.null(data_dir) && nzchar(data_dir)) {
+      extra_py_args <- paste0(extra_py_args, " --data-dir=", shQuote(data_dir))
+    }
+    cmd <- sprintf("python3 %s --network=%s%s",
+                   shQuote(rel_path(base_dir, "scripts", "01_preprocess_orn.py")),
+                   shQuote(net_cli_arg),
+                   extra_py_args)
     status <- system(cmd)
     if (status != 0L) {
-      stop(sprintf("Failed to preprocess water network '%s'. Run `python3 scripts/01_preprocess_orn.py --list-networks`.", abbr))
+      stop(sprintf("Failed to preprocess water network '%s'. Run `python3 scripts/01_preprocess_orn.py --list-networks`.", net_cli_arg))
     }
   }
-  if (file.exists(file.path(sub_d, "england_rsn_reaches.csv"))) {
+  if (file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
     return(sub_d)
   }
   proc_root

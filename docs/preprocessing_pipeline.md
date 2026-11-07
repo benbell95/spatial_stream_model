@@ -1,15 +1,17 @@
 # Technical Documentation: Scalable Spatial Stream Network (S3N) Pipeline
 
 This document provides complete technical documentation for the three-stage **Scalable Spatial Stream Network (S3N)** codebase:
-1. **Part I — GIS & Water Quality Preprocessing** ([`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py))
-2. **Part II — OpenMP C++ Stream-Tree Neighbor Engine** ([`src/s3n_fast_neighbors.cpp`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.cpp))
-3. **Part III — R S3N Estimation, Prediction & Cross-Validation** ([`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R) & [`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R))
+1. **Part I — GIS & Water Quality Preprocessing** ([`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py))
+2. **Part II — OpenMP C++ Stream-Tree Neighbor Engine** ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp))
+3. **Part III — R S3N Estimation, Prediction & Cross-Validation** ([`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) & [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R))
+
+> **Full Mathematical & Kriging Guide**: For the complete step-by-step mathematical derivation of the `S3N` covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbor Gaussian Process (`NNGP`) estimation (`BRISC_estimation_stream`), Universal Stream Kriging (`BRISC_prediction_stream`), and spatial information-gain weighting, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
 
 ---
 
 ## Part I: Python GIS & Water Quality Preprocessing (`01_preprocess_orn.py`)
 
-[`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency River Surveillance Network (`RSN`)** tables into a topologically ordered, model-ready spatial stream network dataset in **~13 seconds** using pure Python standard library modules (`sqlite3`, `struct`, `math`, `csv`).
+[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency River Surveillance Network (`RSN`)** tables into a topologically ordered, model-ready spatial stream network dataset in **~13 seconds** using pure Python standard library modules (`sqlite3`, `struct`, `math`, `csv`).
 
 ### 1. Water Quality Ingestion & Censored-Value Handling (`ROS` vs. `0.5 * LOD`)
 - **Station Lookup (`pts`)**: Reads `RSN Water Quality Sample Points.csv` and maps each `network_id` to its British National Grid (`EPSG:27700`) coordinates `(ngr_easting, ngr_northing)` in meters.
@@ -45,7 +47,7 @@ This document provides complete technical documentation for the three-stage **Sc
 
 ## Part II: OpenMP C++ Stream-Tree Neighbor Engine (`src/s3n_fast_neighbors.cpp`)
 
-[`src/s3n_fast_neighbors.cpp`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.cpp) replaces `SSN2::createDistMat()` and `S3N::s3n_neighbors()`, computing all exact stream distances, flow-connectedness flags, and NNGP neighbor structures across all 90,876 reaches in memory in **~0.88 seconds** on 4 OpenMP threads.
+[`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) replaces `SSN2::createDistMat()` and `S3N::s3n_neighbors()`, computing all exact stream distances, flow-connectedness flags, and NNGP neighbor structures across all 90,876 reaches in memory in **~0.88 seconds** on 4 OpenMP threads.
 
 ### 1. O(1) Flow-Connectedness via Euler-Tour DFS Timestamps (`C_build_tree_tin_tout()` L27–70)
 - Runs a linear `O(q)` depth-first search from every river mouth root (`parent_dn < 0`), recording entry time `tin[u]` and exit time `tout[u]` for every reach `u`.
@@ -80,20 +82,20 @@ This document provides complete technical documentation for the three-stage **Sc
 
 The entire S3N pipeline was deliberately engineered to minimize external software dependencies so that it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
 
-### 1. Python Environment & Packages ([`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py))
+### 1. Python Environment & Packages ([`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py))
 - **Python Version**: **Python ≥ 3.8** (tested on `Python 3.14.8`). Note: `statistics.NormalDist()` used in the Robust Lognormal ROS censored-value imputation was introduced in Python 3.8.
 - **Third-Party Python Packages**: **None (Zero `pip` or `conda` dependencies)**.
 - **Standard Library Modules Used**:
-  | Module | Role in [`01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py) |
+  | Module | Role in [`01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) |
   | :--- | :--- |
-  | `sqlite3` | Queries the 10.4 GB [`gis/ORN_v2.gpkg`](file:///home/ben/code/r/spatial_stream_model/gis/ORN_v2.gpkg) OGC GeoPackage directly via SQL without `GDAL`/`fiona`/`geopandas`. |
+  | `sqlite3` | Queries the 10.4 GB [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) OGC GeoPackage directly via SQL without `GDAL`/`fiona`/`geopandas`. |
   | `struct` | Unpacks little-endian binary GeoPackage headers and WKB `LineString`/`MultiLineString` coordinate arrays. |
   | `statistics` | Computes means, medians, standard deviations, and normal quantiles (`NormalDist().inv_cdf`) for ROS imputation. |
   | `math`, `collections`, `csv`, `argparse`, `os`, `time` | Geometry projection, tree traversal, CSV I/O, and CLI argument parsing. |
 
 ---
 
-### 2. R Environment & Packages ([`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R), [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R), [`scripts/03_generate_plots.R`](file:///home/ben/code/r/spatial_stream_model/scripts/03_generate_plots.R))
+### 2. R Environment & Packages ([`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R), [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R))
 - **R Version**: **R ≥ 3.5.0** (tested on `R 4.5.3` on `x86_64-redhat-linux-gnu`).
 - **Required R Packages** (installed in the default R package library):
   | Package | Version / Source | Location | Purpose |
@@ -101,12 +103,12 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
   | **`S3N`** | `1.0.5` (`remotes::install_github("jpierkunke/S3N")`) | Standard R Library (`.libPaths()`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging prediction (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`) (Kunke et al., 2024; `https://github.com/jpierkunke/S3N`). |
   | `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr` | CRAN | Standard R Library (`.libPaths()`) | Package dependencies required by the upstream `jpierkunke/S3N` package namespace. |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Bundled with R | All linear algebra (`qr.solve`), statistical functions, and publication-quality base-R PNG graphics (`png(..., type = "cairo")`, `segments`, `points`, `barplot`, `boxplot`). |
-- **No `ggplot2` / `sf` / `SSN2` Required**: All maps and diagnostic plots use pure base R graphics, and all stream-tree neighbor calculations use the compiled C++ OpenMP engine ([`src/s3n_fast_neighbors.cpp`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.cpp)).
+- **No `ggplot2` / `sf` / `SSN2` Required**: All maps and diagnostic plots use pure base R graphics, and all stream-tree neighbor calculations use the compiled C++ OpenMP engine ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)).
 
 ---
 
-### 3. Compiled C++ / OpenMP Shared Library ([`src/s3n_fast_neighbors.cpp`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.cpp))
-- **Compiled Binary**: [`src/s3n_fast_neighbors.so`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.so), loaded dynamically by the R scripts via `dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))`.
+### 3. Compiled C++ / OpenMP Shared Library ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp))
+- **Compiled Binary**: [`src/s3n_fast_neighbors.so`](../src/s3n_fast_neighbors.so), loaded dynamically by the R scripts via `dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))`.
 - **Recompilation Command** (if migrating to a new CPU architecture or OS):
   ```bash
   PKG_CXXFLAGS="-fopenmp -O3" PKG_LIBS="-fopenmp" R CMD SHLIB src/s3n_fast_neighbors.cpp
@@ -117,7 +119,7 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
 ### 4. System / OS Dependencies (Linux)
 | Dependency | Fedora / RHEL Package | Ubuntu / Debian Package | Purpose |
 | :--- | :--- | :--- | :--- |
-| **C/C++ Compiler & OpenMP** | `gcc`, `gcc-c++`, `libgomp` | `build-essential`, `libomp-dev` | Compiling [`src/s3n_fast_neighbors.cpp`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.cpp) and the `S3N` C/C++ BRISC backend with multi-threaded OpenMP (`-fopenmp`). |
+| **C/C++ Compiler & OpenMP** | `gcc`, `gcc-c++`, `libgomp` | `build-essential`, `libomp-dev` | Compiling [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) and the `S3N` C/C++ BRISC backend with multi-threaded OpenMP (`-fopenmp`). |
 | **R Development Headers & BLAS/LAPACK** | `R-core-devel`, `openblas-devel`, `lapack-devel` | `r-base-dev`, `libopenblas-dev`, `liblapack-dev` | Provides `<R.h>`, `<Rinternals.h>`, `<R_ext/Lapack.h>`, and `<R_ext/BLAS.h>` for `S3N` and `s3n_fast_neighbors.so`. |
 | **Cairo Graphics** | `cairo`, `cairo-devel` | `libcairo2`, `libcairo2-dev` | Enables anti-aliased headless PNG rendering (`type = "cairo"`) in R without an X11 display server. |
 | **SQLite3** | `sqlite-libs` | `libsqlite3-0` | Underlying C library used by Python's built-in `sqlite3` module to read `ORN_v2.gpkg`. |
@@ -126,8 +128,8 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
 
 ### 5. Input Data & Hardware Requirements
 - **Required Data Files**:
-  1. [`gis/ORN_v2.gpkg`](file:///home/ben/code/r/spatial_stream_model/gis/ORN_v2.gpkg) (~10.4 GB Ordnance Survey Open Rivers Network v2 GeoPackage — only required when running [`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py)).
-  2. [`data/NCEA_River_Surveillance_Network_ARD_Open/`](file:///home/ben/code/r/spatial_stream_model/data/NCEA_River_Surveillance_Network_ARD_Open) (~235 MB total across the EA RSN Water Quality, Macroinvertebrate, Diatom, Macrophyte, River Habitat Survey, and LCMS/GCMS CSV files).
+  1. [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) (~10.4 GB Ordnance Survey Open Rivers Network v2 GeoPackage — only required when running [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)).
+  2. [`data/NCEA_River_Surveillance_Network_ARD_Open/`](../data/NCEA_River_Surveillance_Network_ARD_Open) (~235 MB total across the EA RSN Water Quality, Macroinvertebrate, Diatom, Macrophyte, River Habitat Survey, and LCMS/GCMS CSV files).
 - **Memory & CPU**:
   - **RAM**: ~1.5 GB peak memory (fits comfortably on any laptop or standard VM).
   - **CPU**: Uses 4 OpenMP threads by default (`n_omp = 4L`); a full national + 3-basin S3N run with 5-fold cross-validation and 4 figures completes in **~18–25 seconds**.

@@ -18,7 +18,7 @@ Key Future-Proofing Capabilities:
      automatic 3D vertex Z elevation extraction.
   2. Automatic CRS detection (`gpkg_contents.srs_id`) and batch planar coordinate
      transformation (`EPSG:3035` / any EPSG <-> `EPSG:27700` British National Grid)
-     via `/usr/bin/cs2cs`.
+     via `cs2cs`.
   3. Three-mode directed river tree topology builder:
        - `nodes`    : `(Fnode, Tnode)` node-pair matching (e.g. ORN, NHDPlus)
        - `pointer`  : `NEXTDOWNID` downstream reach pointer with `(Fnode, Tnode)` fallback (e.g. EU-Hydro, HydroRIVERS)
@@ -42,6 +42,8 @@ Outputs (written to both `data/processed/<network_abbr>/` and `data/processed/`)
 
 import argparse
 import csv
+import ctypes
+import ctypes.util
 import glob
 import json
 import math
@@ -55,11 +57,71 @@ import time
 import zipfile
 from collections import Counter, defaultdict
 
-BASE_DIR = "/home/ben/code/r/spatial_stream_model"
-WQ_DIR = os.path.join(BASE_DIR, "data/NCEA_River_Surveillance_Network_ARD_Open")
-CONFIG_DIR = os.path.join(BASE_DIR, "configs/networks")
-OUT_DIR = os.path.join(BASE_DIR, "data/processed")
-os.makedirs(OUT_DIR, exist_ok=True)
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_SCRIPT_DIR)
+try:
+    BASE_DIR = "." if os.path.samefile(os.getcwd(), _REPO_ROOT) else os.path.relpath(_REPO_ROOT, os.getcwd())
+except OSError:
+    BASE_DIR = "."
+
+
+def _rel_join(base, *parts):
+    p = os.path.join(base, *parts)
+    if p.startswith("./") and len(p) > 2:
+        p = p[2:]
+    return p
+
+
+GIS_DIR = os.environ.get("S3N_GIS_DIR") or _rel_join(BASE_DIR, "gis")
+DATA_DIR = os.environ.get("S3N_DATA_DIR") or _rel_join(BASE_DIR, "data")
+WQ_DIR = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+CONFIG_DIR = _rel_join(BASE_DIR, "configs", "networks")
+OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or _rel_join(DATA_DIR, "processed")
+
+
+def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
+    """Updates global GIS_DIR, DATA_DIR, WQ_DIR, and OUT_DIR from CLI or environment overrides."""
+    global GIS_DIR, DATA_DIR, WQ_DIR, OUT_DIR
+    if gis_dir:
+        GIS_DIR = gis_dir
+    if data_dir:
+        DATA_DIR = data_dir
+        cand_wq = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+        if os.path.isdir(cand_wq):
+            WQ_DIR = cand_wq
+        elif os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")):
+            WQ_DIR = DATA_DIR
+        else:
+            WQ_DIR = cand_wq
+        if not out_dir:
+            OUT_DIR = _rel_join(DATA_DIR, "processed")
+    if out_dir:
+        OUT_DIR = out_dir
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def resolve_gis_path(rel_p, gis_dir=None):
+    """
+    Resolves a GeoPackage or ZIP path against the configured `GIS_DIR` (default `gis`).
+    If `rel_p` begins with `gis/`, that prefix is replaced by `GIS_DIR`.
+    """
+    g_dir = gis_dir or GIS_DIR
+    if os.path.isabs(rel_p):
+        return rel_p
+    norm_p = rel_p.replace("\\", "/")
+    if norm_p.startswith("gis/"):
+        sub_p = norm_p[4:]
+        cand = _rel_join(g_dir, sub_p)
+        if os.path.exists(cand):
+            return cand
+        return cand
+    cand_direct = rel_p
+    if os.path.exists(cand_direct):
+        return cand_direct
+    cand_gis = _rel_join(g_dir, rel_p)
+    if os.path.exists(cand_gis):
+        return cand_gis
+    return _rel_join(BASE_DIR, rel_p)
 
 _STD_NORM = statistics.NormalDist()
 
@@ -203,43 +265,67 @@ def impute_censored_by_site(raw_by_site, method="half_lod"):
 
 def parse_gpkg_geometry(blob):
     """
-    Universal parser for GeoPackage WKB LineString / MultiLineString geometries.
+    Universal parser for GeoPackage Binary (GPB) and standard WKB / ISO WKB / EWKB
+    (as used in GeoParquet) LineString & MultiLineString geometries.
     Supports 2D (XY), 3D (XYZ / XYM), and 4D (XYZM) in both ISO WKB (1000/2000/3000)
-    and OGC EWKB (0x80000000 / 0x40000000), returning `(pts_xy, zs)` where:
+    and OGC EWKB (0x80000000 / 0x40000000 / 0x20000000), returning `(pts_xy, zs)` where:
       - `pts_xy` : list of (x, y) tuples
       - `zs`     : list of valid vertex Z elevations (if 3D/4D Z is present, else [])
     """
-    if not blob or len(blob) < 9:
+    if not blob:
         return [], []
-    env_sizes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}
-    flags = blob[3]
-    env_ind = (flags >> 1) & 0x07
-    offset = 8 + env_sizes.get(env_ind, 0)
-    if offset >= len(blob):
+    if isinstance(blob, str):
+        s = blob.strip()
+        if not s:
+            return [], []
+        try:
+            blob = bytes.fromhex(s[2:] if s.lower().startswith("0x") else s)
+        except ValueError:
+            return [], []
+    elif isinstance(blob, memoryview):
+        blob = blob.tobytes()
+
+    if len(blob) < 9:
+        return [], []
+
+    # Detect OGC GeoPackage Binary header ("GP" = 0x47, 0x50) vs raw WKB / ISO WKB / EWKB (0x00 or 0x01)
+    if blob[0] == 0x47 and blob[1] == 0x50:
+        env_sizes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}
+        flags = blob[3]
+        env_ind = (flags >> 1) & 0x07
+        offset = 8 + env_sizes.get(env_ind, 0)
+    else:
+        offset = 0
+
+    if offset + 9 > len(blob):
         return [], []
 
     bo = "<" if blob[offset] == 1 else ">"
     wkb_type = struct.unpack_from(bo + "I", blob, offset + 1)[0]
+    has_srid = (wkb_type & 0x20000000) != 0
     low16 = wkb_type & 0xFFFF
     has_z = (wkb_type & 0x80000000) != 0 or (1000 <= low16 < 4000 and (low16 // 1000) in (1, 3))
     has_m = (wkb_type & 0x40000000) != 0 or (1000 <= low16 < 4000 and (low16 // 1000) in (2, 3))
     ndim = 2 + (1 if has_z else 0) + (1 if has_m else 0)
     base_type = low16 % 1000
+    hdr_len = 9 if has_srid else 5
 
     pts = []
     zs = []
     if base_type == 5:  # MultiLineString
-        num_geoms = struct.unpack_from(bo + "I", blob, offset + 5)[0]
-        offset += 9
+        num_geoms = struct.unpack_from(bo + "I", blob, offset + hdr_len)[0]
+        offset += hdr_len + 4
         for _ in range(num_geoms):
             g_bo = "<" if blob[offset] == 1 else ">"
             g_type = struct.unpack_from(g_bo + "I", blob, offset + 1)[0]
+            g_srid = (g_type & 0x20000000) != 0
             g_low16 = g_type & 0xFFFF
             g_z = (g_type & 0x80000000) != 0 or (1000 <= g_low16 < 4000 and (g_low16 // 1000) in (1, 3))
             g_m = (g_type & 0x40000000) != 0 or (1000 <= g_low16 < 4000 and (g_low16 // 1000) in (2, 3))
             g_dim = 2 + (1 if g_z else 0) + (1 if g_m else 0)
-            npts = struct.unpack_from(g_bo + "I", blob, offset + 5)[0]
-            offset += 9
+            g_hdr = 9 if g_srid else 5
+            npts = struct.unpack_from(g_bo + "I", blob, offset + g_hdr)[0]
+            offset += g_hdr + 4
             coords = struct.unpack_from(g_bo + f"{g_dim * npts}d", blob, offset)
             offset += 8 * g_dim * npts
             for i in range(0, g_dim * npts, g_dim):
@@ -249,8 +335,8 @@ def parse_gpkg_geometry(blob):
                     if not math.isnan(zv) and -500.0 < zv < 9000.0:
                         zs.append(zv)
     elif base_type == 2:  # LineString
-        npts = struct.unpack_from(bo + "I", blob, offset + 5)[0]
-        offset += 9
+        npts = struct.unpack_from(bo + "I", blob, offset + hdr_len)[0]
+        offset += hdr_len + 4
         coords = struct.unpack_from(bo + f"{ndim * npts}d", blob, offset)
         for i in range(0, ndim * npts, ndim):
             pts.append((coords[i], coords[i + 1]))
@@ -259,6 +345,519 @@ def parse_gpkg_geometry(blob):
                 if not math.isnan(zv) and -500.0 < zv < 9000.0:
                     zs.append(zv)
     return pts, zs
+
+
+# ==============================================================================
+# GEOPARQUET (.parquet / .geoparquet / .pq) READER & METADATA HELPERS
+# ==============================================================================
+
+PARQUET_EXTENSIONS = (".parquet", ".geoparquet", ".pq")
+_GDAL_LIB = None
+
+
+def is_parquet_path(path):
+    """Returns True if `path` is a GeoParquet file or a directory containing Parquet files."""
+    if not path:
+        return False
+    low = str(path).lower()
+    if low.endswith(PARQUET_EXTENSIONS):
+        return True
+    if os.path.isdir(path):
+        for fn in os.listdir(path):
+            if fn.lower().endswith(PARQUET_EXTENSIONS):
+                return True
+    return False
+
+
+def _extract_epsg_from_crs_obj(crs_obj):
+    """Extracts an integer EPSG code from a GeoParquet PROJJSON `crs` object."""
+    if crs_obj is None:
+        return None
+    if isinstance(crs_obj, int):
+        return crs_obj
+    if isinstance(crs_obj, str):
+        s = crs_obj.strip().upper()
+        if s.startswith("EPSG:") and s[5:].isdigit():
+            return int(s[5:])
+        if "CRS84" in s or "WGS84" in s:
+            return 4326
+        return None
+    if isinstance(crs_obj, dict):
+        cid = crs_obj.get("id")
+        if isinstance(cid, dict):
+            auth = str(cid.get("authority", "")).upper()
+            code = cid.get("code")
+            if auth == "EPSG" and str(code).isdigit():
+                return int(code)
+            if auth == "OGC" and str(code).upper() == "CRS84":
+                return 4326
+        # Search nested identifiers if present
+        ids = crs_obj.get("ids")
+        if isinstance(ids, list):
+            for item in ids:
+                if isinstance(item, dict) and str(item.get("authority", "")).upper() == "EPSG":
+                    if str(item.get("code", "")).isdigit():
+                        return int(item["code"])
+    return None
+
+
+def read_geoparquet_footer_metadata(parquet_path):
+    """
+    Pure-Python reader that extracts the OGC GeoParquet `'geo'` JSON metadata
+    from the Parquet file footer (`PAR1` magic + 4-byte footer length) in < 1 ms.
+    Returns a dict with `'primary_column'`, `'crs_epsg'`, `'encoding'`, `'bbox'`, and raw `'geo'`.
+    """
+    info = {
+        "primary_column": None,
+        "crs_epsg": None,
+        "encoding": "WKB",
+        "bbox": None,
+        "geo": None,
+    }
+    if not os.path.isfile(parquet_path) or os.path.getsize(parquet_path) < 12:
+        return info
+    try:
+        with open(parquet_path, "rb") as f:
+            f.seek(-8, os.SEEK_END)
+            flen, magic = struct.unpack("<I4s", f.read(8))
+            if magic != b"PAR1" or flen <= 0 or flen > 64 * 1024 * 1024:
+                return info
+            f.seek(-(8 + flen), os.SEEK_END)
+            footer = f.read(flen)
+
+        # Locate the GeoParquet "geo" JSON payload inside the Parquet FileMetaData key-value list
+        for marker in (b'"primary_column"', b'"columns"'):
+            idx = footer.find(marker)
+            if idx != -1:
+                start = footer.rfind(b"{", 0, idx)
+                while start != -1:
+                    depth = 0
+                    in_str = False
+                    esc = False
+                    end_pos = -1
+                    for i in range(start, len(footer)):
+                        b = footer[i]
+                        if in_str:
+                            if esc:
+                                esc = False
+                            elif b == 0x5C:  # backslash
+                                esc = True
+                            elif b == 0x22:  # quote
+                                in_str = False
+                        else:
+                            if b == 0x22:
+                                in_str = True
+                            elif b == 0x7B:  # '{'
+                                depth += 1
+                            elif b == 0x7D:  # '}'
+                                depth -= 1
+                                if depth == 0:
+                                    end_pos = i + 1
+                                    break
+                    if end_pos != -1:
+                        try:
+                            cand = json.loads(footer[start:end_pos].decode("utf-8"))
+                            if isinstance(cand, dict) and "columns" in cand and isinstance(cand["columns"], dict):
+                                info["geo"] = cand
+                                break
+                        except Exception:
+                            pass
+                    start = footer.rfind(b"{", 0, start)
+                if info["geo"] is not None:
+                    break
+
+        geo = info["geo"]
+        if isinstance(geo, dict):
+            cols_meta = geo.get("columns", {})
+            prim = geo.get("primary_column")
+            if not prim and cols_meta:
+                prim = next(iter(cols_meta.keys()))
+            info["primary_column"] = prim
+            if prim and prim in cols_meta and isinstance(cols_meta[prim], dict):
+                cmeta = cols_meta[prim]
+                info["encoding"] = cmeta.get("encoding", "WKB")
+                info["bbox"] = cmeta.get("bbox")
+                if "crs" in cmeta:
+                    if cmeta["crs"] is None:
+                        # Per OGC GeoParquet spec, explicit null/omitted crs means OGC:CRS84 (EPSG:4326)
+                        info["crs_epsg"] = 4326
+                    else:
+                        info["crs_epsg"] = _extract_epsg_from_crs_obj(cmeta["crs"])
+    except Exception:
+        pass
+    return info
+
+
+def _get_gdal_lib():
+    """
+    Lazily loads `libgdal` via `ctypes` and configures OGR C API signatures for
+    reading and writing GeoParquet (`.parquet` / `.geoparquet`) files.
+    """
+    global _GDAL_LIB
+    if _GDAL_LIB is not None:
+        return _GDAL_LIB
+
+    candidates = [
+        ctypes.util.find_library("gdal"),
+        "libgdal.so.37",
+        "libgdal.so.36",
+        "libgdal.so.35",
+        "libgdal.so.34",
+        "libgdal.so",
+    ]
+    gdal = None
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            gdal = ctypes.CDLL(cand)
+            break
+        except OSError:
+            continue
+
+    if gdal is None:
+        raise RuntimeError(
+            "Could not load libgdal shared library or pyarrow to read GeoParquet file. "
+            "Install `gdal-libs` or `pyarrow`."
+        )
+
+    gdal.GDALAllRegister()
+    gdal.CPLSetConfigOption.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    gdal.CPLSetConfigOption.restype = None
+    gdal.CPLSetConfigOption(b"OGR_PARQUET_ALLOW_ALL_DIMS", b"YES")
+
+    gdal.GDALOpenEx.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_char_p),
+    ]
+    gdal.GDALOpenEx.restype = ctypes.c_void_p
+    gdal.GDALClose.argtypes = [ctypes.c_void_p]
+    gdal.GDALClose.restype = None
+    gdal.GDALDatasetGetLayerCount.argtypes = [ctypes.c_void_p]
+    gdal.GDALDatasetGetLayerCount.restype = ctypes.c_int
+    gdal.GDALDatasetGetLayer.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdal.GDALDatasetGetLayer.restype = ctypes.c_void_p
+    gdal.GDALDatasetGetLayerByName.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    gdal.GDALDatasetGetLayerByName.restype = ctypes.c_void_p
+
+    gdal.OGR_L_GetName.argtypes = [ctypes.c_void_p]
+    gdal.OGR_L_GetName.restype = ctypes.c_char_p
+    gdal.OGR_L_GetGeometryColumn.argtypes = [ctypes.c_void_p]
+    gdal.OGR_L_GetGeometryColumn.restype = ctypes.c_char_p
+    gdal.OGR_L_GetSpatialRef.argtypes = [ctypes.c_void_p]
+    gdal.OGR_L_GetSpatialRef.restype = ctypes.c_void_p
+    gdal.OSRGetAuthorityCode.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    gdal.OSRGetAuthorityCode.restype = ctypes.c_char_p
+
+    gdal.OGR_L_GetLayerDefn.argtypes = [ctypes.c_void_p]
+    gdal.OGR_L_GetLayerDefn.restype = ctypes.c_void_p
+    gdal.OGR_FD_GetFieldCount.argtypes = [ctypes.c_void_p]
+    gdal.OGR_FD_GetFieldCount.restype = ctypes.c_int
+    gdal.OGR_FD_GetFieldDefn.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdal.OGR_FD_GetFieldDefn.restype = ctypes.c_void_p
+    gdal.OGR_Fld_GetNameRef.argtypes = [ctypes.c_void_p]
+    gdal.OGR_Fld_GetNameRef.restype = ctypes.c_char_p
+    gdal.OGR_Fld_GetType.argtypes = [ctypes.c_void_p]
+    gdal.OGR_Fld_GetType.restype = ctypes.c_int
+
+    gdal.OGR_L_ResetReading.argtypes = [ctypes.c_void_p]
+    gdal.OGR_L_ResetReading.restype = None
+    gdal.OGR_L_GetNextFeature.argtypes = [ctypes.c_void_p]
+    gdal.OGR_L_GetNextFeature.restype = ctypes.c_void_p
+    gdal.OGR_F_Destroy.argtypes = [ctypes.c_void_p]
+    gdal.OGR_F_Destroy.restype = None
+    gdal.OGR_F_GetFID.argtypes = [ctypes.c_void_p]
+    gdal.OGR_F_GetFID.restype = ctypes.c_longlong
+    gdal.OGR_F_IsFieldSetAndNotNull.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdal.OGR_F_IsFieldSetAndNotNull.restype = ctypes.c_int
+    gdal.OGR_F_GetFieldAsInteger64.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdal.OGR_F_GetFieldAsInteger64.restype = ctypes.c_longlong
+    gdal.OGR_F_GetFieldAsDouble.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdal.OGR_F_GetFieldAsDouble.restype = ctypes.c_double
+    gdal.OGR_F_GetFieldAsString.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdal.OGR_F_GetFieldAsString.restype = ctypes.c_char_p
+
+    gdal.OGR_F_GetGeometryRef.argtypes = [ctypes.c_void_p]
+    gdal.OGR_F_GetGeometryRef.restype = ctypes.c_void_p
+    gdal.OGR_G_WkbSize.argtypes = [ctypes.c_void_p]
+    gdal.OGR_G_WkbSize.restype = ctypes.c_int
+    gdal.OGR_G_ExportToIsoWkb.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
+    gdal.OGR_G_ExportToIsoWkb.restype = ctypes.c_int
+
+    gdal.GDALVectorTranslateOptionsNew.argtypes = [ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p]
+    gdal.GDALVectorTranslateOptionsNew.restype = ctypes.c_void_p
+    gdal.GDALVectorTranslateOptionsFree.argtypes = [ctypes.c_void_p]
+    gdal.GDALVectorTranslateOptionsFree.restype = None
+    gdal.GDALVectorTranslate.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    gdal.GDALVectorTranslate.restype = ctypes.c_void_p
+
+    _GDAL_LIB = gdal
+    return gdal
+
+
+def inspect_geoparquet_schema(parquet_path):
+    """
+    Inspects a GeoParquet (`.parquet` / `.geoparquet` / `.pq`) file to determine:
+      - `layer`    : layer/table name
+      - `geom_col` : geometry column name
+      - `crs_epsg` : integer EPSG code
+      - `cols`     : dict mapping lowercase column name -> original column name
+    """
+    target_file = parquet_path
+    if os.path.isdir(parquet_path):
+        pq_files = sorted(
+            os.path.join(parquet_path, fn)
+            for fn in os.listdir(parquet_path)
+            if fn.lower().endswith(PARQUET_EXTENSIONS)
+        )
+        if not pq_files:
+            raise FileNotFoundError(f"No .parquet files found inside directory: {parquet_path}")
+        target_file = pq_files[0]
+
+    footer_meta = read_geoparquet_footer_metadata(target_file)
+    geom_col = footer_meta.get("primary_column")
+    crs_epsg = footer_meta.get("crs_epsg")
+    layer_name = os.path.splitext(os.path.basename(target_file))[0]
+    cols = {}
+
+    # Try pyarrow first if installed
+    try:
+        import pyarrow.parquet as pq  # type: ignore
+
+        pf = pq.ParquetFile(target_file)
+        for name in pf.schema.names:
+            cols[name.lower()] = name
+        if not geom_col:
+            for cand in ("shape", "geometry", "geom", "wkb_geometry"):
+                if cand in cols:
+                    geom_col = cols[cand]
+                    break
+        return {
+            "layer": layer_name,
+            "geom_col": geom_col or "geometry",
+            "crs_epsg": crs_epsg or 27700,
+            "cols": cols,
+        }
+    except ImportError:
+        pass
+
+    # Fallback to libgdal C OGR API (Parquet driver)
+    gdal = _get_gdal_lib()
+    ds = gdal.GDALOpenEx(os.fsencode(target_file), 0, None, None, None)
+    if not ds:
+        raise RuntimeError(f"GDAL failed to open GeoParquet file: {target_file}")
+    try:
+        lyr = gdal.GDALDatasetGetLayer(ds, 0)
+        if lyr:
+            lnm = gdal.OGR_L_GetName(lyr)
+            if lnm:
+                layer_name = lnm.decode("utf-8", errors="ignore")
+            gcol_ptr = gdal.OGR_L_GetGeometryColumn(lyr)
+            if gcol_ptr:
+                gcol_s = gcol_ptr.decode("utf-8", errors="ignore")
+                if gcol_s:
+                    geom_col = geom_col or gcol_s
+                    cols[gcol_s.lower()] = gcol_s
+            srs = gdal.OGR_L_GetSpatialRef(lyr)
+            if srs and not crs_epsg:
+                auth_code = gdal.OSRGetAuthorityCode(srs, None)
+                if auth_code:
+                    code_s = auth_code.decode("utf-8", errors="ignore")
+                    if code_s.isdigit():
+                        crs_epsg = int(code_s)
+            fdefn = gdal.OGR_L_GetLayerDefn(lyr)
+            nflds = gdal.OGR_FD_GetFieldCount(fdefn)
+            for i in range(nflds):
+                fld = gdal.OGR_FD_GetFieldDefn(fdefn, i)
+                fnm = gdal.OGR_Fld_GetNameRef(fld).decode("utf-8", errors="ignore")
+                cols[fnm.lower()] = fnm
+    finally:
+        gdal.GDALClose(ds)
+
+    if not geom_col:
+        for cand in ("shape", "geometry", "geom", "wkb_geometry"):
+            if cand in cols:
+                geom_col = cols[cand]
+                break
+
+    return {
+        "layer": layer_name,
+        "geom_col": geom_col or "geometry",
+        "crs_epsg": crs_epsg or 27700,
+        "cols": cols,
+    }
+
+
+def iter_geoparquet_rows(parquet_path, geom_col_hint=None):
+    """
+    Streams rows from a GeoParquet file (or directory of Parquet files), yielding
+    `(rdict, geom_wkb_bytes)` for each feature.
+    Uses `pyarrow.parquet` if installed, or `libgdal` C OGR API (`Parquet` driver).
+    """
+    if os.path.isdir(parquet_path):
+        pq_files = sorted(
+            os.path.join(parquet_path, fn)
+            for fn in os.listdir(parquet_path)
+            if fn.lower().endswith(PARQUET_EXTENSIONS)
+        )
+        for pq_f in pq_files:
+            yield from iter_geoparquet_rows(pq_f, geom_col_hint=geom_col_hint)
+        return
+
+    footer_meta = read_geoparquet_footer_metadata(parquet_path)
+    primary_geom_col = footer_meta.get("primary_column") or geom_col_hint
+
+    # Tier 1: pyarrow.parquet (if installed and encoding is WKB)
+    if footer_meta.get("encoding", "WKB").upper() == "WKB":
+        try:
+            import pyarrow.parquet as pq  # type: ignore
+
+            pf = pq.ParquetFile(parquet_path)
+            schema_names = pf.schema.names
+            gcol = primary_geom_col
+            if not gcol or gcol not in schema_names:
+                for cand in (geom_col_hint, "Shape", "geometry", "geom", "wkb_geometry"):
+                    if cand and cand in schema_names:
+                        gcol = cand
+                        break
+            for batch in pf.iter_batches(batch_size=8192):
+                cols_py = {name: batch.column(i).to_pylist() for i, name in enumerate(batch.schema.names)}
+                nrows = batch.num_rows
+                for r_idx in range(nrows):
+                    rdict = {k: v[r_idx] for k, v in cols_py.items()}
+                    if "FID" not in rdict:
+                        rdict["FID"] = r_idx + 1
+                    blob = rdict.get(gcol) if gcol else None
+                    yield rdict, blob
+            return
+        except ImportError:
+            pass
+
+    # Tier 2: libgdal C OGR API (supports all GeoParquet 1.0/1.1 encodings & compressions)
+    gdal = _get_gdal_lib()
+    ds = gdal.GDALOpenEx(os.fsencode(parquet_path), 0, None, None, None)
+    if not ds:
+        raise RuntimeError(f"Failed to open GeoParquet file: {parquet_path}")
+    try:
+        n_layers = gdal.GDALDatasetGetLayerCount(ds)
+        for l_idx in range(n_layers):
+            lyr = gdal.GDALDatasetGetLayer(ds, l_idx)
+            if not lyr:
+                continue
+            gcol_ptr = gdal.OGR_L_GetGeometryColumn(lyr)
+            gcol = (
+                gcol_ptr.decode("utf-8", errors="ignore")
+                if gcol_ptr
+                else (primary_geom_col or geom_col_hint or "geometry")
+            )
+            fdefn = gdal.OGR_L_GetLayerDefn(lyr)
+            nflds = gdal.OGR_FD_GetFieldCount(fdefn)
+            fields = []
+            for i in range(nflds):
+                fld = gdal.OGR_FD_GetFieldDefn(fdefn, i)
+                fnm = gdal.OGR_Fld_GetNameRef(fld).decode("utf-8", errors="ignore")
+                ftyp = gdal.OGR_Fld_GetType(fld)
+                fields.append((i, fnm, ftyp))
+
+            gdal.OGR_L_ResetReading(lyr)
+            row_num = 0
+            while True:
+                feat = gdal.OGR_L_GetNextFeature(lyr)
+                if not feat:
+                    break
+                row_num += 1
+                try:
+                    fid = gdal.OGR_F_GetFID(feat)
+                    rdict = {"FID": int(fid) if fid >= 0 else row_num}
+                    for i, fnm, ftyp in fields:
+                        if not gdal.OGR_F_IsFieldSetAndNotNull(feat, i):
+                            rdict[fnm] = None
+                        elif ftyp in (0, 12):  # OFTInteger, OFTInteger64
+                            rdict[fnm] = int(gdal.OGR_F_GetFieldAsInteger64(feat, i))
+                        elif ftyp == 2:  # OFTReal
+                            rdict[fnm] = float(gdal.OGR_F_GetFieldAsDouble(feat, i))
+                        else:
+                            s_ptr = gdal.OGR_F_GetFieldAsString(feat, i)
+                            rdict[fnm] = s_ptr.decode("utf-8", errors="ignore") if s_ptr else None
+
+                    geom = gdal.OGR_F_GetGeometryRef(feat)
+                    wkb_bytes = None
+                    if geom:
+                        sz = gdal.OGR_G_WkbSize(geom)
+                        if sz > 0:
+                            buf = ctypes.create_string_buffer(sz)
+                            if gdal.OGR_G_ExportToIsoWkb(geom, 1, buf) == 0:
+                                wkb_bytes = buf.raw
+                    if gcol:
+                        rdict[gcol] = wkb_bytes
+                    yield rdict, wkb_bytes
+                finally:
+                    gdal.OGR_F_Destroy(feat)
+    finally:
+        gdal.GDALClose(ds)
+
+
+def convert_gpkg_to_geoparquet(src_gpkg_path, dst_parquet_path, layers=None):
+    """
+    Converts a GeoPackage (`.gpkg`) layer (or merges multiple layers) into an
+    OGC GeoParquet (`.parquet` / `.geoparquet`) file using `libgdal`.
+    """
+    gdal = _get_gdal_lib()
+    src_ds = gdal.GDALOpenEx(os.fsencode(src_gpkg_path), 0, None, None, None)
+    if not src_ds:
+        raise FileNotFoundError(f"Could not open source GeoPackage: {src_gpkg_path}")
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(dst_parquet_path)), exist_ok=True)
+        if os.path.exists(dst_parquet_path):
+            os.remove(dst_parquet_path)
+
+        opt_tokens = [b"-f", b"Parquet"]
+        if layers and len(layers) == 1:
+            opt_tokens.append(os.fsencode(layers[0]))
+        elif layers and len(layers) > 1:
+            # Inspect columns across layers and build a column-aligned UNION ALL query
+            conn = sqlite3.connect(src_gpkg_path)
+            c = conn.cursor()
+            layer_cols = []
+            all_cols_ordered = []
+            for lyr in layers:
+                c_list = [r[1] for r in c.execute(f'PRAGMA table_info("{lyr}")').fetchall()]
+                layer_cols.append((lyr, set(c_list)))
+                for cn in c_list:
+                    if cn not in all_cols_ordered:
+                        all_cols_ordered.append(cn)
+            conn.close()
+            sql_parts = []
+            for lyr, c_set in layer_cols:
+                sel_exprs = [f'"{cn}"' if cn in c_set else f'NULL AS "{cn}"' for cn in all_cols_ordered]
+                sql_parts.append(f'SELECT {", ".join(sel_exprs)} FROM "{lyr}"')
+            union_sql = " UNION ALL ".join(sql_parts)
+            opt_tokens.extend([b"-sql", os.fsencode(union_sql)])
+
+        c_opts = (ctypes.c_char_p * (len(opt_tokens) + 1))(*opt_tokens, None)
+        vt_opts = gdal.GDALVectorTranslateOptionsNew(c_opts, None)
+        src_arr = (ctypes.c_void_p * 1)(src_ds)
+        err = ctypes.c_int(0)
+        dst_ds = gdal.GDALVectorTranslate(
+            os.fsencode(dst_parquet_path), None, 1, src_arr, vt_opts, ctypes.byref(err)
+        )
+        gdal.GDALVectorTranslateOptionsFree(vt_opts)
+        if dst_ds:
+            gdal.GDALClose(dst_ds)
+        if err.value != 0 or not os.path.exists(dst_parquet_path):
+            raise RuntimeError(f"GDALVectorTranslate to GeoParquet failed (error={err.value}).")
+    finally:
+        gdal.GDALClose(src_ds)
 
 
 def parse_gpkg_multilinestring(blob):
@@ -270,7 +869,7 @@ def parse_gpkg_multilinestring(blob):
 def transform_coords_batch(xy_list, from_epsg, to_epsg):
     """
     Transforms a list of (x, y) coordinates from `from_epsg` to `to_epsg` using
-    `/usr/bin/cs2cs` with traditional GIS easting/northing (`+init=epsg:...`) order.
+    `cs2cs` with traditional GIS easting/northing (`+init=epsg:...`) order.
     """
     if not xy_list or from_epsg == to_epsg:
         return list(xy_list)
@@ -375,21 +974,84 @@ def parse_month_arg(m_str):
     raise ValueError(f"Invalid --month '{m_str}'. Use 1..12 or Jan..Dec.")
 
 
+def _get_config_network_paths(cfg):
+    """Returns configured network file paths from `network_paths`, `parquet_paths`, or `gpkg_paths`."""
+    paths = []
+    for key in ("network_paths", "parquet_paths", "gpkg_paths"):
+        val = cfg.get(key)
+        if isinstance(val, list):
+            for item in val:
+                if item and item not in paths:
+                    paths.append(item)
+        elif isinstance(val, str) and val.strip():
+            if val.strip() not in paths:
+                paths.append(val.strip())
+    return paths
+
+
 def list_available_networks():
-    print("Available Water Network Profiles (`--network=<name>`):\n")
-    print(f"{'Network Name':<18} | {'Short Label':<20} | {'CRS':<10} | {'GeoPackage Path(s)'}")
+    print(f"Available Water Network Profiles (`--network=<name>`, GIS folder: `{GIS_DIR}`):\n")
+    print(f"{'Network Name':<18} | {'Short Label':<20} | {'CRS':<10} | {'Network File Path(s) (.gpkg / .parquet)'}")
     print("-" * 105)
     for p in sorted(glob.glob(os.path.join(CONFIG_DIR, "*.json"))):
         with open(p, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        gpkgs = ", ".join(cfg.get("gpkg_paths", []))
-        print(f"{cfg['abbr']:<18} | {cfg.get('short_label', cfg['abbr']):<20} | EPSG:{cfg.get('crs_epsg', 27700):<5} | {gpkgs}")
-    print("\nYou can also pass a custom JSON config (`--network-config=path/to/net.json`) or a `.gpkg` path directly.")
+        net_files = ", ".join(resolve_gis_path(gp) for gp in _get_config_network_paths(cfg))
+        print(f"{cfg['abbr']:<18} | {cfg.get('short_label', cfg['abbr']):<20} | EPSG:{cfg.get('crs_epsg', 27700):<5} | {net_files}")
+    print(
+        "\nYou can also pass a custom JSON config (`--network-config=path/to/net.json`), "
+        "a `.gpkg` or `.parquet`/`.geoparquet` file path (`--network=path/to/network.parquet`), or `--gis-dir=<dir>`."
+    )
+
+
+def _build_auto_network_config(file_path, layer, geom_col, crs_epsg, cols, is_parquet=False):
+    """Builds a complete network configuration dict from an inspected GeoPackage or GeoParquet schema."""
+    stem = os.path.splitext(os.path.basename(file_path.rstrip("/\\")))[0]
+    if stem.lower().endswith(".geo"):
+        stem = stem[:-4]
+    abbr = stem.lower()
+    path_key = "parquet_paths" if is_parquet else "gpkg_paths"
+    return {
+        "name": abbr,
+        "abbr": abbr,
+        "label": abbr,
+        "short_label": abbr,
+        path_key: [file_path],
+        "gpkg_paths": [file_path],
+        "layers": [layer],
+        "geom_col": geom_col,
+        "crs_epsg": crs_epsg or 27700,
+        "topology": {
+            "mode": "pointer" if "nextdownid" in cols else ("nodes" if "fnode" in cols else "geometry"),
+            "id_col": cols.get(
+                "rivid",
+                cols.get("object_id", cols.get("objectid", cols.get("id", cols.get("hyriv_id", "FID")))),
+            ),
+            "from_node_col": cols.get("fnode", cols.get("startnode", cols.get("fromnode"))),
+            "to_node_col": cols.get("tnode", cols.get("endnode", cols.get("tonode"))),
+            "next_down_col": cols.get("nextdownid", cols.get("next_down", cols.get("tonode_id"))),
+            "catch_id_col": cols.get("catchid", cols.get("catch_id", cols.get("hybas_id"))),
+            "rbd_id_col": cols.get("rbd_id"),
+        },
+        "attributes": {
+            "dist_to_mouth_col": cols.get("dist2mth", cols.get("dist_dn_km")),
+            "dist_to_mouth_unit": "km" if "dist_dn_km" in cols else "m",
+            "afv_weight_col": cols.get("us_accum", cols.get("cum_len", cols.get("upland_skm"))),
+            "afv_weight_unit": "km" if "upland_skm" in cols else "m",
+            "shreve_col": cols.get("shreve"),
+            "strahler_col": cols.get("strahler", cols.get("ord_stra")),
+            "slope_col": cols.get("slope", cols.get("pente")),
+            "elevation_col": cols.get("elevation", cols.get("elev")),
+            "river_name_cols": [c_nm for k, c_nm in cols.items() if "name" in k],
+        },
+        "covariates": {"mode": "geometry_and_spatial_join"},
+        "max_snap_dist_m": 250.0,
+    }
 
 
 def load_network_config(network_arg, config_path=None):
     if config_path:
-        p = config_path if os.path.isabs(config_path) else os.path.join(BASE_DIR, config_path)
+        p = config_path if os.path.isabs(config_path) else _rel_join(BASE_DIR, config_path)
         with open(p, "r", encoding="utf-8") as f:
             return json.load(f)
 
@@ -421,67 +1083,61 @@ def load_network_config(network_arg, config_path=None):
         with open(net_clean, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # Direct GeoPackage path fallback: auto-inspect schema
-    gpkg_p = net_clean if os.path.isabs(net_clean) else os.path.join(BASE_DIR, net_clean)
-    if os.path.exists(gpkg_p) and gpkg_p.endswith(".gpkg"):
-        conn = sqlite3.connect(gpkg_p)
-        c = conn.cursor()
-        row = c.execute("SELECT table_name, srs_id FROM gpkg_contents WHERE data_type='features' LIMIT 1").fetchone()
-        layer, srs_id = row[0], row[1]
-        cols = {r[1].lower(): r[1] for r in c.execute(f'PRAGMA table_info("{layer}")').fetchall()}
-        conn.close()
-        abbr = os.path.splitext(os.path.basename(gpkg_p))[0].lower()
-        return {
-            "name": abbr,
-            "abbr": abbr,
-            "label": abbr,
-            "short_label": abbr,
-            "gpkg_paths": [net_clean],
-            "layers": [layer],
-            "geom_col": cols.get("shape", cols.get("geom", "Shape")),
-            "crs_epsg": srs_id or 27700,
-            "topology": {
-                "mode": "pointer" if "nextdownid" in cols else ("nodes" if "fnode" in cols else "geometry"),
-                "id_col": cols.get("rivid", cols.get("object_id", cols.get("objectid", "FID"))),
-                "from_node_col": cols.get("fnode"),
-                "to_node_col": cols.get("tnode"),
-                "next_down_col": cols.get("nextdownid"),
-                "catch_id_col": cols.get("catchid"),
-                "rbd_id_col": cols.get("rbd_id"),
-            },
-            "attributes": {
-                "dist_to_mouth_col": cols.get("dist2mth"),
-                "dist_to_mouth_unit": "m",
-                "afv_weight_col": cols.get("us_accum", cols.get("cum_len")),
-                "afv_weight_unit": "m",
-                "shreve_col": cols.get("shreve"),
-                "strahler_col": cols.get("strahler"),
-                "slope_col": cols.get("slope", cols.get("pente")),
-                "elevation_col": cols.get("elevation"),
-                "river_name_cols": [c_nm for k, c_nm in cols.items() if "name" in k],
-            },
-            "covariates": {"mode": "geometry_and_spatial_join"},
-            "max_snap_dist_m": 250.0,
-        }
+    # Direct GeoParquet or GeoPackage path fallback (or stem inside GIS_DIR): auto-inspect schema
+    cand_paths = [resolve_gis_path(net_clean)]
+    if not any(net_clean.lower().endswith(ext) for ext in (".gpkg",) + PARQUET_EXTENSIONS):
+        for ext in PARQUET_EXTENSIONS + (".gpkg",):
+            cand_paths.append(resolve_gis_path(net_clean + ext))
+
+    for cand_p in cand_paths:
+        if not os.path.exists(cand_p):
+            continue
+        if is_parquet_path(cand_p):
+            pq_info = inspect_geoparquet_schema(cand_p)
+            return _build_auto_network_config(
+                file_path=cand_p,
+                layer=pq_info["layer"],
+                geom_col=pq_info["geom_col"],
+                crs_epsg=pq_info["crs_epsg"],
+                cols=pq_info["cols"],
+                is_parquet=True,
+            )
+        if cand_p.lower().endswith(".gpkg"):
+            conn = sqlite3.connect(cand_p)
+            c = conn.cursor()
+            row = c.execute("SELECT table_name, srs_id FROM gpkg_contents WHERE data_type='features' LIMIT 1").fetchone()
+            layer, srs_id = row[0], row[1]
+            cols = {r[1].lower(): r[1] for r in c.execute(f'PRAGMA table_info("{layer}")').fetchall()}
+            conn.close()
+            geom_col = cols.get("shape", cols.get("geom", cols.get("geometry", "Shape")))
+            return _build_auto_network_config(
+                file_path=cand_p,
+                layer=layer,
+                geom_col=geom_col,
+                crs_epsg=srs_id or 27700,
+                cols=cols,
+                is_parquet=False,
+            )
 
     raise ValueError(f"Unknown network '{network_arg}'. Run with --list-networks to see available options.")
 
 
 def ensure_gpkg_paths(cfg):
-    """Ensures all configured GeoPackage files exist, extracting zip_fallbacks if needed."""
+    """Ensures all configured GeoPackage or GeoParquet files exist, extracting zip_fallbacks if needed."""
     resolved = []
     zip_list = cfg.get("zip_fallbacks", [])
-    for idx, rel_p in enumerate(cfg.get("gpkg_paths", [])):
-        full_p = rel_p if os.path.isabs(rel_p) else os.path.join(BASE_DIR, rel_p)
+    raw_paths = _get_config_network_paths(cfg)
+    for idx, rel_p in enumerate(raw_paths):
+        full_p = resolve_gis_path(rel_p)
         if not os.path.exists(full_p) and idx < len(zip_list):
             zip_rel = zip_list[idx]
-            zip_p = zip_rel if os.path.isabs(zip_rel) else os.path.join(BASE_DIR, zip_rel)
+            zip_p = resolve_gis_path(zip_rel)
             if os.path.exists(zip_p):
                 print(f"   Extracting {zip_p}...")
                 with zipfile.ZipFile(zip_p, "r") as zf:
                     zf.extractall(os.path.dirname(zip_p))
         if not os.path.exists(full_p):
-            raise FileNotFoundError(f"GeoPackage file not found: {full_p}")
+            raise FileNotFoundError(f"Water network file not found: {full_p}")
         resolved.append(full_p)
     return resolved
 
@@ -609,57 +1265,104 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
 
     best_snap = {nid: (1e18, None, None, 0.0) for nid in all_station_ids}
 
-    # Scan GeoPackage(s) to snap stations and load reaches
+    # Scan GeoPackage(s) and/or GeoParquet file(s) to snap stations and load reaches
     raw_reaches = []
-    node_lookup = {}  # (file_idx, node_id) -> (elev, len_tom)
+    node_lookup = {}  # (file_idx, node_id) or ("*", node_id) -> (elev, len_tom)
     nodes_cfg = cfg.get("nodes_table")
 
+    # If nodes_table points to an external GeoParquet or CSV file, load it into node_lookup
+    if isinstance(nodes_cfg, dict):
+        ext_nodes_rel = nodes_cfg.get("path") or nodes_cfg.get("parquet_path")
+        if not ext_nodes_rel:
+            cand_tbl = str(nodes_cfg.get("table", ""))
+            if cand_tbl.lower().endswith(PARQUET_EXTENSIONS + (".csv", ".gpkg")):
+                ext_nodes_rel = cand_tbl
+        if ext_nodes_rel:
+            ext_nodes_p = resolve_gis_path(ext_nodes_rel)
+            if os.path.exists(ext_nodes_p):
+                nid_c = nodes_cfg.get("id_col", "OBJECT_ID")
+                nel_c = nodes_cfg.get("elev_col", "ELEV")
+                nlt_c = nodes_cfg.get("dist_to_mouth_col", "LEN_TOM")
+                if is_parquet_path(ext_nodes_p):
+                    for nr_dict, _ in iter_geoparquet_rows(ext_nodes_p):
+                        if nr_dict.get(nid_c) is not None:
+                            node_lookup[("*", str(nr_dict[nid_c]))] = (nr_dict.get(nel_c), nr_dict.get(nlt_c))
+                elif ext_nodes_p.lower().endswith(".csv"):
+                    with open(ext_nodes_p, "r", encoding="utf-8-sig") as nf:
+                        for nr_dict in csv.DictReader(nf):
+                            if nr_dict.get(nid_c):
+                                el_v = float(nr_dict[nel_c]) if nr_dict.get(nel_c) not in (None, "") else None
+                                lt_v = float(nr_dict[nlt_c]) if nr_dict.get(nlt_c) not in (None, "") else None
+                                node_lookup[("*", str(nr_dict[nid_c]))] = (el_v, lt_v)
+
+    def _parse_cid_val(raw_val):
+        if raw_val is None:
+            return 0
+        s = str(raw_val).strip()
+        if not s:
+            return 0
+        try:
+            return int(float(s))
+        except ValueError:
+            return (abs(hash(s)) % 90000) + 1
+
+    def _ingest_reach_row(file_idx, rdict, blob):
+        poly, zs = parse_gpkg_geometry(blob)
+        if len(poly) < 2:
+            return
+        raw_id_val = rdict.get(id_col) if id_col else None
+        if raw_id_val is None:
+            raw_id_val = rdict.get("FID", len(raw_reaches) + 1)
+        orig_id = str(raw_id_val)
+        raw_cid = rdict.get(catch_col) if catch_col else None
+        cid_key = (file_idx, _parse_cid_val(raw_cid))
+
+        xs = [p[0] for p in poly]
+        ys = [p[1] for p in poly]
+        minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+        gx0, gx1 = int((minx - 1000) // 2000), int((maxx + 1000) // 2000)
+        gy0, gy1 = int((miny - 1000) // 2000), int((maxy + 1000) // 2000)
+        cand_sites = []
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                if (gx, gy) in site_grid:
+                    cand_sites.extend(site_grid[(gx, gy)])
+
+        for nid, px, py in cand_sites:
+            d, along = point_to_polyline(px, py, poly)
+            if d < best_snap[nid][0]:
+                best_snap[nid] = (d, (file_idx, orig_id), cid_key, along)
+
+        raw_reaches.append((file_idx, orig_id, cid_key, poly, zs, rdict))
+
     for file_idx, gpkg_p in enumerate(gpkg_paths):
-        conn = sqlite3.connect(gpkg_p)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        if is_parquet_path(gpkg_p):
+            for rdict, blob in iter_geoparquet_rows(gpkg_p, geom_col_hint=geom_col):
+                if blob is None and geom_col in rdict:
+                    blob = rdict.get(geom_col)
+                _ingest_reach_row(file_idx, rdict, blob)
+        else:
+            conn = sqlite3.connect(gpkg_p)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
 
-        if nodes_cfg:
-            ntbl = nodes_cfg.get("table", "Nodes")
-            nid_c = nodes_cfg.get("id_col", "OBJECT_ID")
-            nel_c = nodes_cfg.get("elev_col", "ELEV")
-            nlt_c = nodes_cfg.get("dist_to_mouth_col", "LEN_TOM")
-            try:
-                for nr in c.execute(f'SELECT "{nid_c}", "{nel_c}", "{nlt_c}" FROM "{ntbl}"'):
-                    node_lookup[(file_idx, str(nr[0]))] = (nr[1], nr[2])
-            except sqlite3.Error:
-                pass
+            if isinstance(nodes_cfg, dict):
+                ntbl = nodes_cfg.get("table", "Nodes")
+                nid_c = nodes_cfg.get("id_col", "OBJECT_ID")
+                nel_c = nodes_cfg.get("elev_col", "ELEV")
+                nlt_c = nodes_cfg.get("dist_to_mouth_col", "LEN_TOM")
+                try:
+                    for nr in c.execute(f'SELECT "{nid_c}", "{nel_c}", "{nlt_c}" FROM "{ntbl}"'):
+                        node_lookup[(file_idx, str(nr[0]))] = (nr[1], nr[2])
+                except sqlite3.Error:
+                    pass
 
-        for layer in layers:
-            for row in c.execute(f'SELECT * FROM "{layer}"'):
-                rdict = dict(row)
-                blob = rdict.get(geom_col)
-                poly, zs = parse_gpkg_geometry(blob)
-                if len(poly) < 2:
-                    continue
-
-                orig_id = str(rdict[id_col])
-                raw_cid = rdict.get(catch_col) if catch_col else None
-                cid_key = (file_idx, int(raw_cid) if raw_cid is not None else 0)
-
-                xs = [p[0] for p in poly]
-                ys = [p[1] for p in poly]
-                minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
-                gx0, gx1 = int((minx - 1000) // 2000), int((maxx + 1000) // 2000)
-                gy0, gy1 = int((miny - 1000) // 2000), int((maxy + 1000) // 2000)
-                cand_sites = []
-                for gx in range(gx0, gx1 + 1):
-                    for gy in range(gy0, gy1 + 1):
-                        if (gx, gy) in site_grid:
-                            cand_sites.extend(site_grid[(gx, gy)])
-
-                for nid, px, py in cand_sites:
-                    d, along = point_to_polyline(px, py, poly)
-                    if d < best_snap[nid][0]:
-                        best_snap[nid] = (d, (file_idx, orig_id), cid_key, along)
-
-                raw_reaches.append((file_idx, orig_id, cid_key, poly, zs, rdict))
-        conn.close()
+            for layer in layers:
+                for row in c.execute(f'SELECT * FROM "{layer}"'):
+                    rdict = dict(row)
+                    blob = rdict.get(geom_col)
+                    _ingest_reach_row(file_idx, rdict, blob)
+            conn.close()
 
     # Determine monitored catchments (or keep all if network has <= 5 catchments)
     monitored_cid_keys = {
@@ -673,6 +1376,10 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             for nid in best_snap
             if best_snap[nid][0] <= max_snap_m and best_snap[nid][2] is not None
         }
+    if not monitored_cid_keys:
+        monitored_cid_keys = {r[2] for r in raw_reaches}
+
+    has_explicit_catch_id = any(r[2][1] > 0 for r in raw_reaches)
 
     # Filter reaches to monitored catchments
     filtered_reaches = [r for r in raw_reaches if r[2] in monitored_cid_keys]
@@ -689,6 +1396,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
 
     # Assign unique positive integer RivIDs
     key_to_rivid = {}
+    global_orig_to_rivid = {}
     reaches_by_id = {}
     for idx, (file_idx, orig_id, cid_key, poly, zs, rdict) in enumerate(filtered_reaches, 1):
         if len(gpkg_paths) == 1 and len(layers) == 1 and str(orig_id).isdigit():
@@ -696,6 +1404,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         else:
             riv_id = idx
         key_to_rivid[(file_idx, orig_id)] = riv_id
+        if orig_id not in global_orig_to_rivid:
+            global_orig_to_rivid[orig_id] = riv_id
         reaches_by_id[riv_id] = {
             "riv_id": riv_id,
             "file_idx": file_idx,
@@ -706,9 +1416,14 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             "row": rdict,
         }
 
+    src_fmt_label = (
+        "GeoParquet"
+        if all(is_parquet_path(p) for p in gpkg_paths)
+        else ("GeoPackage + GeoParquet" if any(is_parquet_path(p) for p in gpkg_paths) else "GeoPackage")
+    )
     print(
         f"   Loaded {len(reaches_by_id)} reaches across {len(monitored_cid_keys)} monitored catchments "
-        f"(from {len(raw_reaches)} total reaches in GeoPackage)."
+        f"(from {len(raw_reaches)} total reaches in {src_fmt_label})."
     )
 
     # 3. Build directed river tree topology (supporting pointer, nodes, or geometry)
@@ -725,8 +1440,12 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             key = (f_idx, info["catch_id"], str(fn))
             if key not in fnode_index or mc == 1:
                 fnode_index[key] = riv_id
+            g_key = ("*", info["catch_id"], str(fn))
+            if g_key not in fnode_index or mc == 1:
+                fnode_index[g_key] = riv_id
         p0 = info["poly"][0]
         start_pt_grid[(f_idx, int(p0[0] // 50), int(p0[1] // 50))].append((riv_id, p0[0], p0[1]))
+        start_pt_grid[("*", int(p0[0] // 50), int(p0[1] // 50))].append((riv_id, p0[0], p0[1]))
 
     raw_parent_dn = {}
     for riv_id, info in reaches_by_id.items():
@@ -740,13 +1459,15 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             if nd_val:
                 # Handle potential semicolon/comma list by taking primary target
                 first_tok = str(nd_val).split(";")[0].split(",")[0].strip()
-                dn_id = key_to_rivid.get((f_idx, first_tok))
+                dn_id = key_to_rivid.get((f_idx, first_tok)) or global_orig_to_rivid.get(first_tok)
 
         # Mode B / Fallback: Nodes (Tnode -> Fnode)
         if dn_id is None and topo_mode in ("nodes", "pointer") and tnode_col:
             tn_val = rdict.get(tnode_col)
             if tn_val:
-                dn_id = fnode_index.get((f_idx, info["catch_id"], str(tn_val)))
+                dn_id = fnode_index.get((f_idx, info["catch_id"], str(tn_val))) or fnode_index.get(
+                    ("*", info["catch_id"], str(tn_val))
+                )
 
         # Mode C / Fallback: Geometry endpoint snapping within 5m
         if dn_id is None and topo_mode == "geometry":
@@ -763,8 +1484,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                                 dn_id = cand_id
 
         if dn_id is not None and dn_id != riv_id and dn_id in reaches_by_id:
-            # Keep within same CatchID
-            if reaches_by_id[dn_id]["catch_id"] == info["catch_id"]:
+            # Keep within same CatchID (or allow cross-file link when no explicit CatchID column exists)
+            if not has_explicit_catch_id or reaches_by_id[dn_id]["catch_id"] == info["catch_id"]:
                 raw_parent_dn[riv_id] = dn_id
 
     # Break any cycles so the directed graph is a strict forest of trees
@@ -797,6 +1518,46 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             mouths.append(riv_id)
         else:
             parents[dn].append(riv_id)
+
+    # If the input dataset lacked an explicit CatchID column, assign integer CatchIDs
+    # automatically from weakly connected river tree components rooted at each mouth
+    if not has_explicit_catch_id and len(mouths) > 1:
+        tree_members = {}
+        for m_id in mouths:
+            comp = []
+            stack = [m_id]
+            while stack:
+                u = stack.pop()
+                comp.append(u)
+                for p in parents[u]:
+                    stack.append(p)
+            tree_members[m_id] = comp
+
+        snapped_rivids = {
+            key_to_rivid[best_snap[nid][1]]
+            for nid in best_snap
+            if best_snap[nid][0] <= max_snap_m and best_snap[nid][1] in key_to_rivid
+        }
+        monitored_mouths = [
+            m_id for m_id in mouths if any(u in snapped_rivids for u in tree_members[m_id])
+        ]
+        active_mouths = monitored_mouths if monitored_mouths else mouths
+        active_mouths.sort(key=lambda m_id: (-len(tree_members[m_id]), m_id))
+
+        keep_rivids = set()
+        for new_cid, m_id in enumerate(active_mouths, 1):
+            for u in tree_members[m_id]:
+                reaches_by_id[u]["catch_id"] = new_cid
+                keep_rivids.add(u)
+
+        if len(keep_rivids) < len(reaches_by_id):
+            reaches_by_id = {u: info for u, info in reaches_by_id.items() if u in keep_rivids}
+            parent_dn = {u: dn for u, dn in parent_dn.items() if u in keep_rivids and dn in keep_rivids}
+            parents = defaultdict(list)
+            for u, dn in parent_dn.items():
+                parents[dn].append(u)
+            key_to_rivid = {k: v for k, v in key_to_rivid.items() if v in keep_rivids}
+        mouths = active_mouths
 
     # Verify polyline vertex orientation (upstream -> downstream) and compute reach lengths
     flipped_cnt = 0
@@ -922,9 +1683,11 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         elif zs:
             elev = statistics.mean(zs)
         elif node_lookup:
-            fn_el = node_lookup.get((f_idx, str(rdict.get(fnode_col))), (None, None))[0]
-            tn_el = node_lookup.get((f_idx, str(rdict.get(tnode_col))), (None, None))[0]
-            vals_el = [x for x in (fn_el, tn_el) if x is not None]
+            fn_key = str(rdict.get(fnode_col))
+            tn_key = str(rdict.get(tnode_col))
+            fn_el = (node_lookup.get((f_idx, fn_key)) or node_lookup.get(("*", fn_key)) or (None, None))[0]
+            tn_el = (node_lookup.get((f_idx, tn_key)) or node_lookup.get(("*", tn_key)) or (None, None))[0]
+            vals_el = [float(x) for x in (fn_el, tn_el) if x is not None]
             if vals_el:
                 elev = statistics.mean(vals_el)
         if elev is None:
@@ -1155,7 +1918,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "rsn_catchments_lookup.csv": catch_lu_path,
         "network_metadata.json": meta_path,
     })
-    print(f"Done in {time.time() - t0:.2f} seconds (saved to data/processed/{net_abbr}/ and data/processed/).")
+    print(f"Done in {time.time() - t0:.2f} seconds (saved to {os.path.join(OUT_DIR, net_abbr)}/ and {OUT_DIR}/).")
 
 
 def main():
@@ -1163,14 +1926,43 @@ def main():
         description="Preprocess stream network GeoPackages (ORN v2, EU-Hydro, etc.) and EA RSN samples for S3N modeling."
     )
     parser.add_argument(
+        "--gis-dir",
+        "--gis",
+        dest="gis_dir",
+        default=None,
+        help="Custom GIS directory containing water network GeoPackages (default: 'gis').",
+    )
+    parser.add_argument(
+        "--data-dir",
+        "--data",
+        dest="data_dir",
+        default=None,
+        help="Custom data directory containing RSN sample folders and processed outputs (default: 'data').",
+    )
+    parser.add_argument(
+        "--out-dir",
+        "--output-dir",
+        "--out",
+        "--processed-dir",
+        dest="out_dir",
+        default=None,
+        help="Custom output directory for processed network CSVs (default: '<data-dir>/processed').",
+    )
+    parser.add_argument(
         "--network",
         default="orn",
-        help="Water network preset ('orn', 'euhydro_thames', 'euhydro_tweed', 'euhydro') or path to GeoPackage/JSON.",
+        help="Water network preset ('orn', 'euhydro_thames', 'euhydro_tweed', 'euhydro') or path to GeoPackage (.gpkg), GeoParquet (.parquet/.geoparquet), or JSON config.",
     )
     parser.add_argument(
         "--network-config",
         default=None,
         help="Optional path to a custom network JSON configuration file.",
+    )
+    parser.add_argument(
+        "--convert-to-geoparquet",
+        dest="convert_to_geoparquet",
+        default=None,
+        help="Optional output .parquet/.geoparquet path: converts the selected --network GeoPackage layer(s) to an OGC GeoParquet file and exits.",
     )
     parser.add_argument(
         "--list-networks",
@@ -1243,6 +2035,7 @@ def main():
         help="Optional calendar month filter (1..12 or Jan..Dec). Default: all months.",
     )
     args = parser.parse_args()
+    configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
 
     if args.list_networks:
         list_available_networks()
@@ -1250,6 +2043,14 @@ def main():
 
     cfg = load_network_config(args.network, args.network_config)
     net_abbr = cfg["abbr"]
+
+    if args.convert_to_geoparquet:
+        src_files = ensure_gpkg_paths(cfg)
+        layers = cfg.get("layers")
+        print(f"Converting {src_files[0]} (layers={layers}) to GeoParquet: {args.convert_to_geoparquet}...")
+        convert_gpkg_to_geoparquet(src_files[0], args.convert_to_geoparquet, layers=layers)
+        print(f"Successfully wrote GeoParquet file: {args.convert_to_geoparquet}")
+        return
 
     season_filter = None
     if args.season is not None:

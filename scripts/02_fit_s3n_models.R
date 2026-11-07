@@ -17,12 +17,21 @@
 #   - S3N Combined (S3N-TU+TD: spatial information-gain weighted combination)
 # ==============================================================================
 
-BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
+BASE_DIR <- if (file.exists("scripts/s3n_plot_functions.R")) "." else if (file.exists("s3n_plot_functions.R")) ".." else "."
 source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+BASE_DIR <- resolve_base_dir()
 
-args <- commandArgs(trailingOnly = TRUE)
+args    <- commandArgs(trailingOnly = TRUE)
+dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
+GIS_DIR  <- dir_cfg$gis_dir
+DATA_DIR <- dir_cfg$data_dir
+OUT_BASE <- dir_cfg$out_dir
+
 if ("--list-networks" %in% args) {
-  system(sprintf("python3 %s --list-networks", shQuote(file.path(BASE_DIR, "scripts/01_preprocess_orn.py"))))
+  py_cmd <- sprintf("python3 %s --list-networks --gis-dir=%s",
+                    shQuote(rel_path(BASE_DIR, "scripts", "01_preprocess_orn.py")),
+                    shQuote(GIS_DIR))
+  system(py_cmd)
   quit(save = "no", status = 0)
 }
 if ("--list-vars" %in% args || "--list-covariates" %in% args) {
@@ -31,7 +40,7 @@ if ("--list-vars" %in% args || "--list-covariates" %in% args) {
 }
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
-PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli)
+PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR)
 net_meta    <- load_network_metadata(PROC_DIR)
 
 vars_args <- grep("^--(vars|covariates)=", args, value = TRUE)
@@ -51,14 +60,14 @@ suppressPackageStartupMessages({
   library(S3N)
 })
 
-dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
+dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 
 vars_tag <- format_covariates_folder_tag(var_specs)
 sub_tag  <- if (net_meta$abbr != "orn") paste0("net_", net_meta$abbr) else ""
 if (nzchar(vars_tag)) {
   sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", vars_tag) else vars_tag
 }
-OUT_ROOT <- if (nzchar(sub_tag)) file.path(BASE_DIR, "output", sub_tag) else file.path(BASE_DIR, "output")
+OUT_ROOT <- if (nzchar(sub_tag)) rel_path(OUT_BASE, sub_tag) else OUT_BASE
 dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)

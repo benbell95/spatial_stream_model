@@ -11,8 +11,8 @@ The `S3N` R package models spatial autocorrelation along river networks using tw
 - **Tail-Down (TD)**: Flow-connected and flow-unconnected covariance that requires the **hydrologic distance to the catchment outlet (`Dist2Mth_km`)** for every reach.
 
 To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS Open Rivers Network `ORN_v2.gpkg` or Copernicus `EU-Hydro`), the pipeline uses:
-1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native layer names, CRS, topology columns, and attribute names to the standardized `S3N` schema.
-2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage, repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA River Surveillance Network (RSN) monitoring stations, and writes standardized CSV tables to `data/processed/<abbr>/`.
+1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native GeoPackage (`.gpkg`) or GeoParquet (`.parquet` / `.geoparquet`) file paths, layer names, CRS, topology columns, and attribute names to the standardized `S3N` schema.
+2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage or GeoParquet file(s), repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA River Surveillance Network (RSN) monitoring stations, and writes standardized CSV tables to `data/processed/<abbr>/`.
 3. **Network-Aware Modelling & Plotting (`scripts/run_s3n_determinand.R`, `scripts/02_fit_s3n_models.R`, `scripts/03_generate_plots.R`)**: Reads `data/processed/<abbr>/`, tags output folders with `<abbr>` (e.g. `output/det_0117_euhydro_thames/`), and stamps all figures (`fig1`–`fig5`) with the network's human-readable label.
 
 ---
@@ -20,11 +20,25 @@ To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS 
 ## 2. Dataset Requirements
 
 ### 2.1 File Format
-- **Supported format**: **OGC GeoPackage (`.gpkg`)** or a `.zip` archive containing a `.gpkg` file.
-- **Converting from Shapefile / GeoJSON / FileGDB**: If your river network is in another vector format (`.shp`, `.geojson`, `.gdb`), convert it to a GeoPackage using GDAL's `ogr2ogr` before running the preprocessor:
-  ```bash
-  ogr2ogr -f GPKG gis/my_network.gpkg path/to/input_rivers.shp -nln rivers
-  ```
+- **Supported formats**:
+  - **OGC GeoPackage (`.gpkg`)**
+  - **OGC GeoParquet (`.parquet`, `.geoparquet`, `.pq`)** — including single GeoParquet files, multiple layer `.parquet` files, or partitioned directories of `.parquet` files
+  - **`.zip` archives** containing `.gpkg`, `.parquet`, or `.geoparquet` files.
+- **How GeoParquet Files Are Read**:
+  - `scripts/01_preprocess_orn.py` inspects the OGC GeoParquet 1.0/1.1 `"geo"` JSON metadata footer (`primary_column`, `encoding`, PROJJSON `crs`) directly from the Parquet footer and streams features and WKB geometries using either `pyarrow.parquet` (if installed) or the system `libgdal` C OGR `Parquet` driver (`ctypes`).
+- **Converting from Shapefile / GeoJSON / FileGDB (or GeoPackage to GeoParquet)**:
+  - Using `ogr2ogr` (to GeoPackage or GeoParquet):
+    ```bash
+    # Convert to GeoPackage (.gpkg)
+    ogr2ogr -f GPKG gis/my_network.gpkg path/to/input_rivers.shp -nln rivers
+
+    # Convert to GeoParquet (.parquet)
+    ogr2ogr -f Parquet gis/my_network.parquet path/to/input_rivers.shp
+    ```
+  - Or convert any configured GeoPackage network directly to GeoParquet using `scripts/01_preprocess_orn.py`:
+    ```bash
+    python3 scripts/01_preprocess_orn.py --network=euhydro_thames --convert-to-geoparquet=gis/euhydro_thames.parquet
+    ```
 
 ### 2.2 Geometry Requirements
 - **Geometry Type**: `LineString` or `MultiLineString` in standard OGC WKB or ISO WKB:
@@ -82,26 +96,31 @@ You do **not** need pre-computed Strahler orders, Shreve orders, distances to mo
 
 ## 3. Step-by-Step Setup Guide
 
-### Step 1: Place Your GeoPackage in `gis/` and Inspect Its Schema
+### Step 1: Place Your GeoPackage or GeoParquet File in `gis/` and Inspect Its Schema
 
-Place your `.gpkg` (or `.zip`) file inside the `gis/` directory, then inspect its layer names, geometry column, CRS, and attribute columns using `sqlite3`:
+Place your `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` file inside the `gis/` directory (or a custom `--gis-dir`).
 
-```bash
-# 1. List feature layers, geometry column name, and EPSG code
-sqlite3 gis/my_network.gpkg "SELECT table_name, column_name, geometry_type_name, srs_id FROM gpkg_geometry_columns;"
+- **If using a GeoPackage (`.gpkg`)**, you can inspect its layer names, geometry column, CRS, and attribute columns using `sqlite3`:
+  ```bash
+  # 1. List feature layers, geometry column name, and EPSG code
+  sqlite3 gis/my_network.gpkg "SELECT table_name, column_name, geometry_type_name, srs_id FROM gpkg_geometry_columns;"
 
-# 2. List all columns in the river network layer
-sqlite3 gis/my_network.gpkg "PRAGMA table_info(my_river_layer);"
+  # 2. List all columns in the river network layer
+  sqlite3 gis/my_network.gpkg "PRAGMA table_info(my_river_layer);"
 
-# 3. Preview the first 5 rows of non-geometry attributes
-sqlite3 -header -column gis/my_network.gpkg "SELECT FID, OBJECT_ID, FNODE, TNODE, NEXTDOWNID FROM my_river_layer LIMIT 5;"
-```
+  # 3. Preview the first 5 rows of non-geometry attributes
+  sqlite3 -header -column gis/my_network.gpkg "SELECT FID, OBJECT_ID, FNODE, TNODE, NEXTDOWNID FROM my_river_layer LIMIT 5;"
+  ```
+- **If using a GeoParquet (`.parquet` / `.geoparquet`) file**, `scripts/01_preprocess_orn.py` can inspect the GeoParquet `"geo"` metadata footer and column schema automatically:
+  ```bash
+  python3 -c 'import sys; sys.path.insert(0, "scripts"); import importlib; m = importlib.import_module("01_preprocess_orn"); print(m.inspect_geoparquet_schema("gis/my_network.parquet"))'
+  ```
 
 ---
 
 ### Step 2: Create a Network Profile in `configs/networks/<abbr>.json`
 
-Create a new JSON configuration file in [`configs/networks/`](file:///home/ben/code/r/spatial_stream_model/configs/networks) (for example, `configs/networks/my_net.json`). Below is a complete template with annotations explaining every option:
+Create a new JSON configuration file in [`configs/networks/`](../configs/networks) (for example, `configs/networks/my_net.json`). You can specify either `"parquet_paths"` (for `.parquet` / `.geoparquet` files), `"gpkg_paths"` (for `.gpkg` or `.parquet` files), or `"network_paths"`. Below is a complete template with annotations explaining every option:
 
 ```json
 {
@@ -109,8 +128,11 @@ Create a new JSON configuration file in [`configs/networks/`](file:///home/ben/c
   "abbr": "my_net",
   "label": "My Custom River Network v1.0",
   "short_label": "MyNet v1",
+  "parquet_paths": [
+    "gis/my_network.parquet"
+  ],
   "gpkg_paths": [
-    "gis/my_network.gpkg"
+    "gis/my_network.parquet"
   ],
   "zip_fallbacks": [
     "gis/my_network.zip"
@@ -158,18 +180,18 @@ Create a new JSON configuration file in [`configs/networks/`](file:///home/ben/c
 #### Field Reference for `configs/networks/<abbr>.json`
 - **`name` / `abbr`**: Short lowercase identifier (e.g. `"euhydro_thames"`). Used in CLI `--network=<abbr>`, cache folder `data/processed/<abbr>/`, and output directory `output/det_0117_<abbr>/`.
 - **`label` / `short_label`**: Human-readable network name displayed on Figures 1–5 (`Water Network: <short_label>`) and stored in `Network_Label` inside CSV tables.
-- **`gpkg_paths`**: List of one or more relative `.gpkg` paths under the project root. Multiple GeoPackages (such as `euhydro_thames` + `euhydro_tweed` in [`configs/networks/euhydro.json`](file:///home/ben/code/r/spatial_stream_model/configs/networks/euhydro.json)) are automatically merged.
-- **`zip_fallbacks`**: Optional `.zip` archive paths; if a `.gpkg` in `gpkg_paths` does not exist yet, the preprocessor automatically extracts it from the corresponding `.zip`.
-- **`layers`**: List of feature table names to load from each GeoPackage.
-- **`geom_col`**: Name of the GeoPackage WKB geometry column (typically `"Shape"` or `"geom"`).
-- **`crs_epsg`**: Integer EPSG code of the layer's native CRS (e.g., `27700` for British National Grid, `3035` for ETRS89-LAEA Europe).
+- **`parquet_paths` / `gpkg_paths` / `network_paths`**: List of one or more relative `.parquet` / `.geoparquet` or `.gpkg` paths under `gis/` (or the project root). Multiple files (such as `euhydro_thames` + `euhydro_tweed` in [`configs/networks/euhydro.json`](../configs/networks/euhydro.json), or separate GeoParquet layer files) are automatically merged.
+- **`zip_fallbacks`**: Optional `.zip` archive paths; if a file in `parquet_paths` / `gpkg_paths` does not exist yet, the preprocessor automatically extracts it from the corresponding `.zip`.
+- **`layers`**: List of feature table names to load from each GeoPackage (ignored for single-layer `.parquet` files).
+- **`geom_col`**: Name of the WKB geometry column (typically `"Shape"`, `"geometry"`, or `"geom"`; auto-detected from the GeoParquet `"geo"` metadata footer if omitted).
+- **`crs_epsg`**: Integer EPSG code of the layer's native CRS (e.g., `27700` for British National Grid, `3035` for ETRS89-LAEA Europe; auto-detected from GeoParquet PROJJSON metadata when running ad-hoc).
 - **`topology`**:
   - `mode`: `"nodes"` (matches `to_node_col` → `from_node_col`), `"pointer"` (matches `next_down_col` → `id_col`), `"geometry"` (snaps reach endpoints within `snap_tol_m` meters), or `"auto"`.
   - `id_col`, `from_node_col`, `to_node_col`, `next_down_col`, `catch_id_col`: Column names in the GIS table (set any unused column to `null`).
 - **`attributes`**:
   - Set any attribute column that exists in your GIS layer, or set to `null` to have the preprocessor compute it automatically from the network tree and 3D geometry.
   - `dist_to_mouth_unit` / `afv_weight_unit`: `"m"` (automatically converted to `"km"` in `Dist2Mth_km` and `US_Accum_km`) or `"km"`.
-- **`nodes_table`**: Optional lookup table in the same GeoPackage (such as EU-Hydro's `"Nodes"` layer) containing node elevations (`elev_col`) or distances to mouth (`dist_to_mouth_col`). Set to `null` if not applicable.
+- **`nodes_table`**: Optional lookup table containing node elevations (`elev_col`) or distances to mouth (`dist_to_mouth_col`). Can be either a table inside a `.gpkg` (`{"table": "Nodes", ...}`) or a standalone `.parquet` / `.csv` file (`{"path": "gis/my_nodes.parquet", "id_col": "OBJECT_ID", "elev_col": "ELEV", "dist_to_mouth_col": "LEN_TOM"}`). Set to `null` if not applicable.
 - **`core_basins`**: Optional integer `CatchID` overrides for the Humber, Thames, and Severn basins used in Figures 2 and 3. If set to `null`, the R scripts automatically identify the Humber, Thames, and Severn catchments from `catchment_lookup.csv` by river name (`Main_River`) or river basin district.
 - **`max_snap_dist_m`**: Maximum distance in meters (default `250.0`) for snapping EA RSN water quality and biological monitoring stations to their nearest river reach.
 
@@ -200,7 +222,7 @@ All processed files are saved to `data/processed/my_net/` (and mirrored to `data
 
 ### Step 4: Run S3N Models with Your Water Network
 
-Pass `--network=my_net` to [`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R) or [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R):
+Pass `--network=my_net` to [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) or [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
 
 ```bash
 # Fit S3N models for Nitrate (0117) on your network
@@ -223,10 +245,10 @@ Rscript scripts/run_s3n_determinand.R 0117 --network=my_net --basin=Thames
 ### Step 5: Re-Generate or Customize Plots
 
 All output files are saved in a network-specific folder so they never overwrite runs from other networks:
-- Standard covariates: `output/det_0117_<abbr>/` (e.g., [`output/det_0117_euhydro_thames/`](file:///home/ben/code/r/spatial_stream_model/output/det_0117_euhydro_thames))
+- Standard covariates: `output/det_0117_<abbr>/` (e.g., [`output/det_0117_euhydro_thames/`](../output/det_0117_euhydro_thames))
 - Custom covariates: `output/det_0117_<abbr>_vars_<tag>/` (e.g., `output/det_0117_euhydro_thames_vars_3vars_elev_usac_stra/`)
 
-You can re-render Figures 1–5 from any saved output directory using [`scripts/03_generate_plots.R`](file:///home/ben/code/r/spatial_stream_model/scripts/03_generate_plots.R):
+You can re-render Figures 1–5 from any saved output directory using [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R):
 
 ```bash
 # Re-render Figures 1-4 from saved predictions
@@ -238,24 +260,37 @@ Rscript scripts/03_generate_plots.R --dir=output/det_0117_my_net --basin=Thames
 
 ---
 
-## 4. Ad-Hoc Usage (Running Without a Config File)
+## 4. Ad-Hoc Usage (Running Directly on a `.parquet` or `.gpkg` File Without a Config File)
 
-If you want to test a `.gpkg` file quickly without creating a JSON file in `configs/networks/`, you can pass the `.gpkg` path directly to `--network=` and override topology or weighting options on the command line:
+If you want to run a `.parquet` / `.geoparquet` or `.gpkg` file directly without creating a JSON file in `configs/networks/`, pass the file path directly to `--network=`. Both [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) will automatically inspect the GeoParquet or GeoPackage schema (`geom_col`, `crs_epsg`, topology columns, and hydrological attributes):
 
 ```bash
-# Run directly on a GeoPackage file using automatic topology detection
+# 1. Preprocess a GeoParquet file directly using automatic schema & topology detection
+python3 scripts/01_preprocess_orn.py \
+  --network=gis/custom_rivers.parquet \
+  --topology-mode=auto \
+  --max-snap-dist=300
+
+# 2. Or run S3N modelling & plotting directly on a GeoParquet file (auto-triggers preprocessing)
+Rscript scripts/run_s3n_determinand.R 0117 --network=gis/custom_rivers.parquet
+
+# 3. Preprocess a GeoPackage file directly
 python3 scripts/01_preprocess_orn.py \
   --network=gis/custom_rivers.gpkg \
   --topology-mode=auto \
   --max-snap-dist=300
 ```
 
-Available CLI overrides in [`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py):
-- `--network=<name|path>`: Profile name in `configs/networks/` or direct path to a `.gpkg` file.
+Available CLI overrides in [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py):
+- `--network=<name|path>`: Profile name in `configs/networks/` or direct path to a `.parquet`, `.geoparquet`, `.pq`, or `.gpkg` file.
 - `--network-config=<path.json>`: Path to a custom JSON configuration file outside `configs/networks/`.
+- `--convert-to-geoparquet=<out.parquet>`: Converts the selected `--network` GeoPackage layer(s) into a single OGC GeoParquet file.
 - `--topology-mode=auto|nodes|pointer|geometry`: Override how downstream reach connectivity is constructed.
 - `--afv-col=<col>`: Override the attribute column used to compute Tail-Up additive function weights (`afv`).
 - `--max-snap-dist=<meters>`: Override the maximum station-to-reach snapping distance (default `250`).
+- `--gis-dir=<dir>`: Custom directory containing `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` GIS files (default `gis`).
+- `--data-dir=<dir>`: Custom root data directory containing RSN inputs and `processed/` outputs (default `data`).
+- `--out-dir=<dir>` (or `--output-dir=<dir>`): Custom output directory for preprocessed network CSV tables (default `<data-dir>/processed`).
 
 ---
 

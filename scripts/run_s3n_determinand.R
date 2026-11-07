@@ -16,13 +16,20 @@
 #   Rscript scripts/run_s3n_determinand.R 0061 --raw    # pH (modeled on raw scale)
 # ==============================================================================
 
-args <- commandArgs(trailingOnly = TRUE)
-BASE_DIR       <- "/home/ben/code/r/spatial_stream_model"
-WQ_DIR         <- file.path(BASE_DIR, "data/NCEA_River_Surveillance_Network_ARD_Open")
-SAMPLES_CSV    <- file.path(WQ_DIR, "RSN Water Quality Samples.csv")
-REACHES_CSV    <- file.path(BASE_DIR, "data/processed/england_rsn_reaches.csv")
-SITES_CSV      <- file.path(BASE_DIR, "data/processed/rsn_sites.csv")
-CATCHMENTS_CSV <- file.path(BASE_DIR, "data/processed/rsn_catchments_lookup.csv")
+args     <- commandArgs(trailingOnly = TRUE)
+BASE_DIR <- if (file.exists("scripts/s3n_plot_functions.R")) "." else if (file.exists("s3n_plot_functions.R")) ".." else "."
+source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+BASE_DIR <- resolve_base_dir()
+
+dir_cfg        <- parse_custom_dir_args(args, base_dir = BASE_DIR)
+GIS_DIR        <- dir_cfg$gis_dir
+DATA_DIR       <- dir_cfg$data_dir
+OUT_BASE       <- dir_cfg$out_dir
+WQ_DIR         <- dir_cfg$wq_dir
+SAMPLES_CSV    <- rel_path(WQ_DIR, "RSN Water Quality Samples.csv")
+REACHES_CSV    <- rel_path( dir_cfg$proc_root, "england_rsn_reaches.csv")
+SITES_CSV      <- rel_path(dir_cfg$proc_root, "rsn_sites.csv")
+CATCHMENTS_CSV <- rel_path(dir_cfg$proc_root, "rsn_catchments_lookup.csv")
 
 DATASET_FILES <- list(
   wq          = list(file = "RSN Water Quality Samples.csv",      dt_col = "sample_datetime", label = "Water Quality Samples"),
@@ -84,10 +91,11 @@ ds_mode     <- if (length(ds_arg) > 0) tolower(sub("^--dataset=", "", ds_arg[1])
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
 
-source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
-
 if ("--list-networks" %in% args) {
-  system(sprintf("python3 %s --list-networks", shQuote(file.path(BASE_DIR, "scripts/01_preprocess_orn.py"))))
+  py_cmd <- sprintf("python3 %s --list-networks --gis-dir=%s",
+                    shQuote(rel_path(BASE_DIR, "scripts", "01_preprocess_orn.py")),
+                    shQuote(GIS_DIR))
+  system(py_cmd)
   quit(save = "no", status = 0)
 }
 
@@ -96,11 +104,11 @@ if ("--list-vars" %in% args || "--list-covariates" %in% args) {
   quit(save = "no", status = 0)
 }
 
-PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli)
+PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR)
 net_meta       <- load_network_metadata(PROC_DIR)
-REACHES_CSV    <- file.path(PROC_DIR, "england_rsn_reaches.csv")
-SITES_CSV      <- file.path(PROC_DIR, "rsn_sites.csv")
-CATCHMENTS_CSV <- file.path(PROC_DIR, "rsn_catchments_lookup.csv")
+REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
+SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
+CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
 
 if ("--list-basins" %in% args) {
   cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s)]:\n\n",
@@ -178,7 +186,8 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
   }
   cat("\nUsage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
   cat("        [--raw|--log] [--reverse-color] [--censor=ros|half_lod] [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins]\n")
-  cat("        [--vars=<Covariate_List>] [--list-vars]\n")
+  cat("        [--vars=<Covariate_List>] [--list-vars] [--network=<name>] [--list-networks]\n")
+  cat("        [--gis-dir=<dir>] [--data-dir=<dir>] [--output-dir=<dir>]\n")
   cat("        [--year=YYYY] [--season=winter|spring|summer|autumn] [--month=1..12] [--by=year|season|month]\n")
   cat("Examples:\n")
   cat("  Rscript scripts/run_s3n_determinand.R --list --dataset=inverts # List macroinvertebrate indices\n")
@@ -267,12 +276,7 @@ if (nzchar(user_lib) && dir.exists(user_lib) && !(normalizePath(user_lib, mustWo
 suppressPackageStartupMessages({
   library(S3N)
 })
-dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))
-
-# ==============================================================================
-# SHARED BASE-R PLOTTING FUNCTIONS (FIGURES 1 - 4 & CUSTOM BASINS)
-# ==============================================================================
-source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 
 vars_tag <- format_covariates_folder_tag(var_specs)
 out_folder_name <- if (ds_mode == "wq") paste0("det_", det_code) else paste0(ds_mode, "_", gsub("[^a-zA-Z0-9_]+", "_", det_code))
@@ -280,7 +284,7 @@ out_folder_name <- paste0(out_folder_name, "_", net_meta$abbr)
 if (nzchar(vars_tag)) {
   out_folder_name <- paste0(out_folder_name, "_", vars_tag)
 }
-OUT_DIR <- file.path(BASE_DIR, "output", out_folder_name)
+OUT_DIR <- rel_path(OUT_BASE, out_folder_name)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # ==============================================================================

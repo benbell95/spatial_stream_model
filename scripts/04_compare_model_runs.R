@@ -33,298 +33,9 @@
 #   Rscript scripts/04_compare_model_runs.R output/det_0117 --by=season
 # ==============================================================================
 
-BASE_DIR <- "/home/ben/code/r/spatial_stream_model"
-source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
-
-# ------------------------------------------------------------------------------
-# Helper: Format p-values and significance stars
-# ------------------------------------------------------------------------------
-fmt_pval <- function(p) {
-  if (is.null(p) || length(p) == 0 || is.na(p)) return("NA")
-  if (p < 1e-16) return("< 1e-16")
-  if (p < 1e-4)  return(sprintf("%.2e", p))
-  sprintf("%.4f", p)
-}
-
-sig_stars <- function(p) {
-  if (is.null(p) || length(p) == 0 || is.na(p)) return("ns")
-  if (p < 0.001) return("***")
-  if (p < 0.01)  return("**")
-  if (p < 0.05)  return("*")
-  if (p < 0.10)  return(".")
-  "ns"
-}
-
-safe_paired_ttest <- function(x, y) {
-  d <- x - y
-  d <- d[!is.na(d)]
-  if (length(d) < 3 || sd(d) < 1e-12) {
-    return(list(statistic = 0.0, p.value = 1.0))
-  }
-  suppressWarnings(t.test(x, y, paired = TRUE))
-}
-
-safe_paired_wilcox <- function(x, y) {
-  d <- x - y
-  d <- d[!is.na(d) & abs(d) > 1e-12]
-  if (length(d) < 3) {
-    return(list(statistic = 0.0, p.value = 1.0))
-  }
-  suppressWarnings(wilcox.test(x, y, paired = TRUE))
-}
-
-canonical_domain <- function(dom_vec) {
-  d <- as.character(dom_vec)
-  d <- sub(" \\(CatchID=[0-9]+\\)$", "", d)
-  d <- sub("^River ", "", d)
-  trimws(d)
-}
-
-canonical_model <- function(mod_vec) {
-  m <- as.character(mod_vec)
-  m[grepl("OLS", m, ignore.case = TRUE)]       <- "OLS (Non-Spatial)"
-  m[grepl("Tail-Down", m, ignore.case = TRUE) & !grepl("Combined", m, ignore.case = TRUE)] <- "S3N Tail-Down"
-  m[grepl("Tail-Up", m, ignore.case = TRUE)   & !grepl("Combined", m, ignore.case = TRUE)] <- "S3N Tail-Up"
-  m[grepl("Combined", m, ignore.case = TRUE)]  <- "S3N Combined"
-  m
-}
-
-find_first_file <- function(dir_path, pattern, exclude_pattern = NULL) {
-  if (!dir.exists(dir_path)) return(NULL)
-  f <- list.files(dir_path, pattern = pattern, full.names = TRUE)
-  if (!is.null(exclude_pattern) && length(f) > 0) {
-    f <- f[!grepl(exclude_pattern, basename(f))]
-  }
-  if (length(f) == 0) return(NULL)
-  f[1]
-}
-
-calc_sample_skewness <- function(x) {
-  x <- x[!is.na(x) & is.finite(x)]
-  n <- length(x)
-  if (n < 3) return(NA_real_)
-  s <- sd(x)
-  if (s < 1e-12) return(0.0)
-  mean(((x - mean(x)) / s)^3)
-}
-
-calc_sample_kurtosis <- function(x) {
-  x <- x[!is.na(x) & is.finite(x)]
-  n <- length(x)
-  if (n < 4) return(NA_real_)
-  s <- sd(x)
-  if (s < 1e-12) return(0.0)
-  mean(((x - mean(x)) / s)^4) - 3.0
-}
-
-calc_geom_mean <- function(x) {
-  x <- x[!is.na(x) & is.finite(x)]
-  if (length(x) == 0 || any(x <= 0)) return(NA_real_)
-  exp(mean(log(x)))
-}
-
-summarize_numeric_vector <- function(x) {
-  x <- x[!is.na(x) & is.finite(x)]
-  n <- length(x)
-  if (n == 0) {
-    return(data.frame(
-      N = 0L, Mean = NA_real_, SD = NA_real_, CV_Pct = NA_real_,
-      Geom_Mean = NA_real_, Skewness = NA_real_, Excess_Kurtosis = NA_real_,
-      Min = NA_real_, P05 = NA_real_, P10 = NA_real_, Q25 = NA_real_,
-      Median = NA_real_, Q75 = NA_real_, P90 = NA_real_, P95 = NA_real_,
-      Max = NA_real_, IQR = NA_real_, MAD = NA_real_, stringsAsFactors = FALSE
-    ))
-  }
-  qs <- as.numeric(quantile(x, probs = c(0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95), na.rm = TRUE))
-  m_val <- mean(x)
-  s_val <- if (n >= 2) sd(x) else 0.0
-  data.frame(
-    N               = n,
-    Mean            = round(m_val, 5),
-    SD              = round(s_val, 5),
-    CV_Pct          = if (abs(m_val) > 1e-9) round(100.0 * s_val / abs(m_val), 2) else NA_real_,
-    Geom_Mean       = round(calc_geom_mean(x), 5),
-    Skewness        = round(calc_sample_skewness(x), 4),
-    Excess_Kurtosis = round(calc_sample_kurtosis(x), 4),
-    Min             = round(min(x), 5),
-    P05             = round(qs[1], 5),
-    P10             = round(qs[2], 5),
-    Q25             = round(qs[3], 5),
-    Median          = round(qs[4], 5),
-    Q75             = round(qs[5], 5),
-    P90             = round(qs[6], 5),
-    P95             = round(qs[7], 5),
-    Max             = round(max(x), 5),
-    IQR             = round(qs[5] - qs[3], 5),
-    MAD             = round(mad(x, na.rm = TRUE), 5),
-    stringsAsFactors = FALSE
-  )
-}
-
-read_basin_catch_id <- function(file_path, fallback_id = NA_integer_) {
-  if (!is.null(file_path) && file.exists(file_path)) {
-    r1 <- tryCatch(read.csv(file_path, nrows = 1, stringsAsFactors = FALSE), error = function(e) NULL)
-    if (!is.null(r1) && ("CatchID" %in% names(r1)) && nrow(r1) > 0) {
-      return(as.integer(r1$CatchID[1]))
-    }
-  }
-  fallback_id
-}
-
-# ------------------------------------------------------------------------------
-# Helper: Load a single model run bundle from an output directory
-# ------------------------------------------------------------------------------
-load_model_run_bundle <- function(dir_path, custom_label = NULL) {
-  dir_p <- if (grepl("^/", dir_path)) dir_path else file.path(BASE_DIR, dir_path)
-  if (!dir.exists(dir_p)) {
-    stop(sprintf("Model output directory does not exist: %s", dir_p))
-  }
-
-  # Support both standard output/ layout (predictions/, tables/) and det_* layout
-  if (dir.exists(file.path(dir_p, "predictions")) && dir.exists(file.path(dir_p, "tables"))) {
-    pred_dir  <- file.path(dir_p, "predictions")
-    tab_dir   <- file.path(dir_p, "tables")
-    eng_file  <- find_first_file(pred_dir, "^england_.*predictions\\.csv$", "cv_predictions")
-    hum_file  <- find_first_file(pred_dir, "^humber_.*predictions\\.csv$", "cv_predictions")
-    tha_file  <- find_first_file(pred_dir, "^thames_.*predictions\\.csv$", "cv_predictions")
-    sev_file  <- find_first_file(pred_dir, "^severn_.*predictions\\.csv$", "cv_predictions")
-    cv_t_file <- file.path(tab_dir, "cv_model_comparison.csv")
-    par_file  <- file.path(tab_dir, "s3n_parameter_estimates.csv")
-    cv_e_file <- find_first_file(pred_dir, "^england_.*cv_predictions\\.csv$")
-    cv_h_file <- find_first_file(pred_dir, "^humber_.*cv_predictions\\.csv$")
-  } else {
-    eng_file  <- find_first_file(dir_p, "^predictions_.*\\.csv$",
-                                 "^predictions_(humber|thames|severn|river_|catchid_).*\\.csv$")
-    hum_file  <- find_first_file(dir_p, "^predictions_humber_.*\\.csv$")
-    tha_file  <- find_first_file(dir_p, "^predictions_thames_.*\\.csv$")
-    sev_file  <- find_first_file(dir_p, "^predictions_severn_.*\\.csv$")
-    cv_t_file <- find_first_file(dir_p, "^cv_comparison_.*\\.csv$")
-    par_file  <- find_first_file(dir_p, "^parameters_.*\\.csv$")
-    cv_e_file <- find_first_file(dir_p, "^cv_predictions_england_.*\\.csv$")
-    cv_h_file <- find_first_file(dir_p, "^cv_predictions_humber_.*\\.csv$")
-  }
-
-  if (is.null(eng_file) || is.null(cv_t_file) || !file.exists(cv_t_file)) {
-    stop(sprintf("Directory '%s' does not contain required predictions_*.csv and cv_comparison_*.csv files.", dir_p))
-  }
-
-  eng_pred  <- normalize_pred_df(read.csv(eng_file, stringsAsFactors = FALSE))
-  cv_tab    <- normalize_cv_tab(read.csv(cv_t_file, stringsAsFactors = FALSE))
-  param_tab <- if (!is.null(par_file) && file.exists(par_file)) read.csv(par_file, stringsAsFactors = FALSE) else NULL
-  eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) normalize_cv_pts(read.csv(cv_e_file, stringsAsFactors = FALSE)) else NULL
-  hum_cv    <- if (!is.null(cv_h_file) && file.exists(cv_h_file)) normalize_cv_pts(read.csv(cv_h_file, stringsAsFactors = FALSE)) else NULL
-
-  hum_cid <- read_basin_catch_id(hum_file, 80L)
-  tha_cid <- read_basin_catch_id(tha_file, 3055L)
-  sev_cid <- read_basin_catch_id(sev_file, 2786L)
-
-  cv_tab$Canon_Domain <- canonical_domain(cv_tab$Domain)
-  cv_tab$Canon_Model  <- canonical_model(cv_tab$Model)
-
-  if (!is.null(param_tab)) {
-    param_tab$Canon_Domain <- canonical_domain(param_tab$Domain)
-    param_tab$Canon_Model  <- canonical_model(param_tab$Model)
-  }
-
-  # Extract metadata
-  net_lbl  <- extract_network_label_from_tables(cv_tab, param_tab, dir_p)
-  net_abbr <- if ("Network_Abbr" %in% names(cv_tab)) as.character(cv_tab$Network_Abbr[1]) else {
-    if (grepl("euhydro_thames", dir_p)) "euhydro_thames"
-    else if (grepl("euhydro_tweed", dir_p)) "euhydro_tweed"
-    else if (grepl("euhydro", dir_p)) "euhydro"
-    else "orn"
-  }
-  period_lbl <- if ("Period" %in% names(cv_tab) && !is.na(cv_tab$Period[1])) as.character(cv_tab$Period[1]) else {
-    bname <- basename(dir_p)
-    if (grepl("^(year|season|month)_", bname)) bname else "all"
-  }
-  det_code <- if ("Determinand_Code" %in% names(cv_tab)) {
-    c0 <- as.character(cv_tab$Determinand_Code[1])
-    if (nchar(c0) < 4 && grepl("^[0-9]+$", c0)) sprintf("%04d", as.integer(c0)) else c0
-  } else {
-    sub("^predictions_(.*)\\.csv$", "\\1", basename(eng_file))
-  }
-  known_names <- c(
-    "0117" = "Nitrate as N",
-    "0180" = "Orthophosphate as P",
-    "0111" = "Ammoniacal Nitrogen as N",
-    "0116" = "Total Oxidised Nitrogen",
-    "0118" = "Nitrite as N",
-    "0301" = "Dissolved Organic Carbon",
-    "0077" = "Conductivity",
-    "0162" = "Alkalinity",
-    "0061" = "pH",
-    "0076" = "Water Temperature",
-    "0085" = "Dissolved Oxygen (% Sat)",
-    "9924" = "Dissolved Oxygen",
-    "whpt_aspt" = "WHPT ASPT Score",
-    "whpt_ntaxa" = "WHPT N-Taxa Richness",
-    "life_family_index" = "LIFE Flow Index",
-    "psi_family_score" = "PSI Sediment Score",
-    "rmni" = "River Macrophyte Nutrient Index (RMNI)",
-    "hqa_score" = "RHS Habitat Quality Score (HQA)"
-  )
-  det_name <- if ("Determinand_Name" %in% names(cv_tab)) {
-    as.character(cv_tab$Determinand_Name[1])
-  } else if (det_code %in% names(known_names)) {
-    unname(known_names[det_code])
-  } else {
-    det_code
-  }
-  det_unit <- if ("Unit" %in% names(cv_tab)) as.character(cv_tab$Unit[1]) else "mg/L"
-  use_log  <- if ("Scale" %in% names(cv_tab)) (tolower(as.character(cv_tab$Scale[1])) == "log") else {
-    obs_pos <- eng_pred$obs_value[eng_pred$has_obs == 1 & !is.na(eng_pred$obs_value) & eng_pred$obs_value > 0]
-    sc_pos  <- eng_pred$obs_model_sc[eng_pred$has_obs == 1 & !is.na(eng_pred$obs_value) & eng_pred$obs_value > 0]
-    (length(obs_pos) > 0 && max(abs(log(obs_pos) - sc_pos), na.rm = TRUE) < 1e-2)
-  }
-
-  vars_sub <- format_covariates_subtitle(param_tab = param_tab)
-  user_supplied_label <- (!is.null(custom_label) && nzchar(custom_label))
-
-  # Construct concise human-readable run label if not provided
-  if (!user_supplied_label) {
-    bname <- basename(normalizePath(dir_p, mustWork = FALSE))
-    if (grepl("^(season|year|month)_", bname)) {
-      p_clean <- sub("^season_", "Season: ", sub("^year_", "Year ", sub("^month_", "Month ", bname)))
-      custom_label <- sprintf("%s (%s)", p_clean, net_lbl)
-    } else if (!is.null(vars_sub) && nzchar(vars_sub)) {
-      custom_label <- sprintf("%s [Vars: %s]", net_lbl, vars_sub)
-    } else {
-      custom_label <- net_lbl
-    }
-  }
-
-  # Attach coordinates to eng_cv via RivID lookup from eng_pred
-  if (!is.null(eng_cv) && "RivID" %in% names(eng_cv)) {
-    idx <- match(eng_cv$RivID, eng_pred$RivID)
-    eng_cv$mid_X     <- eng_pred$mid_X[idx]
-    eng_cv$mid_Y     <- eng_pred$mid_Y[idx]
-    eng_cv$obs_value <- eng_pred$obs_value[idx]
-  }
-
-  list(
-    dir_path            = dir_p,
-    dir_name            = basename(normalizePath(dir_p, mustWork = FALSE)),
-    label               = custom_label,
-    user_supplied_label = user_supplied_label,
-    net_abbr            = net_abbr,
-    net_label           = net_lbl,
-    period              = period_lbl,
-    det_code            = det_code,
-    det_name            = det_name,
-    det_unit            = det_unit,
-    use_log             = use_log,
-    vars_label          = if (is.null(vars_sub)) "Default (All 8 standard)" else vars_sub,
-    hum_cid             = hum_cid,
-    tha_cid             = tha_cid,
-    sev_cid             = sev_cid,
-    eng_pred            = eng_pred,
-    cv_tab              = cv_tab,
-    param_tab           = param_tab,
-    eng_cv              = eng_cv,
-    hum_cv              = hum_cv
-  )
-}
+BASE_DIR <- if (file.exists("scripts/05_descriptive_stats.R")) "." else if (file.exists("05_descriptive_stats.R")) ".." else "."
+source(file.path(BASE_DIR, "scripts/05_descriptive_stats.R"))
+BASE_DIR <- resolve_base_dir()
 
 # ------------------------------------------------------------------------------
 # Helper: Match reaches or observed stations between two runs
@@ -421,266 +132,6 @@ match_reaches_between_runs <- function(df1, df2, same_network = FALSE, max_dist_
   res <- res[order(res$dist_m), ]
   res <- res[!duplicated(res$idx2), ]
   res[order(res$idx1), ]
-}
-
-# ------------------------------------------------------------------------------
-# Helper: List all available model output directories under output/
-# ------------------------------------------------------------------------------
-list_available_model_runs <- function(out_root = file.path(BASE_DIR, "output")) {
-  cat("==============================================================================\n")
-  cat("Available Model Run Output Directories for Comparison:\n")
-  cat("==============================================================================\n")
-  all_dirs <- list.dirs(out_root, recursive = TRUE, full.names = TRUE)
-  found <- 0L
-  for (d in all_dirs) {
-    if (grepl("/comparisons(/|$)", d)) next
-    has_det_files <- length(list.files(d, pattern = "^cv_comparison_.*\\.csv$")) > 0 &&
-                     length(list.files(d, pattern = "^predictions_.*\\.csv$")) > 0
-    has_std_files <- file.exists(file.path(d, "tables/cv_model_comparison.csv"))
-    if (has_det_files || has_std_files) {
-      found <- found + 1L
-      rel_d <- sub(paste0("^", BASE_DIR, "/?"), "", d)
-      b <- tryCatch(load_model_run_bundle(d), error = function(e) NULL)
-      if (!is.null(b)) {
-        r_all <- subset(b$cv_tab, Canon_Domain == "All England RSN Network" & Canon_Model == "S3N Combined")
-        r2_str <- if (nrow(r_all) > 0) sprintf("CV R2 = %.3f, RMSE = %.3f", r_all$R2[1], r_all$RMSE[1]) else "N/A"
-        cat(sprintf("  [%2d] %-45s | %-20s | %-22s | %6d reaches (%4d obs) | %s\n",
-                    found, rel_d, b$net_label, substr(b$det_name, 1, 22),
-                    nrow(b$eng_pred), sum(b$eng_pred$has_obs == 1), r2_str))
-      } else {
-        cat(sprintf("  [%2d] %s\n", found, rel_d))
-      }
-    }
-  }
-  cat("==============================================================================\n")
-}
-
-# ------------------------------------------------------------------------------
-# Helper: Comprehensive Descriptive Statistics of Model Output Results
-# ------------------------------------------------------------------------------
-compute_detailed_descriptives <- function(bundles) {
-  desc_rows <- list()
-  rep_rows  <- list()
-
-  for (i in seq_along(bundles)) {
-    b  <- bundles[[i]]
-    ep <- b$eng_pred
-    obs_sub   <- ep[ep$has_obs == 1 & !is.na(ep$obs_value), ]
-    unmon_sub <- ep[ep$has_obs == 0, ]
-
-    vars_to_sum <- list(
-      list(grp = "Observed Stations (Raw)",            vec = obs_sub$obs_value,       scale = "raw"),
-      list(grp = "S3N Combined Predictions (Raw)",     vec = ep$pred_combined,        scale = "raw"),
-      list(grp = "Unmonitored Reach Predictions (Raw)",vec = unmon_sub$pred_combined, scale = "raw"),
-      list(grp = "S3N Tail-Up Predictions (Raw)",      vec = ep$pred_tu,              scale = "raw"),
-      list(grp = "S3N Tail-Down Predictions (Raw)",    vec = ep$pred_td,              scale = "raw"),
-      list(grp = "S3N Combined (Model Scale)",         vec = ep$pred_model_sc,        scale = if (b$use_log) "log" else "raw"),
-      list(grp = "Kriging Standard Error (SE)",        vec = ep$se_model_sc,          scale = if (b$use_log) "log_se" else "raw_se")
-    )
-
-    for (v_info in vars_to_sum) {
-      s_df <- summarize_numeric_vector(v_info$vec)
-      meta_df <- data.frame(
-        Run_Index        = i,
-        Run_Label        = b$label,
-        Determinand_Code = b$det_code,
-        Determinand_Name = b$det_name,
-        Unit             = b$det_unit,
-        Scale            = v_info$scale,
-        Variable_Group   = v_info$grp,
-        stringsAsFactors = FALSE
-      )
-      desc_rows[[length(desc_rows) + 1L]] <- cbind(meta_df, s_df)
-    }
-
-    # Representativeness test: Observed stations vs. Unmonitored network predictions
-    if (nrow(obs_sub) >= 5 && nrow(unmon_sub) >= 5) {
-      mw_rep <- suppressWarnings(wilcox.test(ep$pred_combined, obs_sub$obs_value, paired = FALSE))
-      ks_rep <- suppressWarnings(ks.test(ep$pred_combined, obs_sub$obs_value))
-      obs_med  <- median(obs_sub$obs_value, na.rm = TRUE)
-      pred_med <- median(ep$pred_combined, na.rm = TRUE)
-      obs_mn   <- mean(obs_sub$obs_value, na.rm = TRUE)
-      pred_mn  <- mean(ep$pred_combined, na.rm = TRUE)
-      ratio_med <- if (abs(obs_med) > 1e-9) pred_med / obs_med else NA_real_
-      ratio_mn  <- if (abs(obs_mn) > 1e-9)  pred_mn / obs_mn   else NA_real_
-
-      dir_txt <- if (!is.na(ratio_med) && ratio_med < 0.95) {
-        "Full network median is lower than monitored station median (unmonitored upland headwaters dilute network average)"
-      } else if (!is.na(ratio_med) && ratio_med > 1.05) {
-        "Full network median is higher than monitored station median"
-      } else {
-        "Full network median closely matches monitored station median"
-      }
-
-      rep_rows[[length(rep_rows) + 1L]] <- data.frame(
-        Run_Index              = i,
-        Run_Label              = b$label,
-        Determinand_Code       = b$det_code,
-        Unit                   = b$det_unit,
-        n_Obs_Stations         = nrow(obs_sub),
-        n_Total_Reaches        = nrow(ep),
-        Obs_Mean_Raw           = round(obs_mn, 5),
-        Pred_Mean_Raw          = round(pred_mn, 5),
-        Pred_to_Obs_Mean_Ratio = round(ratio_mn, 4),
-        Obs_Median_Raw         = round(obs_med, 5),
-        Pred_Median_Raw        = round(pred_med, 5),
-        Pred_to_Obs_Med_Ratio  = round(ratio_med, 4),
-        MW_W_Stat              = as.numeric(mw_rep$statistic),
-        MW_P_Value             = mw_rep$p.value,
-        KS_D_Stat              = round(as.numeric(ks_rep$statistic), 4),
-        KS_P_Value             = ks_rep$p.value,
-        Significance           = sig_stars(mw_rep$p.value),
-        Interpretation         = dir_txt,
-        stringsAsFactors       = FALSE
-      )
-    }
-  }
-
-  list(
-    desc_df = do.call(rbind, desc_rows),
-    rep_df  = if (length(rep_rows) > 0) do.call(rbind, rep_rows) else NULL
-  )
-}
-
-# ------------------------------------------------------------------------------
-# Helper: Stratified Descriptive Statistics of Model Output Results Across
-#         Topography, Hydrogeology, Landscape Regime, Stream Order & Basins
-# ------------------------------------------------------------------------------
-compute_stratified_descriptives <- function(bundles) {
-  strat_rows <- list()
-
-  for (i in seq_along(bundles)) {
-    b  <- bundles[[i]]
-    ep <- b$eng_pred
-    n_tot <- nrow(ep)
-    z_all <- (ep$pred_model_sc - mean(ep$pred_model_sc, na.rm = TRUE)) /
-             max(1e-9, sd(ep$pred_model_sc, na.rm = TRUE))
-
-    add_stratum <- function(dim_name, strat_label, mask, test_name = "", p_val = NA_real_, ratio_vs_ref = NA_real_) {
-      idx <- which(mask & !is.na(ep$pred_combined))
-      if (length(idx) == 0) return(NULL)
-      sub_ep <- ep[idx, ]
-      obs_v  <- sub_ep$obs_value[sub_ep$has_obs == 1 & !is.na(sub_ep$obs_value)]
-      qs     <- as.numeric(quantile(sub_ep$pred_combined, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE))
-      strat_rows[[length(strat_rows) + 1L]] <<- data.frame(
-        Run_Index          = i,
-        Run_Label          = b$label,
-        Determinand_Code   = b$det_code,
-        Unit               = b$det_unit,
-        Dimension          = dim_name,
-        Stratum            = strat_label,
-        n_reaches          = length(idx),
-        Pct_Network        = round(100.0 * length(idx) / n_tot, 2),
-        n_obs              = length(obs_v),
-        Obs_Median_Raw     = if (length(obs_v) > 0) round(median(obs_v, na.rm = TRUE), 5) else NA_real_,
-        Pred_Mean_Raw      = round(mean(sub_ep$pred_combined, na.rm = TRUE), 5),
-        Pred_SD_Raw        = round(sd(sub_ep$pred_combined, na.rm = TRUE), 5),
-        Pred_GeomMean_Raw  = round(calc_geom_mean(sub_ep$pred_combined), 5),
-        Pred_P05_Raw       = round(qs[1], 5),
-        Pred_Q25_Raw       = round(qs[2], 5),
-        Pred_Median_Raw    = round(qs[3], 5),
-        Pred_Q75_Raw       = round(qs[4], 5),
-        Pred_P95_Raw       = round(qs[5], 5),
-        Pred_IQR_Raw       = round(qs[4] - qs[2], 5),
-        Pred_Mean_Z        = round(mean(z_all[idx], na.rm = TRUE), 4),
-        SE_Mean            = round(mean(sub_ep$se_model_sc, na.rm = TRUE), 4),
-        SE_Median          = round(median(sub_ep$se_model_sc, na.rm = TRUE), 4),
-        Ratio_vs_Ref       = round(ratio_vs_ref, 4),
-        Within_Run_Test    = test_name,
-        Within_Run_P       = p_val,
-        Within_Run_Sig     = sig_stars(p_val),
-        stringsAsFactors   = FALSE
-      )
-    }
-
-    # 1. Topography: Lowland (<150m) vs Upland (>=150m)
-    if ("Elevation" %in% names(ep)) {
-      is_up  <- !is.na(ep$Elevation) & ep$Elevation >= 150.0
-      is_low <- !is.na(ep$Elevation) & ep$Elevation <  150.0
-      p_topo <- if (sum(is_up) >= 5 && sum(is_low) >= 5) {
-        suppressWarnings(wilcox.test(ep$pred_model_sc[is_low], ep$pred_model_sc[is_up]))$p.value
-      } else NA_real_
-      med_up <- median(ep$pred_combined[is_up], na.rm = TRUE)
-      med_lo <- median(ep$pred_combined[is_low], na.rm = TRUE)
-      add_stratum("1. Topography", "Upland (>= 150 m)", is_up, "Mann-Whitney U (Lowland vs Upland)", p_topo, 1.0)
-      add_stratum("1. Topography", "Lowland (< 150 m)", is_low, "Mann-Whitney U (Lowland vs Upland)", p_topo,
-                  if (!is.na(med_up) && abs(med_up) > 1e-9) med_lo / med_up else NA_real_)
-    }
-
-    # 2. Hydrogeology: Non-Aquifer (0) vs Principal Aquifer (1)
-    if ("Is_Aquifer" %in% names(ep)) {
-      is_aq  <- !is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 1
-      is_naq <- !is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 0
-      p_aq <- if (sum(is_aq) >= 5 && sum(is_naq) >= 5) {
-        suppressWarnings(wilcox.test(ep$pred_model_sc[is_aq], ep$pred_model_sc[is_naq]))$p.value
-      } else NA_real_
-      med_naq <- median(ep$pred_combined[is_naq], na.rm = TRUE)
-      med_aq  <- median(ep$pred_combined[is_aq], na.rm = TRUE)
-      add_stratum("2. Hydrogeology", "Non-Aquifer (Bedrock = 0)", is_naq, "Mann-Whitney U (Aquifer vs Non-Aq)", p_aq, 1.0)
-      add_stratum("2. Hydrogeology", "Principal Aquifer (Bedrock = 1)", is_aq, "Mann-Whitney U (Aquifer vs Non-Aq)", p_aq,
-                  if (!is.na(med_naq) && abs(med_naq) > 1e-9) med_aq / med_naq else NA_real_)
-    }
-
-    # 3. Combined Landscape Typology
-    if (("Elevation" %in% names(ep)) && ("Is_Aquifer" %in% names(ep))) {
-      m_up   <- !is.na(ep$Elevation) & ep$Elevation >= 150.0
-      m_lnaq <- !is.na(ep$Elevation) & ep$Elevation < 150.0 & ep$Is_Aquifer == 0
-      m_laq  <- !is.na(ep$Elevation) & ep$Elevation < 150.0 & ep$Is_Aquifer == 1
-      grp_l  <- ifelse(m_up, "Upland", ifelse(m_laq, "Low_Aq", "Low_NonAq"))
-      p_kw_l <- if (length(unique(grp_l)) >= 2) {
-        suppressWarnings(kruskal.test(ep$pred_model_sc ~ as.factor(grp_l)))$p.value
-      } else NA_real_
-      med_ref <- median(ep$pred_combined[m_up], na.rm = TRUE)
-      add_stratum("3. Landscape Regime", "Upland (>= 150 m)", m_up, "Kruskal-Wallis (3 Regimes)", p_kw_l, 1.0)
-      add_stratum("3. Landscape Regime", "Lowland Non-Aquifer (< 150 m)", m_lnaq, "Kruskal-Wallis (3 Regimes)", p_kw_l,
-                  if (!is.na(med_ref) && abs(med_ref) > 1e-9) median(ep$pred_combined[m_lnaq], na.rm = TRUE) / med_ref else NA_real_)
-      add_stratum("3. Landscape Regime", "Lowland Aquifer (< 150 m, Aq = 1)", m_laq, "Kruskal-Wallis (3 Regimes)", p_kw_l,
-                  if (!is.na(med_ref) && abs(med_ref) > 1e-9) median(ep$pred_combined[m_laq], na.rm = TRUE) / med_ref else NA_real_)
-    }
-
-    # 4. Strahler Stream Order Gradient
-    if ("Strahler" %in% names(ep)) {
-      m_hw  <- !is.na(ep$Strahler) & ep$Strahler <= 2
-      m_mid <- !is.na(ep$Strahler) & ep$Strahler %in% c(3, 4)
-      m_ms  <- !is.na(ep$Strahler) & ep$Strahler >= 5
-      ord_g <- ifelse(m_hw, "1_HW", ifelse(m_mid, "2_Mid", "3_Main"))
-      p_ord <- if (length(unique(ord_g)) >= 2) {
-        suppressWarnings(kruskal.test(ep$pred_model_sc ~ as.factor(ord_g)))$p.value
-      } else NA_real_
-      rho_ord <- suppressWarnings(cor(ep$Strahler, ep$pred_model_sc, use = "complete.obs", method = "spearman"))
-      med_hw  <- median(ep$pred_combined[m_hw], na.rm = TRUE)
-      t_lbl   <- sprintf("Kruskal-Wallis (Spearman rho = %+.3f)", rho_ord)
-      add_stratum("4. Stream Order", "Headwaters (Order 1-2)", m_hw, t_lbl, p_ord, 1.0)
-      add_stratum("4. Stream Order", "Medium Tributaries (Order 3-4)", m_mid, t_lbl, p_ord,
-                  if (!is.na(med_hw) && abs(med_hw) > 1e-9) median(ep$pred_combined[m_mid], na.rm = TRUE) / med_hw else NA_real_)
-      add_stratum("4. Stream Order", "Mainstem Rivers (Order >= 5)", m_ms, t_lbl, p_ord,
-                  if (!is.na(med_hw) && abs(med_hw) > 1e-9) median(ep$pred_combined[m_ms], na.rm = TRUE) / med_hw else NA_real_)
-    }
-
-    # 5. Major River Basins
-    med_eng <- median(ep$pred_combined, na.rm = TRUE)
-    add_stratum("5. River Basin", "All England Network", rep(TRUE, nrow(ep)), "Reference Network", NA_real_, 1.0)
-    if (!is.na(b$hum_cid) && any(ep$CatchID == b$hum_cid)) {
-      m_b <- ep$CatchID == b$hum_cid
-      p_b <- suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value
-      add_stratum("5. River Basin", "Humber Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
-                  if (abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
-    }
-    if (!is.na(b$tha_cid) && any(ep$CatchID == b$tha_cid)) {
-      m_b <- ep$CatchID == b$tha_cid
-      p_b <- suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value
-      add_stratum("5. River Basin", "Thames Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
-                  if (abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
-    }
-    if (!is.na(b$sev_cid) && any(ep$CatchID == b$sev_cid)) {
-      m_b <- ep$CatchID == b$sev_cid
-      p_b <- suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value
-      add_stratum("5. River Basin", "Severn Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
-                  if (abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
-    }
-  }
-
-  do.call(rbind, strat_rows)
 }
 
 # ------------------------------------------------------------------------------
@@ -947,21 +398,23 @@ analyze_reach_relationships <- function(bundles, pair12_pred_match) {
 }
 
 # ------------------------------------------------------------------------------
-# Core Comparison & Single-Run Descriptive Engine:
-#   compare_s3n_runs() / describe_s3n_run()
 # ------------------------------------------------------------------------------
-describe_s3n_run <- function(run_dir, label = NULL, out_dir = NULL, quiet = FALSE) {
-  compare_s3n_runs(run_dirs = run_dir, labels = label, out_dir = out_dir, quiet = quiet)
-}
-
-compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FALSE) {
-  if (length(run_dirs) < 1) {
-    stop("Please provide at least 1 model run directory.")
+# Core Comparison Engine: compare_s3n_runs() (Requires >= 2 Model Outputs)
+# ------------------------------------------------------------------------------
+compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FALSE,
+                             out_root = rel_path(BASE_DIR, "output")) {
+  if (length(run_dirs) < 2) {
+    stop(paste0(
+      "compare_s3n_runs() requires at least 2 model run directories to compare.\n",
+      "For descriptive statistics on a single model output directory, run:\n",
+      "  Rscript scripts/05_descriptive_stats.R ",
+      if (length(run_dirs) == 1) run_dirs[1] else "<output_dir>"
+    ))
   }
 
   bundles <- lapply(seq_along(run_dirs), function(i) {
     lbl_i <- if (!is.null(labels) && length(labels) >= i) labels[i] else NULL
-    load_model_run_bundle(run_dirs[i], custom_label = lbl_i)
+    load_model_run_bundle(run_dirs[i], custom_label = lbl_i, out_root = out_root)
   })
   K <- length(bundles)
   same_det_all <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
@@ -985,30 +438,22 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     for (i in seq_len(K)) bundles[[i]]$label <- run_labels[i]
   }
 
+  eff_out_root <- if (!is.null(out_root) && nzchar(out_root)) out_root else rel_path(BASE_DIR, "output")
   if (is.null(out_dir) || !nzchar(out_dir)) {
-    if (K == 1L) {
-      slug <- sprintf("single_%s", bundles[[1]]$dir_name)
-    } else {
-      slug <- paste(sapply(bundles, function(b) b$dir_name), collapse = "_vs_")
-      if (nchar(slug) > 85) {
-        slug <- sprintf("compare_%d_runs_%s_to_%s", K, bundles[[1]]$dir_name, bundles[[K]]$dir_name)
-      }
+    slug <- paste(sapply(bundles, function(b) b$dir_name), collapse = "_vs_")
+    if (nchar(slug) > 85) {
+      slug <- sprintf("compare_%d_runs_%s_to_%s", K, bundles[[1]]$dir_name, bundles[[K]]$dir_name)
     }
-    out_dir <- file.path(BASE_DIR, "output", "comparisons", slug)
+    out_dir <- rel_path(eff_out_root, "comparisons", slug)
   } else if (!grepl("^/", out_dir)) {
-    out_dir <- file.path(BASE_DIR, out_dir)
+    out_dir <- rel_path(BASE_DIR, out_dir)
   }
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   if (!quiet) {
     cat("==============================================================================\n")
-    if (K == 1L) {
-      cat(sprintf("Single-Run Descriptive & Diagnostic Analysis (%s [%s]):\n",
-                  bundles[[1]]$det_name, bundles[[1]]$det_code))
-    } else {
-      cat(sprintf("Comparing %d S3N Model Runs (%s):\n",
-                  K, if (same_det_all) sprintf("Same Determinand: %s", bundles[[1]]$det_name) else "Cross-Determinand Comparison"))
-    }
+    cat(sprintf("Comparing %d S3N Model Runs (%s):\n",
+                K, if (same_det_all) sprintf("Same Determinand: %s", bundles[[1]]$det_name) else "Cross-Determinand Comparison"))
     for (i in seq_len(K)) {
       cat(sprintf("  Run %d: %-42s (%s | %s reaches, %d obs)\n",
                   i, bundles[[i]]$label, bundles[[i]]$dir_name,
@@ -1138,161 +583,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   pair12_cv_match   <- NULL
   pair12_pred_match <- NULL
 
-  if (K == 1L) {
-    b1 <- bundles[[1]]
-    ep <- b1$eng_pred
-    lbl1 <- b1$label
-
-    # 1. Cross-Validation Model Comparisons within the Single Run (S3N Combined vs OLS, TU, TD)
-    if (!is.null(b1$eng_cv) && nrow(b1$eng_cv) >= 5) {
-      e_comb <- b1$eng_cv$obs_y - b1$eng_cv$cv_comb
-      if ("cv_ols" %in% names(b1$eng_cv)) {
-        e_ols <- b1$eng_cv$obs_y - b1$eng_cv$cv_ols
-        tt_ols <- safe_paired_ttest(e_comb^2, e_ols^2)
-        wt_ols <- safe_paired_wilcox(abs(e_comb), abs(e_ols))
-        add_stat_row("S3N Combined vs. OLS", "Cross-Validation",
-                     "Paired t-Test / Diebold-Mariano (Station Squared CV Error)",
-                     "Station MSE", length(e_ols), length(e_comb),
-                     mean(e_ols^2, na.rm = TRUE), mean(e_comb^2, na.rm = TRUE),
-                     mean(e_comb^2, na.rm = TRUE) - mean(e_ols^2, na.rm = TRUE),
-                     "t", as.numeric(tt_ols$statistic), tt_ols$p.value,
-                     sprintf("S3N Combined reduces station MSE vs non-spatial OLS (%s)", sig_stars(tt_ols$p.value)))
-        add_stat_row("S3N Combined vs. OLS", "Cross-Validation",
-                     "Paired Wilcoxon Signed-Rank Test (Station |CV Error|)",
-                     "Mean |CV Error|", length(e_ols), length(e_comb),
-                     mean(abs(e_ols), na.rm = TRUE), mean(abs(e_comb), na.rm = TRUE),
-                     mean(abs(e_comb), na.rm = TRUE) - mean(abs(e_ols), na.rm = TRUE),
-                     "V", as.numeric(wt_ols$statistic), wt_ols$p.value,
-                     sprintf("S3N Combined reduces absolute station CV error vs OLS (%s)", sig_stars(wt_ols$p.value)))
-      }
-      if ("cv_tu" %in% names(b1$eng_cv)) {
-        e_tu <- b1$eng_cv$obs_y - b1$eng_cv$cv_tu
-        tt_tu <- safe_paired_ttest(e_comb^2, e_tu^2)
-        add_stat_row("S3N Combined vs. Tail-Up", "Cross-Validation",
-                     "Paired t-Test (Station Squared CV Error: Combined vs Tail-Up)",
-                     "Station MSE", length(e_tu), length(e_comb),
-                     mean(e_tu^2, na.rm = TRUE), mean(e_comb^2, na.rm = TRUE),
-                     mean(e_comb^2, na.rm = TRUE) - mean(e_tu^2, na.rm = TRUE),
-                     "t", as.numeric(tt_tu$statistic), tt_tu$p.value,
-                     sprintf("Variance-weighted combination vs pure Tail-Up MSE (%s)", sig_stars(tt_tu$p.value)))
-      }
-      if ("cv_td" %in% names(b1$eng_cv)) {
-        e_td <- b1$eng_cv$obs_y - b1$eng_cv$cv_td
-        tt_td <- safe_paired_ttest(e_comb^2, e_td^2)
-        add_stat_row("S3N Combined vs. Tail-Down", "Cross-Validation",
-                     "Paired t-Test (Station Squared CV Error: Combined vs Tail-Down)",
-                     "Station MSE", length(e_td), length(e_comb),
-                     mean(e_td^2, na.rm = TRUE), mean(e_comb^2, na.rm = TRUE),
-                     mean(e_comb^2, na.rm = TRUE) - mean(e_td^2, na.rm = TRUE),
-                     "t", as.numeric(tt_td$statistic), tt_td$p.value,
-                     sprintf("Variance-weighted combination vs pure Tail-Down MSE (%s)", sig_stars(tt_td$p.value)))
-      }
-    }
-
-    # 2. Monitoring Representativeness: Observed Stations vs. Full Network Predictions
-    obs_v <- ep$obs_value[ep$has_obs == 1 & !is.na(ep$obs_value)]
-    if (length(obs_v) >= 5) {
-      mw_rep <- suppressWarnings(wilcox.test(ep$pred_combined, obs_v, paired = FALSE))
-      ks_rep <- suppressWarnings(ks.test(ep$pred_combined, obs_v))
-      add_stat_row("Network vs. Monitored Sites", "Monitoring Representativeness",
-                   "Mann-Whitney U Test (Full Network Predictions vs Observed Stations)",
-                   sprintf("Median (%s)", b1$det_unit), length(obs_v), nrow(ep),
-                   median(obs_v, na.rm = TRUE), median(ep$pred_combined, na.rm = TRUE),
-                   median(ep$pred_combined, na.rm = TRUE) - median(obs_v, na.rm = TRUE),
-                   "W", as.numeric(mw_rep$statistic), mw_rep$p.value,
-                   sprintf("Pred/Obs median ratio = %.2fx (%s)", median(ep$pred_combined, na.rm = TRUE) / max(1e-9, median(obs_v, na.rm = TRUE)), sig_stars(mw_rep$p.value)))
-      add_stat_row("Network vs. Monitored Sites", "Monitoring Representativeness",
-                   "Two-Sample Kolmogorov-Smirnov Test (Predictions vs Observed Stations)",
-                   "Empirical CDF D-stat", length(obs_v), nrow(ep),
-                   mean(obs_v, na.rm = TRUE), mean(ep$pred_combined, na.rm = TRUE),
-                   mean(ep$pred_combined, na.rm = TRUE) - mean(obs_v, na.rm = TRUE),
-                   "D", as.numeric(ks_rep$statistic), ks_rep$p.value,
-                   sprintf("Distributional shift between gauged sites and full network (D = %.3f, %s)", ks_rep$statistic, sig_stars(ks_rep$p.value)))
-    }
-
-    # 3. S3N Tail-Up vs. Tail-Down Component Concordance across All Reaches
-    if ("pred_tu" %in% names(ep) && "pred_td" %in% names(ep)) {
-      tu_v <- if ("pred_tu_sc" %in% names(ep)) ep$pred_tu_sc else ep$pred_tu
-      td_v <- if ("pred_td_sc" %in% names(ep)) ep$pred_td_sc else ep$pred_td
-      ct_tud <- suppressWarnings(cor.test(tu_v, td_v, method = "pearson"))
-      cs_tud <- suppressWarnings(cor.test(tu_v, td_v, method = "spearman"))
-      add_stat_row("Tail-Up vs. Tail-Down", "S3N Components",
-                   "Pearson Correlation Test (Tail-Up vs Tail-Down Reach Predictions)",
-                   "Pearson r (Spearman rho)", nrow(ep), nrow(ep),
-                   as.numeric(ct_tud$estimate), as.numeric(cs_tud$estimate),
-                   as.numeric(ct_tud$estimate)^2,
-                   "t", as.numeric(ct_tud$statistic), ct_tud$p.value,
-                   sprintf("r = %.4f (Spearman rho = %.4f, R2 = %.4f) across %s reaches (%s)",
-                           ct_tud$estimate, cs_tud$estimate, ct_tud$estimate^2,
-                           format(nrow(ep), big.mark = ","), sig_stars(ct_tud$p.value)))
-    }
-
-    # 4. Kriging Uncertainty at Monitored vs. Unmonitored Reaches
-    se_mon   <- ep$se_model_sc[ep$has_obs == 1]
-    se_unmon <- ep$se_model_sc[ep$has_obs == 0]
-    if (length(se_mon) >= 5 && length(se_unmon) >= 5) {
-      mw_se <- suppressWarnings(wilcox.test(se_unmon, se_mon, paired = FALSE))
-      add_stat_row("Unmonitored vs. Monitored SE", "Kriging Uncertainty",
-                   "Mann-Whitney U Test (Kriging SE: Unmonitored vs Monitored Reaches)",
-                   "Mean Kriging SE", length(se_mon), length(se_unmon),
-                   mean(se_mon, na.rm = TRUE), mean(se_unmon, na.rm = TRUE),
-                   mean(se_unmon, na.rm = TRUE) - mean(se_mon, na.rm = TRUE),
-                   "W", as.numeric(mw_se$statistic), mw_se$p.value,
-                   sprintf("Unmonitored reaches have %+.4f higher mean Kriging SE than monitored reaches (%s)",
-                           mean(se_unmon, na.rm = TRUE) - mean(se_mon, na.rm = TRUE), sig_stars(mw_se$p.value)))
-    }
-
-    # 5. Environmental Gradient Hypothesis Tests (Topography, Hydrogeology, Stream Order, Basins)
-    if ("Elevation" %in% names(ep)) {
-      v_up  <- ep$pred_combined[!is.na(ep$Elevation) & ep$Elevation >= 150.0]
-      v_low <- ep$pred_combined[!is.na(ep$Elevation) & ep$Elevation <  150.0]
-      if (length(v_up) >= 5 && length(v_low) >= 5) {
-        mw_topo <- suppressWarnings(wilcox.test(v_low, v_up, paired = FALSE))
-        add_stat_row("Lowland vs. Upland", "Environmental Gradient",
-                     "Mann-Whitney U Test (Lowland < 150 m vs Upland >= 150 m)",
-                     sprintf("Median (%s)", b1$det_unit), length(v_up), length(v_low),
-                     median(v_up, na.rm = TRUE), median(v_low, na.rm = TRUE),
-                     median(v_low, na.rm = TRUE) - median(v_up, na.rm = TRUE),
-                     "W", as.numeric(mw_topo$statistic), mw_topo$p.value,
-                     sprintf("Lowland/Upland median ratio = %.2fx (%s)",
-                             median(v_low, na.rm = TRUE) / max(1e-9, median(v_up, na.rm = TRUE)), sig_stars(mw_topo$p.value)))
-      }
-    }
-    if ("Is_Aquifer" %in% names(ep)) {
-      v_noaq <- ep$pred_combined[!is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 0]
-      v_aq   <- ep$pred_combined[!is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 1]
-      if (length(v_noaq) >= 5 && length(v_aq) >= 5) {
-        mw_aq <- suppressWarnings(wilcox.test(v_aq, v_noaq, paired = FALSE))
-        add_stat_row("Aquifer vs. Non-Aquifer", "Environmental Gradient",
-                     "Mann-Whitney U Test (Chalk/Limestone Aquifer vs Non-Aquifer Bedrock)",
-                     sprintf("Median (%s)", b1$det_unit), length(v_noaq), length(v_aq),
-                     median(v_noaq, na.rm = TRUE), median(v_aq, na.rm = TRUE),
-                     median(v_aq, na.rm = TRUE) - median(v_noaq, na.rm = TRUE),
-                     "W", as.numeric(mw_aq$statistic), mw_aq$p.value,
-                     sprintf("Aquifer/Non-Aquifer median ratio = %.2fx (%s)",
-                             median(v_aq, na.rm = TRUE) / max(1e-9, median(v_noaq, na.rm = TRUE)), sig_stars(mw_aq$p.value)))
-      }
-    }
-    if ("Strahler" %in% names(ep)) {
-      ord_grp <- ifelse(ep$Strahler <= 2, "Headwaters", ifelse(ep$Strahler <= 4, "Mid-Order", "Mainstem"))
-      v_hw <- ep$pred_combined[ord_grp == "Headwaters"]
-      v_ms <- ep$pred_combined[ord_grp == "Mainstem"]
-      if (length(unique(ord_grp[!is.na(ord_grp)])) >= 2) {
-        kw_ord <- suppressWarnings(kruskal.test(ep$pred_combined ~ as.factor(ord_grp)))
-        add_stat_row("Strahler Stream Orders", "Environmental Gradient",
-                     "Kruskal-Wallis Test Across Stream Order Classes (1-2, 3-4, >=5)",
-                     sprintf("Mainstem vs Headw. Med (%s)", b1$det_unit), length(v_hw), length(v_ms),
-                     median(v_hw, na.rm = TRUE), median(v_ms, na.rm = TRUE),
-                     median(v_ms, na.rm = TRUE) - median(v_hw, na.rm = TRUE),
-                     "ChiSq", as.numeric(kw_ord$statistic), kw_ord$p.value,
-                     sprintf("Mainstem/Headwater median ratio = %.2fx (%s)",
-                             median(v_ms, na.rm = TRUE) / max(1e-9, median(v_hw, na.rm = TRUE)), sig_stars(kw_ord$p.value)))
-      }
-    }
-  }
-
-  # Pairwise comparisons against Reference Run 1 (and all pairs if K <= 4) when K >= 2
-  pairs_to_test <- if (K < 2) list() else if (K <= 4) combn(seq_len(K), 2, simplify = FALSE) else lapply(2:K, function(j) c(1L, j))
+  # Pairwise comparisons against Reference Run 1 (and all pairs if K <= 4)
+  pairs_to_test <- if (K <= 4) combn(seq_len(K), 2, simplify = FALSE) else lapply(2:K, function(j) c(1L, j))
 
   for (pr in pairs_to_test) {
     i <- pr[1]; j <- pr[2]
@@ -1567,26 +859,18 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     })
     param_long <- do.call(rbind, p_list)
 
-    if (K == 1L) {
-      # Single-run mode: One-sample Wald Z-test against H0: Parameter = 0
-      param_long$Ref_Estimate <- 0.0
-      param_long$Diff_vs_Run1 <- param_long$Estimate
-      z_val <- param_long$Estimate / param_long$Approx_SE
-      p_val <- 2 * pnorm(-abs(z_val))
-    } else {
-      # Multi-run mode: Two-sample Wald Z-test comparing against Run 1
-      ref_p <- subset(param_long, Run_Index == 1L)
-      ref_key <- paste(ref_p$Canon_Domain, ref_p$Canon_Model, ref_p$Parameter, sep = "||")
-      all_key <- paste(param_long$Canon_Domain, param_long$Canon_Model, param_long$Parameter, sep = "||")
-      m_idx   <- match(all_key, ref_key)
+    # Two-sample Wald Z-test comparing against Run 1
+    ref_p <- subset(param_long, Run_Index == 1L)
+    ref_key <- paste(ref_p$Canon_Domain, ref_p$Canon_Model, ref_p$Parameter, sep = "||")
+    all_key <- paste(param_long$Canon_Domain, param_long$Canon_Model, param_long$Parameter, sep = "||")
+    m_idx   <- match(all_key, ref_key)
 
-      param_long$Ref_Estimate <- ref_p$Estimate[m_idx]
-      param_long$Diff_vs_Run1 <- ifelse(param_long$Run_Index == 1L, 0.0, param_long$Estimate - param_long$Ref_Estimate)
-      z_val <- ifelse(param_long$Run_Index == 1L | is.na(m_idx), NA_real_,
-                      (param_long$Estimate - ref_p$Estimate[m_idx]) /
-                        sqrt(param_long$Approx_SE^2 + ref_p$Approx_SE[m_idx]^2))
-      p_val <- ifelse(is.na(z_val), NA_real_, 2 * pnorm(-abs(z_val)))
-    }
+    param_long$Ref_Estimate <- ref_p$Estimate[m_idx]
+    param_long$Diff_vs_Run1 <- ifelse(param_long$Run_Index == 1L, 0.0, param_long$Estimate - param_long$Ref_Estimate)
+    z_val <- ifelse(param_long$Run_Index == 1L | is.na(m_idx), NA_real_,
+                    (param_long$Estimate - ref_p$Estimate[m_idx]) /
+                      sqrt(param_long$Approx_SE^2 + ref_p$Approx_SE[m_idx]^2))
+    p_val <- ifelse(is.na(z_val), NA_real_, 2 * pnorm(-abs(z_val)))
     param_long$Wald_Z       <- round(z_val, 4)
     param_long$Wald_P       <- p_val
     param_long$Significance <- sapply(p_val, sig_stars)
@@ -1595,7 +879,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   }
 
   # ----------------------------------------------------------------------------
-  # 6. Render Comparison / Single-Run Figures (Pure Base R Graphics)
+  # 6. Render Comparison Figures (Pure Base R Graphics)
   # ----------------------------------------------------------------------------
   run_cols <- c("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e",
                 "#17becf", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22",
@@ -1615,8 +899,6 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   plot_comp4_side_by_side_maps(bundles, fig4_path)
   if (!is.null(rel_info)) {
     plot_comp5_reach_relationships(bundles, strat_df, rel_info, run_cols, fig5_path)
-  } else if (K == 1L) {
-    plot_comp5_single_run_descriptives(bundles[[1]], strat_df, fig5_path)
   }
 
   # ----------------------------------------------------------------------------
@@ -1629,7 +911,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
                                    out_dir, report_path)
 
   if (!quiet) {
-    cat(sprintf("\n%s complete! Generated files:\n", if (K == 1L) "Single-run descriptive analysis" else "Comparison"))
+    cat("\nComparison complete! Generated files:\n")
     cat(sprintf("  - Markdown Report:   %s\n", report_path))
     cat(sprintf("  - CV Table:          %s\n", file.path(out_dir, "cv_metrics_comparison.csv")))
     cat(sprintf("  - Descriptives CSV:  %s\n", file.path(out_dir, "descriptive_stats_summary.csv")))
@@ -1648,7 +930,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
       cat(sprintf("  - Figure 3 (Pars):   %s\n", fig3_path))
     }
     cat(sprintf("  - Figure 4 (Maps):   %s\n", fig4_path))
-    if (!is.null(rel_info) || K == 1L) {
+    if (!is.null(rel_info)) {
       cat(sprintf("  - Figure 5 (Strat):  %s\n", fig5_path))
     }
   }
@@ -1745,40 +1027,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
 
   # Panel C: Empirical CDF of Out-of-Sample Absolute CV Errors (All England)
   has_cv_pts <- sapply(bundles, function(b) !is.null(b$eng_cv) && nrow(b$eng_cv) > 0)
-  if (K == 1L && has_cv_pts[1]) {
-    cv1 <- bundles[[1]]$eng_cv
-    mod_errs <- list(
-      "S3N Combined"      = abs(cv1$obs_y - cv1$cv_comb),
-      "S3N Tail-Up"       = if ("cv_tu"  %in% names(cv1)) abs(cv1$obs_y - cv1$cv_tu)  else NULL,
-      "S3N Tail-Down"     = if ("cv_td"  %in% names(cv1)) abs(cv1$obs_y - cv1$cv_td)  else NULL,
-      "OLS (Non-Spatial)" = if ("cv_ols" %in% names(cv1)) abs(cv1$obs_y - cv1$cv_ols) else NULL
-    )
-    mod_errs <- mod_errs[!sapply(mod_errs, is.null)]
-    mod_cols <- c("#1f77b4", "#2ca02c", "#ff7f0e", "#d62728")[seq_along(mod_errs)]
-    xmax_c <- quantile(unlist(mod_errs), probs = 0.98, na.rm = TRUE)
-    plot(NULL, xlim = c(0, xmax_c), ylim = c(0, 1),
-         xlab = "Absolute Out-of-Sample CV Error |y_obs - y_cv| (Model Scale)",
-         ylab = "Cumulative Proportion of Stations",
-         main = "C. Empirical CDF of Station CV Errors Across Models",
-         cex.main = 1.12, cex.lab = 1.0, las = 1)
-    grid(col = "#e0e0e0", lty = "dotted")
-    xs <- seq(0, xmax_c, length.out = 250)
-    for (m_i in seq_along(mod_errs)) {
-      ec <- ecdf(mod_errs[[m_i]])
-      lines(xs, ec(xs), col = mod_cols[m_i], lwd = 2.4)
-    }
-    leg_c <- sapply(seq_along(mod_errs), function(m_i) {
-      sprintf("%s (Med |e| = %.3f)", names(mod_errs)[m_i], median(mod_errs[[m_i]], na.rm = TRUE))
-    })
-    legend("bottomright", legend = leg_c, col = mod_cols, lwd = 2.5, bty = "n", cex = 0.80)
-    if ("OLS (Non-Spatial)" %in% names(mod_errs)) {
-      wt_p <- safe_paired_wilcox(mod_errs[["S3N Combined"]], mod_errs[["OLS (Non-Spatial)"]])$p.value
-      dm_p <- safe_paired_ttest(mod_errs[["S3N Combined"]]^2, mod_errs[["OLS (Non-Spatial)"]]^2)$p.value
-      mtext(sprintf("S3N Combined vs OLS (n = %d): Paired Wilcoxon p = %s (%s) | Paired MSE t-test p = %s (%s)",
-                    nrow(cv1), fmt_pval(wt_p), sig_stars(wt_p), fmt_pval(dm_p), sig_stars(dm_p)),
-            side = 3, line = 0.25, cex = 0.76, col = "#333333")
-    }
-  } else if (any(has_cv_pts)) {
+  if (any(has_cv_pts)) {
     err_list <- lapply(bundles, function(b) {
       if (!is.null(b$eng_cv)) abs(b$eng_cv$obs_y - b$eng_cv$cv_comb) else numeric(0)
     })
@@ -2394,7 +1643,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
     add_line("- **Comparison Mode**: Cross-Determinand Comparison (%s)", det_desc)
   }
   add_line("- **Number of Model Runs Compared**: `%d`", K)
-  add_line("- **Output Directory**: `%s`", sub(paste0("^", BASE_DIR, "/?"), "", out_dir))
+  add_line("- **Output Directory**: `%s`", format_rel_display_path(out_dir, base_dir = BASE_DIR))
   add_line("")
   add_line("## 1. Overview of Compared Model Runs")
   add_line("")
@@ -2756,24 +2005,26 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
 # ==============================================================================
 if (sys.nframe() == 0L) {
   args <- commandArgs(trailingOnly = TRUE)
+  dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
   if (length(args) == 0 || any(args %in% c("-h", "--help"))) {
     cat("Usage:\n")
-    cat("  Rscript scripts/04_compare_model_runs.R --list\n")
-    cat("  Rscript scripts/04_compare_model_runs.R <dir1> <dir2> [dir3 ...] [--labels=\"L1,L2,...\"] [--out=<dir>]\n")
-    cat("  Rscript scripts/04_compare_model_runs.R <parent_dir> --by=season|year|month [--out=<dir>]\n")
+    cat("  Rscript scripts/04_compare_model_runs.R --list [--output-dir=<dir>]\n")
+    cat("  Rscript scripts/04_compare_model_runs.R <dir1> <dir2> [dir3 ...] [--labels=\"L1,L2,...\"] [--out=<dir>] [--output-dir=<dir>]\n")
+    cat("  Rscript scripts/04_compare_model_runs.R <parent_dir> --by=season|year|month [--out=<dir>] [--output-dir=<dir>]\n")
     cat("  Rscript scripts/04_compare_model_runs.R --dirs=output/det_0117,output/det_0117_euhydro_thames\n")
     quit(save = "no", status = 0)
   }
 
   if (any(args %in% c("--list", "--list-runs"))) {
-    list_available_model_runs()
+    list_available_model_runs(out_root = dir_cfg$out_dir)
     quit(save = "no", status = 0)
   }
 
   pos_dirs <- character(0)
   labels_cli <- NULL
   out_cli    <- NULL
+  out_root_cli <- rel_path(BASE_DIR, "output")
   by_mode    <- NULL
 
   for (a in args) {
@@ -2784,6 +2035,10 @@ if (sys.nframe() == 0L) {
       labels_cli <- trimws(unlist(strsplit(sub("^--labels=", "", a), ",")))
     } else if (grepl("^--out=", a) || grepl("^--output=", a)) {
       out_cli <- sub("^--(out|output)=", "", a)
+    } else if (grepl("^--(output-dir|out-dir)=", a)) {
+      out_root_cli <- dir_cfg$out_dir
+    } else if (grepl("^--(gis-dir|gis|data-dir|data)=", a)) {
+      # Handled by parse_custom_dir_args
     } else if (grepl("^--by=", a)) {
       by_mode <- tolower(sub("^--by=", "", a))
     } else if (a %in% c("--by-season", "--seasons")) {
@@ -2800,7 +2055,11 @@ if (sys.nframe() == 0L) {
   # If a single directory is passed (or --by=season|year|month is requested),
   # automatically discover temporal subdirectories inside it
   if (length(pos_dirs) == 1 && !is.null(by_mode)) {
-    p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else file.path(BASE_DIR, pos_dirs[1])
+    p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else rel_path(BASE_DIR, pos_dirs[1])
+    if (!dir.exists(p_dir)) {
+      alt_p <- rel_path(out_root_cli, pos_dirs[1])
+      if (dir.exists(alt_p)) p_dir <- alt_p
+    }
     subs <- list.dirs(p_dir, recursive = FALSE, full.names = TRUE)
     if (by_mode == "season") {
       order_s <- c("season_winter", "season_spring", "season_summer", "season_autumn")
@@ -2815,7 +2074,11 @@ if (sys.nframe() == 0L) {
     }
   } else if (length(pos_dirs) == 1 && is.null(by_mode)) {
     # Check if single directory contains temporal subdirectories automatically
-    p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else file.path(BASE_DIR, pos_dirs[1])
+    p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else rel_path(BASE_DIR, pos_dirs[1])
+    if (!dir.exists(p_dir)) {
+      alt_p <- rel_path(out_root_cli, pos_dirs[1])
+      if (dir.exists(alt_p)) p_dir <- alt_p
+    }
     subs <- list.dirs(p_dir, recursive = FALSE, full.names = TRUE)
     for (m_type in c("season", "year", "month")) {
       m_subs <- subs[grepl(paste0("^", m_type, "_"), basename(subs))]
@@ -2826,6 +2089,7 @@ if (sys.nframe() == 0L) {
     }
   }
 
-  compare_s3n_runs(run_dirs = pos_dirs, labels = labels_cli, out_dir = out_cli)
+  compare_s3n_runs(run_dirs = pos_dirs, labels = labels_cli, out_dir = out_cli,
+                   out_root = out_root_cli)
 }
 
