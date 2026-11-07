@@ -14,7 +14,9 @@ This guide documents all scripts, command-line options, output directory convent
 | [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) | Python 3 | **Network & GIS preprocessor**: Parses [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), snaps RSN stations to stream reaches within 250 m, builds directed river tree topology (`parent_dn`, `Dist2Mth_km`, `log_AFV`), and exports [`england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv), [`rsn_sites.csv`](../data/processed/rsn_sites.csv), [`rsn_reach_periods.csv`](../data/processed/rsn_reach_periods.csv), and [`rsn_catchments_lookup.csv`](../data/processed/rsn_catchments_lookup.csv). |
 | [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) | R + C | **Standalone model fitter**: Fits S3N Tail-Up, Tail-Down, and Combined models directly on whichever determinand/period is currently stored in [`data/processed/england_rsn_reaches.csv`](../data/processed/england_rsn_reaches.csv) and writes outputs to [`output/`](../output). |
 | [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R) | R | **Standalone figure generator**: Sources [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R) to render Figures 1–4 from saved CSV outputs in [`output/`](../output) or any determinand output directory (`--dir=output/det_0117`). |
-| [`scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R) | R | **Model run & network comparator**: Compares 2 or more model output directories (across networks such as `ORN v2` vs. `EU-Hydro`, covariate subsets, or temporal slices `year_*`/`season_*`/`month_*`), runs statistical hypothesis tests, writes `comparison_report.md` + CSV summary tables, and renders 4 base-R comparison figures (`fig_comp1`–`fig_comp4`). |
+| [`scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R) | R | **Model run & network comparator**: Compares 2 or more model output directories (across networks such as `ORN v2` vs. `EU-Hydro`, covariate subsets, or temporal slices `year_*`/`season_*`/`month_*`), runs statistical hypothesis tests, writes `comparison_report.md` + CSV summary tables, and renders 5 base-R comparison figures (`fig_comp1`–`fig_comp5`). |
+| [`scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) | R | **Single-output descriptive & stratified analyzer**: Computes 18 distributional metrics, monitoring network representativeness tests, and stratified environmental/topological breakdowns for any single model output folder (`<run_dir>/descriptives/`). |
+| [`scripts/06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R) | R | **Station-to-reach snapping diagnostics & catchment plotter**: Standalone function (`analyze_station_snapping()`) and CLI tool that produces station-to-reach snapping coordinate tables (`station_X/Y`, `snapped_RivID`, `snap_reach_X/Y`, `reach_mid_X/Y`, `snap_dist_m`) and catchment-level base-R snapping figures (`fig_snap_catchment_*.png`). |
 | [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R) | R | **Shared modular plotting library**: Contains all base-R stream network and diagnostic plotting functions (`plot_stream_network`, `plot_fig1_england_map`, `plot_basin_map`, `plot_fig2_humber_map`, `plot_fig3_thames_severn_map`, `plot_fig4_diagnostics`) sourced by both [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R). |
 
 > [!TIP]
@@ -379,6 +381,49 @@ Rscript scripts/04_compare_model_runs.R output/det_0117 --by=season
 Rscript scripts/04_compare_model_runs.R output/det_0117 --by=year
 Rscript scripts/04_compare_model_runs.R output/det_0117 --by=month
 ```
+
+---
+
+## 8. Station-to-Reach Snapping Diagnostics & Catchment Plots: [`scripts/06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R)
+
+[`scripts/06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R) is a standalone script and reusable R function (`analyze_station_snapping()`) that inspects how monitoring stations snap to river network reaches (`<= 250 m` threshold vs. `> 250 m` excluded stations) at both the **network level** and **catchment level**.
+
+For any water network (`--network=orn`, `--network=euhydro_thames`, etc.), it writes outputs to `output/station_snapping_<network>/` (or a custom `--out=<dir>`):
+- **`station_snapping_all.csv` & `station_snapping_catchment_<CatchID>_<name>.csv`**:
+  Complete station-level table containing:
+  - Station identifiers (`site_id`, `wims_id`, `wims_region_code`) and catchment metadata (`CatchID`, `Catchment_Name`, `RBD_Name`)
+  - Station coordinates (`station_X`, `station_Y` in British National Grid `EPSG:27700` metres)
+  - Snapped river reach ID (`snapped_RivID`)
+  - Snapped reach coordinates (`snap_reach_X`, `snap_reach_Y` for the orthogonal snapped point on the reach; `reach_mid_X`, `reach_mid_Y` for the reach midpoint; and `reach_start_X/Y`, `reach_end_X/Y` for the upstream and downstream reach nodes)
+  - Exact snapping distance in metres (`snap_dist_m`), inclusion status (`included_250m`, `snap_status`), reach length (`reach_length_m`), distance along reach (`along_reach_m`), hydrologic distance to mouth (`obs_up_dist_km`), and `Strahler` / `Shreve` stream order
+- **`catchment_snapping_summary.csv` & `station_snapping_report.md`**:
+  Catchment-by-catchment summary of total reaches, snapped reaches, included/excluded station counts, and snapping distance quantiles (`Min`, `Q25`, `Median`, `Mean`, `Q75`, `P95`, `Max` in metres).
+- **Catchment-Level & Network-Wide Base-R Figures**:
+  - `fig_snap_catchment_<CatchID>_<name>.png`: Multi-panel catchment diagnostic figure containing **(Panel A)** the full catchment river network with highlighted snapped reaches (`snapped_RivID`), station points colored by snapping distance tier, and snapping vectors; **(Panel B)** the catchment snapping distance histogram and quantiles; and **(Panels C1–C4)** four metre-scale zoomed insets showing the local reach geometry, reach midpoint, orthogonal snap point, station location, and dashed snapping distance vector (`d = X.XX m`).
+  - `fig_snap_overview_<network>.png`: 4-panel network-wide overview of station snapping distances, Strahler order breakdown, and top catchments.
+
+```bash
+# 1. List all catchments in the network with station counts and median/max snapping distances (m)
+Rscript scripts/06_station_snapping_diagnostics.R --list-catchments
+
+# 2. Run snapping diagnostics for a specific catchment by name or CatchID
+Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
+Rscript scripts/06_station_snapping_diagnostics.R --catchment=3125
+
+# 3. Run snapping diagnostics across multiple catchments
+Rscript scripts/06_station_snapping_diagnostics.R --catchment=Humber,Thames,Severn,Eden
+
+# 4. Run snapping diagnostics on EU-Hydro (Thames) network
+Rscript scripts/06_station_snapping_diagnostics.R --network=euhydro_thames --catchment=306
+```
+
+You can also call `analyze_station_snapping()` directly inside R:
+```r
+source("scripts/06_station_snapping_diagnostics.R")
+res <- analyze_station_snapping(catchment = c("Thames", "Eden"), network = "orn")
+head(res$snap_table)
+```
+
 
 
 
