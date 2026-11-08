@@ -396,7 +396,8 @@ if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
         samp_hdr <- colnames(read.csv(cand_smp, nrows = 1, fileEncoding = "UTF-8-BOM"))
         if ("meas_method" %in% samp_hdr) {
           samp_preview <- read.csv(cand_smp, nrows = 200, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
-          mm_vals <- tolower(unique(samp_preview$meas_method))
+          mm_vals <- tolower(unique(as.character(samp_preview$meas_method)))
+          mm_vals <- mm_vals[!is.na(mm_vals) & nzchar(mm_vals)]
           if (any(grepl("tobit", mm_vals))) detected_range_mode <- "tobit"
           else if (any(grepl("geometric", mm_vals))) detected_range_mode <- "geometric"
           else if (any(grepl("midpoint|arithmetic", mm_vals))) detected_range_mode <- "midpoint"
@@ -702,8 +703,14 @@ if (ds_mode == "wq") {
   raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
   is_cens  <- rep(FALSE, length(raw_vals))
 }
-if (!"meas_uncertainty" %in% names(det_samples)) det_samples$meas_uncertainty <- NA_real_
-if (!"meas_method" %in% names(det_samples)) det_samples$meas_method <- ""
+if (!"meas_uncertainty" %in% names(det_samples)) {
+  det_samples$meas_uncertainty <- NA_real_
+}
+if (!"meas_method" %in% names(det_samples)) {
+  det_samples$meas_method <- rep("", nrow(det_samples))
+} else {
+  det_samples$meas_method <- ifelse(is.na(det_samples$meas_method), "", as.character(det_samples$meas_method))
+}
 
 valid_k     <- !is.na(raw_vals) & nchar(trimws(det_samples$sample_datetime)) >= 7 & trans_obj$valid_fn(raw_vals)
 det_samples <- det_samples[valid_k, ]
@@ -790,7 +797,8 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     val_raw <- df_ord$obs_val[1:n_obs]
     if (any(!is.na(u_raw) & u_raw > 0)) {
       v_meas <- calc_response_meas_variance(val_raw, u_raw, trans_obj)
-      has_me <- (mean(v_meas) > 1e-8) && (use_meas_error || any(tolower(df_ord$meas_method[1:n_obs]) == "gam"))
+      has_me <- (mean(v_meas) > 1e-8) && (isTRUE(use_meas_error) || isTRUE(any(tolower(df_ord$meas_method[1:n_obs]) == "gam", na.rm = TRUE)))
+      has_me <- isTRUE(has_me)
     }
   }
 
@@ -1191,7 +1199,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
     })
     reach_agg <- merge(reach_agg, reach_unc, by = "RivID", all.x = TRUE)
   }
-  has_samp_meth <- "meas_method" %in% names(det_WithRiv) && any(nzchar(det_WithRiv$meas_method))
+  has_samp_meth <- "meas_method" %in% names(det_WithRiv) && isTRUE(any(nzchar(det_WithRiv$meas_method[!is.na(det_WithRiv$meas_method)])))
   if (has_samp_meth) {
     reach_meth <- aggregate(meas_method ~ RivID, data = det_WithRiv, FUN = function(m) {
       m_clean <- m[!is.na(m) & nzchar(m)]
@@ -1213,15 +1221,18 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
     df_full$meas_uncertainty <- NA_real_
   }
   if ("meas_method" %in% names(reach_agg)) {
-    df_full$meas_method <- ifelse(df_full$has_obs == 1L, reach_agg$meas_method[idx_match], "")
-  } else if (!"meas_method" %in% names(df_full)) {
-    df_full$meas_method <- ""
+    mm <- as.character(reach_agg$meas_method[idx_match])
+    mm[is.na(mm)] <- ""
+    df_full$meas_method <- ifelse(df_full$has_obs == 1L, mm, "")
+  } else {
+    df_full$meas_method <- rep("", nrow(df_full))
   }
 
-  active_meas_error <- meas_error_arg ||
-    (has_samp_meth && any(tolower(det_WithRiv$meas_method) == "gam")) ||
-    ("meas_method" %in% names(df_full) && any(tolower(df_full$meas_method[df_full$has_obs == 1L]) == "gam")) ||
+  active_meas_error <- isTRUE(meas_error_arg) ||
+    (has_samp_meth && isTRUE(any(tolower(det_WithRiv$meas_method) == "gam", na.rm = TRUE))) ||
+    ("meas_method" %in% names(df_full) && isTRUE(any(tolower(df_full$meas_method[df_full$has_obs == 1L]) == "gam", na.rm = TRUE))) ||
     (!is.null(net_meta$meas_method) && identical(tolower(net_meta$meas_method), "gam"))
+  active_meas_error <- isTRUE(active_meas_error)
 
   humber_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "humber")
   thames_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "thames")

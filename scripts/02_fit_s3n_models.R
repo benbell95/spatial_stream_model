@@ -187,7 +187,8 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     val_raw <- df_ord$nitrate_mean[1:n_obs]
     if (any(!is.na(u_raw) & u_raw > 0)) {
       v_meas <- calc_response_meas_variance(val_raw, u_raw, trans_obj)
-      has_me <- (mean(v_meas) > 1e-8) && (meas_error_arg || any(tolower(df_ord$meas_method[1:n_obs]) == "gam") || identical(tolower(net_meta$meas_method), "gam"))
+      has_me <- (mean(v_meas) > 1e-8) && (isTRUE(meas_error_arg) || isTRUE(any(tolower(df_ord$meas_method[1:n_obs]) == "gam", na.rm = TRUE)) || identical(tolower(net_meta$meas_method), "gam"))
+      has_me <- isTRUE(has_me)
     }
   }
 
