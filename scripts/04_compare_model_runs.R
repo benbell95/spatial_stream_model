@@ -1012,7 +1012,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   ymax_a  <- max(0.85, max(r2_plot, na.rm = TRUE) * 1.22)
   bp_a <- matrix(barplot(r2_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(0, ymax_a), ylab = "5-Fold Cross-Validation R2",
-                         main = wrap_title(sprintf("A. Out-of-Sample S3N Combined CV R2 (%s)", det_short), 80),
+                         main = wrap_title(sprintf("A. Out-of-Sample S3N Combined CV R2 (%s)", det_short), 60),
                          cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
                  nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1034,7 +1034,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   ymax_b <- max(rmse_plot, na.rm = TRUE) * 1.25
   bp_b <- matrix(barplot(rmse_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(0, ymax_b), ylab = "5-Fold CV RMSE (Model Scale)",
-                         main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)", 80),
+                         main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)", 60),
                          cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
                  nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1080,7 +1080,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
     draw_plot_header(
       main_title = "C. Empirical CDF of Station CV Errors (All England)",
       sub_title  = sub_c_txt,
-      max_main = 80, max_sub = 120, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
+      max_main = 60, max_sub = 100, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
     )
   } else {
     plot.new()
@@ -1093,7 +1093,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   bp_d <- matrix(barplot(gain_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(min(0, yr_d[1] - pad_d), yr_d[2] + pad_d),
                          ylab = "Delta CV R2 (S3N Combined minus OLS)",
-                         main = wrap_title("D. Spatial Network Gain Over Non-Spatial OLS (Delta R2)", 80),
+                         main = wrap_title("D. Spatial Network Gain Over Non-Spatial OLS (Delta R2)", 60),
                          cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
                  nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1146,7 +1146,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
          xlab = sprintf("Run 1: %s [%s]", run_labels[1], u1_lbl),
          ylab = sprintf("Run 2: %s [%s]", run_labels[2], u2_lbl),
          main = wrap_title(sprintf("A. Co-located Reach Predictions (n = %s matched reaches)",
-                                  format(nrow(pm), big.mark = ",")), 80),
+                                  format(nrow(pm), big.mark = ",")), 60),
          cex.main = 1.12, cex.lab = 0.95, las = 1)
     grid(col = "#e0e0e0", lty = "dotted")
     fit_a <- lm(pred2_sc ~ pred1_sc, data = pm)
@@ -1221,7 +1221,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     main_title = main_b,
     sub_title  = sprintf("Two-Sample KS Test (Run 1 vs Run 2): D = %.4f, p = %s (%s)",
                          ks_p$statistic, fmt_pval(ks_p$p.value), sig_stars(ks_p$p.value)),
-    max_main = 80, max_sub = 120, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
+    max_main = 60, max_sub = 100, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
   )
 
   # Panel C: Boxplot Comparison of Kriging Standard Error (se_model_sc) Across Runs
@@ -1245,7 +1245,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     main_title = "C. Kriging Prediction Uncertainty (se_model_sc) Across Runs",
     sub_title  = sprintf("Mann-Whitney U Test on Kriging SE (Run 1 vs Run 2): p = %s (%s)",
                          fmt_pval(wt_se_p), sig_stars(wt_se_p)),
-    max_main = 80, max_sub = 120, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
+    max_main = 60, max_sub = 100, cex_main = 1.12, cex_sub = 0.76, adj = 0.5
   )
 
   # Panel D: Spatial Map of Co-located Prediction Differences (Run 2 minus Run 1 or Z2 - Z1)
@@ -1288,7 +1288,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     draw_plot_header(
       main_title = main_d,
       sub_title  = sprintf("Red = Relatively Higher in %s | Blue = Relatively Higher in %s", run_labels[2], run_labels[1]),
-      max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.76, adj = 0.5
+      max_main = 60, max_sub = 100, cex_main = 1.08, cex_sub = 0.76, adj = 0.5
     )
   } else {
     plot.new()
@@ -1321,7 +1321,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
     pad_a  <- 0.15 * max(0.2, diff(xlim_a))
     plot(NULL, xlim = c(xlim_a[1] - pad_a, xlim_a[2] + pad_a), ylim = c(0.4, n_p + 1.45),
          yaxt = "n", xlab = "Standardized Regression Coefficient (Estimate & 95% Bootstrap CI)",
-         ylab = "", main = wrap_title("A. Fixed-Effect Drivers (All England S3N Tail-Up)", 85),
+         ylab = "", main = wrap_title("A. Fixed-Effect Drivers (All England S3N Tail-Up)", 65),
          cex.main = 1.10, cex.lab = 0.95, las = 1)
     grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
     abline(v = 0, col = "#c0392b", lwd = 1.5, lty = 2)
@@ -1378,7 +1378,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
     bp_b <- barplot(bar_vals, names.arg = bar_names, col = c("#2980b9", "#f39c12"),
                     border = "#222222", ylim = c(0, ymax_b), las = 2,
                     ylab = "Variance Component Estimate (Model Scale)",
-                    main = wrap_title("B. Spatial Sill (sigma^2) vs. Nugget (tau^2) Partitioning", 85),
+                    main = wrap_title("B. Spatial Sill (sigma^2) vs. Nugget (tau^2) Partitioning", 65),
                     cex.main = 1.10, cex.lab = 0.95, cex.names = 0.85)
     grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
     tot_v <- colSums(bar_vals)
@@ -1513,7 +1513,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
     sub_title  = sprintf("r = %.4f (Spearman rho = %.4f) | Concordance = %.1f%% (OR = %.2f, ChiSq p = %s) | P75 Jaccard = %.3f",
                          rel_info$r_sc, rel_info$rho_sc, rel_info$pct_concordant, rel_info$odds_ratio,
                          fmt_pval(rel_info$chisq_p), rel_info$jaccard_75),
-    max_main = 80, max_sub = 120, cex_main = 1.10, cex_sub = 0.72, adj = 0.5
+    max_main = 60, max_sub = 100, cex_main = 1.10, cex_sub = 0.72, adj = 0.5
   )
 
   # Panel B: Stratified Comparison Across Landscape Regimes & Strahler Stream Orders
@@ -1544,7 +1544,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
   bp_b  <- matrix(barplot(z_mat, beside = TRUE, col = run_cols, border = "#222222",
                           ylim = c(yr_b[1] - pad_b, yr_b[2] + pad_b),
                           ylab = "Mean Standardized Prediction Z-Score ((y - mean) / SD)",
-                          main = wrap_title("B. Stratified Output Profile by Landscape Regime & Stream Order", 80),
+                          main = wrap_title("B. Stratified Output Profile by Landscape Regime & Stream Order", 60),
                           cex.main = 1.10, cex.lab = 0.95, cex.names = 0.84, las = 1),
                   nrow = K)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1589,7 +1589,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
     main_title = "C. Spatial Co-Occurrence Map Across Stream Reaches (4 Quadrants)",
     sub_title  = sprintf("Concordant Reaches (High/High + Low/Low): %.1f%% | Top-Quartile Hotspot Overlap (Jaccard): %.3f",
                          rel_info$pct_concordant, rel_info$jaccard_75),
-    max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+    max_main = 60, max_sub = 100, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
   )
 
   # Panel D: Basin & Regime Distribution of Stoichiometric N:P Ratio or Z-Score Divergence
@@ -1628,7 +1628,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
       main_title = "D. Reach Stoichiometric N:P Molar Ratio Across Basins & Regimes",
       sub_title  = sprintf("All England: %.1f%% P-Limited (>20:1), %.1f%% Co-Limited (10-20:1), %.1f%% N-Limited (<10:1) | Redfield = 16:1",
                            rel_info$np_info$pct_p_limited, rel_info$np_info$pct_co_limited, rel_info$np_info$pct_n_limited),
-      max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+      max_main = 60, max_sub = 100, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
     )
   } else {
     box_d <- lapply(grp_masks, function(m) pm$z_diff[m])
@@ -1649,7 +1649,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
       main_title = "D. Relative Dominance (Z2 - Z1) Across Basins & Landscape Regimes",
       sub_title  = sprintf("Positive (>0) = Relatively Higher in %s | Negative (<0) = Relatively Higher in %s",
                            b2$label, b1$label),
-      max_main = 80, max_sub = 120, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+      max_main = 60, max_sub = 100, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
     )
   }
 

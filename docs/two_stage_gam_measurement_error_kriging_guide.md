@@ -79,7 +79,7 @@ where:
 Because the first-stage GAM estimates uncertainty on the natural concentration scale ($u_i = \text{SE}(\hat{x}_i)$) while spatial modeling occurs on a transformed scale $y = g(x)$, we apply the first-order Taylor expansion (the **Delta Method**):
 $$\text{Var}(g(X)) \approx \left[ g'(E[X]) \right]^2 \text{Var}(X)$$
 
-The pipeline implements transformation-specific formulas in [`scripts/s3n_plot_functions.R`](file:///home/ben/code/r/spatial_stream_model/scripts/s3n_plot_functions.R#L872-L904):
+The pipeline implements transformation-specific formulas in [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R):
 
 | Transformation Type | Formula $y = g(x)$ | First Derivative $g'(x)$ | Response Error Variance $v_i = \text{Var}(y_i)$ |
 | :--- | :---: | :---: | :---: |
@@ -130,7 +130,7 @@ The spatial prediction **filters out the measurement error $\eta_i$**. An observ
 
 ## 3. High-Performance C++ Solver Architecture
 
-To maintain the extreme computational efficiency of S3N (predicting all 91,077 reaches of England in under a second), Approach A was implemented natively in C++ inside [`src/s3n_fast_neighbors.cpp`](file:///home/ben/code/r/spatial_stream_model/src/s3n_fast_neighbors.cpp#L198-L320).
+To maintain the extreme computational efficiency of S3N (predicting all 91,077 reaches of England in under a second), Approach A was implemented natively in C++ inside [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp).
 
 ### 3.1 Stack Allocation & Numerical Stability
 Standard linear solvers in R allocate memory dynamically on the heap for every reach $s_0$, leading to severe memory fragmentation over 90,000 reaches. 
@@ -192,7 +192,7 @@ $$\text{SE}(\bar{X}) = \frac{\sqrt{\sum_{k=1}^K u_k^2}}{K}$$
 ## 5. End-to-End Workflow & Command Reference
 
 ### Step 1: Preprocess River Network & Snap Stations
-Run [`scripts/01_preprocess_orn.py`](file:///home/ben/code/r/spatial_stream_model/scripts/01_preprocess_orn.py) specifying the GAM source:
+Run [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) specifying the GAM source:
 ```bash
 # For station-mean GAM predictions
 python3 scripts/01_preprocess_orn.py --source=rsn_gam_mean
@@ -205,7 +205,7 @@ python3 scripts/01_preprocess_orn.py --source=rsn_gam
 ---
 
 ### Step 2: Fit S3N Model with Measurement Error Kriging
-Run [`scripts/run_s3n_determinand.R`](file:///home/ben/code/r/spatial_stream_model/scripts/run_s3n_determinand.R):
+Run [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R):
 ```bash
 # Nationwide England model + Humber, Thames, Severn, and a custom basin
 Rscript scripts/run_s3n_determinand.R 0117 \
@@ -229,7 +229,7 @@ Rscript scripts/run_s3n_determinand.R 0117 \
 ---
 
 ### Step 3: Standalone Model Execution
-You can also run the core modeling script [`scripts/02_fit_s3n_models.R`](file:///home/ben/code/r/spatial_stream_model/scripts/02_fit_s3n_models.R):
+You can also run the core modeling script [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
 ```bash
 Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 ```
@@ -238,7 +238,7 @@ Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 
 ## 6. Output Tables & Interpretation
 
-All results are saved in `output/det_<code >_<net>_<source>/` (e.g. [`output/det_0117_orn_rsn_gam_mean/`](file:///home/ben/code/r/spatial_stream_model/output/det_0117_orn_rsn_gam_mean/)):
+All results are saved in `output/det_<code >_<net>_<source>/` (e.g. [`output/det_0117_orn_rsn_gam_mean/`](../output/det_0117_orn_rsn_gam_mean/)):
 
 ### 6.1 Parameter Estimates Table (`parameters_0117.csv`)
 Under Approach A, the parameter table reports both the standard covariance parameters and the decoupled microscale variance:

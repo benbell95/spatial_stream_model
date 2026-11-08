@@ -401,7 +401,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
                          net_label, format(nrow(sub_r), big.mark = ","),
                          length(unique(sub_s$snapped_RivID[sub_s$included_250m == 1L])),
                          nrow(sub_s), sum(sub_s$included_250m == 1L), sum(sub_s$included_250m == 0L)),
-    max_main = 120, max_sub = 160, cex_main = 1.15, cex_sub = 0.84, adj = 0.5
+    max_main = 100, max_sub = 140, cex_main = 1.15, cex_sub = 0.84, adj = 0.5
   )
 
   # 1. Draw all unmonitored reaches in light grey (2-segment polylines: start -> mid -> end)
@@ -475,7 +475,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   brks <- seq(0, max(25, ceiling(max(d_plot, na.rm = TRUE) * 1.05)), length.out = 22)
 
   hist(d_plot, breaks = brks, col = "#38BDF8", border = "#0369A1",
-       main = wrap_title(sprintf("B. Snapping Distance Distribution (%s, n = %d)", c_name, length(d_plot)), 80),
+       main = wrap_title(sprintf("B. Snapping Distance Distribution (%s, n = %d)", c_name, length(d_plot)), 60),
        xlab = "Station-to-Reach Snapping Distance (metres)", ylab = "Number of Stations",
        cex.main = 1.12, cex.lab = 1.0)
   grid(col = "#E2E8F0", lty = 1)
@@ -581,7 +581,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
                            k, st$site_id, st$snapped_RivID, st$snap_dist_m),
       sub_title  = sprintf("Stn: (%.1f, %.1f) | SnapPt: (%.1f, %.1f)",
                            st$station_X, st$station_Y, st$snap_reach_X, st$snap_reach_Y),
-      max_main = 68, max_sub = 85, cex_main = 0.88, cex_sub = 0.68, adj = 0.5
+      max_main = 48, max_sub = 65, cex_main = 0.88, cex_sub = 0.68, adj = 0.5
     )
     if (k == 1) {
       legend("bottomleft",
@@ -613,7 +613,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
   s_lbl <- if (exists("source_label") && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
   plot(NA, xlim = xr, ylim = yr, asp = 1,
        xlab = "Easting (m, BNG EPSG:27700)", ylab = "Northing (m, BNG EPSG:27700)",
-       main = wrap_title(sprintf("A. All %s Monitoring Stations by Snapping Distance (%s)", s_lbl, net_label), 80),
+       main = wrap_title(sprintf("A. All %s Monitoring Stations by Snapping Distance (%s)", s_lbl, net_label), 60),
        cex.main = 1.15, cex.lab = 1.0)
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#F8FAFC", border = "#CBD5E1")
   grid(col = "#E2E8F0", lty = 1)
@@ -645,7 +645,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
   # Panel B: Empirical CDF & Histogram of Included Station Snapping Distances (0 - 250 m)
   d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L]
   hist(d_inc, breaks = 30, col = "#38BDF8", border = "#0284C7",
-       main = wrap_title(sprintf("B. Snapping Distance Distribution (Included <= 250 m, n = %d)", length(d_inc)), 80),
+       main = wrap_title(sprintf("B. Snapping Distance Distribution (Included <= 250 m, n = %d)", length(d_inc)), 60),
        xlab = "Snapping Distance to Nearest River Reach (metres)", ylab = "Station Count",
        cex.main = 1.15, cex.lab = 1.0)
   grid(col = "#E2E8F0", lty = 1)
@@ -682,7 +682,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
     draw_plot_header(
       main_title = "C. Station Snapping Distance by Strahler Stream Order",
       sub_title  = sprintf("n = %s", paste(paste0("Ord ", names(cnts), ": ", cnts), collapse = " | ")),
-      max_main = 80, max_sub = 130, cex_main = 1.15, cex_sub = 0.78, adj = 0.5
+      max_main = 60, max_sub = 110, cex_main = 1.15, cex_sub = 0.78, adj = 0.5
     )
   } else {
     plot.new()
@@ -697,7 +697,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
     bp <- barplot(top_c$Stations_Included, names.arg = lbls, horiz = TRUE, las = 1,
                   col = "#0284C7", border = "#0F172A",
                   xlim = c(0, max(top_c$Stations_Included) * 1.28),
-                  main = wrap_title("D. Top 12 Catchments by Snapped Stations (with Median Snap m)", 80),
+                  main = wrap_title("D. Top 12 Catchments by Snapped Stations (with Median Snap m)", 60),
                   xlab = "Number of Included Monitoring Stations (<= 250 m)",
                   cex.names = 0.84, cex.main = 1.12, cex.lab = 1.0)
     grid(nx = NULL, ny = NA, col = "#E2E8F0", lty = 1)

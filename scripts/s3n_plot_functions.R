@@ -71,7 +71,7 @@ format_rel_display_path <- function(p, base_dir = ".") {
 # ==============================================================================
 # Wraps titles and long labels across multiple lines at whitespace boundaries.
 # Prevents long titles from overflowing into adjacent panels or being clipped.
-wrap_title <- function(text, max_len = 85) {
+wrap_title <- function(text, max_len = 65) {
   if (is.null(text) || length(text) == 0 || all(is.na(text))) return("")
   if (length(text) > 1) {
     return(vapply(text, function(t) wrap_title(t, max_len = max_len), character(1), USE.NAMES = FALSE))
@@ -1167,7 +1167,7 @@ normalize_cv_tab <- function(cv_tab) {
 }
 
 draw_plot_header <- function(main_title = NULL, sub_title = NULL,
-                             max_main = 85, max_sub = 110,
+                             max_main = 65, max_sub = 90,
                              cex_main = 0.96, cex_sub = 0.80,
                              font_main = 2, font_sub = 1,
                              col_main = "#111111", col_sub = "#444444",
@@ -1212,7 +1212,7 @@ draw_plot_header <- function(main_title = NULL, sub_title = NULL,
 plot_stream_network <- function(df, val_col, vmin, vmax, pal, main_title, sub_title,
                                 cbar_ticks, cbar_labels, cbar_title,
                                 show_obs = FALSE, obs_col = NULL, base_lwd = 0.35, max_lwd = 2.6,
-                                max_main_chars = 85, max_sub_chars = 110) {
+                                max_main_chars = 65, max_sub_chars = 90) {
   ord <- order(df$Shreve)
   d   <- df[ord, ]
 
@@ -1538,7 +1538,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
        xlim = lims, ylim = lims,
        xlab = paste("Observed", sc_lbl),
        ylab = paste("5-Fold CV Predicted", sc_lbl),
-       main = wrap_title("A. Out-of-Sample 5-Fold Cross-Validation Accuracy", 80))
+       main = wrap_title("A. Out-of-Sample 5-Fold Cross-Validation Accuracy", 60))
   grid(col = "#e0e0e0", lty = "dotted")
   if (!is.null(hum_cv) && nrow(hum_cv) > 0) {
     points(hum_cv$obs_y, hum_cv$cv_comb, pch = 21, bg = rgb(0.90, 0.49, 0.13, 0.75), col = "#222222", cex = 0.95, lwd = 0.6)
@@ -1631,7 +1631,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   bp <- barplot(r2_mat, beside = TRUE, ylim = c(0, ymax_b),
                 col = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"),
                 border = "#222222", cex.names = cex_names_b, ylab = "5-Fold Cross-Validation R2",
-                main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 80))
+                main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 60))
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   text(bp, r2_mat + 0.03 * ymax_b, labels = sprintf("%.2f", r2_mat), cex = cex_txt_b, font = 2)
   legend("topright",
@@ -1681,7 +1681,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   xr_pad <- 0.12 * diff(xr_ci)
   plot(NA, xlim = c(xr_ci[1] - xr_pad, xr_ci[2] + xr_pad), ylim = c(0.4, np + 0.6),
        yaxt = "n", xlab = sprintf("Effect Size on %s [95%% Bootstrap CI]", sc_lbl), ylab = "",
-       main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 80))
+       main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 60))
   grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
   abline(v = 0, col = "#c0392b", lty = 2, lwd = 1.5)
   lbls_c <- ifelse(eng_td_p$Parameter %in% names(nice_labels), nice_labels[eng_td_p$Parameter], eng_td_p$Parameter)
@@ -1713,7 +1713,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
                   ylab = sprintf("S3N Predicted %s (%s)", det_short, det_unit),
                   xlab = "Overall Network vs. Hydrogeological & Topographic Regime",
                   main = wrap_title(sprintf("D. Predicted %s Across %s Reaches by Regime",
-                                           det_short, format(nrow(eng_pred), big.mark = ",")), 80))
+                                           det_short, format(nrow(eng_pred), big.mark = ",")), 60))
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
   abline(v = 1.5, col = "#7f8c8d", lty = 2, lwd = 1.3)
   medians <- sapply(box_list, median, na.rm = TRUE)
@@ -1809,8 +1809,8 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
                       format(n_obs_i, big.mark = ","), r2_str,
                       formatC(med_raw, format = "fg", digits = 3), det_unit)
 
-    max_m_t <- if (ncol_g >= 3) 68 else 85
-    max_s_t <- if (ncol_g >= 3) 80 else 110
+    max_m_t <- if (ncol_g >= 3) 48 else 65
+    max_s_t <- if (ncol_g >= 3) 60 else 90
     plot_stream_network(
       eng_df, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
       main_title = main_t,
