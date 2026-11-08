@@ -159,7 +159,7 @@ load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
 }
 
 parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
-  cfg_dirs <- load_directory_config(base_dir = base_dir, auto_create = FALSE)
+  cfg_dirs <- load_directory_config(base_dir = base_dir, auto_create = TRUE)
   gis_dir  <- cfg_dirs$gis_dir
   data_dir <- cfg_dirs$data_dir
   out_dir  <- cfg_dirs$output_dir
@@ -305,6 +305,16 @@ load_source_registry <- function(base_dir = NULL) {
     description = "Union of all active monitoring networks",
     sources     = c("rsn", "ssn")
   )
+
+  # If configs/sources is empty or missing, trigger config generation via python
+  if (!dir.exists(cfg_dir) || length(list.files(cfg_dir, pattern = "\\.json$")) == 0) {
+    py_script <- rel_path(base_dir, "scripts", "01_preprocess_orn.py")
+    if (file.exists(py_script)) {
+      suppressWarnings(tryCatch({
+        system2("python3", c(py_script, "--list-sources"), stdout = FALSE, stderr = FALSE)
+      }, error = function(e) NULL))
+    }
+  }
 
   # Scan configs/sources/*.json
   if (dir.exists(cfg_dir)) {
