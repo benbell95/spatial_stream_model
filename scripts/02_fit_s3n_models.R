@@ -27,6 +27,8 @@ GIS_DIR  <- dir_cfg$gis_dir
 DATA_DIR <- dir_cfg$data_dir
 OUT_BASE <- dir_cfg$out_dir
 
+meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
+
 src_cli      <- parse_source_arg(args)
 source_cli   <- resolve_source_tag(src_cli)
 range_arg    <- grep("^--range-mode=", args, value = TRUE)
@@ -92,6 +94,9 @@ if (is.na(trans_cli)) {
 
 trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
 use_log   <- trans_obj$is_log
+
+boot_arg   <- grep("^--(boot|n-boot)=", args, value = TRUE)
+n_boot_cli <- if (length(boot_arg) > 0) as.integer(sub("^--(boot|n-boot)=", "", boot_arg[1])) else 100L
 
 cand_libs <- c(
   Sys.getenv("R_LIBS_USER"),
@@ -177,6 +182,26 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   X_obs <- X_all[1:n_obs, , drop = FALSE]
   y_obs <- as.matrix(trans_obj$fwd(df_ord$nitrate_mean[1:n_obs]))
 
+  # Heteroskedastic measurement error check (Approach A)
+  v_meas <- numeric(n_obs)
+  has_me <- FALSE
+  if ("meas_uncertainty" %in% names(df_ord)) {
+    u_raw   <- df_ord$meas_uncertainty[1:n_obs]
+    val_raw <- df_ord$nitrate_mean[1:n_obs]
+    if (any(!is.na(u_raw) & u_raw > 0)) {
+      v_meas <- calc_response_meas_variance(val_raw, u_raw, trans_obj)
+      has_me <- (mean(v_meas) > 1e-8) && (meas_error_arg || any(tolower(df_ord$meas_method[1:n_obs]) == "gam") || identical(tolower(net_meta$meas_method), "gam"))
+    }
+  }
+
+  if (has_me) {
+    v_bar <- mean(v_meas)
+    mean_se <- mean(sqrt(v_meas))
+    cat(sprintf("  [Approach A: Measurement Error Kriging] Active: accounting for GAM estimation uncertainty\n"))
+    cat(sprintf("    Mean measurement SE: %.4f (%s scale), Mean error variance: %.6f\n",
+                mean_se, trans_obj$short_label, v_bar))
+  }
+
   # 1. Build Tree & Neighbors (Tail-Up and Tail-Down)
   t0 <- proc.time()
   tt <- .Call("C_build_tree_tin_tout", as.integer(parent_0))
@@ -209,6 +234,17 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   cat(sprintf("  [2] Estimated S3N-TU (logLik=%.2f) and S3N-TD (logLik=%.2f) in %.3f sec.\n",
               fit_tu$log_likelihood, fit_td$log_likelihood, t_est))
 
+  if (has_me) {
+    tau_micro_tu <- max(1e-6 * fit_tu$Theta["sigma.sq"], fit_tu$Theta["tau.sq"] - v_bar)
+    theta_tu_me  <- c(fit_tu$Theta["sigma.sq"], tau_micro_tu, fit_tu$Theta["phi"])
+    tau_micro_td <- max(1e-6 * fit_td$Theta["sigma.sq"], fit_td$Theta["tau.sq"] - v_bar)
+    theta_td_me  <- c(fit_td$Theta["sigma.sq"], tau_micro_td, fit_td$Theta["phi"])
+    cat(sprintf("    Tail-Up Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
+                fit_tu$Theta["tau.sq"], tau_micro_tu, v_bar))
+    cat(sprintf("    Tail-Down Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
+                fit_td$Theta["tau.sq"], tau_micro_td, v_bar))
+  }
+
   # 3. Parametric Bootstrap for 95% Confidence Intervals
   t2 <- proc.time()
   bs_tu <- BRISC_bootstrap(fit_tu, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
@@ -218,23 +254,40 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
 
   # 4. Predict across all q_tot stream reaches in the domain
   t3 <- proc.time()
-  pr_tu <- BRISC_prediction_stream(
-    BRISC_Out = fit_tu, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-    neighbor = nb_tu$pred_neighbors, obsobs_dist = nb_tu$obsobs_dist, obsobs_wt = nb_tu$obsobs_wt,
-    n_omp = n_omp, verbose = FALSE
-  )
-  pr_td <- BRISC_prediction_stream(
-    BRISC_Out = fit_td, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-    neighbor = nb_td$pred_neighbors, obsobs_dist = nb_td$obsobs_dist, obsobs_wt = nb_td$obsobs_wt,
-    n_omp = n_omp, verbose = FALSE
-  )
+  if (has_me) {
+    pr_tu <- .Call("C_s3n_predict_meas_error",
+                   X_obs, y_obs, v_meas, X_all,
+                   fit_tu$Beta, theta_tu_me,
+                   as.integer(m_neighbors),
+                   nb_tu$pred_neighbors$nnIndx, nb_tu$pred_neighbors$nnDist, nb_tu$pred_neighbors$nnWght,
+                   nb_tu$obsobs_dist, nb_tu$obsobs_wt)
+    pr_td <- .Call("C_s3n_predict_meas_error",
+                   X_obs, y_obs, v_meas, X_all,
+                   fit_td$Beta, theta_td_me,
+                   as.integer(m_neighbors),
+                   nb_td$pred_neighbors$nnIndx, nb_td$pred_neighbors$nnDist, nb_td$pred_neighbors$nnWght,
+                   nb_td$obsobs_dist, nb_td$obsobs_wt)
+  } else {
+    pr_tu <- BRISC_prediction_stream(
+      BRISC_Out = fit_tu, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
+      neighbor = nb_tu$pred_neighbors, obsobs_dist = nb_tu$obsobs_dist, obsobs_wt = nb_tu$obsobs_wt,
+      n_omp = n_omp, verbose = FALSE
+    )
+    pr_td <- BRISC_prediction_stream(
+      BRISC_Out = fit_td, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
+      neighbor = nb_td$pred_neighbors, obsobs_dist = nb_td$obsobs_dist, obsobs_wt = nb_td$obsobs_wt,
+      n_omp = n_omp, verbose = FALSE
+    )
+  }
   t_pred <- (proc.time() - t3)[3]
   cat(sprintf("  [4] Predicted Nitrate across all %d stream reaches in %.3f sec.\n", q_tot, t_pred))
 
   se_tu <- (pr_tu$prediction.ci[, 2] - pr_tu$prediction) / 1.959964
   se_td <- (pr_td$prediction.ci[, 2] - pr_td$prediction) / 1.959964
-  info_tu <- pmax(1e-4, 1 - (se_tu^2) / sum(fit_tu$Theta[1:2]))
-  info_td <- pmax(1e-4, 1 - (se_td^2) / sum(fit_td$Theta[1:2]))
+  sill_nug_tu <- sum(if (has_me) theta_tu_me[1:2] else fit_tu$Theta[1:2])
+  sill_nug_td <- sum(if (has_me) theta_td_me[1:2] else fit_td$Theta[1:2])
+  info_tu <- pmax(1e-4, 1 - (se_tu^2) / sill_nug_tu)
+  info_td <- pmax(1e-4, 1 - (se_td^2) / sill_nug_td)
 
   pred_log_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
   se_comb       <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
@@ -258,7 +311,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     Is_Aquifer         = df_ord$Is_Aquifer,
     has_obs            = df_ord$has_obs,
     obs_nitrate_mgL    = df_ord$nitrate_mean,
-    obs_model_sc       = as.numeric(y_obs),
+    obs_model_sc       = ifelse(df_ord$has_obs == 1, trans_obj$fwd(df_ord$nitrate_mean), NA_real_),
     pred_tu_sc         = round(pr_tu$prediction, 5),
     se_tu_sc           = round(se_tu, 5),
     pred_td_sc         = round(pr_td$prediction, 5),
@@ -268,7 +321,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     pred_tu            = round(trans_obj$inv(pr_tu$prediction), 4),
     pred_td            = round(trans_obj$inv(pr_td$prediction), 4),
     pred_combined      = round(trans_obj$inv(pred_log_comb), 4),
-    obs_log_nitrate    = as.numeric(y_obs),
+    obs_log_nitrate    = ifelse(df_ord$has_obs == 1, log(df_ord$nitrate_mean), NA_real_),
     pred_log_tu        = round(pr_tu$prediction, 5),
     se_log_tu          = round(se_tu, 5),
     pred_mgL_tu        = round(trans_obj$inv(pr_tu$prediction), 4),
@@ -279,6 +332,12 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     se_log_combined    = round(se_comb, 5),
     pred_mgL_combined  = round(trans_obj$inv(pred_log_comb), 4)
   )
+  if ("meas_uncertainty" %in% names(df_ord)) {
+    pred_df$meas_uncertainty <- df_ord$meas_uncertainty
+  }
+  if ("meas_method" %in% names(df_ord)) {
+    pred_df$meas_method <- df_ord$meas_method
+  }
   write.csv(pred_df, file.path(OUT_ROOT, sprintf("predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
 
   # 5. 5-Fold Out-of-Sample Cross-Validation
@@ -324,15 +383,6 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
       neighbor = nb_tu_cv$obs_neighbors, sigma.sq = 0.4, tau.sq = 0.05, phi = 0.05,
       cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
     )
-    pr_tu_cv <- BRISC_prediction_stream(
-      BRISC_Out = f_tu_cv, coords.0 = as.matrix(1:n_eval),
-      X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-      neighbor = p_tu_cv, obsobs_dist = nb_tu_cv$obsobs_dist, obsobs_wt = nb_tu_cv$obsobs_wt,
-      n_omp = n_omp, verbose = FALSE
-    )
-    cv_tu[te] <- pr_tu_cv$prediction[(n_tr + 1):n_eval]
-    se_tu_cv  <- (pr_tu_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
-    inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(f_tu_cv$Theta[1:2]))
 
     # CV Tail-Down
     nb_td_cv <- .Call("C_compute_s3n_neighbors",
@@ -350,15 +400,56 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
       neighbor = nb_td_cv$obs_neighbors, sigma.sq = 0.4, tau.sq = 0.05, phi = 0.05,
       cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
     )
-    pr_td_cv <- BRISC_prediction_stream(
-      BRISC_Out = f_td_cv, coords.0 = as.matrix(1:n_eval),
-      X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-      neighbor = p_td_cv, obsobs_dist = nb_td_cv$obsobs_dist, obsobs_wt = nb_td_cv$obsobs_wt,
-      n_omp = n_omp, verbose = FALSE
-    )
-    cv_td[te] <- pr_td_cv$prediction[(n_tr + 1):n_eval]
-    se_td_cv  <- (pr_td_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
-    inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(f_td_cv$Theta[1:2]))
+
+    if (has_me) {
+      v_tr <- v_meas[tr]
+      v_bar_tr <- mean(v_tr)
+      tau_micro_tu_cv <- max(1e-6 * f_tu_cv$Theta["sigma.sq"], f_tu_cv$Theta["tau.sq"] - v_bar_tr)
+      theta_tu_cv_me  <- c(f_tu_cv$Theta["sigma.sq"], tau_micro_tu_cv, f_tu_cv$Theta["phi"])
+      p_tu_cv_raw <- .Call("C_s3n_predict_meas_error",
+                           X_obs[tr, , drop = FALSE], as.matrix(y_vec[tr]), v_tr,
+                           rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+                           f_tu_cv$Beta, theta_tu_cv_me,
+                           as.integer(m_neighbors),
+                           p_tu_cv$nnIndx, p_tu_cv$nnDist, p_tu_cv$nnWght,
+                           nb_tu_cv$obsobs_dist, nb_tu_cv$obsobs_wt)
+      cv_tu[te] <- p_tu_cv_raw$prediction[(n_tr + 1):n_eval]
+      se_tu_cv  <- (p_tu_cv_raw$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
+      inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(theta_tu_cv_me[1:2]))
+
+      tau_micro_td_cv <- max(1e-6 * f_td_cv$Theta["sigma.sq"], f_td_cv$Theta["tau.sq"] - v_bar_tr)
+      theta_td_cv_me  <- c(f_td_cv$Theta["sigma.sq"], tau_micro_td_cv, f_td_cv$Theta["phi"])
+      p_td_cv_raw <- .Call("C_s3n_predict_meas_error",
+                           X_obs[tr, , drop = FALSE], as.matrix(y_vec[tr]), v_tr,
+                           rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+                           f_td_cv$Beta, theta_td_cv_me,
+                           as.integer(m_neighbors),
+                           p_td_cv$nnIndx, p_td_cv$nnDist, p_td_cv$nnWght,
+                           nb_td_cv$obsobs_dist, nb_td_cv$obsobs_wt)
+      cv_td[te] <- p_td_cv_raw$prediction[(n_tr + 1):n_eval]
+      se_td_cv  <- (p_td_cv_raw$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
+      inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(theta_td_cv_me[1:2]))
+    } else {
+      pr_tu_cv <- BRISC_prediction_stream(
+        BRISC_Out = f_tu_cv, coords.0 = as.matrix(1:n_eval),
+        X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+        neighbor = p_tu_cv, obsobs_dist = nb_tu_cv$obsobs_dist, obsobs_wt = nb_tu_cv$obsobs_wt,
+        n_omp = n_omp, verbose = FALSE
+      )
+      cv_tu[te] <- pr_tu_cv$prediction[(n_tr + 1):n_eval]
+      se_tu_cv  <- (pr_tu_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
+      inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(f_tu_cv$Theta[1:2]))
+
+      pr_td_cv <- BRISC_prediction_stream(
+        BRISC_Out = f_td_cv, coords.0 = as.matrix(1:n_eval),
+        X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+        neighbor = p_td_cv, obsobs_dist = nb_td_cv$obsobs_dist, obsobs_wt = nb_td_cv$obsobs_wt,
+        n_omp = n_omp, verbose = FALSE
+      )
+      cv_td[te] <- pr_td_cv$prediction[(n_tr + 1):n_eval]
+      se_td_cv  <- (pr_td_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
+      inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(f_td_cv$Theta[1:2]))
+    }
 
     cv_comb[te] <- (inf_tu_cv * cv_tu[te] + inf_td_cv * cv_td[te]) / (inf_tu_cv + inf_td_cv)
   }
@@ -368,13 +459,14 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   r2   <- function(a, b) 1 - sum((a - b)^2) / sum((a - mean(a))^2)
 
   cv_summary <- data.frame(
-    Domain    = domain_label,
-    n_obs     = n_obs,
-    n_reaches = q_tot,
-    Model     = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
-    RMSE_log  = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
-    MAE_log   = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
-    R2_log    = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
+    Domain         = domain_label,
+    n_obs          = n_obs,
+    n_reaches      = q_tot,
+    Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
+    Spatial_Method = if (has_me) "Measurement Error Kriging" else "Standard S3N",
+    RMSE_log       = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
+    MAE_log        = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
+    R2_log         = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
   )
   print(cv_summary, row.names = FALSE)
 
@@ -399,6 +491,17 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
       CI_Upper  = round(bs_td$confidence.interval[2, ] + phi_shift, 4)
     )
   )
+  if (has_me) {
+    param_df <- rbind(
+      param_df,
+      data.frame(Domain = domain_label, Model = "S3N Tail-Up (FC + AFV)", Parameter = "tau.sq (microscale)",
+                 Estimate = round(tau_micro_tu, 4), CI_Lower = NA, CI_Upper = NA),
+      data.frame(Domain = domain_label, Model = "S3N Tail-Down (Stream)", Parameter = "tau.sq (microscale)",
+                 Estimate = round(tau_micro_td, 4), CI_Lower = NA, CI_Upper = NA),
+      data.frame(Domain = domain_label, Model = "Measurement Error", Parameter = "mean_meas_variance",
+                 Estimate = round(v_bar, 6), CI_Lower = NA, CI_Upper = NA)
+    )
+  }
 
   # Save CV point predictions for England & Humber for diagnostic plotting
   cv_pts <- data.frame(
@@ -429,10 +532,10 @@ eng_domain_label <- switch(source_cli,
   rss = "All England RSS Combined Network",
   sprintf("All England %s Network", source_abbr)
 )
-res_england <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = 100L)
-res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = 100L)
-res_thames  <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = 100L)
-res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = 100L)
+res_england <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
+res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
+res_thames  <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
+res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
 
 all_cv <- rbind(res_england$cv_summary, res_humber$cv_summary, res_thames$cv_summary, res_severn$cv_summary)
 all_params <- rbind(res_england$param_df, res_humber$param_df, res_thames$param_df, res_severn$param_df)

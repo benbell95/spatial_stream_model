@@ -350,6 +350,7 @@ suppressPackageStartupMessages({
   library(S3N)
 })
 dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
+meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
 
 # Range mode handling and folder tagging
 range_arg <- grep("^--range-mode=", args, value = TRUE)
@@ -569,14 +570,18 @@ if (ds_mode == "wq") {
       sub_raw <- raw[keep_rows, , drop = FALSE]
       rm(raw)
       if (nrow(sub_raw) > 0) {
+        unc_c  <- find_first_col(fnames, c("meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"))
+        meth_c <- find_first_col(fnames, c("meas_method", "method", "model_type", "type"))
         sub_samples <- data.frame(
-          network_id      = as.character(sub_raw[[id_c]]),
-          sample_datetime = if (!is.null(dt_c)) as.character(sub_raw[[dt_c]]) else rep("2023-06-01", nrow(sub_raw)),
-          det_desc        = if (!is.null(desc_c)) as.character(sub_raw[[desc_c]]) else rep(det_code, nrow(sub_raw)),
-          meas_sign       = if (!is.null(sign_c)) as.character(sub_raw[[sign_c]]) else rep("=", nrow(sub_raw)),
-          meas_result     = as.character(sub_raw[[val_c]]),
-          unit_short_desc = if (!is.null(unit_c)) as.character(sub_raw[[unit_c]]) else rep("mg/L", nrow(sub_raw)),
-          data_source     = toupper(s_name),
+          network_id       = as.character(sub_raw[[id_c]]),
+          sample_datetime  = if (!is.null(dt_c)) as.character(sub_raw[[dt_c]]) else rep("2023-06-01", nrow(sub_raw)),
+          det_desc         = if (!is.null(desc_c)) as.character(sub_raw[[desc_c]]) else rep(det_code, nrow(sub_raw)),
+          meas_sign        = if (!is.null(sign_c)) as.character(sub_raw[[sign_c]]) else rep("=", nrow(sub_raw)),
+          meas_result      = as.character(sub_raw[[val_c]]),
+          meas_uncertainty = if (!is.null(unc_c)) suppressWarnings(as.numeric(sub_raw[[unc_c]])) else rep(NA_real_, nrow(sub_raw)),
+          meas_method      = if (!is.null(meth_c)) tolower(trimws(as.character(sub_raw[[meth_c]]))) else rep("", nrow(sub_raw)),
+          unit_short_desc  = if (!is.null(unit_c)) as.character(sub_raw[[unit_c]]) else rep("mg/L", nrow(sub_raw)),
+          data_source      = toupper(s_name),
           stringsAsFactors = FALSE
         )
         sample_dfs[[s_name]] <- sub_samples
@@ -595,6 +600,8 @@ if (ds_mode == "wq") {
     c_desc_c <- find_first_col(c_fnames, c("det_desc", "det_name", "description"))
     c_sign_c <- find_first_col(c_fnames, c("meas_sign", "less_than_flag"))
     c_unit_c <- find_first_col(c_fnames, c("unit_short_desc", "unit", "units"))
+    c_unc_c  <- find_first_col(c_fnames, c("meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"))
+    c_meth_c <- find_first_col(c_fnames, c("meas_method", "method", "model_type", "type"))
 
     if (is.null(c_id_c)) c_id_c <- c_fnames[1]
     c_keep <- rep(TRUE, nrow(c_raw))
@@ -607,13 +614,15 @@ if (ds_mode == "wq") {
     c_sub <- c_raw[c_keep, , drop = FALSE]
     if (nrow(c_sub) > 0) {
       sample_dfs[["custom"]] <- data.frame(
-        network_id      = as.character(c_sub[[c_id_c]]),
-        sample_datetime = if (!is.null(c_dt_c)) as.character(c_sub[[c_dt_c]]) else rep("2023-06-01", nrow(c_sub)),
-        det_desc        = if (!is.null(c_desc_c)) as.character(c_sub[[c_desc_c]]) else rep(det_code, nrow(c_sub)),
-        meas_sign       = if (!is.null(c_sign_c)) as.character(c_sub[[c_sign_c]]) else rep("=", nrow(c_sub)),
-        meas_result     = as.character(c_sub[[c_val_c]]),
-        unit_short_desc = if (!is.null(c_unit_c)) as.character(c_sub[[c_unit_c]]) else rep("mg/L", nrow(c_sub)),
-        data_source     = "CUSTOM",
+        network_id       = as.character(c_sub[[c_id_c]]),
+        sample_datetime  = if (!is.null(c_dt_c)) as.character(c_sub[[c_dt_c]]) else rep("2023-06-01", nrow(c_sub)),
+        det_desc         = if (!is.null(c_desc_c)) as.character(c_sub[[c_desc_c]]) else rep(det_code, nrow(c_sub)),
+        meas_sign        = if (!is.null(c_sign_c)) as.character(c_sub[[c_sign_c]]) else rep("=", nrow(c_sub)),
+        meas_result      = as.character(c_sub[[c_val_c]]),
+        meas_uncertainty = if (!is.null(c_unc_c)) suppressWarnings(as.numeric(c_sub[[c_unc_c]])) else rep(NA_real_, nrow(c_sub)),
+        meas_method      = if (!is.null(c_meth_c)) tolower(trimws(as.character(c_sub[[c_meth_c]]))) else rep("", nrow(c_sub)),
+        unit_short_desc  = if (!is.null(c_unit_c)) as.character(c_sub[[c_unit_c]]) else rep("mg/L", nrow(c_sub)),
+        data_source      = "CUSTOM",
         stringsAsFactors = FALSE
       )
     }
@@ -641,6 +650,8 @@ if (ds_mode == "wq") {
     stop(sprintf("No LCMS/GCMS samples found for '%s'. Run with --list --dataset=lcms to see valid compounds.", det_code))
   }
   det_samples$data_source <- "RSN"
+  det_samples$meas_uncertainty <- NA_real_
+  det_samples$meas_method <- ""
   det_name <- det_samples$compound_name[1]
   det_unit <- det_samples$unit_short_desc[1]
   raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
@@ -691,6 +702,8 @@ if (ds_mode == "wq") {
   raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
   is_cens  <- rep(FALSE, length(raw_vals))
 }
+if (!"meas_uncertainty" %in% names(det_samples)) det_samples$meas_uncertainty <- NA_real_
+if (!"meas_method" %in% names(det_samples)) det_samples$meas_method <- ""
 
 valid_k     <- !is.na(raw_vals) & nchar(trimws(det_samples$sample_datetime)) >= 7 & trans_obj$valid_fn(raw_vals)
 det_samples <- det_samples[valid_k, ]
@@ -726,7 +739,35 @@ sites_lu   <- read.csv(SITES_CSV, stringsAsFactors = FALSE)
 sites_lu   <- sites_lu[sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
 df_reaches <- read.csv(REACHES_CSV, stringsAsFactors = FALSE)
 
-analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 50L, n_omp = 1L) {
+calc_response_meas_variance <- function(raw_val, raw_unc, trans_obj) {
+  n <- length(raw_val)
+  v_resp <- numeric(n)
+  if (is.null(raw_unc) || all(is.na(raw_unc))) return(v_resp)
+
+  u_clean <- ifelse(is.na(raw_unc) | raw_unc < 0, 0, as.numeric(raw_unc))
+  x_clean <- pmax(1e-6, ifelse(is.na(raw_val), 1.0, as.numeric(raw_val)))
+
+  tt <- tolower(trans_obj$type)
+  if (tt == "log") {
+    # Delta method: Var(log(X)) approx (u / X)^2
+    v_resp <- (u_clean / x_clean)^2
+  } else if (tt %in% c("raw", "identity", "none")) {
+    v_resp <- u_clean^2
+  } else if (tt %in% c("boxcox", "bc")) {
+    lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
+    # Delta method: g'(X) = X^(lambda - 1)
+    v_resp <- (x_clean^(lam - 1) * u_clean)^2
+  } else if (tt %in% c("yeojohnson", "yj")) {
+    lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
+    # For X >= 0: g'(X) = (X + 1)^(lambda - 1)
+    v_resp <- ((x_clean + 1.0)^(lam - 1) * u_clean)^2
+  } else {
+    v_resp <- u_clean^2
+  }
+  v_resp
+}
+
+analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 50L, n_omp = 1L, use_meas_error = FALSE) {
   obs_idx  <- which(df$has_obs == 1L)
   n_obs    <- length(obs_idx)
   if (n_obs < 15L) {
@@ -740,6 +781,26 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   df_ord   <- df[c(obs_idx, pred_idx), ]
   q_tot    <- nrow(df_ord)
   m_use    <- min(as.integer(m_neighbors), max(2L, n_obs - 2L))
+
+  # Heteroskedastic measurement error check (Approach A)
+  v_meas <- numeric(n_obs)
+  has_me <- FALSE
+  if ("meas_uncertainty" %in% names(df_ord)) {
+    u_raw   <- df_ord$meas_uncertainty[1:n_obs]
+    val_raw <- df_ord$obs_val[1:n_obs]
+    if (any(!is.na(u_raw) & u_raw > 0)) {
+      v_meas <- calc_response_meas_variance(val_raw, u_raw, trans_obj)
+      has_me <- (mean(v_meas) > 1e-8) && (use_meas_error || any(tolower(df_ord$meas_method[1:n_obs]) == "gam"))
+    }
+  }
+
+  if (has_me) {
+    v_bar <- mean(v_meas)
+    mean_se <- mean(sqrt(v_meas))
+    cat(sprintf("  [Approach A: Measurement Error Kriging] Active: accounting for GAM estimation uncertainty\n"))
+    cat(sprintf("    Mean measurement SE: %.4f (%s scale), Mean error variance: %.6f\n",
+                mean_se, trans_obj$short_label, v_bar))
+  }
 
   id_map   <- setNames(seq_len(q_tot), df_ord$RivID)
   parent_0 <- ifelse(df_ord$parent_dn == 0, -1L, id_map[as.character(df_ord$parent_dn)] - 1L)
@@ -774,24 +835,52 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
   )
 
+  if (has_me) {
+    tau_micro_tu <- max(1e-6 * fit_tu$Theta["sigma.sq"], fit_tu$Theta["tau.sq"] - v_bar)
+    theta_tu_me  <- c(fit_tu$Theta["sigma.sq"], tau_micro_tu, fit_tu$Theta["phi"])
+    tau_micro_td <- max(1e-6 * fit_td$Theta["sigma.sq"], fit_td$Theta["tau.sq"] - v_bar)
+    theta_td_me  <- c(fit_td$Theta["sigma.sq"], tau_micro_td, fit_td$Theta["phi"])
+    cat(sprintf("    Tail-Up Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
+                fit_tu$Theta["tau.sq"], tau_micro_tu, v_bar))
+    cat(sprintf("    Tail-Down Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
+                fit_td$Theta["tau.sq"], tau_micro_td, v_bar))
+  }
+
   bs_tu <- BRISC_bootstrap(fit_tu, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
   bs_td <- BRISC_bootstrap(fit_td, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
 
-  pr_tu <- BRISC_prediction_stream(
-    BRISC_Out = fit_tu, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-    neighbor = nb_tu$pred_neighbors, obsobs_dist = nb_tu$obsobs_dist, obsobs_wt = nb_tu$obsobs_wt,
-    n_omp = n_omp, verbose = FALSE
-  )
-  pr_td <- BRISC_prediction_stream(
-    BRISC_Out = fit_td, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-    neighbor = nb_td$pred_neighbors, obsobs_dist = nb_td$obsobs_dist, obsobs_wt = nb_td$obsobs_wt,
-    n_omp = n_omp, verbose = FALSE
-  )
+  if (has_me) {
+    pr_tu <- .Call("C_s3n_predict_meas_error",
+                   X_obs, y_obs, v_meas, X_all,
+                   fit_tu$Beta, theta_tu_me,
+                   as.integer(m_use),
+                   nb_tu$pred_neighbors$nnIndx, nb_tu$pred_neighbors$nnDist, nb_tu$pred_neighbors$nnWght,
+                   nb_tu$obsobs_dist, nb_tu$obsobs_wt)
+    pr_td <- .Call("C_s3n_predict_meas_error",
+                   X_obs, y_obs, v_meas, X_all,
+                   fit_td$Beta, theta_td_me,
+                   as.integer(m_use),
+                   nb_td$pred_neighbors$nnIndx, nb_td$pred_neighbors$nnDist, nb_td$pred_neighbors$nnWght,
+                   nb_td$obsobs_dist, nb_td$obsobs_wt)
+  } else {
+    pr_tu <- BRISC_prediction_stream(
+      BRISC_Out = fit_tu, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
+      neighbor = nb_tu$pred_neighbors, obsobs_dist = nb_tu$obsobs_dist, obsobs_wt = nb_tu$obsobs_wt,
+      n_omp = n_omp, verbose = FALSE
+    )
+    pr_td <- BRISC_prediction_stream(
+      BRISC_Out = fit_td, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
+      neighbor = nb_td$pred_neighbors, obsobs_dist = nb_td$obsobs_dist, obsobs_wt = nb_td$obsobs_wt,
+      n_omp = n_omp, verbose = FALSE
+    )
+  }
 
   se_tu   <- (pr_tu$prediction.ci[, 2] - pr_tu$prediction) / 1.959964
   se_td   <- (pr_td$prediction.ci[, 2] - pr_td$prediction) / 1.959964
-  info_tu <- pmax(1e-4, 1 - (se_tu^2) / sum(fit_tu$Theta[1:2]))
-  info_td <- pmax(1e-4, 1 - (se_td^2) / sum(fit_td$Theta[1:2]))
+  sill_nug_tu <- sum(if (has_me) theta_tu_me[1:2] else fit_tu$Theta[1:2])
+  sill_nug_td <- sum(if (has_me) theta_td_me[1:2] else fit_td$Theta[1:2])
+  info_tu <- pmax(1e-4, 1 - (se_tu^2) / sill_nug_tu)
+  info_td <- pmax(1e-4, 1 - (se_td^2) / sill_nug_td)
 
   pred_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
   se_comb   <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
@@ -820,6 +909,12 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     pred_td       = trans_obj$inv(pr_td$prediction),
     pred_combined = trans_obj$inv(pred_comb)
   )
+  if ("meas_uncertainty" %in% names(df_ord)) {
+    pred_df$meas_uncertainty <- df_ord$meas_uncertainty
+  }
+  if ("meas_method" %in% names(df_ord)) {
+    pred_df$meas_method <- df_ord$meas_method
+  }
 
   # 5-Fold Cross-Validation
   set.seed(2026)
@@ -861,15 +956,6 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
       neighbor = nb_tu_cv$obs_neighbors, sigma.sq = vy * 0.7, tau.sq = vy * 0.1, phi = 0.05,
       cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
     )
-    pr_tu_cv <- BRISC_prediction_stream(
-      BRISC_Out = f_tu_cv, coords.0 = as.matrix(1:n_eval),
-      X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-      neighbor = p_tu_cv, obsobs_dist = nb_tu_cv$obsobs_dist, obsobs_wt = nb_tu_cv$obsobs_wt,
-      n_omp = n_omp, verbose = FALSE
-    )
-    cv_tu[te] <- pr_tu_cv$prediction[(n_tr + 1):n_eval]
-    se_tu_cv  <- (pr_tu_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
-    inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(f_tu_cv$Theta[1:2]))
 
     nb_td_cv <- .Call("C_compute_s3n_neighbors",
                       as.integer(n_tr), as.integer(m_cv), as.integer(par_cv),
@@ -886,15 +972,56 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
       neighbor = nb_td_cv$obs_neighbors, sigma.sq = vy * 0.7, tau.sq = vy * 0.1, phi = 0.05,
       cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
     )
-    pr_td_cv <- BRISC_prediction_stream(
-      BRISC_Out = f_td_cv, coords.0 = as.matrix(1:n_eval),
-      X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-      neighbor = p_td_cv, obsobs_dist = nb_td_cv$obsobs_dist, obsobs_wt = nb_td_cv$obsobs_wt,
-      n_omp = n_omp, verbose = FALSE
-    )
-    cv_td[te] <- pr_td_cv$prediction[(n_tr + 1):n_eval]
-    se_td_cv  <- (pr_td_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
-    inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(f_td_cv$Theta[1:2]))
+
+    if (has_me) {
+      v_tr <- v_meas[tr]
+      v_bar_tr <- mean(v_tr)
+      tau_micro_tu_cv <- max(1e-6 * f_tu_cv$Theta["sigma.sq"], f_tu_cv$Theta["tau.sq"] - v_bar_tr)
+      theta_tu_cv_me  <- c(f_tu_cv$Theta["sigma.sq"], tau_micro_tu_cv, f_tu_cv$Theta["phi"])
+      p_tu_cv_raw <- .Call("C_s3n_predict_meas_error",
+                           X_obs[tr, , drop = FALSE], as.matrix(y_vec[tr]), v_tr,
+                           rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+                           f_tu_cv$Beta, theta_tu_cv_me,
+                           as.integer(m_cv),
+                           p_tu_cv$nnIndx, p_tu_cv$nnDist, p_tu_cv$nnWght,
+                           nb_tu_cv$obsobs_dist, nb_tu_cv$obsobs_wt)
+      cv_tu[te] <- p_tu_cv_raw$prediction[(n_tr + 1):n_eval]
+      se_tu_cv  <- (p_tu_cv_raw$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
+      inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(theta_tu_cv_me[1:2]))
+
+      tau_micro_td_cv <- max(1e-6 * f_td_cv$Theta["sigma.sq"], f_td_cv$Theta["tau.sq"] - v_bar_tr)
+      theta_td_cv_me  <- c(f_td_cv$Theta["sigma.sq"], tau_micro_td_cv, f_td_cv$Theta["phi"])
+      p_td_cv_raw <- .Call("C_s3n_predict_meas_error",
+                           X_obs[tr, , drop = FALSE], as.matrix(y_vec[tr]), v_tr,
+                           rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+                           f_td_cv$Beta, theta_td_cv_me,
+                           as.integer(m_cv),
+                           p_td_cv$nnIndx, p_td_cv$nnDist, p_td_cv$nnWght,
+                           nb_td_cv$obsobs_dist, nb_td_cv$obsobs_wt)
+      cv_td[te] <- p_td_cv_raw$prediction[(n_tr + 1):n_eval]
+      se_td_cv  <- (p_td_cv_raw$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
+      inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(theta_td_cv_me[1:2]))
+    } else {
+      pr_tu_cv <- BRISC_prediction_stream(
+        BRISC_Out = f_tu_cv, coords.0 = as.matrix(1:n_eval),
+        X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+        neighbor = p_tu_cv, obsobs_dist = nb_tu_cv$obsobs_dist, obsobs_wt = nb_tu_cv$obsobs_wt,
+        n_omp = n_omp, verbose = FALSE
+      )
+      cv_tu[te] <- pr_tu_cv$prediction[(n_tr + 1):n_eval]
+      se_tu_cv  <- (pr_tu_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
+      inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(f_tu_cv$Theta[1:2]))
+
+      pr_td_cv <- BRISC_prediction_stream(
+        BRISC_Out = f_td_cv, coords.0 = as.matrix(1:n_eval),
+        X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
+        neighbor = p_td_cv, obsobs_dist = nb_td_cv$obsobs_dist, obsobs_wt = nb_td_cv$obsobs_wt,
+        n_omp = n_omp, verbose = FALSE
+      )
+      cv_td[te] <- pr_td_cv$prediction[(n_tr + 1):n_eval]
+      se_td_cv  <- (pr_td_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
+      inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(f_td_cv$Theta[1:2]))
+    }
 
     cv_comb[te] <- (inf_tu_cv * cv_tu[te] + inf_td_cv * cv_td[te]) / (inf_tu_cv + inf_td_cv)
   }
@@ -904,13 +1031,14 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   r2   <- function(a, b) 1 - sum((a - b)^2) / sum((a - mean(a))^2)
 
   cv_summary <- data.frame(
-    Domain    = domain_label,
-    n_obs     = n_obs,
-    n_reaches = q_tot,
-    Model     = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
-    RMSE      = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
-    MAE       = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
-    R2        = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
+    Domain         = domain_label,
+    n_obs          = n_obs,
+    n_reaches      = q_tot,
+    Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
+    Spatial_Method = if (has_me) "Measurement Error Kriging" else "Standard S3N",
+    RMSE           = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
+    MAE            = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
+    R2             = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
   )
   print(cv_summary, row.names = FALSE)
 
@@ -926,6 +1054,17 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
                CI_Lower = round(bs_td$confidence.interval[1, ] + phi_shift, 4),
                CI_Upper = round(bs_td$confidence.interval[2, ] + phi_shift, 4))
   )
+  if (has_me) {
+    param_df <- rbind(
+      param_df,
+      data.frame(Domain = domain_label, Model = "S3N Tail-Up (FC + AFV)", Parameter = "tau.sq (microscale)",
+                 Estimate = round(tau_micro_tu, 4), CI_Lower = NA, CI_Upper = NA),
+      data.frame(Domain = domain_label, Model = "S3N Tail-Down (Stream)", Parameter = "tau.sq (microscale)",
+                 Estimate = round(tau_micro_td, 4), CI_Lower = NA, CI_Upper = NA),
+      data.frame(Domain = domain_label, Model = "Measurement Error", Parameter = "mean_meas_variance",
+                 Estimate = round(v_bar, 6), CI_Lower = NA, CI_Upper = NA)
+    )
+  }
 
   cv_pts <- data.frame(
     RivID   = df_ord$RivID[1:n_obs],
@@ -1043,12 +1182,46 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   reach_agg   <- merge(reach_means, reach_up, by = "RivID")
   reach_agg$y_resp <- trans_obj$fwd(reach_agg$val)
 
+  has_samp_unc <- "meas_uncertainty" %in% names(det_WithRiv) && any(!is.na(det_WithRiv$meas_uncertainty))
+  if (has_samp_unc) {
+    reach_unc <- aggregate(meas_uncertainty ~ RivID, data = det_WithRiv, FUN = function(u) {
+      u_clean <- u[!is.na(u) & u >= 0]
+      if (length(u_clean) == 0) return(NA_real_)
+      sqrt(sum(u_clean^2)) / length(u_clean)
+    })
+    reach_agg <- merge(reach_agg, reach_unc, by = "RivID", all.x = TRUE)
+  }
+  has_samp_meth <- "meas_method" %in% names(det_WithRiv) && any(nzchar(det_WithRiv$meas_method))
+  if (has_samp_meth) {
+    reach_meth <- aggregate(meas_method ~ RivID, data = det_WithRiv, FUN = function(m) {
+      m_clean <- m[!is.na(m) & nzchar(m)]
+      if (length(m_clean) == 0) return("")
+      m_clean[1]
+    })
+    reach_agg <- merge(reach_agg, reach_meth, by = "RivID", all.x = TRUE)
+  }
+
   df_full <- df_reaches
   df_full$has_obs <- ifelse(df_full$RivID %in% reach_agg$RivID, 1L, 0L)
   idx_match       <- match(df_full$RivID, reach_agg$RivID)
   df_full$obs_val <- ifelse(df_full$has_obs == 1L, reach_agg$val[idx_match], NA_real_)
   df_full$obs_y   <- ifelse(df_full$has_obs == 1L, reach_agg$y_resp[idx_match], NA_real_)
   df_full$obs_up_dist_km <- ifelse(df_full$has_obs == 1L, reach_agg$obs_up_dist_km[idx_match], df_full$up_dist_mid_km)
+  if ("meas_uncertainty" %in% names(reach_agg)) {
+    df_full$meas_uncertainty <- ifelse(df_full$has_obs == 1L, reach_agg$meas_uncertainty[idx_match], NA_real_)
+  } else if (!"meas_uncertainty" %in% names(df_full)) {
+    df_full$meas_uncertainty <- NA_real_
+  }
+  if ("meas_method" %in% names(reach_agg)) {
+    df_full$meas_method <- ifelse(df_full$has_obs == 1L, reach_agg$meas_method[idx_match], "")
+  } else if (!"meas_method" %in% names(df_full)) {
+    df_full$meas_method <- ""
+  }
+
+  active_meas_error <- meas_error_arg ||
+    (has_samp_meth && any(tolower(det_WithRiv$meas_method) == "gam")) ||
+    ("meas_method" %in% names(df_full) && any(tolower(df_full$meas_method[df_full$has_obs == 1L]) == "gam")) ||
+    (!is.null(net_meta$meas_method) && identical(tolower(net_meta$meas_method), "gam"))
 
   humber_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "humber")
   thames_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "thames")
@@ -1060,11 +1233,11 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
     rss = "All England RSS Combined Network",
     sprintf("All England %s Network", source_abbr)
   )
-  res_eng <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = n_boot)
+  res_eng <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
   if (is.null(res_eng)) return(NULL)
-  res_hum <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
-  res_tha <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
-  res_sev <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
+  res_hum <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
+  res_tha <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
+  res_sev <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
 
   eng_pred <- res_eng$pred_df
   hum_pred <- if (!is.null(res_hum)) res_hum$pred_df else subset(eng_pred, CatchID == humber_info$catch_id)
@@ -1074,7 +1247,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   # Fit any user-specified additional basins (--basin=...)
   extra_fits <- lapply(extra_basins, function(b_info) {
     sub_df <- subset(df_full, CatchID %in% b_info$catch_ids)
-    fit_b  <- analyze_domain(sub_df, b_info$slug, b_info$domain_label, m_neighbors = 15L, n_boot = n_boot)
+    fit_b  <- analyze_domain(sub_df, b_info$slug, b_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
     pred_b <- if (!is.null(fit_b)) fit_b$pred_df else subset(eng_pred, CatchID %in% b_info$catch_ids)
     list(info = b_info, fit = fit_b, pred_df = pred_b)
   })
@@ -1095,6 +1268,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_cv$Transform_Label  <- trans_obj$label
   all_cv$Network_Abbr     <- net_meta$abbr
   all_cv$Network_Label    <- net_meta$short_label
+  all_cv$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
+  all_cv$Meas_Method      <- if (active_meas_error) "gam" else "standard"
   all_params$Source           <- source_abbr
   all_params$Source_Desc      <- source_label
   all_params$Period           <- period_tag
@@ -1103,6 +1278,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_params$Transform_Label  <- trans_obj$label
   all_params$Network_Abbr     <- net_meta$abbr
   all_params$Network_Label    <- net_meta$short_label
+  all_params$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
+  all_params$Meas_Method      <- if (active_meas_error) "gam" else "standard"
 
   write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
   write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)

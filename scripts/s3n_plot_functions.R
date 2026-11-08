@@ -869,6 +869,35 @@ as_transformer <- function(obj, y_obs = NULL, lambda = NULL) {
   build_transformer(as.character(obj), y_obs = y_obs, lambda = lambda)
 }
 
+calc_response_meas_variance <- function(raw_val, raw_unc, trans_obj) {
+  n <- length(raw_val)
+  v_resp <- numeric(n)
+  if (is.null(raw_unc) || all(is.na(raw_unc))) return(v_resp)
+
+  u_clean <- ifelse(is.na(raw_unc) | raw_unc < 0, 0, as.numeric(raw_unc))
+  x_clean <- pmax(1e-6, ifelse(is.na(raw_val), 1.0, as.numeric(raw_val)))
+
+  tt <- tolower(trans_obj$type)
+  if (tt == "log") {
+    # Delta method: Var(log(X)) approx (u / X)^2
+    v_resp <- (u_clean / x_clean)^2
+  } else if (tt %in% c("raw", "identity", "none")) {
+    v_resp <- u_clean^2
+  } else if (tt %in% c("sqrt", "square_root")) {
+    # Delta method: g'(X) = 1 / (2 * sqrt(X)) -> Var(sqrt(X)) approx u^2 / (4 * X)
+    v_resp <- (u_clean / (2.0 * sqrt(x_clean)))^2
+  } else if (tt %in% c("boxcox", "bc")) {
+    lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
+    v_resp <- (x_clean^(lam - 1) * u_clean)^2
+  } else if (tt %in% c("yeojohnson", "yj")) {
+    lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
+    v_resp <- ((x_clean + 1.0)^(lam - 1) * u_clean)^2
+  } else {
+    v_resp <- u_clean^2
+  }
+  v_resp
+}
+
 print_available_transforms <- function() {
   cat("Available Data Transformations (--transform=<type> [--lambda=<val>]):\n\n")
   cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",

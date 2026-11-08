@@ -395,6 +395,65 @@ If your custom dataset contains values reported below the Limit of Detection (e.
 - Mark `meas_sign = "<"` (or `less_than_flag = "yes"`).
 - The pipeline applies **Multi-Threshold Robust Lognormal Regression on Order Statistics (`ROS`)** (Hirsch & Stedinger 1987; Helsel & Cohn 1988) by default (`--censor=ros`), or substitution via `--censor=half_lod`.
 
+### 5.5 Two-Stage Modeling with Pre-Fitted Values (GAMs, Machine Learning) & Approach A: Measurement Error Kriging
+
+A powerful geostatistical modeling pattern is **two-stage modeling**:
+1. **Stage 1 (Temporal Smoothing / Detrending)**: A first-stage temporal model—such as a Generalized Additive Model (GAM), dynamic harmonic regression, or time-series filter—is fit independently at each monitoring station to remove seasonal cycles, flow dependence, and observation noise, producing site-level predictions $\hat{x}_i$ along with standard errors $u_i = \text{SE}(\hat{x}_i)$.
+2. **Stage 2 (Spatial Stream Network Kriging)**: S3N spatial tail-up and tail-down stream network models are fit across the network to interpolate values to all unmonitored reaches.
+
+#### Is Two-Stage Modeling Statistically Valid?
+Yes, **provided the spatial model accounts for the heteroskedastic estimation uncertainty of the first stage**. 
+
+If standard homoskedastic kriging is used on pre-modelled values, two statistical issues arise:
+- Stations with poor first-stage fits (high SE due to sparse data or high residual scatter) are weighted identically to stations with hundreds of clean measurements.
+- Standard kriging will interpolate straight through the first-stage point estimates, attributing first-stage estimation uncertainty to microscale spatial variability (inflating the nugget).
+
+#### The Solution: Approach A — Heteroskedastic Measurement Error Kriging
+Under Approach A, the observation equation for reach $i$ becomes:
+$$y_i = \boldsymbol{x}_i^T \boldsymbol{\beta} + w_{\text{TU}}(s_i) + w_{\text{TD}}(s_i) + \varepsilon_{\text{micro}, i} + \eta_i$$
+where:
+- $w_{\text{TU}}(s_i), w_{\text{TD}}(s_i)$ are the spatial stream network processes.
+- $\varepsilon_{\text{micro}, i} \sim \mathcal{N}(0, \tau_{\text{micro}}^2)$ is the intrinsic microscale spatial nugget variation.
+- $\eta_i \sim \mathcal{N}(0, v_i)$ is the **known, site-specific measurement/estimation error variance** from the first stage.
+
+#### 1. Delta Method Variance Transformation
+Because S3N models log-transformed (or sqrt/Box-Cox/Yeo-Johnson transformed) concentrations $y_i = g(x_i)$, the raw standard error $u_i = \text{SE}(x_i)$ is converted to response-scale variance $v_i = \text{Var}(y_i)$ via the Delta Method:
+- **Log scale ($y = \log x$)**: $v_i \approx \left(\frac{u_i}{x_i}\right)^2$ (the squared coefficient of variation, $\text{CV}^2$).
+- **Square root scale ($y = \sqrt{x}$)**: $v_i \approx \left(\frac{u_i}{2\sqrt{x_i}}\right)^2$.
+- **Box-Cox scale ($y = \frac{x^\lambda - 1}{\lambda}$)**: $v_i \approx (x_i^{\lambda - 1} u_i)^2$.
+- **Raw scale ($y = x$)**: $v_i = u_i^2$.
+
+#### 2. Nugget Decomposition & C++ NNGP Solver
+The total estimated nugget $\hat{\tau}_{\text{total}}^2$ from BRISC reflects both spatial microscale variation and measurement noise:
+$$\tau_{\text{micro}}^2 = \max\left(10^{-6}\sigma^2, \hat{\tau}_{\text{total}}^2 - \bar{v}\right), \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i$$
+In S3N's high-speed C++ solver (`src/s3n_fast_neighbors.cpp`), the NNGP prediction weights $\boldsymbol{\lambda}_0$ for target reach $s_0$ solve:
+$$\left[ \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_1, \dots, v_m) \right] \boldsymbol{\lambda}_0 = \boldsymbol{c}_0$$
+This downweights uncertain stations in spatial interpolation, denoises observation locations, and produces exact prediction standard errors.
+
+#### Providing GAM Estimates to the Pipeline
+To use Approach A, include `meas_uncertainty` and set `meas_method = "gam"` in your `samples.csv`:
+```csv
+site_id,sample_datetime,meas_result,meas_uncertainty,meas_method,unit_short_desc
+RSN001,2023-06-01,2.351,0.2197,gam,mg/L
+RSN002,2023-06-01,4.120,0.1850,gam,mg/L
+```
+- **Automatic Activation**: Whenever `meas_method = "gam"` is detected (or via `--meas-error` / `--gam` flag), Approach A is automatically activated.
+- **Reporting**: Cross-validation tables tag `Spatial_Method = "Measurement Error Kriging"` and parameter tables report the decomposed `tau.sq (microscale)` and `mean_meas_variance`.
+- **Pre-packaged Examples**:
+  - `data/custom/rsn_gam_mean/`: 1,382 station mean GAM predictions across England.
+  - `data/custom/rsn_gam/`: 94,778 weekly GAM concentration estimates.
+
+```bash
+# Preprocess reaches with GAM estimates and uncertainty
+python3 scripts/01_preprocess_orn.py --source=rsn_gam_mean
+
+# Fit S3N model with Measurement Error Kriging
+Rscript scripts/run_s3n_determinand.R 0117 --source=rsn_gam_mean --basin=Thames
+```
+
+> [!TIP]
+> **Comprehensive Two-Stage Modeling & Measurement Error Kriging Guide**: For a dedicated, complete guide detailing the theoretical foundations, Delta Method derivations, C++ stack solver mechanics, and comparative benchmarks, see [`docs/two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md).
+
 ---
 
 ## 6. End-to-End Walkthrough: Adding a Custom Dataset

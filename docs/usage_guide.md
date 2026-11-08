@@ -3,6 +3,8 @@
 This guide documents all scripts, command-line options, output directory conventions, and practical examples for running the Scalable Spatial Stream Network (S3N) water quality pipeline across the Ordnance Survey Open Rivers Network ([`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), 90,876 reaches across 141 monitored catchments), the Environment Agency River Surveillance Network ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the Small Streams Network ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), and the combined River Surveillance + Small Streams ([`RSS`](../data/processed/orn_rss/)) monitoring network.
 
 > **Mathematical & Algorithmic Deep-Dive**: For a step-by-step theoretical and mathematical explanation of how the `S3N` package, stream-network covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbor Gaussian Process (`NNGP`) estimation, and Universal Stream Kriging work, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
+> 
+> **Two-Stage GAM Modeling & Measurement Error Kriging**: For a dedicated guide on using first-stage Generalized Additive Models (GAMs) with S3N to account for heteroskedastic estimation uncertainty via Approach A Measurement Error Kriging, see [`./two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md).
 
 ---
 
@@ -59,6 +61,7 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | `--reverse-color` (or `--reverse-colour`) | `FALSE` (blue = low, red = high) | Reverses the map color palette (`val_cols_rev`) so that **low values are warm red/orange and high values are cool blue/teal** — useful for ecological/habitat quality metrics where higher scores indicate better condition (e.g., `hqa_score`, `whpt_aspt`, `life_family_index`, `psi_family_score`). Also supported in [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R). |
 | `--vmin=<val>` / `--vmax=<val>` | Auto-shared across periods | Optional explicit minimum and maximum scale bar bounds (in raw measurement units, e.g., `--vmin=0.2 --vmax=20`). Note: When running seasonal, yearly, or monthly plots (`--by=season|year|month` or individual period slices), scale bars are **automatically synchronized** across all periods even without `--vmin`/`--vmax`. |
 | `--censor=<method>` | `ros` | Method for imputing left-censored (`<`) observations below the limit of detection:<br>• `ros`: **Robust Lognormal Regression on Order Statistics** (Helsel & Cohn, 1988; Hirsch & Stedinger, 1987). Fits a log-normal quantile regression above the detection limit(s) and imputes censored values via Weibull/Kaplan–Meier plotting positions.<br>• `half_lod`: Simple substitution of `< L` with `0.5 * L`. |
+| `--meas-error` (or `--gam`) | Auto-detected | Activates **Approach A: Measurement Error Kriging** (heteroskedastic observation error). Accounts for first-stage estimation uncertainty (e.g., site-level GAM standard errors `meas_uncertainty`) by converting standard errors via the Delta Method to response-scale variances, decomposing the estimated total nugget into microscale spatial variance ($\tau_{\text{micro}}^2 = \max(10^{-6}\sigma^2, \hat{\tau}_{\text{total}}^2 - \bar{v})$) and mean estimation variance ($\bar{v}$), and solving the heteroskedastic NNGP system in C++. Automatically activated when `meas_method = "gam"`. |
 | `--boot=<N>` | `50` | Number of parametric bootstrap iterations (`BRISC_bootstrap`) used to compute 95% confidence intervals on fixed-effect and covariance parameters. Use `--boot=15` for faster exploratory runs or `--boot=100` for final tables. |
 | `--basin=<spec>` | *(None)* | Additionally models, cross-validates, and plots one or more custom river basins alongside `All England`, `Humber`, `Thames`, and `Severn`. Accepts:<br>• **Mainstem river name** (case-insensitive substring, e.g., `--basin=Eden`, `--basin="Great Ouse"`, `--basin=Tyne`, `--basin=Ribble`)<br>• **Numeric `CatchID`** (e.g., `--basin=3125`, `--basin=27`, `--basin=2828`)<br>• **River Basin District name or ID** (e.g., `--basin=Anglian`, `--basin="South West"`, `--basin=rbd:5`)<br>• **Multiple basins**: Comma-separated (`--basin=Eden,Tyne`) or repeated `--basin=` flags. |
 | `--year=<YYYY>` | *(All years)* | Filters water quality samples to a single calendar year (e.g., `--year=2021`, `--year=2022`, `--year=2023`, `--year=2024`). Saves outputs in `output/det_<code>/year_<YYYY>/`. |
@@ -252,7 +255,23 @@ Rscript scripts/run_s3n_determinand.R 0180 --censor=half_lod
 Rscript scripts/run_s3n_determinand.R 0061 --raw
 ```
 
-#### C. Modeling & Plotting Additional Custom Basins (`--basin=...`)
+#### C. Two-Stage Modeling & Measurement Error Kriging (Approach A, GAM Estimates)
+```bash
+# 1. Preprocess reach network using station-mean GAM predictions with uncertainty
+python3 scripts/01_preprocess_orn.py --source=rsn_gam_mean
+
+# 2. Fit S3N model using Approach A Measurement Error Kriging (auto-activated via meas_method="gam")
+Rscript scripts/run_s3n_determinand.R 0117 --source=rsn_gam_mean --basin=Thames
+
+# 3. Fit S3N model on weekly GAM predictions across England
+python3 scripts/01_preprocess_orn.py --source=rsn_gam
+Rscript scripts/run_s3n_determinand.R 0117 --source=rsn_gam
+
+# 4. Explicit CLI flag on any custom dataset with meas_uncertainty
+Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error
+```
+
+#### D. Modeling & Plotting Additional Custom Basins (`--basin=...`)
 ```bash
 # 1. Add the River Eden catchment (CatchID=3125, Solway Tweed RBD) by river name
 Rscript scripts/run_s3n_determinand.R 0117 --basin=Eden
@@ -269,7 +288,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin=Anglian
 Rscript scripts/run_s3n_determinand.R 0117 --basin="South West"
 ```
 
-#### D. Temporal Filtering & Automated Multi-Period Batch Runs
+#### E. Temporal Filtering & Automated Multi-Period Batch Runs
 ```bash
 # 1. Single calendar year (saved to output/det_0117/year_2023/)
 Rscript scripts/run_s3n_determinand.R 0117 --year=2023
@@ -290,7 +309,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --by=season
 Rscript scripts/run_s3n_determinand.R 0117 --by=year --basin=Eden
 ```
 
-#### E. Using Custom `gis`, `data`, and `output` Directory Locations
+#### F. Using Custom `gis`, `data`, and `output` Directory Locations
 All scripts in the pipeline (`01_preprocess_orn.py`, `run_s3n_determinand.R`, `02_fit_s3n_models.R`, `03_generate_plots.R`, `04_compare_model_runs.R`, and `05_descriptive_stats.R`) use relative paths (`gis`, `data`, `output`) by default, and allow overriding any of these three folders via command-line flags or environment variables (`S3N_GIS_DIR`, `S3N_DATA_DIR`, `S3N_OUTPUT_DIR`):
 ```bash
 # 1. Run preprocessing with custom gis and data folders
@@ -326,7 +345,7 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
-| `--source <NAME>` | `rsn` | Monitoring network data source:<br>• `rsn`: River Surveillance Network (`RSN`, default nationwide surveillance dataset)<br>• `ssn`: Small Streams Network (`SSN`, dedicated headwater and tributary dataset)<br>• `rss`: Combined River Surveillance & Small Streams (`RSS`, integrated nationwide dataset)<br>• `<custom>`: Any configured profile in `configs/sources/<name>.json` or custom directory in `data/custom/<name>/`<br>• Multi-source combination: e.g. `--source=rsn+custom` or `--source=rsn,ssn,custom`. Preprocessed outputs are saved to `data/processed/<net>_<source>/` (while default `rsn` preserves backward compatibility at `data/processed/<net>/` and `data/processed/`). See [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md). |
+| `--source <NAME>` | `rsn` | Monitoring network data source:<br>• `rsn`: River Surveillance Network (`RSN`, default nationwide surveillance dataset)<br>• `ssn`: Small Streams Network (`SSN`, dedicated headwater and tributary dataset)<br>• `rss`: Combined River Surveillance & Small Streams (`RSS`, integrated nationwide dataset)<br>• `<custom>`: Any configured profile in `configs/sources/<name>.json` or custom directory in `data/custom/<name>/` (e.g. `rsn_gam_mean`, `rsn_gam`, `waterblitz`). Automatically preserves and propagates measurement uncertainty (`meas_uncertainty`) and estimation method (`meas_method = "gam"`) to reach tables and metadata.<br>• Multi-source combination: e.g. `--source=rsn+custom` or `--source=rsn,ssn,custom`. Preprocessed outputs are saved to `data/processed/<net>_<source>/` (while default `rsn` preserves backward compatibility at `data/processed/<net>/` and `data/processed/`). See [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md). |
 | `--custom-sites <PATH>` | `None` | Direct path to a custom monitoring station points CSV file (e.g. with `site_id`, `easting`, `northing`). Automatically snaps custom points to reaches. |
 | `--custom-samples <PATH>` | `None` | Direct path to a custom sample observations CSV file (e.g. with `site_id`, `sample_datetime`, `meas_result`). |
 | `--custom-dir <DIR>` | `None` | Path to a custom directory containing `sites.csv` and/or `samples.csv`. |

@@ -495,6 +495,8 @@ def load_monitoring_stations_and_records(
                     s_id_col = find_col(s_fnames, ["site_id", "network_id", "station_id", "id", "location_id", "site"])
                     dt_col = find_col(s_fnames, ["sample_datetime", "datetime", "date_time", "date", "survey_date", "timestamp"])
                     val_col = find_col(s_fnames, ["meas_result", "result", "value", "val", "reading", "score", "concentration"])
+                    unc_col = find_col(s_fnames, ["meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"])
+                    meth_col = find_col(s_fnames, ["meas_method", "method", "model_type", "type"])
                     det_col_cand = find_col(s_fnames, ["det_code", "determinand_code", "param_code", "cas_number", "determinand", "code", "metric_name"])
                     sign_col = find_col(s_fnames, ["meas_sign", "less_than_flag", "censored", "is_censored", "qualifier"])
 
@@ -521,7 +523,16 @@ def load_monitoring_stations_and_records(
                         yr = int(dt_str[0:4]) if len(dt_str) >= 4 and dt_str[0:4].isdigit() else 2023
                         mo = int(dt_str[5:7]) if len(dt_str) >= 7 and dt_str[5:7].isdigit() else 6
                         seas = MONTH_TO_SEASON.get(mo, "summer")
-                        all_records.append((s_nid, val, is_cens, yr, mo, seas))
+                        unc_val = None
+                        if unc_col:
+                            raw_unc = r.get(unc_col, "").strip()
+                            if raw_unc:
+                                try:
+                                    unc_val = float(raw_unc)
+                                except ValueError:
+                                    unc_val = None
+                        meth_val = r.get(meth_col, "").strip().lower() if meth_col else ""
+                        all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
 
         # 2. Registered Source Profile (from configs/sources/*.json)
@@ -584,6 +595,8 @@ def load_monitoring_stations_and_records(
                     det_col_c = ds_cfg.get("det_col") or find_col(s_fnames, ["det_code", "determinand_code", "determinand", "code"])
                     cens_col_c = ds_cfg.get("cens_col") or find_col(s_fnames, ["meas_sign", "less_than_flag", "is_censored"])
                     cens_flg = ds_cfg.get("cens_flag", "<").lower()
+                    unc_col = ds_cfg.get("unc_col") or find_col(s_fnames, ["meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"])
+                    meth_col = ds_cfg.get("meth_col") or find_col(s_fnames, ["meas_method", "method", "model_type", "type"])
 
                     for r in s_reader:
                         s_nid = r.get(s_id_col, "").strip()
@@ -608,7 +621,16 @@ def load_monitoring_stations_and_records(
                         yr = int(dt_str[0:4]) if len(dt_str) >= 4 and dt_str[0:4].isdigit() else 2023
                         mo = int(dt_str[5:7]) if len(dt_str) >= 7 and dt_str[5:7].isdigit() else 6
                         seas = MONTH_TO_SEASON.get(mo, "summer")
-                        all_records.append((s_nid, val, is_cens, yr, mo, seas))
+                        unc_val = None
+                        if unc_col:
+                            raw_unc = r.get(unc_col, "").strip()
+                            if raw_unc:
+                                try:
+                                    unc_val = float(raw_unc)
+                                except ValueError:
+                                    unc_val = None
+                        meth_val = r.get(meth_col, "").strip().lower() if meth_col else str(cfg_s.get("meas_method", "")).lower()
+                        all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
 
         # 3. Standard RSN / SSN official datasets
@@ -658,7 +680,7 @@ def load_monitoring_stations_and_records(
                                 yr = int(dt[0:4])
                                 mo = int(dt[5:7])
                                 seas = MONTH_TO_SEASON[mo]
-                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas))
+                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
         elif dataset == "lcms":
             lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
             if not os.path.exists(lcms_path):
@@ -680,7 +702,7 @@ def load_monitoring_stations_and_records(
                             yr = int(dt[0:4])
                             mo = int(dt[5:7])
                             seas = MONTH_TO_SEASON[mo]
-                            all_records.append((r["network_id"], val, is_cens, yr, mo, seas))
+                            all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
         else:
             ds_files = {
                 "inverts": (f"{prefix} Macroinvertebrate Samples.csv", "sample_datetime"),
@@ -711,7 +733,7 @@ def load_monitoring_stations_and_records(
                     yr = int(dt[0:4])
                     mo = int(dt[5:7])
                     seas = MONTH_TO_SEASON[mo]
-                    all_records.append((r["network_id"], val, False, yr, mo, seas))
+                    all_records.append((r["network_id"], val, False, yr, mo, seas, None, ""))
 
     return pts, pts_source, core_wq_sites, all_records
 
@@ -2501,6 +2523,17 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             u_info["is_peat"] = 0
 
     # Write station-level snapping summary (rsn_sites.csv) and multi-period reach table (rsn_reach_periods.csv)
+    unc_by_site = defaultdict(list)
+    meth_by_site = defaultdict(set)
+    for rec in imputed_records:
+        nid = rec[0]
+        unc_val = rec[6] if len(rec) > 6 else None
+        meth_val = rec[7] if len(rec) > 7 else ""
+        if unc_val is not None:
+            unc_by_site[nid].append(unc_val)
+        if meth_val:
+            meth_by_site[nid].add(meth_val)
+
     site_by_reach = defaultdict(list)
     sites_csv_path = os.path.join(OUT_DIR, "rsn_sites.csv")
     with open(sites_csv_path, "w", newline="") as f:
@@ -2509,7 +2542,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             "site_id", "wims_id", "wims_region_code",
             "easting", "northing", "snap_dist_m", "RivID", "CatchID",
             "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median",
-            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate", "included_250m",
+            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate",
+            "meas_uncertainty", "meas_method", "included_250m",
             "source"
         ])
         for nid in all_station_ids:
@@ -2525,6 +2559,10 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             inc = 1 if d <= max_snap_m else 0
             src_str = pts_source.get(nid, "RSN")
             vals = nitrate_by_site.get(nid, [])
+            u_vals = unc_by_site.get(nid, [])
+            m_set = meth_by_site.get(nid, set())
+            site_u = round(math.sqrt(sum(u * u for u in u_vals) / len(u_vals)), 6) if u_vals else ""
+            site_m = sorted(m_set)[0] if m_set else ""
             if vals:
                 m_val = statistics.mean(vals)
                 med_val = statistics.median(vals)
@@ -2537,23 +2575,28 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                 ]
                 m_log = round(statistics.mean(trans_clean), 5) if trans_clean else ""
                 if inc:
-                    site_by_reach[riv_id].append((nid, d, along_m, vals))
+                    site_by_reach[riv_id].append((nid, d, along_m, vals, u_vals, m_set))
                 w.writerow([
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
                     round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), log_m, m_log, inc, src_str
+                    round(sd_val, 4), log_m, m_log, site_u, site_m, inc, src_str
                 ])
             else:
                 w.writerow([
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), 0, "", "", "", "", "", inc, src_str
+                    round(obs_up_km, 5), 0, "", "", "", "", "", "", "", inc, src_str
                 ])
 
     reach_period_vals = defaultdict(list)
+    reach_period_unc = defaultdict(list)
+    reach_period_meth = defaultdict(set)
     reach_along_map = defaultdict(list)
-    for nid, imp_val, yr, mo, seas, _ in imputed_records:
+    for rec in imputed_records:
+        nid, imp_val, yr, mo, seas = rec[0], rec[1], rec[2], rec[3], rec[4]
+        unc_val = rec[6] if len(rec) > 6 else None
+        meth_val = rec[7] if len(rec) > 7 else ""
         if nid not in best_snap:
             continue
         d, r_key, cid_key, along_m = best_snap[nid]
@@ -2565,13 +2608,26 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             reach_period_vals[(riv_id, "season", seas)].append(imp_val)
             reach_period_vals[(riv_id, "month", f"{mo:02d}")].append(imp_val)
             reach_period_vals[(riv_id, "year_season", f"{yr}_{seas}")].append(imp_val)
+            if unc_val is not None:
+                reach_period_unc[(riv_id, "all", "all")].append(unc_val)
+                reach_period_unc[(riv_id, "year", str(yr))].append(unc_val)
+                reach_period_unc[(riv_id, "season", seas)].append(unc_val)
+                reach_period_unc[(riv_id, "month", f"{mo:02d}")].append(unc_val)
+                reach_period_unc[(riv_id, "year_season", f"{yr}_{seas}")].append(unc_val)
+            if meth_val:
+                reach_period_meth[(riv_id, "all", "all")].add(meth_val)
+                reach_period_meth[(riv_id, "year", str(yr))].add(meth_val)
+                reach_period_meth[(riv_id, "season", seas)].add(meth_val)
+                reach_period_meth[(riv_id, "month", f"{mo:02d}")].add(meth_val)
+                reach_period_meth[(riv_id, "year_season", f"{yr}_{seas}")].add(meth_val)
 
     periods_csv_path = os.path.join(OUT_DIR, "rsn_reach_periods.csv")
     with open(periods_csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow([
             "RivID", "CatchID", "period_type", "period_value",
-            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median", "log_nitrate_mean"
+            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median", "log_nitrate_mean",
+            "meas_uncertainty", "meas_method"
         ])
         for (riv_id, p_type, p_val), vals in sorted(reach_period_vals.items()):
             u_info = reaches_by_id[riv_id]
@@ -2582,9 +2638,14 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             med_v = statistics.median(vals)
             trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
             log_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
+            u_list = reach_period_unc.get((riv_id, p_type, p_val), [])
+            m_set = reach_period_meth.get((riv_id, p_type, p_val), set())
+            p_unc = round(math.sqrt(sum(u * u for u in u_list) / len(u_list)), 6) if u_list else ""
+            p_meth = sorted(m_set)[0] if m_set else ""
             w.writerow([
                 riv_id, u_info["catch_id"], p_type, p_val,
-                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv
+                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv,
+                p_unc, p_meth
             ])
 
     # Build catchment lookup table (rsn_catchments_lookup.csv)
@@ -2633,7 +2694,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "Elevation", "Slope", "Sinuosity", "SrcElevation",
         "Is_Chalk_Limestone", "Is_Sandstone", "Is_Aquifer", "Is_Peat",
         "has_obs", "site_id", "snap_dist_m", "obs_up_dist_km",
-        "nitrate_mean", "nitrate_median", "log_nitrate_mean", "n_samples"
+        "nitrate_mean", "nitrate_median", "log_nitrate_mean",
+        "meas_uncertainty", "meas_method", "n_samples"
     ]
     with open(out_reaches_path, "w", newline="") as f:
         w = csv.writer(f)
@@ -2652,6 +2714,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             if riv_id in site_by_reach:
                 s_list = site_by_reach[riv_id]
                 all_vals = [v for s in s_list for v in s[3]]
+                all_uncs = [u for s in s_list for u in s[4]]
+                all_meths = {m for s in s_list for m in s[5] if m}
                 along_m = statistics.mean(s[2] for s in s_list)
                 snap_d = min(s[1] for s in s_list)
                 obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
@@ -2659,6 +2723,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                 med_no3 = statistics.median(all_vals)
                 trans_no3_val = apply_forward_transform(m_no3, ttype=trans_type, lam=eff_lambda)
                 log_no3 = round(trans_no3_val, 5) if trans_no3_val is not None else ""
+                r_unc = round(math.sqrt(sum(u * u for u in all_uncs) / len(all_uncs)), 6) if all_uncs else ""
+                r_meth = sorted(all_meths)[0] if all_meths else ""
                 row_out = [
                     riv_id, u_info["catch_id"], u_info["rbd_id"], parent_dn.get(riv_id, 0),
                     round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(u_info["us_accum_km"], 5),
@@ -2667,7 +2733,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                     round(u_info["elevation"], 3), round(u_info["slope"], 4), round(u_info["sinuosity"], 4), round(u_info["src_elevation"], 3),
                     u_info["is_chalk_lime"], u_info["is_sand"], u_info["is_aq"], u_info["is_peat"],
                     1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
-                    round(m_no3, 4), round(med_no3, 4), log_no3, len(all_vals)
+                    round(m_no3, 4), round(med_no3, 4), log_no3,
+                    r_unc, r_meth, len(all_vals)
                 ]
             else:
                 row_out = [
@@ -2678,10 +2745,11 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                     round(u_info["elevation"], 3), round(u_info["slope"], 4), round(u_info["sinuosity"], 4), round(u_info["src_elevation"], 3),
                     u_info["is_chalk_lime"], u_info["is_sand"], u_info["is_aq"], u_info["is_peat"],
                     0, "", "", round(up_mid_km, 5),
-                    "", "", "", 0
+                    "", "", "", "", "", 0
                 ]
             w.writerow(row_out + extra_vals)
 
+    active_meas_method = "gam" if any("gam" in s[5] for s_list in site_by_reach.values() for s in s_list) else None
     meta_path = os.path.join(OUT_DIR, "network_metadata.json")
     meta_obj = {
         "name": cfg.get("name", net_abbr),
@@ -2691,8 +2759,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "source": source_key,
         "source_abbr": source_abbr,
         "source_label": source_label,
-        "range_mode": active_range_mode,
         "range_mode": range_mode,
+        "meas_method": active_meas_method,
+        "has_meas_uncertainty": bool(active_meas_method),
         "crs_epsg": crs_epsg,
         "topology_mode": topo_mode,
         "max_snap_dist_m": max_snap_m,
@@ -2992,22 +3061,31 @@ def main():
     )
 
     raw_all_by_site = defaultdict(list)
-    for nid, val, is_cens, yr, mo, seas in all_records:
+    for rec in all_records:
+        nid, val, is_cens = rec[0], rec[1], rec[2]
         raw_all_by_site[nid].append((val, is_cens))
     imp_all_by_site = impute_censored_by_site(raw_all_by_site, method=args.censor_method)
 
     site_cursors = defaultdict(int)
     imputed_records = []
-    for nid, val, is_cens, yr, mo, seas in all_records:
+    for rec in all_records:
+        nid, val, is_cens, yr, mo, seas = rec[0], rec[1], rec[2], rec[3], rec[4], rec[5]
+        unc_val = rec[6] if len(rec) > 6 else None
+        meth_val = rec[7] if len(rec) > 7 else ""
         idx = site_cursors[nid]
         site_cursors[nid] += 1
         imp_val = imp_all_by_site[nid][idx]
-        imputed_records.append((nid, imp_val, yr, mo, seas, is_cens))
+        imputed_records.append((nid, imp_val, yr, mo, seas, is_cens, unc_val, meth_val))
 
     nitrate_by_site = defaultdict(list)
+    unc_by_site = defaultdict(list)
+    meth_by_site = defaultdict(set)
     n_slice_samples = 0
     n_slice_cens = 0
-    for nid, imp_val, yr, mo, seas, is_cens in imputed_records:
+    for rec in imputed_records:
+        nid, imp_val, yr, mo, seas, is_cens = rec[0], rec[1], rec[2], rec[3], rec[4], rec[5]
+        unc_val = rec[6] if len(rec) > 6 else None
+        meth_val = rec[7] if len(rec) > 7 else ""
         if args.year is not None and yr != args.year:
             continue
         if season_filter is not None and seas != season_filter:
@@ -3015,6 +3093,10 @@ def main():
         if month_filter is not None and mo != month_filter:
             continue
         nitrate_by_site[nid].append(imp_val)
+        if unc_val is not None:
+            unc_by_site[nid].append(unc_val)
+        if meth_val:
+            meth_by_site[nid].add(meth_val)
         n_slice_samples += 1
         if is_cens:
             n_slice_cens += 1
@@ -3102,7 +3184,8 @@ def main():
             "site_id", "wims_id", "wims_region_code",
             "easting", "northing", "snap_dist_m", "RivID", "CatchID",
             "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median",
-            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate", "included_250m",
+            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate",
+            "meas_uncertainty", "meas_method", "included_250m",
             "source"
         ])
         for nid in all_station_ids:
@@ -3114,6 +3197,10 @@ def main():
             inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
             src_str = pts_source.get(nid, "RSN")
             vals = nitrate_by_site.get(nid, [])
+            u_vals = unc_by_site.get(nid, [])
+            m_set = meth_by_site.get(nid, set())
+            site_u = round(math.sqrt(sum(u * u for u in u_vals) / len(u_vals)), 6) if u_vals else ""
+            site_m = sorted(m_set)[0] if m_set else ""
             if vals:
                 m_val = statistics.mean(vals)
                 med_val = statistics.median(vals)
@@ -3126,25 +3213,30 @@ def main():
                 ]
                 m_log = round(statistics.mean(trans_clean), 5) if trans_clean else ""
                 if inc:
-                    site_by_reach[riv_id].append((nid, d, along, vals))
+                    site_by_reach[riv_id].append((nid, d, along, vals, u_vals, m_set))
                 w.writerow([
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
                     round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), log_m, m_log, inc, src_str
+                    round(sd_val, 4), log_m, m_log, site_u, site_m, inc, src_str
                 ])
             else:
                 w.writerow([
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), 0, "", "", "", "", "", inc, src_str
+                    round(obs_up_km, 5), 0, "", "", "", "", "", "", "", inc, src_str
                 ])
 
     reach_period_vals = defaultdict(list)
+    reach_period_unc = defaultdict(list)
+    reach_period_meth = defaultdict(set)
     reach_along_map = defaultdict(list)
     reach_catch_map = {}
     reach_d2m_map = {}
-    for nid, imp_val, yr, mo, seas, _ in imputed_records:
+    for rec in imputed_records:
+        nid, imp_val, yr, mo, seas = rec[0], rec[1], rec[2], rec[3], rec[4]
+        unc_val = rec[6] if len(rec) > 6 else None
+        meth_val = rec[7] if len(rec) > 7 else ""
         if nid not in best_snap:
             continue
         d, riv_id, catch_id, along, d2m = best_snap[nid]
@@ -3157,13 +3249,26 @@ def main():
             reach_period_vals[(riv_id, "season", seas)].append(imp_val)
             reach_period_vals[(riv_id, "month", f"{mo:02d}")].append(imp_val)
             reach_period_vals[(riv_id, "year_season", f"{yr}_{seas}")].append(imp_val)
+            if unc_val is not None:
+                reach_period_unc[(riv_id, "all", "all")].append(unc_val)
+                reach_period_unc[(riv_id, "year", str(yr))].append(unc_val)
+                reach_period_unc[(riv_id, "season", seas)].append(unc_val)
+                reach_period_unc[(riv_id, "month", f"{mo:02d}")].append(unc_val)
+                reach_period_unc[(riv_id, "year_season", f"{yr}_{seas}")].append(unc_val)
+            if meth_val:
+                reach_period_meth[(riv_id, "all", "all")].add(meth_val)
+                reach_period_meth[(riv_id, "year", str(yr))].add(meth_val)
+                reach_period_meth[(riv_id, "season", seas)].add(meth_val)
+                reach_period_meth[(riv_id, "month", f"{mo:02d}")].add(meth_val)
+                reach_period_meth[(riv_id, "year_season", f"{yr}_{seas}")].add(meth_val)
 
     periods_csv_path = os.path.join(OUT_DIR, "rsn_reach_periods.csv")
     with open(periods_csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow([
             "RivID", "CatchID", "period_type", "period_value",
-            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median", "log_nitrate_mean"
+            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median", "log_nitrate_mean",
+            "meas_uncertainty", "meas_method"
         ])
         for (riv_id, p_type, p_val), vals in sorted(reach_period_vals.items()):
             d2m_km = reach_d2m_map[riv_id] / 1000.0
@@ -3173,9 +3278,14 @@ def main():
             med_v = statistics.median(vals)
             trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
             log_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
+            u_list = reach_period_unc.get((riv_id, p_type, p_val), [])
+            m_set = reach_period_meth.get((riv_id, p_type, p_val), set())
+            p_unc = round(math.sqrt(sum(u * u for u in u_list) / len(u_list)), 6) if u_list else ""
+            p_meth = sorted(m_set)[0] if m_set else ""
             w.writerow([
                 riv_id, reach_catch_map[riv_id], p_type, p_val,
-                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv
+                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv,
+                p_unc, p_meth
             ])
 
     print(
@@ -3303,7 +3413,8 @@ def main():
             "Elevation", "Slope", "Sinuosity", "SrcElevation",
             "Is_Chalk_Limestone", "Is_Sandstone", "Is_Aquifer", "Is_Peat",
             "has_obs", "site_id", "snap_dist_m", "obs_up_dist_km",
-            "nitrate_mean", "nitrate_median", "log_nitrate_mean", "n_samples"
+            "nitrate_mean", "nitrate_median", "log_nitrate_mean",
+            "meas_uncertainty", "meas_method", "n_samples"
         ])
         for riv_id in topo_order:
             r = reaches[riv_id]
@@ -3323,6 +3434,8 @@ def main():
             if riv_id in site_by_reach:
                 s_list = site_by_reach[riv_id]
                 all_vals = [v for s in s_list for v in s[3]]
+                all_uncs = [u for s in s_list for u in s[4]]
+                all_meths = {m for s in s_list for m in s[5] if m}
                 along_m = statistics.mean(s[2] for s in s_list)
                 snap_d = min(s[1] for s in s_list)
                 obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
@@ -3330,6 +3443,8 @@ def main():
                 med_no3 = statistics.median(all_vals)
                 trans_no3_val = apply_forward_transform(m_no3, ttype=trans_type, lam=eff_lambda)
                 log_no3 = round(trans_no3_val, 5) if trans_no3_val is not None else ""
+                r_unc = round(math.sqrt(sum(u * u for u in all_uncs) / len(all_uncs)), 6) if all_uncs else ""
+                r_meth = sorted(all_meths)[0] if all_meths else ""
                 w.writerow([
                     riv_id, r[3], r[4], parent_dn.get(riv_id, 0),
                     round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(r[6] / 1000.0, 5),
@@ -3338,7 +3453,8 @@ def main():
                     round(rc[0] or 0.0, 3), round(rc[1] or 0.0, 4), round(rc[2] or 1.0, 4), round(rc[5] or rc[0] or 0.0, 3),
                     is_chalk_lime, is_sand, is_aq, is_peat,
                     1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
-                    round(m_no3, 4), round(med_no3, 4), log_no3, len(all_vals)
+                    round(m_no3, 4), round(med_no3, 4), log_no3,
+                    r_unc, r_meth, len(all_vals)
                 ])
             else:
                 w.writerow([
@@ -3349,9 +3465,10 @@ def main():
                     round(rc[0] or 0.0, 3), round(rc[1] or 0.0, 4), round(rc[2] or 1.0, 4), round(rc[5] or rc[0] or 0.0, 3),
                     is_chalk_lime, is_sand, is_aq, is_peat,
                     0, "", "", round(up_mid_km, 5),
-                    "", "", "", 0
+                    "", "", "", "", "", 0
                 ])
 
+    active_meas_method = "gam" if any("gam" in s[5] for s_list in site_by_reach.values() for s in s_list) else None
     meta_path = os.path.join(OUT_DIR, "network_metadata.json")
     meta_obj = {
         "name": cfg.get("name", "orn"),
@@ -3362,6 +3479,8 @@ def main():
         "source_abbr": source_abbr,
         "source_label": source_label,
         "range_mode": active_range_mode,
+        "meas_method": active_meas_method,
+        "has_meas_uncertainty": bool(active_meas_method),
         "crs_epsg": 27700,
         "topology_mode": "nodes",
         "max_snap_dist_m": max_snap_m,

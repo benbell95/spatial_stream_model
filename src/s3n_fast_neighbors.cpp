@@ -301,5 +301,193 @@ SEXP C_compute_s3n_neighbors(
     return out;
 }
 
+// Solves C * x = b for an m x m symmetric positive definite matrix C using Cholesky.
+// If C has zero or negative pivots, adds progressive jitter to diagonal.
+static bool solve_chol_stack(int m, const double* C, const double* b, double* x) {
+    if (m <= 0 || m > 64) return false;
+    double L[64 * 64];
+    double jitter = 0.0;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        bool ok = true;
+        for (int i = 0; i < m; ++i) {
+            for (int j = 0; j <= i; ++j) {
+                double s = C[i * m + j];
+                if (i == j) s += jitter;
+                for (int k = 0; k < j; ++k) {
+                    s -= L[i * m + k] * L[j * m + k];
+                }
+                if (i == j) {
+                    if (s <= 1e-12) {
+                        ok = false;
+                        break;
+                    }
+                    L[i * m + j] = std::sqrt(s);
+                } else {
+                    L[i * m + j] = s / L[j * m + j];
+                }
+            }
+            if (!ok) break;
+        }
+        if (ok) {
+            double y[64];
+            for (int i = 0; i < m; ++i) {
+                double s = b[i];
+                for (int k = 0; k < i; ++k) {
+                    s -= L[i * m + k] * y[k];
+                }
+                y[i] = s / L[i * m + i];
+            }
+            for (int i = m - 1; i >= 0; --i) {
+                double s = y[i];
+                for (int k = i + 1; k < m; ++k) {
+                    s -= L[k * m + i] * x[k];
+                }
+                x[i] = s / L[i * m + i];
+            }
+            return true;
+        }
+        jitter = (jitter == 0.0) ? 1e-6 : jitter * 10.0;
+    }
+    for (int i = 0; i < m; ++i) {
+        double d = C[i * m + i] + 1e-4;
+        x[i] = b[i] / d;
+    }
+    return false;
 }
+
+// Fast NNGP Kriging Prediction with Heteroskedastic Measurement Error (Approach A)
+// Solves: [sigma^2 * R + tau_micro^2 * I + diag(v_meas)] * lambda = c
+// for each reach i in 0..q-1.
+SEXP C_s3n_predict_meas_error(
+    SEXP X_r,            // n x p matrix of observed covariates
+    SEXP y_r,            // n x 1 matrix of observed response
+    SEXP v_meas_r,       // n vector of measurement error variances (>= 0)
+    SEXP X0_r,           // q x p matrix of target reach covariates
+    SEXP Beta_r,         // p vector of fixed effect coefficients
+    SEXP Theta_r,        // 3 vector: sigma.sq, tau.sq (microscale), phi
+    SEXP m_r,            // integer scalar: number of neighbors m
+    SEXP pred_nnIndx_r,  // (q * m) 0-based neighbor indices
+    SEXP pred_nnDist_r,  // (q * m) target-to-neighbor distances
+    SEXP pred_nnWght_r,  // (q * m) target-to-neighbor weights
+    SEXP obsobs_dist_r,  // n x n neighbor pairwise distances
+    SEXP obsobs_wt_r     // n x n neighbor pairwise weights
+) {
+    int n = Rf_nrows(X_r);
+    int p = Rf_ncols(X_r);
+    int q = Rf_nrows(X0_r);
+    int m = INTEGER(m_r)[0];
+    if (m > 64) m = 64;
+
+    const double* X = REAL(X_r);
+    const double* y = REAL(y_r);
+    const double* v_meas = (Rf_length(v_meas_r) > 0) ? REAL(v_meas_r) : nullptr;
+    const double* X0 = REAL(X0_r);
+    const double* Beta = REAL(Beta_r);
+    const double* Theta = REAL(Theta_r);
+    double sigma_sq = Theta[0];
+    double tau_sq = Theta[1];
+    double phi = Theta[2];
+
+    const int* pred_nnIndx = INTEGER(pred_nnIndx_r);
+    const double* pred_nnDist = REAL(pred_nnDist_r);
+    const double* pred_nnWght = REAL(pred_nnWght_r);
+    const double* obsobs_dist = REAL(obsobs_dist_r);
+    const double* obsobs_wt = REAL(obsobs_wt_r);
+
+    SEXP pred_r = PROTECT(Rf_allocVector(REALSXP, q));
+    SEXP se_r = PROTECT(Rf_allocVector(REALSXP, q));
+    SEXP ci_r = PROTECT(Rf_allocMatrix(REALSXP, q, 2));
+    double* pred = REAL(pred_r);
+    double* se = REAL(se_r);
+    double* ci = REAL(ci_r);
+
+    #pragma omp parallel for schedule(dynamic, 64)
+    for (int i = 0; i < q; ++i) {
+        // 1. Mean prediction at reach i
+        double mu_0 = 0.0;
+        for (int b = 0; b < p; ++b) {
+            mu_0 += X0[i + b * q] * Beta[b];
+        }
+
+        // 2. Neighbor indices, distances, weights
+        int base_p = i * m;
+        double C[64 * 64];
+        double c[64];
+        double lambda[64];
+        double resid[64];
+
+        for (int k = 0; k < m; ++k) {
+            int idx_k = pred_nnIndx[base_p + k];
+            if (idx_k < 0) idx_k = 0;
+            if (idx_k >= n) idx_k = n - 1;
+
+            double d_ik = pred_nnDist[base_p + k];
+            double w_ik = pred_nnWght[base_p + k];
+            c[k] = sigma_sq * w_ik * std::exp(-phi * d_ik);
+
+            double mu_k = 0.0;
+            for (int b = 0; b < p; ++b) {
+                mu_k += X[idx_k + b * n] * Beta[b];
+            }
+            resid[k] = y[idx_k] - mu_k;
+        }
+
+        // 3. Build m x m covariance matrix C
+        for (int k = 0; k < m; ++k) {
+            int idx_k = pred_nnIndx[base_p + k];
+            if (idx_k < 0) idx_k = 0;
+            if (idx_k >= n) idx_k = n - 1;
+
+            for (int l = 0; l <= k; ++l) {
+                int idx_l = pred_nnIndx[base_p + l];
+                if (idx_l < 0) idx_l = 0;
+                if (idx_l >= n) idx_l = n - 1;
+
+                double D_kl = obsobs_dist[idx_k + idx_l * n];
+                double W_kl = obsobs_wt[idx_k + idx_l * n];
+                double cov_val = sigma_sq * W_kl * std::exp(-phi * D_kl);
+
+                if (k == l) {
+                    cov_val += tau_sq + (v_meas ? v_meas[idx_k] : 0.0);
+                }
+                C[k * m + l] = cov_val;
+                C[l * m + k] = cov_val;
+            }
+        }
+
+        // 4. Solve C * lambda = c
+        solve_chol_stack(m, C, c, lambda);
+
+        // 5. Compute spatial prediction
+        double delta_y = 0.0;
+        double lambda_dot_c = 0.0;
+        for (int k = 0; k < m; ++k) {
+            delta_y += lambda[k] * resid[k];
+            lambda_dot_c += lambda[k] * c[k];
+        }
+
+        double y_pred = mu_0 + delta_y;
+        double v_pred = sigma_sq + tau_sq - lambda_dot_c;
+        if (v_pred < 1e-8) v_pred = 1e-8;
+        double s_pred = std::sqrt(v_pred);
+
+        pred[i] = y_pred;
+        se[i] = s_pred;
+        ci[i] = y_pred - 1.959964 * s_pred;
+        ci[i + q] = y_pred + 1.959964 * s_pred;
+    }
+
+    SEXP out = PROTECT(Rf_allocVector(VECSXP, 3));
+    SEXP out_names = PROTECT(Rf_allocVector(STRSXP, 3));
+    SET_VECTOR_ELT(out, 0, pred_r); SET_STRING_ELT(out_names, 0, Rf_mkChar("prediction"));
+    SET_VECTOR_ELT(out, 1, ci_r);   SET_STRING_ELT(out_names, 1, Rf_mkChar("prediction.ci"));
+    SET_VECTOR_ELT(out, 2, se_r);   SET_STRING_ELT(out_names, 2, Rf_mkChar("se"));
+    Rf_setAttrib(out, R_NamesSymbol, out_names);
+
+    UNPROTECT(5);
+    return out;
+}
+
+}
+
 
