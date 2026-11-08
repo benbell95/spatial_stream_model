@@ -414,7 +414,7 @@ if (!is.na(detected_range_mode)) {
       source_tag <- paste0(source_tag, "_", detected_range_mode)
     }
   } else {
-    source_tag <- paste0("src_", detected_range_mode)
+    source_tag <- detected_range_mode
   }
   if (!grepl(paste0("_", detected_range_mode, "$"), source_cli)) {
     source_cli <- paste0(source_cli, "_", detected_range_mode)

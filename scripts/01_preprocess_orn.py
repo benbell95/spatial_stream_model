@@ -73,14 +73,95 @@ def _rel_join(base, *parts):
     return p
 
 
-GIS_DIR = os.environ.get("S3N_GIS_DIR") or _rel_join(BASE_DIR, "gis")
-DATA_DIR = os.environ.get("S3N_DATA_DIR") or _rel_join(BASE_DIR, "data")
-RSN_DIR = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
-SSN_DIR = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
+def find_directory_config_file(base_dir=BASE_DIR):
+    """Finds existing directory configuration file in configs/ or root, or returns canonical path."""
+    candidates = [
+        _rel_join(base_dir, "configs", "directories.json"),
+        _rel_join(base_dir, "configs", "paths.json"),
+        _rel_join(base_dir, "config.json"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return candidates[0]
+
+
+def ensure_directory_config(base_dir=BASE_DIR, default_data="data", default_gis="gis", default_out="output"):
+    """
+    Creates configs/directories.json automatically if no directory config file exists yet.
+    Returns (cfg_file_path, was_created).
+    """
+    cfg_file = find_directory_config_file(base_dir)
+    created = False
+    if not os.path.exists(cfg_file):
+        os.makedirs(os.path.dirname(os.path.abspath(cfg_file)), exist_ok=True)
+        default_cfg = {
+            "data_dir": default_data,
+            "gis_dir": default_gis,
+            "output_dir": default_out
+        }
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            json.dump(default_cfg, f, indent=2)
+            f.write("\n")
+        created = True
+        print(f"   [Config] Created directory configuration file: {cfg_file}")
+    return cfg_file, created
+
+
+def load_directory_config(base_dir=BASE_DIR, auto_create=False):
+    """
+    Loads directory configuration from configs/directories.json (or paths.json / config.json).
+    If auto_create=True, creates the file with default locations if not found.
+    Resolves relative paths against base_dir.
+    """
+    cfg_file = find_directory_config_file(base_dir)
+    if not os.path.exists(cfg_file) and auto_create:
+        ensure_directory_config(base_dir)
+
+    raw_cfg = {}
+    if os.path.exists(cfg_file):
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                raw_cfg = json.load(f)
+        except Exception as e:
+            print(f"   [Warning] Could not parse directory config {cfg_file}: {e}")
+
+    def _resolve(val, default):
+        p = str(val).strip() if (val is not None and str(val).strip()) else default
+        p = os.path.expanduser(p)
+        if not os.path.isabs(p):
+            p = _rel_join(base_dir, p)
+        return p
+
+    data_dir = _resolve(raw_cfg.get("data_dir") or raw_cfg.get("data") or raw_cfg.get("DATA_DIR"), "data")
+    gis_dir = _resolve(raw_cfg.get("gis_dir") or raw_cfg.get("gis") or raw_cfg.get("GIS_DIR"), "gis")
+    output_dir = _resolve(
+        raw_cfg.get("output_dir") or raw_cfg.get("out_dir") or raw_cfg.get("output") or raw_cfg.get("out") or raw_cfg.get("OUTPUT_DIR"),
+        "output"
+    )
+    proc_val = raw_cfg.get("processed_dir") or raw_cfg.get("processed") or raw_cfg.get("PROCESSED_DIR")
+    proc_dir = _resolve(proc_val, _rel_join(data_dir, "processed")) if proc_val else _rel_join(data_dir, "processed")
+
+    return {
+        "config_file": cfg_file if os.path.exists(cfg_file) else None,
+        "data_dir": data_dir,
+        "gis_dir": gis_dir,
+        "output_dir": output_dir,
+        "processed_dir": proc_dir,
+    }
+
+
+DIR_CONFIG = load_directory_config(BASE_DIR, auto_create=False)
+GIS_DIR = os.environ.get("S3N_GIS_DIR") or DIR_CONFIG["gis_dir"]
+DATA_DIR = os.environ.get("S3N_DATA_DIR") or DIR_CONFIG["data_dir"]
+cand_rsn = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+RSN_DIR = cand_rsn if os.path.isdir(cand_rsn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")) else cand_rsn)
+cand_ssn = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
+SSN_DIR = cand_ssn if os.path.isdir(cand_ssn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "SSN Water Quality Samples.csv")) else cand_ssn)
 WQ_DIR = RSN_DIR
 CONFIG_DIR = _rel_join(BASE_DIR, "configs", "networks")
 SOURCE_CONFIG_DIR = _rel_join(BASE_DIR, "configs", "sources")
-OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or _rel_join(DATA_DIR, "processed")
+OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or DIR_CONFIG["processed_dir"]
 
 
 def wgs84_to_bng(lat, lon):
@@ -395,20 +476,28 @@ def print_available_sources(base_dir=BASE_DIR):
 
 def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
     """Updates global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, and OUT_DIR from CLI or environment overrides."""
-    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, OUT_DIR
+    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, OUT_DIR, DIR_CONFIG
+    DIR_CONFIG = load_directory_config(BASE_DIR, auto_create=False)
     if gis_dir:
         GIS_DIR = gis_dir
+    else:
+        GIS_DIR = os.environ.get("S3N_GIS_DIR") or DIR_CONFIG["gis_dir"]
+
     if data_dir:
         DATA_DIR = data_dir
-        cand_rsn = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
-        RSN_DIR = cand_rsn if os.path.isdir(cand_rsn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")) else cand_rsn)
-        cand_ssn = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
-        SSN_DIR = cand_ssn if os.path.isdir(cand_ssn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "SSN Water Quality Samples.csv")) else cand_ssn)
-        WQ_DIR = RSN_DIR
-        if not out_dir:
-            OUT_DIR = _rel_join(DATA_DIR, "processed")
+    else:
+        DATA_DIR = os.environ.get("S3N_DATA_DIR") or DIR_CONFIG["data_dir"]
+
+    cand_rsn = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
+    RSN_DIR = cand_rsn if os.path.isdir(cand_rsn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")) else cand_rsn)
+    cand_ssn = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
+    SSN_DIR = cand_ssn if os.path.isdir(cand_ssn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "SSN Water Quality Samples.csv")) else cand_ssn)
+    WQ_DIR = RSN_DIR
+
     if out_dir:
         OUT_DIR = out_dir
+    else:
+        OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or DIR_CONFIG["processed_dir"]
     os.makedirs(OUT_DIR, exist_ok=True)
 
 
@@ -1928,22 +2017,28 @@ def ensure_gpkg_paths(cfg):
 
 def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
     """
-    Writes generated output files into `data/processed/<net_abbr>[_<source>]/` AND copies them
-    into `data/processed/` when source is 'rsn' so downstream scripts work with or without `--network`.
+    Writes generated output files into `data/processed/<net_abbr>_<source>/` (e.g. `orn_rsn`, `orn_ssn`)
+    AND copies them into `data/processed/<net_abbr>/` and `data/processed/` root when source is 'rsn'
+    so downstream scripts work seamlessly with or without `--network`.
     """
     source_key, _, _, _ = resolve_source_tag(source)
-    sub_name = net_abbr if source_key == "rsn" else f"{net_abbr}_{source_key}"
-    net_dir = os.path.join(DATA_DIR, "processed", sub_name)
+    tagged_name = f"{net_abbr}_{source_key}"
+    net_dir = os.path.join(DATA_DIR, "processed", tagged_name)
     os.makedirs(net_dir, exist_ok=True)
     for fname, src_path in files_dict.items():
         dst_net = os.path.join(net_dir, fname)
         if os.path.abspath(src_path) != os.path.abspath(dst_net):
             shutil.copy2(src_path, dst_net)
 
-    # For default RSN, also ensure outputs are available at data/processed/ root
+    # For default RSN, also ensure outputs are available at bare net_abbr (orn) and proc_root fallback
     if source_key == "rsn":
+        bare_dir = os.path.join(DATA_DIR, "processed", net_abbr)
+        os.makedirs(bare_dir, exist_ok=True)
         proc_root = os.path.join(DATA_DIR, "processed")
         for fname, src_path in files_dict.items():
+            dst_bare = os.path.join(bare_dir, fname)
+            if os.path.abspath(src_path) != os.path.abspath(dst_bare):
+                shutil.copy2(src_path, dst_bare)
             dst_root = os.path.join(proc_root, fname)
             if os.path.abspath(src_path) != os.path.abspath(dst_root):
                 shutil.copy2(src_path, dst_root)
@@ -1951,12 +2046,14 @@ def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
 
 def load_orn_spatial_reference():
     """
-    Loads the pre-extracted ORN England reaches (`data/processed/orn/england_rsn_reaches.csv`)
+    Loads the pre-extracted ORN England reaches (`data/processed/orn_rsn/england_rsn_reaches.csv`)
     into a fast 2 km spatial hash grid in EPSG:27700 so non-ORN networks in England
     can inherit BGS bedrock/superficial geology (`Is_Chalk_Limestone`, `Is_Sandstone`,
     `Is_Aquifer`, `Is_Peat`), `RBD_ID`, and fallback `Elevation`/`Slope` in < 0.2s.
     """
-    orn_csv = os.path.join(DATA_DIR, "processed", "orn", "england_rsn_reaches.csv")
+    orn_csv = os.path.join(DATA_DIR, "processed", "orn_rsn", "england_rsn_reaches.csv")
+    if not os.path.exists(orn_csv):
+        orn_csv = os.path.join(DATA_DIR, "processed", "orn", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
         orn_csv = os.path.join(OUT_DIR, "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
@@ -2968,6 +3065,7 @@ def main():
         help="List available monitoring data sources (RSN, SSN, RSS, custom) and their configuration, then exit.",
     )
     args = parser.parse_args()
+    ensure_directory_config(BASE_DIR)
     if args.list_transforms:
         print_available_transforms()
         return
@@ -3009,7 +3107,7 @@ def main():
     net_abbr = cfg["abbr"]
 
     if not args.out_dir:
-        sub_name = net_abbr if source_key == "rsn" else f"{net_abbr}_{source_key}"
+        sub_name = f"{net_abbr}_{source_key}"
         OUT_DIR = _rel_join(DATA_DIR, "processed", sub_name)
     os.makedirs(OUT_DIR, exist_ok=True)
 

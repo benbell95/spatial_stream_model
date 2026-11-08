@@ -288,9 +288,9 @@ Available CLI overrides in [`scripts/01_preprocess_orn.py`](../scripts/01_prepro
 - `--topology-mode=auto|nodes|pointer|geometry`: Override how downstream reach connectivity is constructed.
 - `--afv-col=<col>`: Override the attribute column used to compute Tail-Up additive function weights (`afv`).
 - `--max-snap-dist=<meters>`: Override the maximum station-to-reach snapping distance (default `250`).
-- `--gis-dir=<dir>`: Custom directory containing `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` GIS files (default `gis`).
-- `--data-dir=<dir>`: Custom root data directory containing RSN inputs and `processed/` outputs (default `data`).
-- `--out-dir=<dir>` (or `--output-dir=<dir>`): Custom output directory for preprocessed network CSV tables (default `<data-dir>/processed`).
+- `--gis-dir=<dir>`: Custom directory containing `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` GIS files (defaults to `configs/directories.json` or `gis`).
+- `--data-dir=<dir>`: Custom root data directory containing RSN inputs and `processed/` outputs (defaults to `configs/directories.json` or `data`).
+- `--out-dir=<dir>` (or `--output-dir=<dir>`): Custom output directory for preprocessed network CSV tables (defaults to `<data-dir>/processed`).
 
 ---
 

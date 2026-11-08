@@ -63,6 +63,39 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCRIPT_DIR)
 
 
+def load_directory_config(base_dir=BASE_DIR):
+    """Loads directory configuration from configs/directories.json, paths.json, or config.json."""
+    candidates = [
+        os.path.join(base_dir, "configs", "directories.json"),
+        os.path.join(base_dir, "configs", "paths.json"),
+        os.path.join(base_dir, "config.json"),
+    ]
+    cfg_file = None
+    for c in candidates:
+        if os.path.isfile(c):
+            cfg_file = c
+            break
+
+    raw_cfg = {}
+    if cfg_file:
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                raw_cfg = json.load(f)
+        except Exception:
+            pass
+
+    def _resolve(val, default):
+        p = str(val).strip() if (val is not None and str(val).strip()) else default
+        p = os.path.expanduser(p)
+        if not os.path.isabs(p):
+            p = os.path.join(base_dir, p)
+        return p
+
+    data_dir = _resolve(raw_cfg.get("data_dir") or raw_cfg.get("data") or raw_cfg.get("DATA_DIR"), "data")
+    output_dir = _resolve(raw_cfg.get("output_dir") or raw_cfg.get("out_dir") or raw_cfg.get("output") or raw_cfg.get("OUTPUT_DIR"), "output")
+    return {"data_dir": data_dir, "output_dir": output_dir, "config_file": cfg_file}
+
+
 # ==============================================================================
 # 1. Coordinate Reference System (CRS) Projection Helpers
 # ==============================================================================
@@ -667,9 +700,12 @@ def format_custom_dataset(
     raw_source_label = source_label or source_name.replace("_", " ").title()
     source_label = raw_source_label
 
+    dir_cfg = load_directory_config(BASE_DIR)
+    data_root = dir_cfg["data_dir"]
+
     explicit_out_dir = bool(output_dir)
     if not output_dir:
-        output_dir = os.path.join(BASE_DIR, "data", "custom", source_name)
+        output_dir = os.path.join(data_root, "custom", source_name)
     os.makedirs(output_dir, exist_ok=True)
 
     # 3. Read Header and Determine Column Mapping
@@ -1024,9 +1060,9 @@ def format_custom_dataset(
         if not source_name.endswith(mode_suffix):
             tagged_source_name = f"{source_name}{mode_suffix}"
         
-        default_dir = os.path.join(BASE_DIR, "data", "custom", source_name)
+        default_dir = os.path.join(data_root, "custom", source_name)
         if (not explicit_out_dir) or (output_dir == default_dir) or (os.path.basename(output_dir) == source_name):
-            output_dir = os.path.join(BASE_DIR, "data", "custom", tagged_source_name)
+            output_dir = os.path.join(data_root, "custom", tagged_source_name)
         
         if f"[{effective_mode.title()}]" not in source_label:
             source_label = f"{raw_source_label} [{effective_mode.title()}]"

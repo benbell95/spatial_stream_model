@@ -117,17 +117,14 @@ dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 
 trans_tag <- format_transform_folder_tag(trans_obj, default_type = "log")
 vars_tag  <- format_covariates_folder_tag(var_specs)
-sub_tag   <- if (net_meta$abbr != "orn") paste0("net_", net_meta$abbr) else ""
-if (nzchar(source_tag)) {
-  sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", source_tag) else source_tag
-}
+sub_tag <- paste0(net_meta$abbr, "_", source_tag)
 if (nzchar(trans_tag)) {
-  sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", trans_tag) else trans_tag
+  sub_tag <- paste0(sub_tag, "_", trans_tag)
 }
 if (nzchar(vars_tag)) {
-  sub_tag <- if (nzchar(sub_tag)) paste0(sub_tag, "_", vars_tag) else vars_tag
+  sub_tag <- paste0(sub_tag, "_", vars_tag)
 }
-OUT_ROOT <- if (nzchar(sub_tag)) rel_path(OUT_BASE, sub_tag) else OUT_BASE
+OUT_ROOT <- rel_path(OUT_BASE, sub_tag)
 dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)

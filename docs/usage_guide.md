@@ -40,7 +40,7 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | Option / Argument | Default | Description |
 | :--- | :--- | :--- |
 | `<code_or_var>` | *(Required)* | Either a 4-digit EA RSN determinand code (e.g., `0117` for Nitrate, `0180` for Orthophosphate, `0061` for pH) **or** an ecological/habitat metric column name (e.g., `whpt_aspt`, `whpt_ntaxa`, `life_family_index`, `psi_family_score`, `rmni`, `hqa_score`). |
-| `--source=<name>` | `rsn` | Selects the monitoring station network data source:<br>• `rsn`: **River Surveillance Network** ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the default nationwide surveillance network (1,382 monitoring stations across wider rivers)<br>• `ssn`: **Small Streams Network** ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), dedicated to headwaters and smaller tributaries (313 monitoring stations; saves outputs to `output/det_<code>_<net>_src_ssn/`)<br>• `rss`: **Combined River Surveillance & Small Streams** ([`RSS`](../data/processed/orn_rss/)), merging RSN + SSN into a single integrated dataset (1,695 stations, 1,384 snapped observed reaches on ORN v2; saves outputs to `output/det_<code>_<net>_src_rss/`)<br>• **Custom or registered source**: e.g. `--source=my_study`, `--source=riverfly`, `--source=river_guardians`<br>• **Multi-source delimiter combination**: e.g. `--source=rsn+my_study` or `--source=rsn,ssn,riverfly`. See [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md). |
+| `--source=<name>` | `rsn` | Selects the monitoring station network data source:<br>• `rsn`: **River Surveillance Network** ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the default nationwide surveillance network (1,382 monitoring stations across wider rivers; saves outputs to `output/det_<code>_<net>_rsn/`)<br>• `ssn`: **Small Streams Network** ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), dedicated to headwaters and smaller tributaries (313 monitoring stations; saves outputs to `output/det_<code>_<net>_ssn/`)<br>• `rss`: **Combined River Surveillance & Small Streams** ([`RSS`](../data/processed/orn_rss/)), merging RSN + SSN into a single integrated dataset (1,695 stations, 1,384 snapped observed reaches on ORN v2; saves outputs to `output/det_<code>_<net>_rss/`)<br>• **Custom or registered source**: e.g. `--source=my_study`, `--source=riverfly`, `--source=river_guardians`<br>• **Multi-source delimiter combination**: e.g. `--source=rsn+my_study` or `--source=rsn,ssn,riverfly`. See [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md). |
 | `--custom-samples=<path>` | *(None)* | Direct path to a custom sample observations CSV file (e.g., containing `site_id`, `sample_datetime`, `meas_result`). Ingests custom measurements into the modeling pipeline. |
 | `--custom-sites=<path>` | *(None)* | Direct path to a custom station points CSV file (e.g., containing `site_id`, `easting`, `northing`). Automatically snaps custom points to reaches. |
 | `--custom-dir=<path>` | *(None)* | Path to a custom directory containing `sites.csv` and/or `samples.csv`. |
@@ -50,7 +50,7 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | `--list`, `-h`, `--help` | — | Lists available variables, sample counts, descriptions, and units for the selected `--dataset` (defaults to top 25 water quality determinands; combine with `--dataset=inverts`, `--dataset=diatoms`, `--dataset=macrophytes`, `--dataset=rhs`, or `--dataset=lcms`). |
 | `--list-basins` | — | Prints all 11 Environment Agency River Basin Districts (`RBD_ID`, `RBD_Name`) and the top 30 individual catchments (`CatchID`, `Main_River`, `RBD_Name`, total reaches, and monitored reaches) from [`data/processed/rsn_catchments_lookup.csv`](../data/processed/rsn_catchments_lookup.csv). |
 | `--list-networks` | — | Lists all configured water network profiles (`orn`, `euhydro_thames`, `euhydro_tweed`, `euhydro`) in [`configs/networks/`](../configs/networks). |
-| `--network=<name>` | `orn` | Selects the river network dataset (`orn`, `euhydro_thames`, `euhydro_tweed`, `euhydro`, or a custom GeoPackage `.gpkg`, GeoParquet `.parquet`/`.geoparquet`, or JSON profile). Automatically preprocesses the network if not yet cached in `data/processed/<name>/`, appends the network abbreviation to the output directory (e.g., `output/det_0117_orn/`, `output/det_0117_euhydro_thames/`), and displays the network name on all figures. See [`docs/custom_water_network_guide.md`](./custom_water_network_guide.md) for instructions on adding new water networks. |
+| `--network=<name>` | `orn` | Selects the river network dataset (`orn`, `euhydro_thames`, `euhydro_tweed`, `euhydro`, or a custom GeoPackage `.gpkg`, GeoParquet `.parquet`/`.geoparquet`, or JSON profile). Automatically preprocesses the network if not yet cached in `data/processed/<name>_<source>/`, appends the network abbreviation and source tag to the output directory (e.g., `output/det_0117_orn_rsn/`, `output/det_0117_euhydro_thames_rsn/`), and displays the network name on all figures. See [`docs/custom_water_network_guide.md`](./custom_water_network_guide.md) for instructions on adding new water networks. |
 | `--list-vars` (or `--list-covariates`) | — | Lists all 15 available fixed-effect regression covariates, their short CLI aliases, transformations, and default inclusion status. |
 | `--vars=<spec>` (or `--covariates=<spec>`) | `default` | Selects which fixed-effect predictors enter the regression design matrix `X` (without needing to re-run [`01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)):<br>• `default`: `Elevation_z`, `Slope_z`, `log10_US_Accum_z`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Peat` (or `Is_Aquifer` for single basins), `Easting_z`, `Northing_z` (saves to `output/det_<code>_<net>/`)<br>• **Explicit subset**: e.g. `--vars=elevation,slope,aquifer` (saves to `output/det_<code>_<net>_vars_elev_slope_aquifer/` and adds covariate names to the subtitles of Figures 1–4)<br>• **Relative add/remove (`+var`/`-var`)**: e.g. `--vars=-easting,-northing` (saves to `output/det_<code>_<net>_vars_no_east_no_north/`) or `--vars=+sinuosity,+strahler`<br>• `none` (or `intercept`): Intercept-only model (`X = 1`, saves to `output/det_<code>_<net>_vars_none/`)<br>• `all`: All available covariates (saves to `output/det_<code>_<net>_vars_all/`). |
 | `--list-transforms` | — | Prints a comprehensive reference table of all available data transformation algorithms, mathematical formulas \(z = f(y)\), valid domains, and scientific recommendations across [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R), and [`01_preprocess_orn.py`](../scripts/01_preprocess_orn.py). |
@@ -68,9 +68,9 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | `--season=<season>` | *(All seasons)* | Filters water quality samples to a single meteorological season:<br>• `winter` (Dec, Jan, Feb)<br>• `spring` (Mar, Apr, May)<br>• `summer` (Jun, Jul, Aug)<br>• `autumn` or `fall` (Sep, Oct, Nov)<br>Saves outputs in `output/det_<code>/season_<season>/`. |
 | `--month=<1..12>` | *(All months)* | Filters water quality samples to a single calendar month (`1` to `12`). Saves outputs in `output/det_<code>/month_<MM>/`. Can be combined with `--year=<YYYY>` (e.g., `--year=2023 --month=7`). |
 | `--by=<mode>` | *(None)* | **Automated Temporal Batch Mode**: Automatically loops over all periods in `<mode>`, fitting the full S3N suite and generating all figures in per-period subdirectories, plus combined multi-period summary CSVs (`cv_summary_by_<mode>_<code>.csv` and `parameters_by_<mode>_<code>.csv`):<br>• `--by=year`: Fits every calendar year (`year_2021/`, `year_2022/`, `year_2023/`, `year_2024/`)<br>• `--by=season`: Fits all 4 meteorological seasons (`season_winter/`, `season_spring/`, `season_summer/`, `season_autumn/`)<br>• `--by=month`: Fits all 12 calendar months (`month_01/` .. `month_12/`). |
-| `--gis-dir=<path>` (or `--gis=<path>`) | `gis` (or `$S3N_GIS_DIR`) | Custom path (relative or absolute) to the directory containing river network GeoPackages (`ORN_v2.gpkg`, `euhydro_thames_v013.gpkg`, etc.). |
-| `--data-dir=<path>` (or `--data=<path>`) | `data` (or `$S3N_DATA_DIR`) | Custom path (relative or absolute) to the root data directory containing `NCEA_River_Surveillance_Network_ARD_Open/` and `processed/`. |
-| `--output-dir=<path>` (or `--out-dir=<path>`) | `output` (or `$S3N_OUTPUT_DIR`) | Custom path (relative or absolute) to the root output directory where model results (`det_<code>/`) and figures are written. |
+| `--gis-dir=<path>` (or `--gis=<path>`) | `configs/directories.json` (`gis`) | Custom path (relative or absolute) to the directory containing river network GeoPackages (`ORN_v2.gpkg`, `euhydro_thames_v013.gpkg`, etc.). Overrides `configs/directories.json`. |
+| `--data-dir=<path>` (or `--data=<path>`) | `configs/directories.json` (`data`) | Custom path (relative or absolute) to the root data directory containing `NCEA_River_Surveillance_Network_ARD_Open/` and `processed/`. Overrides `configs/directories.json`. |
+| `--output-dir=<path>` (or `--out-dir=<path>`) | `configs/directories.json` (`output`) | Custom path (relative or absolute) to the root output directory where model results (`det_<code>/`) and figures are written. Overrides `configs/directories.json`. |
 
 ---
 
@@ -172,11 +172,11 @@ The pipeline supports official statutory networks, custom field campaigns, and a
 
 | Source Flag | Abbreviation | Monitoring Network | Focus / Character | Total Stations | Snapped Reaches (ORN v2) | Total Reaches | Output Folder Tag |
 | :---: | :---: | :--- | :--- | ---: | ---: | ---: | :--- |
-| `--source=rsn` *(default)* | `RSN` | **River Surveillance Network** | Nationwide network across wider rivers and mainstems | 1,382 | 1,210 | 90,876 | `output/det_<code>_<net>/` |
-| `--source=ssn` | `SSN` | **Small Streams Network** | Dedicated headwater streams (< 20 km² drainage) | 313 | 177 | 76,242 | `output/det_<code>_<net>_src_ssn/` |
-| `--source=rss` | `RSS` | **Combined Surveillance & Small Streams** | Integrated nationwide surveillance + headwater monitoring | 1,695 | 1,384 | 91,118 | `output/det_<code>_<net>_src_rss/` |
-| `--source=<custom>` | User-defined | **Custom User / Field Dataset** | Field study or local monitoring campaign | Variable | Variable | Monitored catchments | `output/det_<code>_<net>_src_<custom>/` |
-| `--source=<A>+<B>` | `<A>+<B>` | **Multi-Source Combination** | Merged union of multiple registered or custom sources | Variable | Variable | Union of catchments | `output/det_<code>_<net>_src_<A>_<B>/` |
+| `--source=rsn` *(default)* | `RSN` | **River Surveillance Network** | Nationwide network across wider rivers and mainstems | 1,382 | 1,210 | 90,876 | `output/det_<code>_<net>_rsn/` |
+| `--source=ssn` | `SSN` | **Small Streams Network** | Dedicated headwater streams (< 20 km² drainage) | 313 | 177 | 76,242 | `output/det_<code>_<net>_ssn/` |
+| `--source=rss` | `RSS` | **Combined Surveillance & Small Streams** | Integrated nationwide surveillance + headwater monitoring | 1,695 | 1,384 | 91,118 | `output/det_<code>_<net>_rss/` |
+| `--source=<custom>` | User-defined | **Custom User / Field Dataset** | Field study or local monitoring campaign | Variable | Variable | Monitored catchments | `output/det_<code>_<net>_<custom>/` |
+| `--source=<A>+<B>` | `<A>+<B>` | **Multi-Source Combination** | Merged union of multiple registered or custom sources | Variable | Variable | Union of catchments | `output/det_<code>_<net>_<A>_<B>/` |
 
 > [!TIP]
 > **Complete Custom Data Guide & Automated Formatter**: For comprehensive instructions on bringing your own point observation datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
@@ -233,9 +233,9 @@ Rscript scripts/run_s3n_determinand.R whpt_aspt --source=rss --reverse-color
 
 # 4. Compare RSN vs. SSN vs. RSS models directly in scripts/04_compare_model_runs.R
 Rscript scripts/04_compare_model_runs.R \
-  output/det_0117 \
-  output/det_0117_orn_src_ssn \
-  output/det_0117_orn_src_rss \
+  output/det_0117_orn_rsn \
+  output/det_0117_orn_ssn \
+  output/det_0117_orn_rss \
   --out=output/comparisons/nitrate_rsn_vs_ssn_vs_rss
 
 # 5. Macroinvertebrate WHPT ASPT, LIFE Flow Index, or PSI Sediment Score (auto-detects --dataset=inverts)
@@ -309,16 +309,41 @@ Rscript scripts/run_s3n_determinand.R 0117 --by=season
 Rscript scripts/run_s3n_determinand.R 0117 --by=year --basin=Eden
 ```
 
-#### F. Using Custom `gis`, `data`, and `output` Directory Locations
-All scripts in the pipeline (`01_preprocess_orn.py`, `run_s3n_determinand.R`, `02_fit_s3n_models.R`, `03_generate_plots.R`, `04_compare_model_runs.R`, and `05_descriptive_stats.R`) use relative paths (`gis`, `data`, `output`) by default, and allow overriding any of these three folders via command-line flags or environment variables (`S3N_GIS_DIR`, `S3N_DATA_DIR`, `S3N_OUTPUT_DIR`):
+#### F. Centralized Directory Configuration (`configs/directories.json`)
+Rather than passing `--data-dir`, `--gis-dir`, or `--output-dir` to every script invocation, the pipeline uses a centralized configuration file located at [`configs/directories.json`](../configs/directories.json).
+
+This file is **created automatically** with default folder locations the first time you run `scripts/01_preprocess_orn.py`:
+```json
+{
+  "data_dir": "data",
+  "gis_dir": "gis",
+  "output_dir": "output"
+}
+```
+
+To redirect your inputs or outputs (e.g. to an external drive, network mount, or custom directory structure), edit `configs/directories.json` once:
+```json
+{
+  "data_dir": "/mnt/storage/water_data",
+  "gis_dir": "/mnt/storage/water_gis",
+  "output_dir": "/mnt/storage/s3n_results"
+}
+```
+**All pipeline scripts** (`01_preprocess_orn.py`, `format_custom_data.py`, `run_s3n_determinand.R`, `02_fit_s3n_models.R`, `03_generate_plots.R`, `04_compare_model_runs.R`, `05_descriptive_stats.R`, `06_station_snapping_diagnostics.R`) immediately pull their folder locations from this file by default.
+
+> [!NOTE]
+> - **Relative paths** (e.g. `"data"`, `"gis"`, `"output"`, `"./results"`) are resolved relative to the project root.
+> - **Absolute paths** (e.g. `"/mnt/storage/data"`) and tilde expansion (`"~/my_data"`) are fully supported.
+> - **Command-line overrides**: Command-line flags (`--data-dir`, `--gis-dir`, `--output-dir`) and environment variables (`S3N_DATA_DIR`, `S3N_GIS_DIR`, `S3N_OUTPUT_DIR`) still take precedence when passed explicitly for a single command.
+
 ```bash
-# 1. Run preprocessing with custom gis and data folders
+# 1. Run preprocessing with custom gis and data folders (CLI override)
 python3 scripts/01_preprocess_orn.py \
   --network=orn \
   --gis-dir=custom_gis \
   --data-dir=custom_data
 
-# 2. Run S3N model fitting & plotting with custom gis, data, and output folders
+# 2. Run S3N model fitting & plotting with custom gis, data, and output folders (CLI override)
 Rscript scripts/run_s3n_determinand.R 0117 \
   --gis-dir=custom_gis \
   --data-dir=custom_data \

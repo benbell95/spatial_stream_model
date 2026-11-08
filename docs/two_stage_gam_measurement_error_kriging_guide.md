@@ -238,7 +238,7 @@ Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 
 ## 6. Output Tables & Interpretation
 
-All results are saved in `output/det_<code >_<net>_src_<source>/` (e.g. [`output/det_0117_orn_src_rsn_gam_mean/`](file:///home/ben/code/r/spatial_stream_model/output/det_0117_orn_src_rsn_gam_mean/)):
+All results are saved in `output/det_<code >_<net>_<source>/` (e.g. [`output/det_0117_orn_rsn_gam_mean/`](file:///home/ben/code/r/spatial_stream_model/output/det_0117_orn_rsn_gam_mean/)):
 
 ### 6.1 Parameter Estimates Table (`parameters_0117.csv`)
 Under Approach A, the parameter table reports both the standard covariance parameters and the decoupled microscale variance:

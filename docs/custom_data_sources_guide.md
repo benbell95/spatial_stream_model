@@ -224,12 +224,12 @@ Pipeline Stage                          Output Folder Pattern & Examples
                                         data/processed/orn_waterblitz_tobit/
                                         data/processed/orn_waterblitz_midpoint/
 
-3. run_s3n_determinand.R          ->    output/det_<code >_<net>_src_<source>_<range_mode>/
-                                        output/det_0117_orn_src_waterblitz_tobit/
-                                        output/det_0117_orn_src_waterblitz_midpoint/
+3. run_s3n_determinand.R          ->    output/det_<code >_<net>_<source>_<range_mode>/
+                                        output/det_0117_orn_waterblitz_tobit/
+                                        output/det_0117_orn_waterblitz_midpoint/
 
-4. 06_station_snapping_...        ->    output/station_snapping_<net>_src_<source>_<range_mode>/
-                                        output/station_snapping_ORN_src_waterblitz_tobit/
+4. 06_station_snapping_...        ->    output/station_snapping_<net>_<source>_<range_mode>/
+                                        output/station_snapping_ORN_waterblitz_tobit/
 ```
 
 Even when executing with default commands like `python3 scripts/01_preprocess_orn.py --source=waterblitz` or `Rscript scripts/run_s3n_determinand.R 0117 --source=waterblitz`, the pipeline detects the underlying range mode and guarantees that all intermediate reach caches and model output folders are explicitly tagged with `_tobit`!
@@ -496,7 +496,7 @@ Rscript scripts/06_station_snapping_diagnostics.R \
   --source=rsn+hampshire_avon_study \
   --catchment=Avon
 ```
-*Output*: Generates metre-scale vector maps in `output/station_snapping_orn_src_rsn_hampshire_avon_study/` verifying that all custom stations snapped cleanly to the correct channel reaches.
+*Output*: Generates metre-scale vector maps in `output/station_snapping_orn_rsn_hampshire_avon_study/` verifying that all custom stations snapped cleanly to the correct channel reaches.
 
 ### Step 4: Fit S3N Model & Predict Across All Reaches
 ```bash
@@ -505,14 +505,14 @@ Rscript scripts/run_s3n_determinand.R 0117 \
   --transform=sqrt \
   --basin=Avon
 ```
-*Output*: Generates reach predictions (`pred_combined`), kriging standard errors (`se_combined`), parameter estimates, cross-validation tables, and Figures 1–5 in `output/det_0117_orn_src_rsn_hampshire_avon_study_sqrt/`.
+*Output*: Generates reach predictions (`pred_combined`), kriging standard errors (`se_combined`), parameter estimates, cross-validation tables, and Figures 1–5 in `output/det_0117_orn_rsn_hampshire_avon_study_sqrt/`.
 
 ### Step 5: Direct Statistical Comparison Against Baseline RSN
 To quantify the impact of adding your custom data to the model:
 ```bash
 Rscript scripts/04_compare_model_runs.R \
-  output/det_0117 \
-  output/det_0117_orn_src_rsn_hampshire_avon_study_sqrt \
+  output/det_0117_orn_rsn \
+  output/det_0117_orn_rsn_hampshire_avon_study_sqrt \
   --out=output/comparisons/nitrate_rsn_vs_with_avon_study
 ```
 *Output*: Evaluates cross-validation accuracy improvement ($\Delta R^2$, $\Delta\text{RMSE}$), paired Wilcoxon tests, parameter stability, and produces Figure Comp 4 (side-by-side national maps) and Figure Comp 5 (scatter plots and spatial difference maps).

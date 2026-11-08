@@ -161,7 +161,10 @@ read_basin_catch_id <- function(file_path, fallback_id = NA_integer_) {
 # ------------------------------------------------------------------------------
 # Helper: Load a single model run bundle from an output directory
 # ------------------------------------------------------------------------------
-load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_path(BASE_DIR, "output")) {
+load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL) {
+  if (is.null(out_root) || !nzchar(out_root)) {
+    out_root <- load_directory_config(BASE_DIR)$output_dir
+  }
   dir_p <- if (grepl("^/", dir_path)) dir_path else rel_path(BASE_DIR, dir_path)
   if (!dir.exists(dir_p) && !grepl("^/", dir_path)) {
     cand_in_out <- rel_path(out_root, dir_path)
@@ -293,8 +296,9 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
     as.character(cv_tab$Source[1])
   } else {
     bname <- basename(dir_p)
-    if (grepl("_src_ssn", bname)) "SSN"
-    else if (grepl("_src_rss", bname)) "RSS"
+    if (grepl("_(src_)?ssn", bname)) "SSN"
+    else if (grepl("_(src_)?rss", bname)) "RSS"
+    else if (grepl("_(src_)?rsn", bname)) "RSN"
     else "RSN"
   }
   source_label <- if ("Source_Desc" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source_Desc[1]))) {
@@ -367,7 +371,10 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = rel_
 # ------------------------------------------------------------------------------
 # Helper: List all available model output directories under output/
 # ------------------------------------------------------------------------------
-list_available_model_runs <- function(out_root = rel_path(BASE_DIR, "output")) {
+list_available_model_runs <- function(out_root = NULL) {
+  if (is.null(out_root) || !nzchar(out_root)) {
+    out_root <- load_directory_config(BASE_DIR)$output_dir
+  }
   cat("==============================================================================\n")
   cat(sprintf("Available Model Run Output Directories (under '%s'):\n", out_root))
   cat("==============================================================================\n")
@@ -1202,7 +1209,10 @@ write_descriptive_markdown_report <- function(b1, desc_df, rep_df, strat_df, sta
 # ------------------------------------------------------------------------------
 # Main Single-Run Entry Point: run_descriptive_stats()
 # ------------------------------------------------------------------------------
-run_descriptive_stats <- function(run_dir, label = NULL, out_dir = NULL, out_root = rel_path(BASE_DIR, "output"), quiet = FALSE) {
+run_descriptive_stats <- function(run_dir, label = NULL, out_dir = NULL, out_root = NULL, quiet = FALSE) {
+  if (is.null(out_root) || !nzchar(out_root)) {
+    out_root <- load_directory_config(BASE_DIR)$output_dir
+  }
   b1 <- load_model_run_bundle(run_dir, custom_label = label, out_root = out_root)
 
   if (is.null(out_dir) || !nzchar(out_dir)) {

@@ -89,12 +89,95 @@ wrap_title <- function(text, max_len = 85) {
   paste(wrapped_lines, collapse = "\n")
 }
 
-parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
-  gis_dir  <- Sys.getenv("S3N_GIS_DIR", unset = "")
-  data_dir <- Sys.getenv("S3N_DATA_DIR", unset = "")
-  out_dir  <- Sys.getenv("S3N_OUTPUT_DIR", unset = "")
-  has_custom_out <- nzchar(out_dir)
+find_directory_config_file <- function(base_dir = ".") {
+  cands <- c(
+    rel_path(base_dir, "configs", "directories.json"),
+    rel_path(base_dir, "configs", "paths.json"),
+    rel_path(base_dir, "config.json")
+  )
+  for (c in cands) {
+    if (file.exists(c)) return(c)
+  }
+  cands[1]
+}
 
+load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
+  cfg_file <- find_directory_config_file(base_dir)
+  if (!file.exists(cfg_file) && isTRUE(auto_create)) {
+    dir.create(dirname(cfg_file), recursive = TRUE, showWarnings = FALSE)
+    writeLines(c('{',
+                 '  "data_dir": "data",',
+                 '  "gis_dir": "gis",',
+                 '  "output_dir": "output"',
+                 '}'), cfg_file)
+  }
+
+  raw_cfg <- list()
+  if (file.exists(cfg_file)) {
+    txt <- tryCatch(paste(readLines(cfg_file, warn = FALSE, encoding = "UTF-8"), collapse = "\n"), error = function(e) "")
+    get_field <- function(keys, default = "") {
+      for (k in keys) {
+        pat <- paste0('"', k, '"\\s*:\\s*"([^"]*)"')
+        if (grepl(pat, txt)) {
+          return(sub(paste0('^.*?', pat, '.*$'), "\\1", txt))
+        }
+      }
+      default
+    }
+    raw_cfg$data_dir      <- get_field(c("data_dir", "data", "DATA_DIR"), "data")
+    raw_cfg$gis_dir       <- get_field(c("gis_dir", "gis", "GIS_DIR"), "gis")
+    raw_cfg$output_dir    <- get_field(c("output_dir", "out_dir", "output", "out", "OUTPUT_DIR"), "output")
+    raw_cfg$processed_dir <- get_field(c("processed_dir", "processed", "PROCESSED_DIR"), "")
+  } else {
+    raw_cfg$data_dir      <- "data"
+    raw_cfg$gis_dir       <- "gis"
+    raw_cfg$output_dir    <- "output"
+    raw_cfg$processed_dir <- ""
+  }
+
+  resolve_p <- function(p, default) {
+    p <- if (is.null(p) || !nzchar(trimws(p))) default else trimws(p)
+    p <- path.expand(p)
+    if (!grepl("^(/|[A-Za-z]:)", p)) {
+      p <- rel_path(base_dir, p)
+    }
+    sub("^\\./", "", p)
+  }
+
+  data_d <- resolve_p(raw_cfg$data_dir, "data")
+  gis_d  <- resolve_p(raw_cfg$gis_dir, "gis")
+  out_d  <- resolve_p(raw_cfg$output_dir, "output")
+  proc_d <- if (nzchar(raw_cfg$processed_dir)) resolve_p(raw_cfg$processed_dir, rel_path(data_d, "processed")) else rel_path(data_d, "processed")
+
+  list(
+    config_file   = if (file.exists(cfg_file)) cfg_file else NULL,
+    data_dir      = data_d,
+    gis_dir       = gis_d,
+    output_dir    = out_d,
+    processed_dir = proc_d
+  )
+}
+
+parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
+  cfg_dirs <- load_directory_config(base_dir = base_dir, auto_create = FALSE)
+  gis_dir  <- cfg_dirs$gis_dir
+  data_dir <- cfg_dirs$data_dir
+  out_dir  <- cfg_dirs$output_dir
+  proc_dir <- cfg_dirs$processed_dir
+  has_custom_out <- FALSE
+
+  # Environment variable overrides
+  env_gis  <- Sys.getenv("S3N_GIS_DIR", unset = "")
+  env_data <- Sys.getenv("S3N_DATA_DIR", unset = "")
+  env_out  <- Sys.getenv("S3N_OUTPUT_DIR", unset = "")
+  if (nzchar(env_gis))  gis_dir  <- env_gis
+  if (nzchar(env_data)) data_dir <- env_data
+  if (nzchar(env_out)) {
+    out_dir <- env_out
+    has_custom_out <- TRUE
+  }
+
+  # CLI argument overrides
   for (a in args) {
     if (grepl("^--(gis-dir|gis)=", a)) {
       gis_dir <- sub("^--(gis-dir|gis)=", "", a)
@@ -106,9 +189,18 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
     }
   }
 
-  if (!nzchar(gis_dir))  gis_dir  <- rel_path(base_dir, "gis")
-  if (!nzchar(data_dir)) data_dir <- rel_path(base_dir, "data")
-  if (!nzchar(out_dir))  out_dir  <- rel_path(base_dir, "output")
+  resolve_arg <- function(p, default) {
+    p <- if (is.null(p) || !nzchar(trimws(p))) default else trimws(p)
+    p <- path.expand(p)
+    if (!grepl("^(/|[A-Za-z]:)", p)) {
+      p <- rel_path(base_dir, p)
+    }
+    sub("^\\./", "", p)
+  }
+
+  gis_dir  <- resolve_arg(gis_dir, "gis")
+  data_dir <- resolve_arg(data_dir, "data")
+  out_dir  <- resolve_arg(out_dir, "output")
 
   cand_wq <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
   wq_dir <- if (dir.exists(cand_wq)) {
@@ -119,7 +211,7 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
     cand_wq
   }
 
-  cand_proc <- rel_path(data_dir, "processed")
+  cand_proc <- if (nzchar(proc_dir)) proc_dir else rel_path(data_dir, "processed")
   proc_root <- if (dir.exists(cand_proc)) {
     cand_proc
   } else if (file.exists(rel_path(data_dir, "england_rsn_reaches.csv"))) {
@@ -129,12 +221,13 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
   }
 
   list(
-    gis_dir        = sub("^\\./", "", gis_dir),
-    data_dir       = sub("^\\./", "", data_dir),
-    wq_dir         = sub("^\\./", "", wq_dir),
-    proc_root      = sub("^\\./", "", proc_root),
-    out_dir        = sub("^\\./", "", out_dir),
-    has_custom_out = has_custom_out
+    gis_dir        = gis_dir,
+    data_dir       = data_dir,
+    wq_dir         = wq_dir,
+    proc_root      = proc_root,
+    out_dir        = out_dir,
+    has_custom_out = has_custom_out,
+    config_file    = cfg_dirs$config_file
   )
 }
 
@@ -227,7 +320,8 @@ load_source_registry <- function(base_dir = NULL) {
   }
 
   # Auto-discover data/custom/* directories
-  cust_root <- rel_path(base_dir, "data", "custom")
+  cfg_dirs  <- load_directory_config(base_dir = base_dir)
+  cust_root <- rel_path(cfg_dirs$data_dir, "custom")
   if (dir.exists(cust_root)) {
     sub_dirs <- list.dirs(cust_root, recursive = FALSE, full.names = FALSE)
     for (sd in sub_dirs) {
@@ -237,8 +331,8 @@ load_source_registry <- function(base_dir = NULL) {
           name        = s_key,
           abbr        = toupper(s_key),
           label       = paste("Custom Dataset:", sd),
-          description = paste("User-supplied custom dataset in", file.path("data/custom", sd)),
-          data_dir    = file.path("data/custom", sd),
+          description = paste("User-supplied custom dataset in", file.path(format_rel_display_path(cfg_dirs$data_dir, base_dir), "custom", sd)),
+          data_dir    = file.path(format_rel_display_path(cfg_dirs$data_dir, base_dir), "custom", sd),
           sites_file  = "sites.csv"
         )
       }
@@ -371,7 +465,7 @@ format_source_label <- function(source = "rsn", base_dir = NULL) {
 
 format_source_folder_tag <- function(source = "rsn") {
   s <- resolve_source_tag(source)
-  if (s == "rsn") "" else paste0("src_", s)
+  s
 }
 
 parse_source_arg <- function(args) {
@@ -2147,13 +2241,16 @@ parse_json_int_field <- function(lines, key, default = NA_integer_) {
 
 resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir = NULL, gis_dir = NULL, source = "rsn") {
   src_tag   <- resolve_source_tag(source)
-  src_suff  <- if (src_tag == "rsn") "" else paste0("_", src_tag)
-  proc_root <- if (!is.null(data_dir) && nzchar(data_dir)) {
-    cand_p <- rel_path(data_dir, "processed")
-    if (dir.exists(cand_p)) cand_p else if (file.exists(rel_path(data_dir, "england_rsn_reaches.csv"))) data_dir else cand_p
+  src_suff  <- paste0("_", src_tag)
+  cfg_dirs  <- load_directory_config(base_dir = base_dir)
+  d_dir     <- if (!is.null(data_dir) && nzchar(data_dir)) data_dir else cfg_dirs$data_dir
+  g_dir     <- if (!is.null(gis_dir) && nzchar(gis_dir)) gis_dir else cfg_dirs$gis_dir
+  cand_p    <- if (nzchar(cfg_dirs$processed_dir) && (is.null(data_dir) || data_dir == cfg_dirs$data_dir)) {
+    cfg_dirs$processed_dir
   } else {
-    rel_path(base_dir, "data", "processed")
+    rel_path(d_dir, "processed")
   }
+  proc_root <- if (dir.exists(cand_p)) cand_p else if (file.exists(rel_path(d_dir, "england_rsn_reaches.csv"))) d_dir else cand_p
 
   if (is.null(network_arg) || !nzchar(trimws(network_arg))) {
     # Check active network_metadata.json in proc_root, defaulting to 'orn'
@@ -2183,9 +2280,14 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
   }
 
   sub_d <- rel_path(proc_root, paste0(abbr, src_suff))
-  # If default RSN and sub_d doesn't exist, check root proc_root fallback
-  if (src_tag == "rsn" && !dir.exists(sub_d) && file.exists(rel_path(proc_root, "england_rsn_reaches.csv"))) {
-    return(proc_root)
+  # If default RSN and sub_d (orn_rsn) doesn't exist, check fallback without _rsn (orn) or root
+  if (src_tag == "rsn" && (!dir.exists(sub_d) || !file.exists(rel_path(sub_d, "england_rsn_reaches.csv")))) {
+    cand_bare <- rel_path(proc_root, abbr)
+    if (dir.exists(cand_bare) && file.exists(rel_path(cand_bare, "england_rsn_reaches.csv"))) {
+      sub_d <- cand_bare
+    } else if (file.exists(rel_path(proc_root, "england_rsn_reaches.csv"))) {
+      return(proc_root)
+    }
   }
 
   # If sub_d does not exist, check if a range-tagged processed directory exists (e.g. orn_waterblitz_tobit)
@@ -2202,11 +2304,11 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
   if (!file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
     cat(sprintf("Preprocessing water network '%s' (source='%s') via scripts/01_preprocess_orn.py...\n", net_cli_arg, src_tag))
     extra_py_args <- ""
-    if (!is.null(gis_dir) && nzchar(gis_dir)) {
-      extra_py_args <- paste0(extra_py_args, " --gis-dir=", shQuote(gis_dir))
+    if (!is.null(g_dir) && nzchar(g_dir)) {
+      extra_py_args <- paste0(extra_py_args, " --gis-dir=", shQuote(g_dir))
     }
-    if (!is.null(data_dir) && nzchar(data_dir)) {
-      extra_py_args <- paste0(extra_py_args, " --data-dir=", shQuote(data_dir))
+    if (!is.null(d_dir) && nzchar(d_dir)) {
+      extra_py_args <- paste0(extra_py_args, " --data-dir=", shQuote(d_dir))
     }
     cmd <- sprintf("python3 %s --network=%s --source=%s%s",
                    shQuote(rel_path(base_dir, "scripts", "01_preprocess_orn.py")),

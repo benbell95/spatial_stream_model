@@ -402,7 +402,10 @@ analyze_reach_relationships <- function(bundles, pair12_pred_match) {
 # Core Comparison Engine: compare_s3n_runs() (Requires >= 2 Model Outputs)
 # ------------------------------------------------------------------------------
 compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FALSE,
-                             out_root = rel_path(BASE_DIR, "output")) {
+                             out_root = NULL) {
+  if (is.null(out_root) || !nzchar(out_root)) {
+    out_root <- load_directory_config(BASE_DIR)$output_dir
+  }
   if (length(run_dirs) < 2) {
     stop(paste0(
       "compare_s3n_runs() requires at least 2 model run directories to compare.\n",
@@ -452,7 +455,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     for (i in seq_len(K)) bundles[[i]]$label <- run_labels[i]
   }
 
-  eff_out_root <- if (!is.null(out_root) && nzchar(out_root)) out_root else rel_path(BASE_DIR, "output")
+  eff_out_root <- if (!is.null(out_root) && nzchar(out_root)) out_root else load_directory_config(BASE_DIR)$output_dir
   if (is.null(out_dir) || !nzchar(out_dir)) {
     slug <- paste(sapply(bundles, function(b) b$dir_name), collapse = "_vs_")
     if (nchar(slug) > 85) {
@@ -2071,7 +2074,7 @@ if (sys.nframe() == 0L) {
   pos_dirs <- character(0)
   labels_cli <- NULL
   out_cli    <- NULL
-  out_root_cli <- rel_path(BASE_DIR, "output")
+  out_root_cli <- dir_cfg$out_dir
   by_mode    <- NULL
 
   for (a in args) {

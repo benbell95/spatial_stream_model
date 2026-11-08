@@ -726,9 +726,10 @@ analyze_station_snapping <- function(
   output_root      = NULL,
   verbose          = TRUE
 ) {
-  g_dir <- if (!is.null(gis_dir) && nzchar(gis_dir)) gis_dir else rel_path(BASE_DIR, "gis")
-  d_dir <- if (!is.null(data_dir) && nzchar(data_dir)) data_dir else rel_path(BASE_DIR, "data")
-  o_root <- if (!is.null(output_root) && nzchar(output_root)) output_root else rel_path(BASE_DIR, "output")
+  cfg_dirs <- load_directory_config(base_dir = BASE_DIR)
+  g_dir  <- if (!is.null(gis_dir) && nzchar(gis_dir)) gis_dir else cfg_dirs$gis_dir
+  d_dir  <- if (!is.null(data_dir) && nzchar(data_dir)) data_dir else cfg_dirs$data_dir
+  o_root <- if (!is.null(output_root) && nzchar(output_root)) output_root else cfg_dirs$output_dir
 
   src_tag      <- resolve_source_tag(source)
   source_abbr  <- format_source_abbr(src_tag)
