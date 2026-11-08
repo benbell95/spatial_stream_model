@@ -109,6 +109,62 @@ def ensure_directory_config(base_dir=BASE_DIR, default_data="data", default_gis=
 
 
 DEFAULT_NETWORK_CONFIGS = json.loads(r"""{
+  "orn": {
+    "name": "orn",
+    "abbr": "orn",
+    "label": "OS Open Rivers Network (ORN v2)",
+    "short_label": "ORN v2",
+    "gpkg_paths": [
+      "gis/ORN_v2.gpkg"
+    ],
+    "zip_fallbacks": [
+      "gis/ORN_v2_GeoPackage.zip"
+    ],
+    "layers": [
+      "ORN"
+    ],
+    "geom_col": "Shape",
+    "crs_epsg": 27700,
+    "topology": {
+      "mode": "nodes",
+      "id_col": "RivID",
+      "from_node_col": "Fnode",
+      "to_node_col": "Tnode",
+      "next_down_col": null,
+      "catch_id_col": "CatchID",
+      "rbd_id_col": "RBD_ID"
+    },
+    "attributes": {
+      "dist_to_mouth_col": "Dist2Mth",
+      "dist_to_mouth_unit": "m",
+      "afv_weight_col": "US_Accum",
+      "afv_weight_unit": "m",
+      "shreve_col": "Shreve",
+      "strahler_col": "Strahler",
+      "slope_col": null,
+      "elevation_col": null,
+      "river_name_cols": [
+        "name1",
+        "name2"
+      ]
+    },
+    "covariates": {
+      "mode": "orn_100m_table",
+      "sampled_table": "ORN_Sampled_100m",
+      "bedrock_lookup": "tblBedrockGeologyLookUp",
+      "superficial_lookup": "tblSuperficialGeologyLookUp",
+      "rbd_lookup": "tblRiverBasinLookUp"
+    },
+    "core_basins": {
+      "humber": 80,
+      "thames": 3055,
+      "severn": 2786
+    },
+    "max_snap_dist_m": 250.0
+  }
+}""")
+
+OPTIONAL_NETWORK_CONFIGS = json.loads(r"""{
   "euhydro": {
     "name": "euhydro",
     "abbr": "euhydro",
@@ -293,137 +349,10 @@ DEFAULT_NETWORK_CONFIGS = json.loads(r"""{
       "severn": null
     },
     "max_snap_dist_m": 250.0
-  },
-  "orn": {
-    "name": "orn",
-    "abbr": "orn",
-    "label": "OS Open Rivers Network (ORN v2)",
-    "short_label": "ORN v2",
-    "gpkg_paths": [
-      "gis/ORN_v2.gpkg"
-    ],
-    "zip_fallbacks": [
-      "gis/ORN_v2_GeoPackage.zip"
-    ],
-    "layers": [
-      "ORN"
-    ],
-    "geom_col": "Shape",
-    "crs_epsg": 27700,
-    "topology": {
-      "mode": "nodes",
-      "id_col": "RivID",
-      "from_node_col": "Fnode",
-      "to_node_col": "Tnode",
-      "next_down_col": null,
-      "catch_id_col": "CatchID",
-      "rbd_id_col": "RBD_ID"
-    },
-    "attributes": {
-      "dist_to_mouth_col": "Dist2Mth",
-      "dist_to_mouth_unit": "m",
-      "afv_weight_col": "US_Accum",
-      "afv_weight_unit": "m",
-      "shreve_col": "Shreve",
-      "strahler_col": "Strahler",
-      "slope_col": null,
-      "elevation_col": null,
-      "river_name_cols": [
-        "name1",
-        "name2"
-      ]
-    },
-    "covariates": {
-      "mode": "orn_100m_table",
-      "sampled_table": "ORN_Sampled_100m",
-      "bedrock_lookup": "tblBedrockGeologyLookUp",
-      "superficial_lookup": "tblSuperficialGeologyLookUp",
-      "rbd_lookup": "tblRiverBasinLookUp"
-    },
-    "core_basins": {
-      "humber": 80,
-      "thames": 3055,
-      "severn": 2786
-    },
-    "max_snap_dist_m": 250.0
   }
 }""")
 
 DEFAULT_SOURCE_CONFIGS = json.loads(r"""{
-  "composites": {
-    "composites": {
-      "rss": {
-        "name": "rss",
-        "abbr": "RSS",
-        "label": "Combined River Surveillance & Small Streams (RSS)",
-        "description": "Integrated River Surveillance Network and Small Streams Network",
-        "sources": [
-          "rsn",
-          "ssn"
-        ]
-      },
-      "all": {
-        "name": "all",
-        "abbr": "ALL",
-        "label": "All Registered Monitoring Networks",
-        "description": "Union of all active monitoring networks",
-        "sources": [
-          "rsn",
-          "ssn"
-        ]
-      }
-    }
-  },
-  "custom_example": {
-    "name": "custom_example",
-    "abbr": "CUSTOM",
-    "label": "Custom River Monitoring Study",
-    "description": "Example configuration template for registering a custom river monitoring dataset",
-    "data_dir": "data/custom/example_study",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  },
-  "river_guardians": {
-    "name": "river_guardians",
-    "abbr": "RGCS",
-    "label": "River Guardians Citizen Science Network",
-    "description": "Volunteer water quality monitoring network collecting monthly nutrients and field chemistry",
-    "data_dir": "data/custom/river_guardians",
-    "sites_file": "volunteer_survey_points.csv",
-    "id_col": "survey_site_id",
-    "easting_col": "lon",
-    "northing_col": "lat",
-    "crs_epsg": 4326,
-    "datasets": {
-      "wq": {
-        "file": "field_observations.csv",
-        "id_col": "survey_site_id",
-        "datetime_col": "observed_date",
-        "det_col": "chemical_parameter",
-        "det_desc_col": "parameter_name",
-        "val_col": "concentration_ppm",
-        "cens_col": "detection_flag",
-        "cens_flag": "<",
-        "unit_col": "units"
-      }
-    }
-  },
   "rsn": {
     "name": "rsn",
     "abbr": "RSN",
@@ -481,6 +410,178 @@ DEFAULT_SOURCE_CONFIGS = json.loads(r"""{
       }
     }
   },
+  "ssn": {
+    "name": "ssn",
+    "abbr": "SSN",
+    "label": "Small Streams Network (SSN)",
+    "description": "Environment Agency Small Streams Network (313 dedicated headwater stations across England)",
+    "data_dir": "data/NCEA_Small_Streams_Network_ARD_Open",
+    "sites_file": "SSN Water Quality Sample Points.csv",
+    "eco_sites_file": "SSN Ecology Sample Points.csv",
+    "id_col": "network_id",
+    "easting_col": "ngr_easting",
+    "northing_col": "ngr_northing",
+    "crs_epsg": 27700,
+    "datasets": {
+      "wq": {
+        "file": "SSN Water Quality Samples.csv",
+        "id_col": "network_id",
+        "datetime_col": "sample_datetime",
+        "det_col": "det_code",
+        "det_desc_col": "det_desc",
+        "val_col": "meas_result",
+        "cens_col": "meas_sign",
+        "cens_flag": "<",
+        "unit_col": "unit_short_desc"
+      },
+      "inverts": {
+        "file": "SSN Macroinvertebrates.csv",
+        "id_col": "network_id",
+        "datetime_col": "sample_datetime"
+      },
+      "diatoms": {
+        "file": "SSN Diatoms.csv",
+        "id_col": "network_id",
+        "datetime_col": "sample_datetime"
+      },
+      "macrophytes": {
+        "file": "SSN Macrophytes.csv",
+        "id_col": "network_id",
+        "datetime_col": "survey_date"
+      }
+    }
+  },
+  "composites": {
+    "composites": {
+      "rss": {
+        "name": "rss",
+        "abbr": "RSS",
+        "label": "Combined River Surveillance & Small Streams (RSS)",
+        "description": "Integrated River Surveillance Network and Small Streams Network",
+        "sources": [
+          "rsn",
+          "ssn"
+        ]
+      },
+      "all": {
+        "name": "all",
+        "abbr": "ALL",
+        "label": "All Registered Monitoring Networks",
+        "description": "Union of all active monitoring networks",
+        "sources": [
+          "rsn",
+          "ssn"
+        ]
+      }
+    }
+  }
+}""")
+
+OPTIONAL_SOURCE_CONFIGS = json.loads(r"""{
+  "waterblitz": {
+    "name": "waterblitz",
+    "abbr": "WATERB",
+    "label": "Waterblitz",
+    "range_mode": "tobit",
+    "alias_target": "waterblitz_tobit",
+    "description": "Custom monitoring dataset waterblitz (defaulting to waterblitz_tobit)",
+    "data_dir": "data/custom/waterblitz_tobit",
+    "sites_file": "sites.csv",
+    "id_col": "site_id",
+    "easting_col": "easting",
+    "northing_col": "northing",
+    "crs_epsg": 27700,
+    "datasets": {
+      "wq": {
+        "file": "samples.csv",
+        "id_col": "site_id",
+        "datetime_col": "sample_datetime",
+        "det_col": "det_code",
+        "det_desc_col": "det_name",
+        "val_col": "meas_result",
+        "cens_col": "meas_sign",
+        "cens_flag": "<",
+        "unit_col": "unit_short_desc"
+      }
+    }
+  },
+  "waterblitz_tobit": {
+    "name": "waterblitz_tobit",
+    "abbr": "WATERB_TOB",
+    "label": "Waterblitz [Tobit]",
+    "range_mode": "tobit",
+    "description": "Custom monitoring dataset formatted by format_custom_data.py (TOBIT mode)",
+    "data_dir": "data/custom/waterblitz_tobit",
+    "sites_file": "sites.csv",
+    "id_col": "site_id",
+    "easting_col": "easting",
+    "northing_col": "northing",
+    "crs_epsg": 27700,
+    "datasets": {
+      "wq": {
+        "file": "samples.csv",
+        "id_col": "site_id",
+        "datetime_col": "sample_datetime",
+        "det_col": "det_code",
+        "det_desc_col": "det_name",
+        "val_col": "meas_result",
+        "cens_col": "meas_sign",
+        "cens_flag": "<",
+        "unit_col": "unit_short_desc"
+      }
+    }
+  },
+  "waterblitz_midpoint": {
+    "name": "waterblitz_midpoint",
+    "abbr": "WATERB_MID",
+    "label": "Waterblitz [Midpoint]",
+    "range_mode": "midpoint",
+    "description": "Custom monitoring dataset formatted by format_custom_data.py (MIDPOINT mode)",
+    "data_dir": "data/custom/waterblitz_midpoint",
+    "sites_file": "sites.csv",
+    "id_col": "site_id",
+    "easting_col": "easting",
+    "northing_col": "northing",
+    "crs_epsg": 27700,
+    "datasets": {
+      "wq": {
+        "file": "samples.csv",
+        "id_col": "site_id",
+        "datetime_col": "sample_datetime",
+        "det_col": "det_code",
+        "det_desc_col": "det_name",
+        "val_col": "meas_result",
+        "cens_col": "meas_sign",
+        "cens_flag": "<",
+        "unit_col": "unit_short_desc"
+      }
+    }
+  },
+  "river_guardians": {
+    "name": "river_guardians",
+    "abbr": "RGCS",
+    "label": "River Guardians Citizen Science Network",
+    "description": "Volunteer water quality monitoring network collecting monthly nutrients and field chemistry",
+    "data_dir": "data/custom/river_guardians",
+    "sites_file": "volunteer_survey_points.csv",
+    "id_col": "survey_site_id",
+    "easting_col": "lon",
+    "northing_col": "lat",
+    "crs_epsg": 4326,
+    "datasets": {
+      "wq": {
+        "file": "field_observations.csv",
+        "id_col": "survey_site_id",
+        "datetime_col": "observed_date",
+        "det_col": "chemical_parameter",
+        "det_desc_col": "parameter_name",
+        "val_col": "concentration_ppm",
+        "cens_col": "detection_flag",
+        "cens_flag": "<",
+        "unit_col": "units"
+      }
+    }
+  },
   "rsn_gam": {
     "name": "rsn_gam",
     "abbr": "RSN_GAM",
@@ -529,107 +630,12 @@ DEFAULT_SOURCE_CONFIGS = json.loads(r"""{
       }
     }
   },
-  "ssn": {
-    "name": "ssn",
-    "abbr": "SSN",
-    "label": "Small Streams Network (SSN)",
-    "description": "Environment Agency Small Streams Network (313 dedicated headwater stations across England)",
-    "data_dir": "data/NCEA_Small_Streams_Network_ARD_Open",
-    "sites_file": "SSN Water Quality Sample Points.csv",
-    "eco_sites_file": "SSN Ecology Sample Points.csv",
-    "id_col": "network_id",
-    "easting_col": "ngr_easting",
-    "northing_col": "ngr_northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "SSN Water Quality Samples.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_desc",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      },
-      "inverts": {
-        "file": "SSN Macroinvertebrates.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime"
-      },
-      "diatoms": {
-        "file": "SSN Diatoms.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime"
-      },
-      "macrophytes": {
-        "file": "SSN Macrophytes.csv",
-        "id_col": "network_id",
-        "datetime_col": "survey_date"
-      }
-    }
-  },
-  "waterblitz": {
-    "name": "waterblitz",
-    "abbr": "WATERB",
-    "label": "Waterblitz",
-    "range_mode": "tobit",
-    "alias_target": "waterblitz_tobit",
-    "description": "Custom monitoring dataset waterblitz (defaulting to waterblitz_tobit)",
-    "data_dir": "data/custom/waterblitz_tobit",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  },
-  "waterblitz_midpoint": {
-    "name": "waterblitz_midpoint",
-    "abbr": "WATERB_MID",
-    "label": "Waterblitz [Midpoint]",
-    "range_mode": "midpoint",
-    "description": "Custom monitoring dataset formatted by format_custom_data.py (MIDPOINT mode)",
-    "data_dir": "data/custom/waterblitz_midpoint",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  },
-  "waterblitz_tobit": {
-    "name": "waterblitz_tobit",
-    "abbr": "WATERB_TOB",
-    "label": "Waterblitz [Tobit]",
-    "range_mode": "tobit",
-    "description": "Custom monitoring dataset formatted by format_custom_data.py (TOBIT mode)",
-    "data_dir": "data/custom/waterblitz_tobit",
+  "custom_example": {
+    "name": "custom_example",
+    "abbr": "CUSTOM",
+    "label": "Custom River Monitoring Study",
+    "description": "Example configuration template for registering a custom river monitoring dataset",
+    "data_dir": "data/custom/example_study",
     "sites_file": "sites.csv",
     "id_col": "site_id",
     "easting_col": "easting",
@@ -652,29 +658,65 @@ DEFAULT_SOURCE_CONFIGS = json.loads(r"""{
 }""")
 
 
+def _network_files_exist(net_cfg, base_dir=BASE_DIR, gis_dir=None):
+    if gis_dir is None:
+        gis_dir = GIS_DIR
+    gpkg_paths = net_cfg.get("gpkg_paths", [])
+    parquet_paths = net_cfg.get("parquet_paths", [])
+    network_paths = net_cfg.get("network_paths", [])
+    zip_fallbacks = net_cfg.get("zip_fallbacks", [])
+
+    all_targets = gpkg_paths + parquet_paths + network_paths + zip_fallbacks
+    if not all_targets:
+        return False
+
+    for rel_p in all_targets:
+        p1 = os.path.join(base_dir, rel_p)
+        if os.path.exists(p1):
+            return True
+        rel_sub = rel_p[4:] if rel_p.startswith("gis/") else rel_p
+        p2 = os.path.join(gis_dir, rel_sub)
+        if os.path.exists(p2):
+            return True
+        p3 = os.path.join(gis_dir, rel_p)
+        if os.path.exists(p3):
+            return True
+    return False
+
+
+def _source_files_exist(src_cfg, base_dir=BASE_DIR, data_dir=None):
+    if data_dir is None:
+        data_dir = DATA_DIR
+    raw_data_dir = src_cfg.get("data_dir")
+    if not raw_data_dir:
+        return False
+    cands = [
+        os.path.join(base_dir, raw_data_dir),
+        os.path.join(data_dir, raw_data_dir),
+        os.path.join(data_dir, raw_data_dir[5:]) if raw_data_dir.startswith("data/") else None,
+        os.path.join(data_dir, "custom", os.path.basename(raw_data_dir)),
+    ]
+    for c in cands:
+        if c and os.path.isdir(c):
+            try:
+                if len(os.listdir(c)) > 0:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
 def ensure_network_configs(base_dir=BASE_DIR):
     """
-    Ensures that configs/networks directory exists and contains default network JSON configurations.
-    If OLD_configs/networks exists, copies existing files if missing.
+    Ensures that configs/networks directory exists and contains default network JSON configuration (ORN).
+    Optional network configurations (e.g. EU-Hydro) are only created if their underlying GIS files exist in gis/.
     Returns list of paths created.
     """
     net_dir = _rel_join(base_dir, "configs", "networks")
     os.makedirs(net_dir, exist_ok=True)
     created = []
 
-    # Check if OLD_configs/networks exists to migrate / copy
-    old_net_dir = _rel_join(base_dir, "OLD_configs", "networks")
-    if os.path.isdir(old_net_dir):
-        for f in os.listdir(old_net_dir):
-            if f.endswith(".json"):
-                dst = os.path.join(net_dir, f)
-                if not os.path.exists(dst):
-                    try:
-                        shutil.copy2(os.path.join(old_net_dir, f), dst)
-                        created.append(dst)
-                    except Exception:
-                        pass
-
+    # 1. Unconditional Default: ORN
     for net_name, net_cfg in DEFAULT_NETWORK_CONFIGS.items():
         dst = os.path.join(net_dir, f"{net_name}.json")
         if not os.path.exists(dst):
@@ -686,34 +728,42 @@ def ensure_network_configs(base_dir=BASE_DIR):
             except Exception as e:
                 print(f"   [Warning] Failed to write network config {dst}: {e}")
 
+    # 2. Optional Networks (e.g. EU-Hydro): only create if underlying GIS files exist in gis/
+    for net_name, net_cfg in OPTIONAL_NETWORK_CONFIGS.items():
+        dst = os.path.join(net_dir, f"{net_name}.json")
+        if _network_files_exist(net_cfg, base_dir, GIS_DIR):
+            if not os.path.exists(dst):
+                try:
+                    with open(dst, "w", encoding="utf-8") as f:
+                        json.dump(net_cfg, f, indent=2)
+                        f.write("\n")
+                    created.append(dst)
+                except Exception as e:
+                    print(f"   [Warning] Failed to write network config {dst}: {e}")
+        else:
+            if os.path.exists(dst):
+                try:
+                    os.remove(dst)
+                except Exception:
+                    pass
+
     if created:
-        print(f"   [Config] Created default network configuration(s) in {net_dir}/ ({len(created)} profile(s))")
+        print(f"   [Config] Created network configuration(s) in {net_dir}/ ({len(created)} profile(s))")
     return created
 
 
 def ensure_source_configs(base_dir=BASE_DIR):
     """
-    Ensures that configs/sources directory exists and contains default source JSON configurations.
-    If OLD_configs/sources exists, copies existing files if missing.
+    Ensures that configs/sources directory exists and contains default source JSON configurations (RSN, SSN, RSS).
+    Optional source configurations (e.g. waterblitz, river_guardians, rsn_gam) are only created if their
+    corresponding directories exist in data/custom/.
     Returns list of paths created.
     """
     src_dir = _rel_join(base_dir, "configs", "sources")
     os.makedirs(src_dir, exist_ok=True)
     created = []
 
-    # Check if OLD_configs/sources exists to migrate / copy
-    old_src_dir = _rel_join(base_dir, "OLD_configs", "sources")
-    if os.path.isdir(old_src_dir):
-        for f in os.listdir(old_src_dir):
-            if f.endswith(".json"):
-                dst = os.path.join(src_dir, f)
-                if not os.path.exists(dst):
-                    try:
-                        shutil.copy2(os.path.join(old_src_dir, f), dst)
-                        created.append(dst)
-                    except Exception:
-                        pass
-
+    # 1. Unconditional Defaults: RSN, SSN, RSS (composites)
     for src_name, src_cfg in DEFAULT_SOURCE_CONFIGS.items():
         dst = os.path.join(src_dir, f"{src_name}.json")
         if not os.path.exists(dst):
@@ -725,13 +775,32 @@ def ensure_source_configs(base_dir=BASE_DIR):
             except Exception as e:
                 print(f"   [Warning] Failed to write source config {dst}: {e}")
 
+    # 2. Optional Sources: only create if underlying directories exist in data/
+    for src_name, src_cfg in OPTIONAL_SOURCE_CONFIGS.items():
+        dst = os.path.join(src_dir, f"{src_name}.json")
+        if _source_files_exist(src_cfg, base_dir, DATA_DIR):
+            if not os.path.exists(dst):
+                try:
+                    with open(dst, "w", encoding="utf-8") as f:
+                        json.dump(src_cfg, f, indent=2)
+                        f.write("\n")
+                    created.append(dst)
+                except Exception as e:
+                    print(f"   [Warning] Failed to write source config {dst}: {e}")
+        else:
+            if os.path.exists(dst):
+                try:
+                    os.remove(dst)
+                except Exception:
+                    pass
+
     if created:
-        print(f"   [Config] Created default source configuration(s) in {src_dir}/ ({len(created)} profile(s))")
+        print(f"   [Config] Created source configuration(s) in {src_dir}/ ({len(created)} profile(s))")
     return created
 
 
 def ensure_all_configs(base_dir=BASE_DIR):
-    """Ensures directory config, network configs, and source configs all exist."""
+    """Ensures directory config, default network configs, and default source configs all exist."""
     ensure_directory_config(base_dir)
     ensure_network_configs(base_dir)
     ensure_source_configs(base_dir)
@@ -2647,9 +2716,14 @@ def load_network_config(network_arg, config_path=None):
                 return json.load(f)
         if mapped in DEFAULT_NETWORK_CONFIGS:
             return DEFAULT_NETWORK_CONFIGS[mapped]
+        if mapped in OPTIONAL_NETWORK_CONFIGS and _network_files_exist(OPTIONAL_NETWORK_CONFIGS[mapped], BASE_DIR, GIS_DIR):
+            return OPTIONAL_NETWORK_CONFIGS[mapped]
 
     if net_clean.lower() in DEFAULT_NETWORK_CONFIGS:
         return DEFAULT_NETWORK_CONFIGS[net_clean.lower()]
+
+    if net_clean.lower() in OPTIONAL_NETWORK_CONFIGS and _network_files_exist(OPTIONAL_NETWORK_CONFIGS[net_clean.lower()], BASE_DIR, GIS_DIR):
+        return OPTIONAL_NETWORK_CONFIGS[net_clean.lower()]
 
     if net_clean.endswith(".json") and os.path.exists(net_clean):
         with open(net_clean, "r", encoding="utf-8") as f:
