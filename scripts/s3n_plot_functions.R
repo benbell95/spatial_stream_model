@@ -149,6 +149,10 @@ load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
   out_d  <- resolve_p(raw_cfg$output_dir, "output")
   proc_d <- if (nzchar(raw_cfg$processed_dir)) resolve_p(raw_cfg$processed_dir, rel_path(data_d, "processed")) else rel_path(data_d, "processed")
 
+  if (isTRUE(auto_create) && nzchar(out_d)) {
+    dir.create(out_d, recursive = TRUE, showWarnings = FALSE)
+  }
+
   list(
     config_file   = if (file.exists(cfg_file)) cfg_file else NULL,
     data_dir      = data_d,
@@ -201,6 +205,9 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
   gis_dir  <- resolve_arg(gis_dir, "gis")
   data_dir <- resolve_arg(data_dir, "data")
   out_dir  <- resolve_arg(out_dir, "output")
+  if (nzchar(out_dir)) {
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  }
 
   cand_wq <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
   wq_dir <- if (dir.exists(cand_wq)) {

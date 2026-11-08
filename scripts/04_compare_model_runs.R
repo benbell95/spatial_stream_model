@@ -406,6 +406,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
+  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(out_root, "comparisons"), recursive = TRUE, showWarnings = FALSE)
   if (length(run_dirs) < 2) {
     stop(paste0(
       "compare_s3n_runs() requires at least 2 model run directories to compare.\n",
@@ -456,6 +458,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   }
 
   eff_out_root <- if (!is.null(out_root) && nzchar(out_root)) out_root else load_directory_config(BASE_DIR)$output_dir
+  dir.create(eff_out_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(eff_out_root, "comparisons"), recursive = TRUE, showWarnings = FALSE)
   if (is.null(out_dir) || !nzchar(out_dir)) {
     slug <- paste(sapply(bundles, function(b) b$dir_name), collapse = "_vs_")
     if (nchar(slug) > 85) {
@@ -2057,6 +2061,10 @@ if (sys.nframe() == 0L) {
   args <- commandArgs(trailingOnly = TRUE)
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
+  # Ensure base output and comparisons directories exist on first run
+  dir.create(dir_cfg$out_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(dir_cfg$out_dir, "comparisons"), recursive = TRUE, showWarnings = FALSE)
+
   if (length(args) == 0 || any(args %in% c("-h", "--help"))) {
     cat("Usage:\n")
     cat("  Rscript scripts/04_compare_model_runs.R --list [--output-dir=<dir>]\n")
@@ -2137,6 +2145,10 @@ if (sys.nframe() == 0L) {
         break
       }
     }
+  }
+
+  if (!is.null(out_cli) && nzchar(out_cli)) {
+    dir.create(out_cli, recursive = TRUE, showWarnings = FALSE)
   }
 
   compare_s3n_runs(run_dirs = pos_dirs, labels = labels_cli, out_dir = out_cli,

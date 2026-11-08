@@ -165,6 +165,7 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
+  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
   dir_p <- if (grepl("^/", dir_path)) dir_path else rel_path(BASE_DIR, dir_path)
   if (!dir.exists(dir_p) && !grepl("^/", dir_path)) {
     cand_in_out <- rel_path(out_root, dir_path)
@@ -375,10 +376,13 @@ list_available_model_runs <- function(out_root = NULL) {
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
+  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(out_root, "comparisons"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(out_root, "descriptives"), recursive = TRUE, showWarnings = FALSE)
   cat("==============================================================================\n")
   cat(sprintf("Available Model Run Output Directories (under '%s'):\n", out_root))
   cat("==============================================================================\n")
-  all_dirs <- list.dirs(out_root, recursive = TRUE, full.names = TRUE)
+  all_dirs <- if (dir.exists(out_root)) list.dirs(out_root, recursive = TRUE, full.names = TRUE) else character(0)
   found <- 0L
   for (d in all_dirs) {
     if (grepl("/(comparisons|descriptives)(/|$)", d)) next
@@ -399,6 +403,9 @@ list_available_model_runs <- function(out_root = NULL) {
         cat(sprintf("  [%2d] %s\n", found, rel_d))
       }
     }
+  }
+  if (found == 0L) {
+    cat(sprintf("  (No fitted model runs found under '%s'.)\n", format_rel_display_path(out_root, BASE_DIR)))
   }
   cat("==============================================================================\n")
 }
@@ -1213,6 +1220,8 @@ run_descriptive_stats <- function(run_dir, label = NULL, out_dir = NULL, out_roo
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
+  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(out_root, "descriptives"), recursive = TRUE, showWarnings = FALSE)
   b1 <- load_model_run_bundle(run_dir, custom_label = label, out_root = out_root)
 
   if (is.null(out_dir) || !nzchar(out_dir)) {
@@ -1286,6 +1295,10 @@ if (sys.nframe() == 0L) {
   args    <- commandArgs(trailingOnly = TRUE)
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
+  # Ensure base output and descriptives directories exist on first run
+  dir.create(dir_cfg$out_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(dir_cfg$out_dir, "descriptives"), recursive = TRUE, showWarnings = FALSE)
+
   if (length(args) == 0 || any(args %in% c("-h", "--help"))) {
     cat("Usage:\n")
     cat("  Rscript scripts/05_descriptive_stats.R --list [--output-dir=<dir>]\n")
@@ -1329,6 +1342,9 @@ if (sys.nframe() == 0L) {
       rel_path(out_cli, basename(pos_dirs[d_i]))
     } else {
       out_cli
+    }
+    if (!is.null(out_i) && nzchar(out_i)) {
+      dir.create(out_i, recursive = TRUE, showWarnings = FALSE)
     }
     run_descriptive_stats(run_dir = pos_dirs[d_i], label = label_cli, out_dir = out_i, out_root = dir_cfg$out_dir)
   }
