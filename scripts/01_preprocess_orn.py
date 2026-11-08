@@ -278,13 +278,94 @@ def resolve_source_tag(source="rsn", registry=None):
         return s, c_srcs, c_abbr, c_label
     if s in sources_reg:
         s_info = sources_reg[s]
+        if s_info.get("alias_target") and s_info["alias_target"] in sources_reg:
+            t_key = s_info["alias_target"]
+            t_info = sources_reg[t_key]
+            return t_key, [t_key], t_info.get("abbr", t_key.upper()), t_info.get("label", f"Monitoring Source: {t_key}")
         s_abbr = s_info.get("abbr", s.upper())
         s_label = s_info.get("label", f"Monitoring Source: {s}")
         return s, [s], s_abbr, s_label
 
+    # Check if a range-tagged profile exists (e.g. waterblitz -> waterblitz_tobit)
+    for rm in ("tobit", "geometric", "midpoint", "lower", "upper"):
+        cand_key = f"{s}_{rm}"
+        if cand_key in sources_reg:
+            t_info = sources_reg[cand_key]
+            return cand_key, [cand_key], t_info.get("abbr", cand_key.upper()), t_info.get("label", f"Monitoring Source: {cand_key}")
+
+    # Check if s has a range mode suffix
+    for rm in ("tobit", "geometric", "midpoint", "lower", "upper"):
+        if s.endswith(f"_{rm}"):
+            base_s = s[:-len(rm)-1]
+            if base_s in sources_reg:
+                b_info = sources_reg[base_s]
+                b_label = b_info.get("label", base_s.title())
+                if f"[{rm.title()}]" not in b_label:
+                    b_label = f"{b_label} [{rm.title()}]"
+                b_abbr = f"{b_info.get('abbr', base_s.upper())}_{rm.upper()[:3]}"
+                return s, [s], b_abbr, b_label
+
     # Generic custom source
     clean_tag = re.sub(r"[^a-z0-9_]+", "_", s)
     return clean_tag, [clean_tag], clean_tag.upper(), f"Custom Monitoring Source ({clean_tag.upper()})"
+
+
+def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=None, cli_mode="auto"):
+    """
+    Detects whether range conversion was used and returns the range mode tag
+    ('tobit', 'geometric', 'midpoint', 'lower', 'upper', or None).
+    """
+    if cli_mode and cli_mode not in ("auto", "none"):
+        return cli_mode
+    if cli_mode == "none":
+        return None
+
+    for m in ("tobit", "geometric", "midpoint", "lower", "upper"):
+        if source_key.endswith(f"_{m}"):
+            return m
+
+    if source_key in sources_reg:
+        rm = sources_reg[source_key].get("range_mode")
+        if rm:
+            return rm
+
+    cand_samples = custom_samples
+    if not cand_samples and custom_dir:
+        cand_samples = os.path.join(custom_dir, "samples.csv")
+    if not cand_samples and source_key in sources_reg:
+        s_dir = sources_reg[source_key].get("data_dir", "")
+        if s_dir:
+            cand = os.path.join(s_dir, "samples.csv")
+            if os.path.exists(cand):
+                cand_samples = cand
+            else:
+                cand = os.path.join(BASE_DIR, s_dir, "samples.csv")
+                if os.path.exists(cand):
+                    cand_samples = cand
+
+    if cand_samples and os.path.exists(cand_samples):
+        try:
+            with open(cand_samples, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames and "meas_method" in reader.fieldnames:
+                    for i, r in enumerate(reader):
+                        if i > 500:
+                            break
+                        mm = (r.get("meas_method") or "").strip().lower()
+                        if "tobit" in mm:
+                            return "tobit"
+                        if "geometric" in mm:
+                            return "geometric"
+                        if "midpoint" in mm or "arithmetic" in mm:
+                            return "midpoint"
+                        if "lower" in mm:
+                            return "lower"
+                        if "upper" in mm:
+                            return "upper"
+        except Exception:
+            pass
+
+    return None
 
 
 def print_available_sources(base_dir=BASE_DIR):
@@ -1910,7 +1991,7 @@ def query_orn_spatial_grid(grid, mx, my):
 
 
 def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
-                               trans_type="log", eff_lambda=None, pts_source=None, source_key="rsn"):
+                               trans_type="log", eff_lambda=None, pts_source=None, source_key="rsn", range_mode=None):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
@@ -2610,6 +2691,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "source": source_key,
         "source_abbr": source_abbr,
         "source_label": source_label,
+        "range_mode": active_range_mode,
+        "range_mode": range_mode,
         "crs_epsg": crs_epsg,
         "topology_mode": topo_mode,
         "max_snap_dist_m": max_snap_m,
@@ -2802,6 +2885,15 @@ def main():
         help="EPSG code for custom station coordinates (default: 27700 BNG; use 4326 for WGS84 lat/lon).",
     )
     parser.add_argument(
+        "--range-mode",
+        choices=["auto", "tobit", "geometric", "midpoint", "lower", "upper", "none"],
+        default="auto",
+        help=(
+            "Range handling strategy tag to apply to output directory: 'auto' (detect from config/samples, default), "
+            "'tobit', 'geometric', 'midpoint', 'lower', 'upper', or 'none'."
+        ),
+    )
+    parser.add_argument(
         "--list-sources",
         action="store_true",
         help="List available monitoring data sources (RSN, SSN, RSS, custom) and their configuration, then exit.",
@@ -2818,7 +2910,25 @@ def main():
     if (args.custom_sites or args.custom_dir) and args.source == "rsn":
         args.source = args.custom_name
 
-    source_key, constituents, source_abbr, source_label = resolve_source_tag(args.source)
+    sources_reg, composites_reg = load_source_registry(base_dir=BASE_DIR)
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(args.source, (sources_reg, composites_reg))
+
+    active_range_mode = detect_range_mode(
+        source_key=source_key,
+        sources_reg=sources_reg,
+        custom_samples=args.custom_samples,
+        custom_dir=args.custom_dir,
+        cli_mode=args.range_mode
+    )
+
+    if active_range_mode:
+        if source_key != "rsn" and not source_key.endswith(f"_{active_range_mode}"):
+            source_key = f"{source_key}_{active_range_mode}"
+            if not source_abbr.endswith(active_range_mode.upper()[:3]):
+                source_abbr = f"{source_abbr}_{active_range_mode.upper()[:3]}"
+            if f"[{active_range_mode.title()}]" not in source_label:
+                source_label = f"{source_label} [{active_range_mode.title()}]"
+        print(f"   [Range Handling] Detected range mode: {active_range_mode.upper()} (Processed folder tagged with _{active_range_mode})")
 
     configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
 
@@ -2931,7 +3041,8 @@ def main():
     if cfg.get("covariates", {}).get("mode") != "orn_100m_table" or args.topology_mode != "auto" or args.afv_col:
         preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
                                    trans_type=trans_type, eff_lambda=eff_lambda,
-                                   pts_source=pts_source, source_key=source_key)
+                                   pts_source=pts_source, source_key=source_key,
+                                   range_mode=active_range_mode)
         return
 
     # Standard ORN v2 fast path
@@ -3250,6 +3361,7 @@ def main():
         "source": source_key,
         "source_abbr": source_abbr,
         "source_label": source_label,
+        "range_mode": active_range_mode,
         "crs_epsg": 27700,
         "topology_mode": "nodes",
         "max_snap_dist_m": max_snap_m,

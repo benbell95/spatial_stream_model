@@ -176,7 +176,12 @@ The pipeline supports official statutory networks, custom field campaigns, and a
 | `--source=<A>+<B>` | `<A>+<B>` | **Multi-Source Combination** | Merged union of multiple registered or custom sources | Variable | Variable | Union of catchments | `output/det_<code>_<net>_src_<A>_<B>/` |
 
 > [!TIP]
-> **Complete Custom Data Guide**: For comprehensive instructions on bringing your own point observation datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
+> **Complete Custom Data Guide & Automated Formatter**: For comprehensive instructions on bringing your own point observation datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
+> To automatically prepare any unstandardized raw CSV dataset (including "Gold Standard" interval-censored Tobit model for concentration ranges, analytical bin uncertainty, coordinate projection, and column remapping), run:
+> ```bash
+> python3 scripts/format_custom_data.py path/to/raw_data.csv --source-name=my_project --generate-config
+> ```
+> Output folders across formatting (`data/custom/`), network preprocessing (`data/processed/`), and modeling (`output/`) are systematically tagged with the active range mode (e.g. `_tobit`, `_midpoint`).
 
 > [!NOTE]
 > **Dataset Availability Across Sources**:

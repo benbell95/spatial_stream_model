@@ -161,13 +161,15 @@ parse_source_config_file <- function(filepath) {
     } else default
   }
   list(
-    name        = tolower(get_field("name", sub("\\.json$", "", basename(filepath)))),
-    abbr        = get_field("abbr", toupper(sub("\\.json$", "", basename(filepath)))),
-    label       = get_field("label", get_field("name")),
-    description = get_field("description", ""),
-    data_dir    = get_field("data_dir", ""),
-    sites_file  = get_field("sites_file", ""),
-    sources     = get_array("sources")
+    name         = tolower(get_field("name", sub("\\.json$", "", basename(filepath)))),
+    abbr         = get_field("abbr", toupper(sub("\\.json$", "", basename(filepath)))),
+    label        = get_field("label", get_field("name")),
+    description  = get_field("description", ""),
+    data_dir     = get_field("data_dir", ""),
+    sites_file   = get_field("sites_file", ""),
+    alias_target = tolower(get_field("alias_target", "")),
+    range_mode   = tolower(get_field("range_mode", "")),
+    sources      = get_array("sources")
   )
 }
 
@@ -287,7 +289,14 @@ resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
     if (s %in% names(reg$composites)) {
       s
     } else if (s %in% names(reg$sources)) {
-      s
+      s_item <- reg$sources[[s]]
+      if (!is.null(s_item$alias_target) && nzchar(s_item$alias_target)) {
+        s_item$alias_target
+      } else {
+        s
+      }
+    } else if (paste0(s, "_tobit") %in% names(reg$sources)) {
+      paste0(s, "_tobit")
     } else {
       # Treat as generic custom source slug
       gsub("[^a-z0-9_]+", "_", s)
@@ -304,6 +313,16 @@ format_source_abbr <- function(source = "rsn", base_dir = NULL) {
   reg <- load_source_registry(base_dir)
   if (s %in% names(reg$composites)) return(reg$composites[[s]]$abbr)
   if (s %in% names(reg$sources)) return(reg$sources[[s]]$abbr)
+
+  # Check range mode suffix (e.g. waterblitz_tobit)
+  if (grepl("_(tobit|geometric|midpoint|lower|upper)$", s)) {
+    base_s <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s)
+    rm     <- sub(".*_(tobit|geometric|midpoint|lower|upper)$", "\\1", s)
+    rm_str <- tools::toTitleCase(rm)
+    base_a <- if (base_s %in% names(reg$sources)) reg$sources[[base_s]]$abbr else toupper(base_s)
+    if (grepl("\\[", base_a)) return(base_a)
+    return(paste0(base_a, " [", rm_str, "]"))
+  }
 
   raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
   raw_tokens <- raw_tokens[nzchar(raw_tokens)]
@@ -326,6 +345,17 @@ format_source_label <- function(source = "rsn", base_dir = NULL) {
       reg <- load_source_registry(base_dir)
       if (s %in% names(reg$composites)) return(reg$composites[[s]]$label)
       if (s %in% names(reg$sources)) return(reg$sources[[s]]$label)
+
+      # Check range mode suffix
+      if (grepl("_(tobit|geometric|midpoint|lower|upper)$", s)) {
+        base_s <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s)
+        rm     <- sub(".*_(tobit|geometric|midpoint|lower|upper)$", "\\1", s)
+        rm_str <- tools::toTitleCase(rm)
+        base_l <- if (base_s %in% names(reg$sources)) reg$sources[[base_s]]$label else tools::toTitleCase(gsub("_", " ", base_s))
+        if (grepl("\\[", base_l)) return(base_l)
+        return(paste0(base_l, " [", rm_str, "]"))
+      }
+
       raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
       raw_tokens <- raw_tokens[nzchar(raw_tokens)]
       if (length(raw_tokens) > 1) {
@@ -2127,6 +2157,17 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
   # If default RSN and sub_d doesn't exist, check root proc_root fallback
   if (src_tag == "rsn" && !dir.exists(sub_d) && file.exists(rel_path(proc_root, "england_rsn_reaches.csv"))) {
     return(proc_root)
+  }
+
+  # If sub_d does not exist, check if a range-tagged processed directory exists (e.g. orn_waterblitz_tobit)
+  if (!dir.exists(sub_d) || !file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
+    for (rm in c("tobit", "geometric", "midpoint", "lower", "upper")) {
+      cand_d <- paste0(sub_d, "_", rm)
+      if (dir.exists(cand_d) && file.exists(rel_path(cand_d, "england_rsn_reaches.csv"))) {
+        sub_d <- cand_d
+        break
+      }
+    }
   }
 
   if (!file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {

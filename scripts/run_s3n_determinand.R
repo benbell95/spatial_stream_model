@@ -351,6 +351,77 @@ suppressPackageStartupMessages({
 })
 dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 
+# Range mode handling and folder tagging
+range_arg <- grep("^--range-mode=", args, value = TRUE)
+range_cli <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
+
+detected_range_mode <- NA_character_
+if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
+  detected_range_mode <- range_cli
+} else if (!is.na(range_cli) && range_cli == "none") {
+  detected_range_mode <- NA_character_
+} else {
+  # 1. Suffix in source_cli
+  for (rm in c("tobit", "geometric", "midpoint", "lower", "upper")) {
+    if (grepl(paste0("_", rm, "$"), source_cli)) {
+      detected_range_mode <- rm
+      break
+    }
+  }
+  # 2. Network metadata in PROC_DIR
+  if (is.na(detected_range_mode) && !is.null(net_meta$range_mode) && nzchar(net_meta$range_mode)) {
+    detected_range_mode <- net_meta$range_mode
+  }
+  # 3. Source config registry
+  if (is.na(detected_range_mode)) {
+    reg <- load_source_registry(BASE_DIR)
+    if (source_cli %in% names(reg$sources)) {
+      rm_cfg <- reg$sources[[source_cli]]$range_mode
+      if (!is.null(rm_cfg) && nzchar(rm_cfg)) detected_range_mode <- rm_cfg
+    }
+  }
+  # 4. Check meas_method in samples.csv
+  if (is.na(detected_range_mode)) {
+    cand_smp <- custom_samples_cli
+    if (is.null(cand_smp) && !is.null(custom_dir_cli)) {
+      cand_smp <- file.path(custom_dir_cli, "samples.csv")
+    }
+    if (is.null(cand_smp) && source_cli %in% names(src_dirs$active_dirs)) {
+      s_d <- src_dirs$active_dirs[[source_cli]]
+      cand_smp <- file.path(s_d, "samples.csv")
+    }
+    if (!is.null(cand_smp) && file.exists(cand_smp)) {
+      tryCatch({
+        samp_hdr <- colnames(read.csv(cand_smp, nrows = 1, fileEncoding = "UTF-8-BOM"))
+        if ("meas_method" %in% samp_hdr) {
+          samp_preview <- read.csv(cand_smp, nrows = 200, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+          mm_vals <- tolower(unique(samp_preview$meas_method))
+          if (any(grepl("tobit", mm_vals))) detected_range_mode <- "tobit"
+          else if (any(grepl("geometric", mm_vals))) detected_range_mode <- "geometric"
+          else if (any(grepl("midpoint|arithmetic", mm_vals))) detected_range_mode <- "midpoint"
+          else if (any(grepl("lower", mm_vals))) detected_range_mode <- "lower"
+          else if (any(grepl("upper", mm_vals))) detected_range_mode <- "upper"
+        }
+      }, error = function(e) NULL)
+    }
+  }
+}
+
+if (!is.na(detected_range_mode)) {
+  if (nzchar(source_tag)) {
+    if (!grepl(paste0("_", detected_range_mode, "$"), source_tag)) {
+      source_tag <- paste0(source_tag, "_", detected_range_mode)
+    }
+  } else {
+    source_tag <- paste0("src_", detected_range_mode)
+  }
+  if (!grepl(paste0("_", detected_range_mode, "$"), source_cli)) {
+    source_cli <- paste0(source_cli, "_", detected_range_mode)
+  }
+  source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
+  source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
+}
+
 default_trans   <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
 trans_tag       <- format_transform_folder_tag(trans_obj, default_type = default_trans)
 vars_tag        <- format_covariates_folder_tag(var_specs)
@@ -367,6 +438,11 @@ if (nzchar(vars_tag)) {
 }
 OUT_DIR <- rel_path(OUT_BASE, out_folder_name)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+
+if (!is.na(detected_range_mode)) {
+  cat(sprintf("   [Range Handling] Active range mode: %s (Output folder tagged with _%s)\n",
+              toupper(detected_range_mode), detected_range_mode))
+}
 
 # ==============================================================================
 # DATA LOADING & MULTI-DOMAIN S3N ESTIMATION + 5-FOLD CV

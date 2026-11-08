@@ -909,6 +909,13 @@ if (sys.nframe() == 0L) {
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
   src_cli <- parse_source_arg(args)
+  range_arg <- grep("^--range-mode=", args, value = TRUE)
+  range_cli <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
+  if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
+    if (!grepl(paste0("_", range_cli, "$"), src_cli)) {
+      src_cli <- paste0(src_cli, "_", range_cli)
+    }
+  }
   if ("--list-sources" %in% args) {
     print_available_sources(base_dir = BASE_DIR)
     quit(save = "no", status = 0)

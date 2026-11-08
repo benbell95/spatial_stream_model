@@ -120,6 +120,122 @@ CS_002,2023-10-05T09:45:00,0117,Nitrate as N,1.9,=,mg/L
 
 ---
 
+### 3.3 Automated Formatting Tool: `scripts/format_custom_data.py`
+
+To eliminate manual data manipulation, the repository provides a standalone Python script, [`scripts/format_custom_data.py`](../scripts/format_custom_data.py), that ingests raw, unstandardized CSV files from any source and automatically creates model-ready `sites.csv` and `samples.csv` files with canonical column names.
+
+#### Key Features:
+1. **Universal Auto-Detection**:
+   Automatically detects station IDs, station names, coordinates (`x`/`y`, `lon`/`lat`, `easting`/`northing`), dates/times, concentrations, units, and censoring signs across dozens of naming conventions.
+2. **Explicit Column Overrides**:
+   Allows you to specify or remap any column name in the raw dataset if your data uses non-standard naming:
+   `--id-col`, `--name-col`, `--x-col`, `--y-col`, `--date-col`, `--time-col`, `--val-col`, `--det-col`, `--unit-col`, `--sign-col`.
+3. **"Gold Standard" Interval-Censored Tobit & Truncated Lognormal Model (`--range-mode=tobit`, Default)**:
+   Citizen-science and test-strip datasets frequently record concentrations as ranges (e.g. `5-10`, `0.2-0.5`, `1-2`, `<0.2`, `>10`).
+   - **Why Arithmetic Midpoints Fail**: Water quality determinands follow right-skewed lognormal distributions. Taking a linear midpoint ($\frac{5+10}{2} = 7.5$) introduces a systematic upward bias in log-transformed models ($\log(7.5) = 2.015$ vs log-midpoint $1.956$), and cannot handle open boundaries ($<0.2$ or $>10$) without arbitrary multipliers.
+   - **The Gold Standard Solution**: The script fits an **interval-censored lognormal maximum likelihood model (Tobit formulation)** per determinand. It computes mathematically unbiased conditional expectations:
+     $$E[Y \mid a \le Y \le b] = \exp\left( \mu + \sigma \left[ \frac{\phi(\alpha) - \phi(\beta)}{\Phi(\beta) - \Phi(\alpha)} \right] \right)$$
+     where $\alpha = \frac{\log a - \mu}{\sigma}$, $\beta = \frac{\log b - \mu}{\sigma}$, and $\phi, \Phi$ are the standard normal PDF and CDF.
+   - **Open-Ended Boundaries Handled Rigorously**: Non-detects ($<0.2$) and saturation limits ($>10$) are estimated strictly from the fitted distribution's tail probabilities ($0.119\text{ mg/L}$ for $<0.2$, $16.92\text{ mg/L}$ for $>10$) rather than ad-hoc guesses.
+   - **Analytical Binning Uncertainty**: Calculates analytical interval variance $\sigma_{\text{bin}} = \frac{\log(b) - \log(a)}{\sqrt{12}}$ and stores interval bounds in `samples.csv` (`meas_lower`, `meas_upper`, `meas_uncertainty`, `meas_method`).
+   - **Configurable Strategies (`--range-mode`)**:
+     - `tobit` *(Default, Gold Standard)*: Maximum likelihood expectation conditional on the fitted lognormal distribution.
+     - `geometric`: Geometric midpoint $y^* = \sqrt{a \cdot b} = \exp\left(\frac{\log a + \log b}{2}\right)$, exact linear midpoint in log-space.
+     - `midpoint`: Standard arithmetic midpoint $y^* = \frac{a + b}{2}$.
+     - `lower` / `upper`: Strict lower or upper interval bounds.
+     - `skip`: Skips range intervals.
+4. **Built-in Pure Python Coordinate Projection**:
+   Converts WGS84 decimal degrees (lat/lon) into British National Grid (`EPSG:27700`) meters using Airy 1830 ellipsoid Transverse Mercator formulas. Zero external GIS or Python dependencies required (no pandas, geopandas, or pyproj needed).
+5. **Wide-to-Long Determinand Unpivoting**:
+   If raw files store determinands as separate columns (e.g. `Nitrate (mg/L)`, `Phosphate (mg/L)`), the script unpivots them into standard relational `samples.csv` records with canonical EA codes (`0117`, `0180`, etc.).
+6. **Data Filtering & Subsetting**:
+   Filter rows using `--filter="KEY=VALUE"` (e.g. `--filter="Country=England"`).
+7. **Instant Pipeline Integration**:
+   Writes outputs directly to `data/custom/<source_name>/` and optionally creates `configs/sources/<source_name>.json` (`--generate-config`), making the dataset immediately available for preprocessing and S3N modeling.
+
+#### Example 1: Formatting the Earthwatch Waterblitz Dataset
+```bash
+python3 scripts/format_custom_data.py data/Waterblitz \
+  --source-name=waterblitz \
+  --source-label="Earthwatch Waterblitz" \
+  --filter="Country=England" \
+  --val-col="Nitrate (mg/L),Phosphate (mg/L)" \
+  --group-sites-by=coords \
+  --site-id-prefix="WB_" \
+  --generate-config
+```
+*Result*: Converts 65,983 range intervals to numeric midpoints, flags 19,608 censored values, projects lat/lon to BNG meters, and writes 36,956 unique stations to `data/custom/waterblitz/sites.csv` and 85,591 observations to `data/custom/waterblitz/samples.csv`.
+
+#### Example 2: Arbitrary External Sensor Dataset with Explicit Column Mappings
+```bash
+python3 scripts/format_custom_data.py path/to/my_sensor_export.csv \
+  --source-name=river_sensor_study \
+  --id-col="Logger_ID" \
+  --name-col="Location_Description" \
+  --x-col="Longitude" \
+  --y-col="Latitude" \
+  --date-col="Reading_Date" \
+  --time-col="Reading_Time" \
+  --val-col="NO3_Concentration" \
+  --det-code=0117 \
+  --det-name="Nitrate as N" \
+  --unit="mg/L" \
+  --ranges-to-midpoint \
+  --generate-config
+```
+
+#### CLI Reference: `format_custom_data.py`
+| Flag / Option | Default | Description |
+| :--- | :---: | :--- |
+| `input` / `--input <path>` | *(Required)* | Path to raw CSV file or directory containing monitoring data |
+| `--source-name <name>` | *(Auto)* | Source identifier (e.g. `waterblitz`, `catchment_study`) |
+| `--source-label <label>` | *(Auto)* | Human-readable title for maps and reports |
+| `--out-dir <dir>` | `data/custom/<name>/` | Output directory where `sites.csv` and `samples.csv` are written |
+| `--id-col <name>` | *(Auto-detected)* | Column for unique station/site identifier |
+| `--name-col <name>` | *(Auto-detected)* | Column for human-readable site name or river reach |
+| `--x-col <name>` | *(Auto-detected)* | Column for Easting (m) or decimal Longitude (deg) |
+| `--y-col <name>` | *(Auto-detected)* | Column for Northing (m) or decimal Latitude (deg) |
+| `--date-col <name>` | *(Auto-detected)* | Column for sample date or ISO datetime |
+| `--time-col <name>` | *(None)* | Separate column for sample time (e.g. `14:30`) |
+| `--val-col <cols>` | *(Auto-detected)* | Measurement column(s) (comma-separated for wide tables) |
+| `--det-code <code >` | `0117` | Determinand code (e.g. `0117` Nitrate, `0180` Orthophosphate) |
+| `--det-name <name>` | `Nitrate as N` | Determinand descriptive name |
+| `--unit <unit>` | `mg/L` | Measurement unit |
+| `--ranges-to-midpoint` | `True` | Enable interval conversion (set `--no-ranges-to-midpoint` to skip intervals) |
+| `--range-mode <mode>` | `tobit` | Strategy: `tobit` (Gold Standard MLE), `geometric` ($\sqrt{ab}$), `midpoint` ($\frac{a+b}{2}$), `lower`, `upper`, `skip` |
+| `--convert-to-bng` | `True` | Convert WGS84 lat/lon coordinates to British National Grid meters |
+| `--filter <expr>` | *(None)* | Row filter expression (e.g. `Country=England`) |
+| `--group-sites-by <mode>`| `auto` | Site grouping: `auto`, `id`, `name`, `coords`, `name_and_coords` |
+| `--site-id-prefix <pre>` | `<SRC>_` | Prefix for generated site IDs (e.g. `WB_`) |
+| `--generate-config` | `False` | Write declarative JSON config to `configs/sources/<name>_<mode>.json` |
+
+#### Systematic Output Folder Tagging with Range Modes
+
+Whenever range intervals are present and converted (via default `tobit` or any alternative mode), all scripts across the S3N pipeline systematically tag their output directory names with the active range mode (e.g. `_tobit`, `_geometric`, `_midpoint`):
+
+```text
+Pipeline Stage                          Output Folder Pattern & Examples
+---------------------------------------------------------------------------------------------
+1. format_custom_data.py          ->    data/custom/<source>_<range_mode>/
+                                        data/custom/waterblitz_tobit/
+                                        data/custom/waterblitz_midpoint/
+
+2. 01_preprocess_orn.py           ->    data/processed/<net>_<source>_<range_mode>/
+                                        data/processed/orn_waterblitz_tobit/
+                                        data/processed/orn_waterblitz_midpoint/
+
+3. run_s3n_determinand.R          ->    output/det_<code >_<net>_src_<source>_<range_mode>/
+                                        output/det_0117_orn_src_waterblitz_tobit/
+                                        output/det_0117_orn_src_waterblitz_midpoint/
+
+4. 06_station_snapping_...        ->    output/station_snapping_<net>_src_<source>_<range_mode>/
+                                        output/station_snapping_ORN_src_waterblitz_tobit/
+```
+
+Even when executing with default commands like `python3 scripts/01_preprocess_orn.py --source=waterblitz` or `Rscript scripts/run_s3n_determinand.R 0117 --source=waterblitz`, the pipeline detects the underlying range mode and guarantees that all intermediate reach caches and model output folders are explicitly tagged with `_tobit`!
+
+---
+
 ## 4. Ingestion Workflows
 
 ### Method 1: Drop-In Directory (`data/custom/<project_name>/`)

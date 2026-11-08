@@ -29,6 +29,13 @@ OUT_BASE <- dir_cfg$out_dir
 
 src_cli      <- parse_source_arg(args)
 source_cli   <- resolve_source_tag(src_cli)
+range_arg    <- grep("^--range-mode=", args, value = TRUE)
+range_cli    <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
+if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
+  if (!grepl(paste0("_", range_cli, "$"), source_cli)) {
+    source_cli <- paste0(source_cli, "_", range_cli)
+  }
+}
 source_abbr  <- format_source_abbr(source_cli)
 source_label <- format_source_label(source_cli)
 source_tag   <- format_source_folder_tag(source_cli)
