@@ -357,6 +357,8 @@ resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
     }
   }
   raw_s <- tolower(raw_orig)
+  raw_s <- gsub("\\btobitz\\b", "tobit", raw_s)
+  raw_s <- gsub("_tobitz\\b", "_tobit", raw_s)
 
   # Multi-source delimiter splitting (e.g. "rsn+ssn", "rsn,ssn", "rsn+custom")
   tokens <- unlist(strsplit(raw_s, "[,+ ]+"))
@@ -367,7 +369,18 @@ resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
     norm_tokens <- vapply(tokens, function(tk) {
       if (tk %in% c("ssn", "small_stream", "small_streams", "small-stream", "small-streams")) "ssn"
       else if (tk %in% c("rsn", "river_surveillance")) "rsn"
-      else tk
+      else if (tk == "tobitz") "tobit"
+      else if (endsWith(tk, "_tobitz")) sub("_tobitz$", "_tobit", tk)
+      else {
+        reg <- load_source_registry(base_dir)
+        if (tk %in% names(reg$sources) && !is.null(reg$sources[[tk]]$alias_target) && nzchar(reg$sources[[tk]]$alias_target)) {
+          reg$sources[[tk]]$alias_target
+        } else if (paste0(tk, "_tobit") %in% names(reg$sources)) {
+          paste0(tk, "_tobit")
+        } else {
+          tk
+        }
+      }
     }, character(1))
     return(paste(norm_tokens, collapse = "_"))
   }
@@ -500,6 +513,8 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
 
   raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
   raw_tokens <- raw_tokens[nzchar(raw_tokens)]
+  raw_tokens <- gsub("\\btobitz\\b", "tobit", raw_tokens)
+  raw_tokens <- gsub("_tobitz\\b", "_tobit", raw_tokens)
 
   # Determine individual constituent source names
   source_tokens <- if (src_tag == "rss") {
@@ -507,22 +522,33 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
   } else if (src_tag %in% names(reg$composites)) {
     reg$composites[[src_tag]]$sources
   } else if (length(raw_tokens) > 1) {
-    raw_tokens
+    vapply(raw_tokens, function(tk) {
+      if (tk %in% names(reg$sources) && !is.null(reg$sources[[tk]]$alias_target) && nzchar(reg$sources[[tk]]$alias_target)) {
+        reg$sources[[tk]]$alias_target
+      } else if (paste0(tk, "_tobit") %in% names(reg$sources)) {
+        paste0(tk, "_tobit")
+      } else {
+        tk
+      }
+    }, character(1))
   } else if (!src_tag %in% names(reg$sources) && grepl("_", src_tag)) {
     # Check if decomposing by underscore matches registered sources
     parts <- strsplit(src_tag, "_")[[1]]
     if (all(parts %in% names(reg$sources))) {
       parts
     } else {
-      # Try greedy prefix matching (e.g. rsn + example_study)
+      # Try greedy prefix matching (sorted longest to shortest)
+      reg_names <- names(reg$sources)
+      reg_names <- reg_names[order(-nchar(reg_names))]
       matched <- character(0)
       rem <- src_tag
       while (nzchar(rem)) {
         found <- FALSE
-        for (sn in names(reg$sources)) {
-          if (startsWith(rem, sn)) {
-            matched <- c(matched, sn)
-            rem <- sub(paste0("^", sn, "_?"), "", rem)
+        for (sn in reg_names) {
+          if (grepl(paste0("^", sn, "(_|$)"), rem)) {
+            target_sn <- if (!is.null(reg$sources[[sn]]$alias_target) && nzchar(reg$sources[[sn]]$alias_target)) reg$sources[[sn]]$alias_target else sn
+            matched <- c(matched, target_sn)
+            rem <- sub(paste0("^", sn, "(_|$)"), "", rem)
             found <- TRUE
             break
           }
@@ -2302,7 +2328,13 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
   }
 
   if (!file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
-    cat(sprintf("Preprocessing water network '%s' (source='%s') via scripts/01_preprocess_orn.py...\n", net_cli_arg, src_tag))
+    dirs_info <- resolve_data_source_dirs(d_dir, source = source, base_dir = base_dir)
+    py_src <- if (length(dirs_info$active_dirs) > 1) {
+      paste(names(dirs_info$active_dirs), collapse = "+")
+    } else {
+      src_tag
+    }
+    cat(sprintf("Preprocessing water network '%s' (source='%s') via scripts/01_preprocess_orn.py...\n", net_cli_arg, py_src))
     extra_py_args <- ""
     if (!is.null(g_dir) && nzchar(g_dir)) {
       extra_py_args <- paste0(extra_py_args, " --gis-dir=", shQuote(g_dir))
@@ -2313,7 +2345,7 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
     cmd <- sprintf("python3 %s --network=%s --source=%s%s",
                    shQuote(rel_path(base_dir, "scripts", "01_preprocess_orn.py")),
                    shQuote(net_cli_arg),
-                   shQuote(src_tag),
+                   shQuote(py_src),
                    extra_py_args)
     status <- system(cmd)
     if (status != 0L) {

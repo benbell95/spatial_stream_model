@@ -323,18 +323,33 @@ def resolve_source_tag(source="rsn", registry=None):
         sources_reg, composites_reg = registry
 
     raw_s = str(source).lower().strip()
+    raw_s = re.sub(r"\btobitz\b", "tobit", raw_s)
+    raw_s = re.sub(r"_tobitz\b", "_tobit", raw_s)
     tokens = [t.strip().lower() for t in re.split(r"[,+ ]+", raw_s) if t.strip()]
     if not tokens:
         tokens = ["rsn"]
 
+    norm_tokens = []
+    for tk in tokens:
+        if tk.endswith("_tobitz"):
+            tk = tk[:-1]
+        elif tk == "tobitz":
+            tk = "tobit"
+        norm_tokens.append(tk)
+    tokens = norm_tokens
+
     if len(tokens) > 1:
         if set(tokens) == {"rsn", "ssn"}:
             return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
-        # Expand composite tokens
+        # Expand composite tokens and check aliases
         expanded = []
         for tk in tokens:
             if tk in composites_reg:
                 expanded.extend(composites_reg[tk].get("sources", [tk]))
+            elif tk in sources_reg and sources_reg[tk].get("alias_target"):
+                expanded.append(sources_reg[tk]["alias_target"])
+            elif f"{tk}_tobit" in sources_reg:
+                expanded.append(f"{tk}_tobit")
             else:
                 expanded.append(tk)
         unique_tokens = []
@@ -342,7 +357,7 @@ def resolve_source_tag(source="rsn", registry=None):
             if t not in unique_tokens:
                 unique_tokens.append(t)
         combo_key = "_".join(unique_tokens)
-        combo_abbr = "+".join(t.upper() for t in unique_tokens)
+        combo_abbr = "+".join(sources_reg[t].get("abbr", t.upper()) if t in sources_reg else t.upper() for t in unique_tokens)
         combo_label = f"Combined Monitoring Sources ({combo_abbr})"
         return combo_key, unique_tokens, combo_abbr, combo_label
 
@@ -385,6 +400,33 @@ def resolve_source_tag(source="rsn", registry=None):
                     b_label = f"{b_label} [{rm.title()}]"
                 b_abbr = f"{b_info.get('abbr', base_s.upper())}_{rm.upper()[:3]}"
                 return s, [s], b_abbr, b_label
+
+    # Check if decomposing an underscore-joined string matches multiple registered sources
+    if "_" in s and s not in sources_reg and s not in ("rsn", "ssn", "rss"):
+        reg_names = sorted(list(sources_reg.keys()) + ["rsn", "ssn"], key=len, reverse=True)
+        matched = []
+        rem = s
+        while rem:
+            found = False
+            for sn in reg_names:
+                if rem == sn or rem.startswith(f"{sn}_"):
+                    matched.append(sn)
+                    rem = rem[len(sn):].lstrip("_")
+                    found = True
+                    break
+            if not found:
+                break
+        if matched and not rem and len(matched) > 1:
+            unique_tokens = []
+            for t in matched:
+                if t in sources_reg and sources_reg[t].get("alias_target"):
+                    t = sources_reg[t]["alias_target"]
+                if t not in unique_tokens:
+                    unique_tokens.append(t)
+            combo_key = "_".join(unique_tokens)
+            combo_abbr = "+".join(sources_reg[t].get("abbr", t.upper()) if t in sources_reg else t.upper() for t in unique_tokens)
+            combo_label = f"Combined Monitoring Sources ({combo_abbr})"
+            return combo_key, unique_tokens, combo_abbr, combo_label
 
     # Generic custom source
     clean_tag = re.sub(r"[^a-z0-9_]+", "_", s)
@@ -722,9 +764,26 @@ def load_monitoring_stations_and_records(
                         all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
 
-        # 3. Standard RSN / SSN official datasets
-        s_dir = rsn_dir if src_item == "rsn" else ssn_dir
-        prefix = "RSN" if src_item == "rsn" else "SSN"
+        # 3. Standard RSN / SSN official datasets or auto-discovered custom folder
+        if src_item not in ("rsn", "ssn"):
+            # Check typo normalization (e.g. tobitz -> tobit)
+            norm_item = src_item.replace("tobitz", "tobit")
+            if norm_item in sources_reg:
+                src_item = norm_item
+            cand_cs = os.path.join(data_dir, "custom", src_item)
+            if not os.path.isdir(cand_cs):
+                cand_cs = os.path.join(BASE_DIR, "data", "custom", src_item)
+            if not os.path.isdir(cand_cs) and src_item in sources_reg:
+                s_d = sources_reg[src_item].get("data_dir", "")
+                if s_d and os.path.isdir(s_d):
+                    cand_cs = s_d
+            if not os.path.isdir(cand_cs):
+                valid_srcs = sorted(list(sources_reg.keys()) + ["rsn", "ssn", "rss"])
+                hint = f" Did you mean '{norm_item}'?" if norm_item in sources_reg else ""
+                raise ValueError(f"Unknown monitoring data source '{src_item}'.{hint} Available sources: {valid_srcs}")
+
+        s_dir = rsn_dir if src_item == "rsn" else (ssn_dir if src_item == "ssn" else cand_cs)
+        prefix = "RSN" if src_item == "rsn" else ("SSN" if src_item == "ssn" else src_item.upper())
         if not os.path.isdir(s_dir):
             raise FileNotFoundError(f"Directory for {src_label} data not found at: {s_dir}")
 
