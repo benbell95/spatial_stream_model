@@ -33,8 +33,9 @@
 #   Rscript scripts/04_compare_model_runs.R output/det_0117 --by=season
 # ==============================================================================
 
-BASE_DIR <- if (file.exists("scripts/05_descriptive_stats.R")) "." else if (file.exists("05_descriptive_stats.R")) ".." else "."
-source(file.path(BASE_DIR, "scripts/05_descriptive_stats.R"))
+BASE_DIR <- if (file.exists("scripts/s3n_stats_functions.R")) "." else if (file.exists("s3n_stats_functions.R")) ".." else "."
+source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+source(file.path(BASE_DIR, "scripts/s3n_stats_functions.R"))
 BASE_DIR <- resolve_base_dir()
 
 # ------------------------------------------------------------------------------
@@ -538,56 +539,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   # 2. Assemble Reach Prediction & Uncertainty Distribution Summary Table
   #    + Detailed Descriptive Statistics & Stratified Results Tables
   # ----------------------------------------------------------------------------
-  pred_sum_list <- lapply(seq_len(K), function(i) {
-    b  <- bundles[[i]]
-    ep <- b$eng_pred
-    obs_sub <- ep[ep$has_obs == 1, ]
-    q_raw <- quantile(ep$pred_combined, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
-    q_sc  <- quantile(ep$pred_model_sc, probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
-    q_se  <- quantile(ep$se_model_sc,   probs = c(0.05, 0.25, 0.50, 0.75, 0.95), na.rm = TRUE)
-    data.frame(
-      Run_Index        = i,
-      Run_Label        = b$label,
-      Determinand_Code = b$det_code,
-      Determinand_Name = b$det_name,
-      Unit             = b$det_unit,
-      Scale            = if (b$use_log) "log" else b$trans_type,
-      Transform_Type   = b$trans_type,
-      Transform_Lambda = ifelse(is.na(b$trans_lambda), "", as.character(round(b$trans_lambda, 4))),
-      Transform_Label  = b$trans_label,
-      Network_Label    = b$net_label,
-      Period           = b$period,
-      Covariates       = b$vars_label,
-      n_reaches        = nrow(ep),
-      n_catchments     = length(unique(ep$CatchID)),
-      n_obs_reaches    = nrow(obs_sub),
-      Obs_Mean_Raw     = mean(obs_sub$obs_value, na.rm = TRUE),
-      Obs_SD_Raw       = sd(obs_sub$obs_value, na.rm = TRUE),
-      Obs_Median_Raw   = median(obs_sub$obs_value, na.rm = TRUE),
-      Obs_IQR_Raw      = IQR(obs_sub$obs_value, na.rm = TRUE),
-      Pred_Mean_Raw    = mean(ep$pred_combined, na.rm = TRUE),
-      Pred_SD_Raw      = sd(ep$pred_combined, na.rm = TRUE),
-      Pred_CV_Pct_Raw  = 100.0 * sd(ep$pred_combined, na.rm = TRUE) / max(1e-9, abs(mean(ep$pred_combined, na.rm = TRUE))),
-      Pred_GeomMean_Raw= calc_geom_mean(ep$pred_combined),
-      Pred_Skew_Raw    = calc_sample_skewness(ep$pred_combined),
-      Pred_P05_Raw     = as.numeric(q_raw[1]),
-      Pred_Q25_Raw     = as.numeric(q_raw[2]),
-      Pred_Median_Raw  = as.numeric(q_raw[3]),
-      Pred_Q75_Raw     = as.numeric(q_raw[4]),
-      Pred_P95_Raw     = as.numeric(q_raw[5]),
-      Pred_IQR_Raw     = as.numeric(q_raw[4] - q_raw[2]),
-      Pred_Mean_ModSc  = mean(ep$pred_model_sc, na.rm = TRUE),
-      Pred_SD_ModSc    = sd(ep$pred_model_sc, na.rm = TRUE),
-      Pred_Med_ModSc   = as.numeric(q_sc[3]),
-      SE_Mean          = mean(ep$se_model_sc, na.rm = TRUE),
-      SE_SD            = sd(ep$se_model_sc, na.rm = TRUE),
-      SE_Median        = as.numeric(q_se[3]),
-      SE_IQR           = as.numeric(q_se[4] - q_se[2]),
-      SE_P95           = as.numeric(q_se[5]),
-      stringsAsFactors = FALSE
-    )
-  })
-  pred_sum_df <- do.call(rbind, pred_sum_list)
+  pred_sum_df <- summarize_prediction_bundles(bundles)
   write.csv(pred_sum_df, file.path(out_dir, "prediction_distribution_summary.csv"), row.names = FALSE)
 
   desc_bundle <- compute_detailed_descriptives(bundles)
@@ -1695,16 +1647,8 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
   K <- length(bundles)
   same_det_all   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
   same_scale_all <- runs_share_scale(bundles)
-  buf   <- character(512L)
-  buf_n <- 0L
-  add_line <- function(fmt = "", ...) {
-    line_str <- if (length(list(...)) == 0L) fmt else sprintf(fmt, ...)
-    buf_n <<- buf_n + 1L
-    if (buf_n > length(buf)) {
-      length(buf) <<- length(buf) * 2L
-    }
-    buf[buf_n] <<- line_str
-  }
+  mdw      <- new_md_writer(512L)
+  add_line <- mdw$add_line
 
   add_line("# S3N Model Run & Output Comparison Report")
   add_line("")
@@ -2081,7 +2025,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
   add_line("- `parameter_comparison.csv` — Fixed-effect and spatial covariance parameter estimates with two-sample Wald Z-tests.")
   add_line("")
 
-  writeLines(buf[seq_len(buf_n)], report_path)
+  writeLines(mdw$get_lines(), report_path)
 }
 
 # ==============================================================================

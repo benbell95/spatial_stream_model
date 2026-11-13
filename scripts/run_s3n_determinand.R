@@ -66,51 +66,7 @@ DATASET_FILES <- list(
   lcms        = list(file = "LCMS GCMS Samples.csv",          dt_col = "sample_datetime", label = "LCMS/GCMS Organic Pollutants")
 )
 
-WIDE_VAR_META <- list(
-  # Macroinvertebrates (RSN Macroinvertebrate Samples.csv)
-  whpt_aspt              = c(short = "WHPT ASPT",              desc = "WHPT Average Score Per Taxon (ASPT)",        unit = "ASPT"),
-  whpt_ntaxa             = c(short = "WHPT Taxa Richness",     desc = "WHPT Taxon Richness (N-Taxa)",               unit = "taxa"),
-  whpt_total             = c(short = "WHPT Total Score",       desc = "WHPT Total Score",                           unit = "score"),
-  whpt_nw_aspt           = c(short = "WHPT Non-Weighted ASPT", desc = "WHPT Non-Weighted ASPT",                     unit = "ASPT"),
-  whpt_nw_ntaxa          = c(short = "WHPT NW Richness",       desc = "WHPT Non-Weighted Taxon Richness",           unit = "taxa"),
-  bmwp_aspt              = c(short = "BMWP ASPT",              desc = "BMWP Average Score Per Taxon (ASPT)",        unit = "ASPT"),
-  bmwp_ntaxa             = c(short = "BMWP Taxa Richness",     desc = "BMWP Taxon Richness (N-Taxa)",               unit = "taxa"),
-  bmwp_total             = c(short = "BMWP Total Score",       desc = "BMWP Total Score",                           unit = "score"),
-  life_family_index      = c(short = "LIFE Flow Index",        desc = "LIFE Flow Index (Family Level)",             unit = "LIFE"),
-  life_species_index     = c(short = "LIFE Species Index",     desc = "LIFE Flow Index (Species Level)",            unit = "LIFE"),
-  psi_family_score       = c(short = "PSI Sediment Score",     desc = "PSI Fine Sediment Index (Family)",           unit = "%"),
-  psi_mixed_level_score  = c(short = "PSI Mixed Score",        desc = "PSI Fine Sediment Index (Mixed Taxa)",       unit = "%"),
-  epsi_family_score      = c(short = "EPSI Sediment Score",    desc = "Empirically Weighted PSI (EPSI Family)",     unit = "%"),
-  epsi_mixed_level_score = c(short = "EPSI Mixed Score",       desc = "Empirically Weighted PSI (EPSI Mixed)",      unit = "%"),
-  cci                    = c(short = "Conservation Index",     desc = "Community Conservation Index (CCI)",         unit = "CCI"),
-  cci_aspt               = c(short = "Conservation ASPT",      desc = "Community Conservation ASPT",                unit = "score"),
-  dehli                  = c(short = "DEHLI Drought Index",    desc = "DEHLI Drought Stress Index",                 unit = "DEHLI"),
-  sagi_mixed_level_index = c(short = "SAGI Salinity Index",    desc = "SAGI Salinity Association Index",            unit = "SAGI"),
-  armi_score             = c(short = "ARMI Riverfly Score",    desc = "Anglers' Riverfly Monitoring Score (ARMI)",  unit = "score"),
-  urmi_score             = c(short = "URMI Urban Score",       desc = "Urban Riverfly Monitoring Score (URMI)",     unit = "score"),
-  ermi_wq_score          = c(short = "ERMI WQ Score",          desc = "Extended Riverfly Water Quality Score",      unit = "score"),
-  ermi_sf_score          = c(short = "ERMI Silt/Flow Score",   desc = "Extended Riverfly Silt & Flow Score",        unit = "score"),
-  percent_silt           = c(short = "Silt Cover",             desc = "In-Channel Silt Substrate Cover",            unit = "%"),
-  percent_cobbles        = c(short = "Cobble Cover",           desc = "In-Channel Cobble Substrate Cover",          unit = "%"),
-  average_width          = c(short = "Channel Width",          desc = "Surveyed Wetted Channel Width",              unit = "m"),
-  average_channel_depth  = c(short = "Channel Depth",          desc = "Surveyed Channel Depth",                     unit = "cm"),
-  # Diatoms (RSN Diatom Samples.csv)
-  percent_organic_tolerant = c(short = "Organic-Tol. Diatoms", desc = "Organic-Tolerant Diatom Valences",           unit = "%"),
-  percent_motile           = c(short = "Motile Diatoms",       desc = "Motile Diatom Guild Relative Abundance",     unit = "%"),
-  percent_planktonic       = c(short = "Planktonic Diatoms",   desc = "Planktonic Diatom Relative Abundance",       unit = "%"),
-  percent_saline           = c(short = "Saline Diatoms",       desc = "Halophilic (Saline) Diatom Abundance",       unit = "%"),
-  # Macrophytes (RSN Macrophyte Samples.csv)
-  rmni                   = c(short = "RMNI Nutrient Index",    desc = "River Macrophyte Nutrient Index (RMNI)",     unit = "RMNI"),
-  rn_a_taxa              = c(short = "Macrophyte Richness",    desc = "Macrophyte Aquatic Taxon Richness",          unit = "taxa"),
-  n_rfg                  = c(short = "Macrophyte Func. Grps",  desc = "Macrophyte Functional Group Richness",       unit = "groups"),
-  rfa_pc                 = c(short = "Filamentous Algae",      desc = "Filamentous Algae Cover",                    unit = "%"),
-  # River Habitat Survey (RSN River Habitat Surveys.csv)
-  hqa_score              = c(short = "RHS HQA Score",          desc = "RHS Habitat Quality Assessment (HQA)",       unit = "HQA"),
-  hqa_score_adjusted     = c(short = "RHS Adjusted HQA",       desc = "RHS Adjusted Habitat Quality Score",         unit = "HQA"),
-  hms_score              = c(short = "RHS HMS Modification",   desc = "RHS Habitat Modification Score (HMS)",       unit = "HMS"),
-  pca1                   = c(short = "RHS Habitat PCA1",       desc = "RHS Habitat Gradient PCA Axis 1",            unit = "PCA1"),
-  pca2                   = c(short = "RHS Habitat PCA2",       desc = "RHS Habitat Gradient PCA Axis 2",            unit = "PCA2")
-)
+WIDE_VAR_META <- load_determinand_catalog(BASE_DIR)
 
 ds_arg      <- grep("^--dataset=", args, value = TRUE)
 ds_mode     <- if (length(ds_arg) > 0) tolower(sub("^--dataset=", "", ds_arg[1])) else NA_character_
@@ -760,22 +716,6 @@ sites_lu   <- sites_lu[sites_lu$included_250m == 1, c("site_id", "RivID", "obs_u
 df_reaches <- read.csv(REACHES_CSV, stringsAsFactors = FALSE)
 
 # Fitting/CV engine (load_s3n_backend, parse_n_omp_arg, fit_s3n_domain) lives in scripts/s3n_model_functions.R
-analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 50L, n_omp = n_omp_cli, use_meas_error = FALSE) {
-  fit_s3n_domain(
-    df = df,
-    domain_id = domain_id,
-    domain_label = domain_label,
-    trans_obj = trans_obj,
-    var_specs = var_specs,
-    m_neighbors = m_neighbors,
-    n_boot = n_boot,
-    n_omp = n_omp,
-    use_meas_error = use_meas_error,
-    net_meta = net_meta,
-    obs_col = "obs_val",
-    legacy_nitrate_mode = FALSE
-  )
-}
 
 catch_lookup <- if (file.exists(CATCHMENTS_CSV)) {
   read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
@@ -863,19 +803,38 @@ resolve_basin_spec <- function(spec, c_lu) {
 
 extra_basins <- lapply(basin_specs, resolve_basin_spec, c_lu = catch_lookup)
 
-fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
+slice_ctx <- list(
+  sites_lu       = sites_lu,
+  df_reaches     = df_reaches,
+  trans_obj      = trans_obj,
+  var_specs      = var_specs,
+  meas_error_arg = meas_error_arg,
+  net_meta       = net_meta,
+  catch_lookup   = catch_lookup,
+  source_cli     = source_cli,
+  source_abbr    = source_abbr,
+  source_label   = source_label,
+  n_boot         = n_boot,
+  n_omp          = n_omp_cli,
+  extra_basins   = extra_basins,
+  det_code       = det_code,
+  det_name       = det_name,
+  det_unit       = det_unit
+)
+
+fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   dir.create(out_subdir, recursive = TRUE, showWarnings = FALSE)
   cat(sprintf("\n======================================================================\n"))
   cat(sprintf("  Temporal Period: %s (%d samples across %d stations)\n",
               period_tag, nrow(sub_samples), length(unique(sub_samples$network_id))))
   cat(sprintf("======================================================================\n"))
 
-  det_WithRiv <- merge(sub_samples, sites_lu, by.x = "network_id", by.y = "site_id")
+  det_WithRiv <- merge(sub_samples, ctx$sites_lu, by.x = "network_id", by.y = "site_id")
   if (nrow(det_WithRiv) == 0) {
     cat(sprintf("  No snapped samples found for period '%s'; skipping.\n", period_tag))
     return(NULL)
   }
-  det_WithRiv$y_sample <- trans_obj$fwd(det_WithRiv$val)
+  det_WithRiv$y_sample <- ctx$trans_obj$fwd(det_WithRiv$val)
   riv_groups <- split(seq_len(nrow(det_WithRiv)), det_WithRiv$RivID)
   riv_ids_u  <- names(riv_groups)
   reach_agg <- data.frame(
@@ -905,7 +864,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
     }, character(1))
   }
 
-  df_full <- df_reaches
+  df_full <- ctx$df_reaches
   idx_match   <- match(df_full$RivID, reach_agg$RivID)
   has_obs_idx <- which(!is.na(idx_match))
   matched_row <- idx_match[has_obs_idx]
@@ -931,27 +890,44 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
     df_full$meas_method[has_obs_idx] <- mm
   }
 
-  active_meas_error <- isTRUE(meas_error_arg) ||
+  active_meas_error <- isTRUE(ctx$meas_error_arg) ||
     (has_samp_meth && isTRUE(any(tolower(det_WithRiv$meas_method) == "gam", na.rm = TRUE))) ||
     ("meas_method" %in% names(df_full) && isTRUE(any(tolower(df_full$meas_method[df_full$has_obs == 1L]) == "gam", na.rm = TRUE))) ||
-    (!is.null(net_meta$meas_method) && identical(tolower(net_meta$meas_method), "gam"))
+    (!is.null(ctx$net_meta$meas_method) && identical(tolower(ctx$net_meta$meas_method), "gam"))
   active_meas_error <- isTRUE(active_meas_error)
 
-  humber_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "humber")
-  thames_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "thames")
-  severn_info <- resolve_core_basin(df_full, catch_lookup, net_meta, "severn")
+  fit_domain <- function(df_dom, dom_id, dom_label) {
+    fit_s3n_domain(
+      df = df_dom,
+      domain_id = dom_id,
+      domain_label = dom_label,
+      trans_obj = ctx$trans_obj,
+      var_specs = ctx$var_specs,
+      m_neighbors = 15L,
+      n_boot = ctx$n_boot,
+      n_omp = ctx$n_omp,
+      use_meas_error = active_meas_error,
+      net_meta = ctx$net_meta,
+      obs_col = "obs_val",
+      legacy_nitrate_mode = FALSE
+    )
+  }
 
-  eng_domain_label <- switch(source_cli,
+  humber_info <- resolve_core_basin(df_full, ctx$catch_lookup, ctx$net_meta, "humber")
+  thames_info <- resolve_core_basin(df_full, ctx$catch_lookup, ctx$net_meta, "thames")
+  severn_info <- resolve_core_basin(df_full, ctx$catch_lookup, ctx$net_meta, "severn")
+
+  eng_domain_label <- switch(ctx$source_cli,
     rsn = "All England RSN Network",
     ssn = "All England SSN Network",
     rss = "All England RSS Combined Network",
-    sprintf("All England %s Network", source_abbr)
+    sprintf("All England %s Network", ctx$source_abbr)
   )
-  res_eng <- analyze_domain(df_full, "england", eng_domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
+  res_eng <- fit_domain(df_full, "england", eng_domain_label)
   if (is.null(res_eng)) return(NULL)
-  res_hum <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
-  res_tha <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
-  res_sev <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
+  res_hum <- fit_domain(subset(df_full, CatchID == humber_info$catch_id), "humber", humber_info$domain_label)
+  res_tha <- fit_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label)
+  res_sev <- fit_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label)
 
   eng_pred <- res_eng$pred_df
   hum_pred <- if (!is.null(res_hum)) res_hum$pred_df else subset(eng_pred, CatchID == humber_info$catch_id)
@@ -959,9 +935,9 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   sev_pred <- if (!is.null(res_sev)) res_sev$pred_df else subset(eng_pred, CatchID == severn_info$catch_id)
 
   # Fit any user-specified additional basins (--basin=...)
-  extra_fits <- lapply(extra_basins, function(b_info) {
+  extra_fits <- lapply(ctx$extra_basins, function(b_info) {
     sub_df <- subset(df_full, CatchID %in% b_info$catch_ids)
-    fit_b  <- analyze_domain(sub_df, b_info$slug, b_info$domain_label, m_neighbors = 15L, n_boot = n_boot, use_meas_error = active_meas_error)
+    fit_b  <- fit_domain(sub_df, b_info$slug, b_info$domain_label)
     pred_b <- if (!is.null(fit_b)) fit_b$pred_df else subset(eng_pred, CatchID %in% b_info$catch_ids)
     list(info = b_info, fit = fit_b, pred_df = pred_b)
   })
@@ -969,29 +945,29 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   dom_list <- c(list(res_eng, res_hum, res_tha, res_sev), lapply(extra_fits, function(x) x$fit))
   all_cv     <- do.call(rbind, lapply(dom_list, function(x) if (!is.null(x)) x$cv_summary else NULL))
   all_params <- do.call(rbind, lapply(dom_list, function(x) if (!is.null(x)) x$param_df else NULL))
-  det_title_name <- if (period_tag == "all") det_name else sprintf("%s [%s]", shorten_det_name(det_name), period_tag)
-  all_cv$Source           <- source_abbr
-  all_cv$Source_Desc      <- source_label
+  det_title_name <- if (period_tag == "all") ctx$det_name else sprintf("%s [%s]", shorten_det_name(ctx$det_name), period_tag)
+  all_cv$Source           <- ctx$source_abbr
+  all_cv$Source_Desc      <- ctx$source_label
   all_cv$Period           <- period_tag
-  all_cv$Determinand_Code <- det_code
+  all_cv$Determinand_Code <- ctx$det_code
   all_cv$Determinand_Name <- det_title_name
-  all_cv$Unit             <- det_unit
-  all_cv$Scale            <- if (trans_obj$is_transformed) trans_obj$short_label else "raw"
-  all_cv$Transform_Type   <- trans_obj$type
-  all_cv$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
-  all_cv$Transform_Label  <- trans_obj$label
-  all_cv$Network_Abbr     <- net_meta$abbr
-  all_cv$Network_Label    <- net_meta$short_label
+  all_cv$Unit             <- ctx$det_unit
+  all_cv$Scale            <- if (ctx$trans_obj$is_transformed) ctx$trans_obj$short_label else "raw"
+  all_cv$Transform_Type   <- ctx$trans_obj$type
+  all_cv$Transform_Lambda <- ifelse(is.na(ctx$trans_obj$lambda), "", as.character(round(ctx$trans_obj$lambda, 4)))
+  all_cv$Transform_Label  <- ctx$trans_obj$label
+  all_cv$Network_Abbr     <- ctx$net_meta$abbr
+  all_cv$Network_Label    <- ctx$net_meta$short_label
   all_cv$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
   all_cv$Meas_Method      <- if (active_meas_error) "gam" else "standard"
-  all_params$Source           <- source_abbr
-  all_params$Source_Desc      <- source_label
+  all_params$Source           <- ctx$source_abbr
+  all_params$Source_Desc      <- ctx$source_label
   all_params$Period           <- period_tag
-  all_params$Transform_Type   <- trans_obj$type
-  all_params$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
-  all_params$Transform_Label  <- trans_obj$label
-  all_params$Network_Abbr     <- net_meta$abbr
-  all_params$Network_Label    <- net_meta$short_label
+  all_params$Transform_Type   <- ctx$trans_obj$type
+  all_params$Transform_Lambda <- ifelse(is.na(ctx$trans_obj$lambda), "", as.character(round(ctx$trans_obj$lambda, 4)))
+  all_params$Transform_Label  <- ctx$trans_obj$label
+  all_params$Network_Abbr     <- ctx$net_meta$abbr
+  all_params$Network_Label    <- ctx$net_meta$short_label
   all_params$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
   all_params$Meas_Method      <- if (active_meas_error) "gam" else "standard"
 
@@ -1006,22 +982,22 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
     }
   }
 
-  write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
-  write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)
-  write.csv(tha_pred,   file.path(out_subdir, sprintf("predictions_thames_%s.csv", det_code)), row.names = FALSE)
-  write.csv(sev_pred,   file.path(out_subdir, sprintf("predictions_severn_%s.csv", det_code)), row.names = FALSE)
+  write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", ctx$det_code)), row.names = FALSE)
+  write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", ctx$det_code)), row.names = FALSE)
+  write.csv(tha_pred,   file.path(out_subdir, sprintf("predictions_thames_%s.csv", ctx$det_code)), row.names = FALSE)
+  write.csv(sev_pred,   file.path(out_subdir, sprintf("predictions_severn_%s.csv", ctx$det_code)), row.names = FALSE)
   if (!is.null(res_eng$cv_pts)) {
-    write.csv(res_eng$cv_pts, file.path(out_subdir, sprintf("cv_predictions_england_%s.csv", det_code)), row.names = FALSE)
+    write.csv(res_eng$cv_pts, file.path(out_subdir, sprintf("cv_predictions_england_%s.csv", ctx$det_code)), row.names = FALSE)
   }
   if (!is.null(res_hum) && !is.null(res_hum$cv_pts)) {
-    write.csv(res_hum$cv_pts, file.path(out_subdir, sprintf("cv_predictions_humber_%s.csv", det_code)), row.names = FALSE)
+    write.csv(res_hum$cv_pts, file.path(out_subdir, sprintf("cv_predictions_humber_%s.csv", ctx$det_code)), row.names = FALSE)
   }
-  write.csv(all_params, file.path(out_subdir, sprintf("parameters_%s.csv", det_code)),  row.names = FALSE)
-  write.csv(all_cv,     file.path(out_subdir, sprintf("cv_comparison_%s.csv", det_code)), row.names = FALSE)
+  write.csv(all_params, file.path(out_subdir, sprintf("parameters_%s.csv", ctx$det_code)),  row.names = FALSE)
+  write.csv(all_cv,     file.path(out_subdir, sprintf("cv_comparison_%s.csv", ctx$det_code)), row.names = FALSE)
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
       ef <- extra_fits[[k]]
-      pred_csv_k <- file.path(out_subdir, sprintf("predictions_%s_%s.csv", ef$info$slug, det_code))
+      pred_csv_k <- file.path(out_subdir, sprintf("predictions_%s_%s.csv", ef$info$slug, ctx$det_code))
       write.csv(ef$pred_df, pred_csv_k, row.names = FALSE)
     }
   }
@@ -1162,19 +1138,19 @@ if (!is.na(by_mode)) {
     periods <- sort(unique(base_samples$year[!is.na(base_samples$year)]))
     batch_res <- lapply(periods, function(yr) {
       sub_s <- base_samples[!is.na(base_samples$year) & base_samples$year == yr, ]
-      fit_temporal_slice(sub_s, file.path(slice_root, paste0("year_", yr)), paste0("Year ", yr))
+      fit_temporal_slice(sub_s, file.path(slice_root, paste0("year_", yr)), paste0("Year ", yr), slice_ctx)
     })
   } else if (by_mode == "season") {
     periods <- c("winter", "spring", "summer", "autumn")
     batch_res <- lapply(periods, function(seas) {
       sub_s <- base_samples[!is.na(base_samples$season) & base_samples$season == seas, ]
-      fit_temporal_slice(sub_s, file.path(slice_root, paste0("season_", seas)), paste0("Season: ", seas))
+      fit_temporal_slice(sub_s, file.path(slice_root, paste0("season_", seas)), paste0("Season: ", seas), slice_ctx)
     })
   } else if (by_mode == "month") {
     periods <- sort(unique(base_samples$month[!is.na(base_samples$month)]))
     batch_res <- lapply(periods, function(mo) {
       sub_s <- base_samples[!is.na(base_samples$month) & base_samples$month == mo, ]
-      fit_temporal_slice(sub_s, file.path(slice_root, sprintf("month_%02d", mo)), sprintf("Month %02d", mo))
+      fit_temporal_slice(sub_s, file.path(slice_root, sprintf("month_%02d", mo)), sprintf("Month %02d", mo), slice_ctx)
     })
   } else {
     stop(sprintf("Invalid --by='%s'. Choose from: year, season, month.", by_mode))
@@ -1204,7 +1180,7 @@ if (!is.na(by_mode)) {
   sub_s  <- base_samples
   p_tag  <- if (length(filter_tags) == 0) "all" else paste(filter_tags, collapse = ", ")
   s_dir  <- if (length(filter_dirs) == 0) OUT_DIR else file.path(OUT_DIR, paste(filter_dirs, collapse = "_"))
-  sl_one <- fit_temporal_slice(sub_s, s_dir, p_tag)
+  sl_one <- fit_temporal_slice(sub_s, s_dir, p_tag, slice_ctx)
   if (!is.null(sl_one)) {
     # When running a single temporal slice (--year, --season, --month), pool with any existing
     # sibling period predictions in OUT_DIR so scale bars stay consistent across periods

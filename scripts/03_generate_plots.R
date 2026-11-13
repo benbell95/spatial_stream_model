@@ -90,18 +90,7 @@ find_first_csv <- function(dir_path, pattern, exclude_pattern = NULL, required =
   files[1]
 }
 
-known_meta <- list(
-  nitrate           = c(name = "Nitrate as N",         unit = "mg/L"),
-  "0117"            = c(name = "Nitrate as N",         unit = "mg/L"),
-  whpt_aspt         = c(name = "WHPT ASPT",            unit = "ASPT"),
-  whpt_ntaxa        = c(name = "WHPT N-Taxa",          unit = "taxa"),
-  life_family_index = c(name = "LIFE Flow Index",      unit = "LIFE"),
-  psi_family_score  = c(name = "PSI Sediment Score",   unit = "%"),
-  epsi_family_score = c(name = "EPSI Sediment Score",  unit = "%"),
-  rmni              = c(name = "RMNI Nutrient Index",  unit = "RMNI"),
-  hqa_score         = c(name = "RHS HQA Score",        unit = "HQA"),
-  hms_score         = c(name = "RHS HMS Modification", unit = "HMS")
-)
+# Determinand metadata resolved dynamically via get_determinand_meta() in configs/determinands.json
 
 load_plot_bundle <- function(dir_p) {
   if (dir.exists(file.path(dir_p, "predictions"))) {
@@ -184,14 +173,14 @@ load_plot_bundle <- function(dir_p) {
     }
   }
 
+  det_meta_row <- get_determinand_meta(det_code, BASE_DIR, default_unit = "mg/L")
+
   det_name <- det_name_cli
   if (is.null(det_name)) {
     if ("Determinand_Name" %in% names(cv_tab)) {
       det_name <- as.character(cv_tab$Determinand_Name[1])
-    } else if (det_code %in% names(known_meta)) {
-      det_name <- unname(known_meta[[det_code]]["name"])
     } else {
-      det_name <- det_code
+      det_name <- unname(det_meta_row["name"])
     }
   }
 
@@ -199,10 +188,8 @@ load_plot_bundle <- function(dir_p) {
   if (is.null(det_unit)) {
     if ("Unit" %in% names(cv_tab)) {
       det_unit <- as.character(cv_tab$Unit[1])
-    } else if (det_code %in% names(known_meta)) {
-      det_unit <- unname(known_meta[[det_code]]["unit"])
     } else {
-      det_unit <- "mg/L"
+      det_unit <- if (nzchar(det_meta_row["unit"])) unname(det_meta_row["unit"]) else "mg/L"
     }
   }
 

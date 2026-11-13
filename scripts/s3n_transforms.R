@@ -1,0 +1,549 @@
+# ==============================================================================
+# s3n_transforms.R
+#
+# Shared data transformations (--transform=...), Box-Cox & Yeo-Johnson MLE,
+# delta-method response measurement-error variance propagation, normalisation,
+# and generic/legacy schema alias resolution.
+# Automatically sourced by scripts/s3n_plot_functions.R.
+# ==============================================================================
+
+estimate_boxcox_lambda <- function(y, lower = -2.0, upper = 2.0) {
+  y_pos <- y[!is.na(y) & y > 0]
+  n <- length(y_pos)
+  if (n < 10) return(0.5)
+  log_y <- log(y_pos)
+  sum_log_y <- sum(log_y)
+
+  ll_fn <- function(lam) {
+    z <- if (abs(lam) < 1e-4) log_y else ((y_pos^lam) - 1.0) / lam
+    z_mean <- mean(z)
+    var_z  <- mean((z - z_mean)^2)
+    if (var_z < 1e-12) return(-1e12)
+    -0.5 * n * log(var_z) + (lam - 1.0) * sum_log_y
+  }
+
+  opt <- tryCatch(
+    optimize(ll_fn, interval = c(lower, upper), maximum = TRUE),
+    error = function(e) list(maximum = 0.5)
+  )
+  round(opt$maximum, 4)
+}
+
+estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
+  y_val <- y[!is.na(y) & is.finite(y)]
+  n <- length(y_val)
+  if (n < 10) return(0.5)
+  pos <- (y_val >= 0)
+  neg <- (!pos)
+
+  ll_fn <- function(lam) {
+    z <- numeric(n)
+    if (any(pos)) {
+      yp <- y_val[pos]
+      z[pos] <- if (abs(lam) < 1e-4) log(yp + 1.0) else (((yp + 1.0)^lam) - 1.0) / lam
+    }
+    if (any(neg)) {
+      yn <- y_val[neg]
+      z[neg] <- if (abs(2.0 - lam) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam)) - 1.0) / (2.0 - lam)
+    }
+    z_mean <- mean(z)
+    var_z  <- mean((z - z_mean)^2)
+    if (var_z < 1e-12) return(-1e12)
+    jac <- sum(sign(y_val) * log(abs(y_val) + 1.0) * ifelse(pos, lam - 1.0, 1.0 - lam))
+    -0.5 * n * log(var_z) + jac
+  }
+
+  opt <- tryCatch(
+    optimize(ll_fn, interval = c(lower, upper), maximum = TRUE),
+    error = function(e) list(maximum = 0.5)
+  )
+  round(opt$maximum, 4)
+}
+
+build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NULL, scale = NULL) {
+  t_raw <- tolower(trimws(as.character(transform_type)))
+  if (!nzchar(t_raw)) t_raw <- "log"
+
+  alias_map <- c(
+    ln = "log", log = "log",
+    log10 = "log10", log_10 = "log10",
+    log1p = "log1p", log_1p = "log1p",
+    sqrt = "sqrt", square_root = "sqrt", squareroot = "sqrt",
+    cbrt = "cbrt", cube_root = "cbrt", cuberoot = "cbrt",
+    fourthrt = "fourthrt", fourth_root = "fourthrt", qtrt = "fourthrt",
+    reciprocal = "reciprocal", inv = "reciprocal", inverse = "reciprocal",
+    boxcox = "boxcox", box_cox = "boxcox", bc = "boxcox",
+    yeojohnson = "yeojohnson", yeo_johnson = "yeojohnson", yj = "yeojohnson",
+    asin = "asin", arcsin = "asin", arcsine = "asin", asin_sqrt = "asin",
+    logit = "logit",
+    none = "none", raw = "none", identity = "none"
+  )
+  ttype <- if (t_raw %in% names(alias_map)) unname(alias_map[t_raw]) else t_raw
+
+  if (ttype == "log") {
+    return(list(
+      type           = "log",
+      label          = "Natural Logarithm (ln)",
+      short_label    = "log",
+      fn_prefix      = "log",
+      folder_tag     = "log",
+      is_transformed = TRUE,
+      is_log         = TRUE,
+      lambda         = NA_real_,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) log(pmax(1e-9, y)),
+      inv            = function(z) exp(z)
+    ))
+  }
+
+  if (ttype == "log10") {
+    return(list(
+      type           = "log10",
+      label          = "Base-10 Logarithm (log10)",
+      short_label    = "log10",
+      fn_prefix      = "log10",
+      folder_tag     = "log10",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) log10(pmax(1e-9, y)),
+      inv            = function(z) 10^z
+    ))
+  }
+
+  if (ttype == "log1p") {
+    return(list(
+      type           = "log1p",
+      label          = "Shifted Logarithm ln(1+y)",
+      short_label    = "log1p",
+      fn_prefix      = "log1p",
+      folder_tag     = "log1p",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) log1p(pmax(0.0, y)),
+      inv            = function(z) pmax(0.0, expm1(z))
+    ))
+  }
+
+  if (ttype == "sqrt") {
+    return(list(
+      type           = "sqrt",
+      label          = "Square Root (sqrt)",
+      short_label    = "sqrt",
+      fn_prefix      = "sqrt",
+      folder_tag     = "sqrt",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = 0.5,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) sqrt(pmax(0.0, y)),
+      inv            = function(z) (pmax(0.0, z))^2
+    ))
+  }
+
+  if (ttype == "cbrt") {
+    return(list(
+      type           = "cbrt",
+      label          = "Cube Root (cbrt)",
+      short_label    = "cbrt",
+      fn_prefix      = "cbrt",
+      folder_tag     = "cbrt",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = 1.0 / 3.0,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y),
+      fwd            = function(y) sign(y) * (abs(y))^(1.0 / 3.0),
+      inv            = function(z) z^3
+    ))
+  }
+
+  if (ttype == "fourthrt") {
+    return(list(
+      type           = "fourthrt",
+      label          = "Fourth Root (fourthrt)",
+      short_label    = "fourthrt",
+      fn_prefix      = "fourthrt",
+      folder_tag     = "fourthrt",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = 0.25,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) (pmax(0.0, y))^0.25,
+      inv            = function(z) (pmax(0.0, z))^4
+    ))
+  }
+
+  if (ttype == "reciprocal") {
+    return(list(
+      type           = "reciprocal",
+      label          = "Negative Reciprocal (-1/y)",
+      short_label    = "reciprocal",
+      fn_prefix      = "recip",
+      folder_tag     = "reciprocal",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = -1.0,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) -1.0 / pmax(1e-6, y),
+      inv            = function(z) -1.0 / pmin(-1e-6, z)
+    ))
+  }
+
+  if (ttype == "boxcox") {
+    lam_val <- if (!is.null(lambda) && !is.na(as.numeric(lambda))) {
+      as.numeric(lambda)
+    } else if (!is.null(y_obs) && length(y_obs) > 0) {
+      estimate_boxcox_lambda(y_obs)
+    } else {
+      0.5
+    }
+    lbl <- sprintf("Box-Cox (lambda = %.2f)", lam_val)
+    f_tag <- sprintf("boxcox_lam%.2f", lam_val)
+    return(list(
+      type           = "boxcox",
+      label          = lbl,
+      short_label    = sprintf("boxcox[%.2f]", lam_val),
+      fn_prefix      = sprintf("boxcox[lambda=%.2f]", lam_val),
+      folder_tag     = f_tag,
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = lam_val,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y) & y > 0,
+      fwd            = function(y) {
+        if (abs(lam_val) < 1e-4) log(pmax(1e-9, y)) else ((pmax(1e-9, y)^lam_val) - 1.0) / lam_val
+      },
+      inv            = function(z) {
+        if (abs(lam_val) < 1e-4) {
+          exp(z)
+        } else {
+          inner <- pmax(1e-9, lam_val * z + 1.0)
+          pmax(0.0, inner^(1.0 / lam_val))
+        }
+      }
+    ))
+  }
+
+  if (ttype == "yeojohnson") {
+    lam_val <- if (!is.null(lambda) && !is.na(as.numeric(lambda))) {
+      as.numeric(lambda)
+    } else if (!is.null(y_obs) && length(y_obs) > 0) {
+      estimate_yeojohnson_lambda(y_obs)
+    } else {
+      0.5
+    }
+    lbl <- sprintf("Yeo-Johnson (lambda = %.2f)", lam_val)
+    f_tag <- sprintf("yeojohnson_lam%.2f", lam_val)
+    return(list(
+      type           = "yeojohnson",
+      label          = lbl,
+      short_label    = sprintf("yeojohnson[%.2f]", lam_val),
+      fn_prefix      = sprintf("yeojohnson[lambda=%.2f]", lam_val),
+      folder_tag     = f_tag,
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = lam_val,
+      scale          = 1.0,
+      valid_fn       = function(y) !is.na(y),
+      fwd            = function(y) {
+        pos <- (y >= 0)
+        z <- numeric(length(y))
+        if (any(pos)) {
+          yp <- y[pos]
+          z[pos] <- if (abs(lam_val) < 1e-4) log(yp + 1.0) else (((yp + 1.0)^lam_val) - 1.0) / lam_val
+        }
+        if (any(!pos)) {
+          yn <- y[!pos]
+          z[!pos] <- if (abs(2.0 - lam_val) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam_val)) - 1.0) / (2.0 - lam_val)
+        }
+        z
+      },
+      inv            = function(z) {
+        pos <- (z >= 0)
+        y <- numeric(length(z))
+        if (any(pos)) {
+          zp <- z[pos]
+          y[pos] <- if (abs(lam_val) < 1e-4) exp(zp) - 1.0 else (pmax(1e-9, zp * lam_val + 1.0))^(1.0 / lam_val) - 1.0
+        }
+        if (any(!pos)) {
+          zn <- z[!pos]
+          y[!pos] <- if (abs(2.0 - lam_val) < 1e-4) 1.0 - exp(-zn) else 1.0 - (pmax(1e-9, -zn * (2.0 - lam_val) + 1.0))^(1.0 / (2.0 - lam_val))
+        }
+        y
+      }
+    ))
+  }
+
+  if (ttype == "asin") {
+    sc_val <- if (!is.null(scale)) as.numeric(scale) else if (!is.null(y_obs) && max(y_obs, na.rm = TRUE) > 1.05) 100.0 else 1.0
+    return(list(
+      type           = "asin",
+      label          = sprintf("Arcsine-Square-Root (0..%g)", sc_val),
+      short_label    = "asin_sqrt",
+      fn_prefix      = "asin_sqrt",
+      folder_tag     = "asin",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = sc_val,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) asin(sqrt(pmin(1.0, pmax(0.0, y / sc_val)))),
+      inv            = function(z) sc_val * (sin(pmin(pi / 2.0, pmax(0.0, z))))^2
+    ))
+  }
+
+  if (ttype == "logit") {
+    sc_val <- if (!is.null(scale)) as.numeric(scale) else if (!is.null(y_obs) && max(y_obs, na.rm = TRUE) > 1.05) 100.0 else 1.0
+    return(list(
+      type           = "logit",
+      label          = sprintf("Logit (0..%g)", sc_val),
+      short_label    = "logit",
+      fn_prefix      = "logit",
+      folder_tag     = "logit",
+      is_transformed = TRUE,
+      is_log         = FALSE,
+      lambda         = NA_real_,
+      scale          = sc_val,
+      valid_fn       = function(y) !is.na(y) & y >= 0,
+      fwd            = function(y) {
+        p <- pmin(1.0 - 1e-4, pmax(1e-4, y / sc_val))
+        qlogis(p)
+      },
+      inv            = function(z) sc_val * plogis(z)
+    ))
+  }
+
+  list(
+    type           = "none",
+    label          = "Untransformed (Raw / Identity)",
+    short_label    = "raw",
+    fn_prefix      = "",
+    folder_tag     = "raw",
+    is_transformed = FALSE,
+    is_log         = FALSE,
+    lambda         = NA_real_,
+    scale          = 1.0,
+    valid_fn       = function(y) !is.na(y),
+    fwd            = function(y) y,
+    inv            = function(z) z
+  )
+}
+
+as_transformer <- function(obj, y_obs = NULL, lambda = NULL) {
+  if (is.list(obj) && !is.null(obj$fwd) && !is.null(obj$inv)) {
+    return(obj)
+  }
+  if (is.logical(obj)) {
+    return(if (isTRUE(obj)) build_transformer("log") else build_transformer("none"))
+  }
+  build_transformer(as.character(obj), y_obs = y_obs, lambda = lambda)
+}
+
+calc_response_meas_variance <- function(raw_val, raw_unc, trans_obj) {
+  n <- length(raw_val)
+  v_resp <- numeric(n)
+  if (is.null(raw_unc) || all(is.na(raw_unc))) return(v_resp)
+
+  u_clean <- ifelse(is.na(raw_unc) | raw_unc < 0, 0, as.numeric(raw_unc))
+  x_raw   <- ifelse(is.na(raw_val), 1.0, as.numeric(raw_val))
+  x_pos   <- pmax(1e-6, x_raw)
+
+  tt <- tolower(trans_obj$type)
+  if (tt == "log") {
+    v_resp <- (u_clean / x_pos)^2
+  } else if (tt == "log1p") {
+    v_resp <- (u_clean / pmax(1e-6, 1.0 + x_raw))^2
+  } else if (tt == "log10") {
+    v_resp <- (u_clean / (x_pos * log(10)))^2
+  } else if (tt %in% c("raw", "identity", "none")) {
+    v_resp <- u_clean^2
+  } else if (tt %in% c("sqrt", "square_root")) {
+    v_resp <- (u_clean / (2.0 * sqrt(x_pos)))^2
+  } else if (tt %in% c("cbrt", "cube_root")) {
+    v_resp <- (u_clean / (3.0 * (pmax(1e-6, abs(x_raw))^(2.0 / 3.0))))^2
+  } else if (tt %in% c("fourthrt", "qtrt")) {
+    v_resp <- (u_clean / (4.0 * (x_pos^0.75)))^2
+  } else if (tt %in% c("reciprocal", "inv", "inverse")) {
+    v_resp <- (u_clean / (x_pos^2))^2
+  } else if (tt %in% c("asin", "arcsin", "arcsine")) {
+    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 100.0
+    p_cl <- pmin(1.0 - 1e-6, pmax(1e-6, x_raw / sc))
+    v_resp <- (u_clean / (2.0 * sc * sqrt(p_cl * (1.0 - p_cl))))^2
+  } else if (tt == "logit") {
+    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 100.0
+    p_cl <- pmin(1.0 - 1e-6, pmax(1e-6, x_raw / sc))
+    v_resp <- (u_clean / (sc * p_cl * (1.0 - p_cl)))^2
+  } else if (tt %in% c("boxcox", "bc")) {
+    lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
+    v_resp <- (x_pos^(lam - 1.0) * u_clean)^2
+  } else if (tt %in% c("yeojohnson", "yj")) {
+    lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
+    deriv <- ifelse(x_raw >= 0, (x_raw + 1.0)^(lam - 1.0), (-x_raw + 1.0)^(1.0 - lam))
+    v_resp <- (deriv * u_clean)^2
+  } else {
+    v_resp <- u_clean^2
+  }
+  v_resp
+}
+
+format_transform_folder_tag <- function(trans_obj, default_type = "log") {
+  if (is.null(trans_obj)) return("")
+  tr <- as_transformer(trans_obj)
+  if (tr$type == default_type) return("")
+  paste0("trans_", tr$folder_tag)
+}
+
+print_available_transforms <- function() {
+  cat("Available Data Transformations (--transform=<type> [--lambda=<val>]):\n\n")
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "Type", "Short Aliases", "Formula z = f(y)", "Valid Domain", "Best Applied When"))
+  cat(strrep("-", 125), "\n")
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "log", "ln", "ln(y)", "y > 0", "Default for water chemistry & LCMS. Multiplicative concentrations spanning orders of magnitude."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "sqrt", "square_root", "y^(1/2)", "y >= 0", "Strongly recommended for moderately skewed concentrations (e.g. UK Nitrate, skewness drop +1.00 -> +0.09) and taxa counts."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "cbrt", "cube_root", "sign(y)*|y|^(1/3)", "All real y", "Wilson-Hilferty transformation for Gamma-distributed hydrological variables. Compresses high values without crushing near-zero observations."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "log1p", "log_1p", "ln(1 + y)", "y >= 0", "Accommodates true zeros (y=0) without arbitrary LOD substitution. Gentle log compression for small values."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "log10", "log_10", "log10(y)", "y > 0", "Order-of-magnitude chemical concentrations (e.g. pathogen counts, electrical conductivity)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "fourthrt", "qtrt", "y^(1/4)", "y >= 0", "Intermediate between square root and log; classic ecological standard for heavy-tailed abundance and biomass."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "boxcox", "bc, box_cox", "(y^lambda-1)/lam", "y > 0", "Analytically optimizes residual normality via Profile Maximum Likelihood lambda in [-2, 2] (or custom --lambda)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "yeojohnson", "yj", "Yeo-Johnson(lam)", "All real y", "Extension of Box-Cox supporting zero and negative values. Automatic Profile MLE estimation of lambda."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "reciprocal", "inv, inverse", "-1 / y", "y > 0", "Monotonic rate-dilution processes. Preserves positive spatial gradient direction (higher y -> higher z)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "asin", "arcsin, arcsine", "asin(sqrt(y/sc))", "0 <= y <= scale", "Angular transformation for bounded proportions and percentages (e.g. silt cover, diatom valences)."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "logit", "logit", "ln(p / (1 - p))", "0 < y < scale", "S-shaped logistic transformation for bounded proportions and sediment percentages."))
+  cat(sprintf("%-12s | %-16s | %-18s | %-16s | %s\n",
+              "none", "raw, identity", "y", "All real y", "Default for ecological indices (WHPT ASPT, LIFE index, RHS scores) that are already normally distributed."))
+}
+
+# ==============================================================================
+# NORMALISATION & GENERIC/LEGACY SCHEMA ALIAS RESOLUTION
+# ==============================================================================
+
+resolve_col_alias <- function(df, candidates) {
+  if (is.null(df)) return(NULL)
+  nms <- names(df)
+  for (cn in candidates) {
+    if (cn %in% nms) return(df[[cn]])
+  }
+  NULL
+}
+
+add_normalised_columns <- function(df, ref_df = df) {
+  df     <- normalize_pred_df(df)
+  ref_df <- normalize_pred_df(ref_df)
+  ref_x  <- ref_df$pred_model_sc
+  ref_x  <- ref_x[is.finite(ref_x)]
+  if (length(ref_x) == 0) return(df)
+
+  mu_x <- mean(ref_x, na.rm = TRUE)
+  sd_x <- sd(ref_x, na.rm = TRUE)
+  if (!is.finite(sd_x) || sd_x < 1e-12) sd_x <- 1.0
+
+  med_x <- median(ref_x, na.rm = TRUE)
+  mad_x <- mad(ref_x, center = med_x, constant = 1.4826, na.rm = TRUE)
+  if (!is.finite(mad_x) || mad_x < 1e-12) {
+    iqr_x <- IQR(ref_x, na.rm = TRUE) / 1.349
+    mad_x <- if (is.finite(iqr_x) && iqr_x >= 1e-12) iqr_x else sd_x
+  }
+
+  min_x <- min(ref_x, na.rm = TRUE)
+  rng_x <- max(ref_x, na.rm = TRUE) - min_x
+  if (!is.finite(rng_x) || rng_x < 1e-12) rng_x <- 1.0
+
+  pct_fn <- ecdf(ref_x)
+
+  df$pred_zscore        <- round((df$pred_model_sc - mu_x) / sd_x, 5)
+  df$pred_robust_zscore <- round((df$pred_model_sc - med_x) / mad_x, 5)
+  df$pred_minmax        <- round((df$pred_model_sc - min_x) / rng_x, 5)
+  df$pred_percentile    <- round(100.0 * pct_fn(df$pred_model_sc), 2)
+
+  if ("pred_tu_sc" %in% names(df)) {
+    df$pred_tu_zscore        <- round((df$pred_tu_sc - mu_x) / sd_x, 5)
+    df$pred_tu_robust_zscore <- round((df$pred_tu_sc - med_x) / mad_x, 5)
+    df$pred_tu_minmax        <- round((df$pred_tu_sc - min_x) / rng_x, 5)
+    df$pred_tu_percentile    <- round(100.0 * pct_fn(df$pred_tu_sc), 2)
+  }
+  if ("pred_td_sc" %in% names(df)) {
+    df$pred_td_zscore        <- round((df$pred_td_sc - mu_x) / sd_x, 5)
+    df$pred_td_robust_zscore <- round((df$pred_td_sc - med_x) / mad_x, 5)
+    df$pred_td_minmax        <- round((df$pred_td_sc - min_x) / rng_x, 5)
+    df$pred_td_percentile    <- round(100.0 * pct_fn(df$pred_td_sc), 2)
+  }
+  if ("obs_model_sc" %in% names(df)) {
+    has_o <- !is.na(df$obs_model_sc) & is.finite(df$obs_model_sc)
+    df$obs_zscore        <- ifelse(has_o, round((df$obs_model_sc - mu_x) / sd_x, 5), NA_real_)
+    df$obs_robust_zscore <- ifelse(has_o, round((df$obs_model_sc - med_x) / mad_x, 5), NA_real_)
+    df$obs_minmax        <- ifelse(has_o, round((df$obs_model_sc - min_x) / rng_x, 5), NA_real_)
+    df$obs_percentile    <- ifelse(has_o, round(100.0 * pct_fn(df$obs_model_sc), 2), NA_real_)
+  }
+  df
+}
+
+normalize_pred_df <- function(df) {
+  if (!("pred_model_sc" %in% names(df)) && ("pred_log_combined" %in% names(df))) {
+    df$pred_model_sc <- df$pred_log_combined
+  }
+  if (!("se_model_sc" %in% names(df)) && ("se_log_combined" %in% names(df))) {
+    df$se_model_sc <- df$se_log_combined
+  }
+  if (!("obs_model_sc" %in% names(df))) {
+    val <- resolve_col_alias(df, c("obs_trans_mean", "trans_obs_mean", "obs_log_nitrate"))
+    if (!is.null(val)) df$obs_model_sc <- val
+  }
+  if (!("obs_value" %in% names(df))) {
+    val <- resolve_col_alias(df, c("obs_raw", "obs_mean", "nitrate_mean"))
+    if (!is.null(val)) df$obs_value <- val
+  }
+  if (!("pred_tu_sc" %in% names(df)) && ("pred_log_tu" %in% names(df))) {
+    df$pred_tu_sc <- df$pred_log_tu
+  }
+  if (!("pred_td_sc" %in% names(df)) && ("pred_log_td" %in% names(df))) {
+    df$pred_td_sc <- df$pred_log_td
+  }
+  if (!("pred_combined" %in% names(df))) {
+    val <- resolve_col_alias(df, c("pred_raw_combined", "pred_mgL_combined"))
+    if (!is.null(val)) df$pred_combined <- val
+  }
+  df
+}
+
+normalize_cv_pts <- function(cv_df) {
+  if (is.null(cv_df)) return(NULL)
+  if (!("obs_y" %in% names(cv_df)) && ("obs_log" %in% names(cv_df))) {
+    cv_df$obs_y <- cv_df$obs_log
+  }
+  cv_df
+}
+
+normalize_cv_tab <- function(cv_tab) {
+  if (is.null(cv_tab)) return(NULL)
+  if (!("R2" %in% names(cv_tab)) && ("R2_log" %in% names(cv_tab))) {
+    cv_tab$R2 <- cv_tab$R2_log
+  }
+  if (!("RMSE" %in% names(cv_tab)) && ("RMSE_log" %in% names(cv_tab))) {
+    cv_tab$RMSE <- cv_tab$RMSE_log
+  }
+  if (!("MAE" %in% names(cv_tab)) && ("MAE_log" %in% names(cv_tab))) {
+    cv_tab$MAE <- cv_tab$MAE_log
+  }
+  cv_tab
+}

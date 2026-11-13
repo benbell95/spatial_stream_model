@@ -54,743 +54,55 @@ import sqlite3
 import statistics
 import struct
 import subprocess
+import sys
 import time
 import zipfile
 from collections import Counter, defaultdict
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_SCRIPT_DIR)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
 try:
     BASE_DIR = "." if os.path.samefile(os.getcwd(), _REPO_ROOT) else os.path.relpath(_REPO_ROOT, os.getcwd())
 except OSError:
     BASE_DIR = "."
 
-
-def _rel_join(base, *parts):
-    p = os.path.join(base, *parts)
-    if p.startswith("./") and len(p) > 2:
-        p = p[2:]
-    return p
-
-
-def find_directory_config_file(base_dir=BASE_DIR):
-    """Finds existing directory configuration file in configs/ or root, or returns canonical path."""
-    candidates = [
-        _rel_join(base_dir, "configs", "directories.json"),
-        _rel_join(base_dir, "configs", "paths.json"),
-        _rel_join(base_dir, "config.json"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return candidates[0]
-
-
-def ensure_directory_config(base_dir=BASE_DIR, default_data="data", default_gis="gis", default_out="output"):
-    """
-    Creates configs/directories.json automatically if no directory config file exists yet.
-    Returns (cfg_file_path, was_created).
-    """
-    cfg_file = find_directory_config_file(base_dir)
-    created = False
-    if not os.path.exists(cfg_file):
-        os.makedirs(os.path.dirname(os.path.abspath(cfg_file)), exist_ok=True)
-        default_cfg = {
-            "data_dir": default_data,
-            "gis_dir": default_gis,
-            "output_dir": default_out
-        }
-        with open(cfg_file, "w", encoding="utf-8") as f:
-            json.dump(default_cfg, f, indent=2)
-            f.write("\n")
-        created = True
-        print(f"   [Config] Created directory configuration file: {cfg_file}")
-    return cfg_file, created
-
-
-DEFAULT_NETWORK_CONFIGS = json.loads(r"""{
-  "orn": {
-    "name": "orn",
-    "abbr": "orn",
-    "label": "OS Open Rivers Network (ORN v2)",
-    "short_label": "ORN v2",
-    "gpkg_paths": [
-      "gis/ORN_v2.gpkg"
-    ],
-    "zip_fallbacks": [
-      "gis/ORN_v2_GeoPackage.zip"
-    ],
-    "layers": [
-      "ORN"
-    ],
-    "geom_col": "Shape",
-    "crs_epsg": 27700,
-    "topology": {
-      "mode": "nodes",
-      "id_col": "RivID",
-      "from_node_col": "Fnode",
-      "to_node_col": "Tnode",
-      "next_down_col": null,
-      "catch_id_col": "CatchID",
-      "rbd_id_col": "RBD_ID"
-    },
-    "attributes": {
-      "dist_to_mouth_col": "Dist2Mth",
-      "dist_to_mouth_unit": "m",
-      "afv_weight_col": "US_Accum",
-      "afv_weight_unit": "m",
-      "shreve_col": "Shreve",
-      "strahler_col": "Strahler",
-      "slope_col": null,
-      "elevation_col": null,
-      "river_name_cols": [
-        "name1",
-        "name2"
-      ]
-    },
-    "covariates": {
-      "mode": "orn_100m_table",
-      "sampled_table": "ORN_Sampled_100m",
-      "bedrock_lookup": "tblBedrockGeologyLookUp",
-      "superficial_lookup": "tblSuperficialGeologyLookUp",
-      "rbd_lookup": "tblRiverBasinLookUp"
-    },
-    "core_basins": {
-      "humber": 80,
-      "thames": 3055,
-      "severn": 2786
-    },
-    "max_snap_dist_m": 250.0
-  }
-}""")
-
-OPTIONAL_NETWORK_CONFIGS = json.loads(r"""{
-  "euhydro": {
-    "name": "euhydro",
-    "abbr": "euhydro",
-    "label": "EU-Hydro v1.3 (Thames + Tweed)",
-    "short_label": "EU-Hydro v1.3",
-    "gpkg_paths": [
-      "gis/EU_hydro_gpkg_eu/euhydro_thames_v013_GPKG/euhydro_thames_v013.gpkg",
-      "gis/EU_hydro_gpkg_eu/euhydro_tweed_v013_GPKG/euhydro_tweed_v013.gpkg"
-    ],
-    "zip_fallbacks": [
-      "gis/EU_hydro_gpkg_eu/euhydro_thames_v013_GPKG.zip",
-      "gis/EU_hydro_gpkg_eu/euhydro_tweed_v013_GPKG.zip"
-    ],
-    "layers": [
-      "River_Net_l",
-      "Canals_l",
-      "Ditches_l"
-    ],
-    "geom_col": "Shape",
-    "crs_epsg": 3035,
-    "topology": {
-      "mode": "pointer",
-      "id_col": "OBJECT_ID",
-      "from_node_col": "FNODE",
-      "to_node_col": "TNODE",
-      "next_down_col": "NEXTDOWNID",
-      "catch_id_col": "CatchID",
-      "rbd_id_col": null
-    },
-    "attributes": {
-      "dist_to_mouth_col": null,
-      "dist_to_mouth_unit": "m",
-      "afv_weight_col": "CUM_LEN",
-      "afv_weight_unit": "m",
-      "shreve_col": null,
-      "strahler_col": "STRAHLER",
-      "slope_col": "PENTE",
-      "elevation_col": null,
-      "river_name_cols": [
-        "nameText",
-        "nameTxtInt"
-      ],
-      "extra_numeric_cols": [
-        "LONGPATH"
-      ]
-    },
-    "nodes_table": {
-      "table": "Nodes",
-      "id_col": "OBJECT_ID",
-      "elev_col": "ELEV",
-      "dist_to_mouth_col": "LEN_TOM"
-    },
-    "covariates": {
-      "mode": "geometry_and_spatial_join",
-      "orn_geology_gpkg": "gis/ORN_v2.gpkg"
-    },
-    "core_basins": {
-      "humber": 75,
-      "thames": 306,
-      "severn": 243
-    },
-    "max_snap_dist_m": 250.0
-  },
-  "euhydro_thames": {
-    "name": "euhydro_thames",
-    "abbr": "euhydro_thames",
-    "label": "EU-Hydro v1.3 (Thames Network)",
-    "short_label": "EU-Hydro (Thames)",
-    "gpkg_paths": [
-      "gis/EU_hydro_gpkg_eu/euhydro_thames_v013_GPKG/euhydro_thames_v013.gpkg"
-    ],
-    "zip_fallbacks": [
-      "gis/EU_hydro_gpkg_eu/euhydro_thames_v013_GPKG.zip"
-    ],
-    "layers": [
-      "River_Net_l",
-      "Canals_l",
-      "Ditches_l"
-    ],
-    "geom_col": "Shape",
-    "crs_epsg": 3035,
-    "topology": {
-      "mode": "pointer",
-      "id_col": "OBJECT_ID",
-      "from_node_col": "FNODE",
-      "to_node_col": "TNODE",
-      "next_down_col": "NEXTDOWNID",
-      "catch_id_col": "CatchID",
-      "rbd_id_col": null
-    },
-    "attributes": {
-      "dist_to_mouth_col": null,
-      "dist_to_mouth_unit": "m",
-      "afv_weight_col": "CUM_LEN",
-      "afv_weight_unit": "m",
-      "shreve_col": null,
-      "strahler_col": "STRAHLER",
-      "slope_col": "PENTE",
-      "elevation_col": null,
-      "river_name_cols": [
-        "nameText",
-        "nameTxtInt"
-      ],
-      "extra_numeric_cols": [
-        "LONGPATH"
-      ]
-    },
-    "nodes_table": {
-      "table": "Nodes",
-      "id_col": "OBJECT_ID",
-      "elev_col": "ELEV",
-      "dist_to_mouth_col": "LEN_TOM"
-    },
-    "covariates": {
-      "mode": "geometry_and_spatial_join",
-      "orn_geology_gpkg": "gis/ORN_v2.gpkg"
-    },
-    "core_basins": {
-      "humber": 75,
-      "thames": 306,
-      "severn": 243
-    },
-    "max_snap_dist_m": 250.0
-  },
-  "euhydro_tweed": {
-    "name": "euhydro_tweed",
-    "abbr": "euhydro_tweed",
-    "label": "EU-Hydro v1.3 (Tweed Network)",
-    "short_label": "EU-Hydro (Tweed)",
-    "gpkg_paths": [
-      "gis/EU_hydro_gpkg_eu/euhydro_tweed_v013_GPKG/euhydro_tweed_v013.gpkg"
-    ],
-    "zip_fallbacks": [
-      "gis/EU_hydro_gpkg_eu/euhydro_tweed_v013_GPKG.zip"
-    ],
-    "layers": [
-      "River_Net_l",
-      "Canals_l",
-      "Ditches_l"
-    ],
-    "geom_col": "Shape",
-    "crs_epsg": 3035,
-    "topology": {
-      "mode": "pointer",
-      "id_col": "OBJECT_ID",
-      "from_node_col": "FNODE",
-      "to_node_col": "TNODE",
-      "next_down_col": "NEXTDOWNID",
-      "catch_id_col": "CatchID",
-      "rbd_id_col": null
-    },
-    "attributes": {
-      "dist_to_mouth_col": null,
-      "dist_to_mouth_unit": "m",
-      "afv_weight_col": "CUM_LEN",
-      "afv_weight_unit": "m",
-      "shreve_col": null,
-      "strahler_col": "STRAHLER",
-      "slope_col": "PENTE",
-      "elevation_col": null,
-      "river_name_cols": [
-        "nameText",
-        "nameTxtInt"
-      ],
-      "extra_numeric_cols": [
-        "LONGPATH"
-      ]
-    },
-    "nodes_table": {
-      "table": "Nodes",
-      "id_col": "OBJECT_ID",
-      "elev_col": "ELEV",
-      "dist_to_mouth_col": "LEN_TOM"
-    },
-    "covariates": {
-      "mode": "geometry_and_spatial_join",
-      "orn_geology_gpkg": "gis/ORN_v2.gpkg"
-    },
-    "core_basins": {
-      "humber": null,
-      "thames": null,
-      "severn": null
-    },
-    "max_snap_dist_m": 250.0
-  }
-}""")
-
-DEFAULT_SOURCE_CONFIGS = json.loads(r"""{
-  "rsn": {
-    "name": "rsn",
-    "abbr": "RSN",
-    "label": "River Surveillance Network (RSN)",
-    "description": "Environment Agency River Surveillance Network (1,382 baseline stations across England's mainstems)",
-    "data_dir": "data/NCEA_River_Surveillance_Network_ARD_Open",
-    "sites_file": "RSN Water Quality Sample Points.csv",
-    "eco_sites_file": "RSN Ecology Sample Points.csv",
-    "id_col": "network_id",
-    "easting_col": "ngr_easting",
-    "northing_col": "ngr_northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "RSN Water Quality Samples.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_desc",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      },
-      "lcms": {
-        "file": "RSN LCMS GCMS Samples.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "cas_number",
-        "det_desc_col": "compound_name",
-        "val_col": "meas_result",
-        "cens_col": "less_than_flag",
-        "cens_flag": "yes",
-        "unit_col": "unit_short_desc"
-      },
-      "inverts": {
-        "file": "RSN Macroinvertebrates.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime"
-      },
-      "diatoms": {
-        "file": "RSN Diatoms.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime"
-      },
-      "macrophytes": {
-        "file": "RSN Macrophytes.csv",
-        "id_col": "network_id",
-        "datetime_col": "survey_date"
-      },
-      "rhs": {
-        "file": "RSN RHS.csv",
-        "id_col": "network_id",
-        "datetime_col": "survey_date"
-      }
-    }
-  },
-  "ssn": {
-    "name": "ssn",
-    "abbr": "SSN",
-    "label": "Small Streams Network (SSN)",
-    "description": "Environment Agency Small Streams Network (313 dedicated headwater stations across England)",
-    "data_dir": "data/NCEA_Small_Streams_Network_ARD_Open",
-    "sites_file": "SSN Water Quality Sample Points.csv",
-    "eco_sites_file": "SSN Ecology Sample Points.csv",
-    "id_col": "network_id",
-    "easting_col": "ngr_easting",
-    "northing_col": "ngr_northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "SSN Water Quality Samples.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_desc",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      },
-      "inverts": {
-        "file": "SSN Macroinvertebrates.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime"
-      },
-      "diatoms": {
-        "file": "SSN Diatoms.csv",
-        "id_col": "network_id",
-        "datetime_col": "sample_datetime"
-      },
-      "macrophytes": {
-        "file": "SSN Macrophytes.csv",
-        "id_col": "network_id",
-        "datetime_col": "survey_date"
-      }
-    }
-  },
-  "composites": {
-    "composites": {
-      "rss": {
-        "name": "rss",
-        "abbr": "RSS",
-        "label": "Combined River Surveillance & Small Streams (RSS)",
-        "description": "Integrated River Surveillance Network and Small Streams Network",
-        "sources": [
-          "rsn",
-          "ssn"
-        ]
-      },
-      "all": {
-        "name": "all",
-        "abbr": "ALL",
-        "label": "All Registered Monitoring Networks",
-        "description": "Union of all active monitoring networks",
-        "sources": [
-          "rsn",
-          "ssn"
-        ]
-      }
-    }
-  }
-}""")
-
-OPTIONAL_SOURCE_CONFIGS = json.loads(r"""{
-  "waterblitz": {
-    "name": "waterblitz",
-    "abbr": "WATERB",
-    "label": "Waterblitz",
-    "range_mode": "tobit",
-    "alias_target": "waterblitz_tobit",
-    "description": "Custom monitoring dataset waterblitz (defaulting to waterblitz_tobit)",
-    "data_dir": "data/custom/waterblitz_tobit",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  },
-  "waterblitz_tobit": {
-    "name": "waterblitz_tobit",
-    "abbr": "WATERB_TOB",
-    "label": "Waterblitz [Tobit]",
-    "range_mode": "tobit",
-    "description": "Custom monitoring dataset formatted by format_custom_data.py (TOBIT mode)",
-    "data_dir": "data/custom/waterblitz_tobit",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  },
-  "waterblitz_midpoint": {
-    "name": "waterblitz_midpoint",
-    "abbr": "WATERB_MID",
-    "label": "Waterblitz [Midpoint]",
-    "range_mode": "midpoint",
-    "description": "Custom monitoring dataset formatted by format_custom_data.py (MIDPOINT mode)",
-    "data_dir": "data/custom/waterblitz_midpoint",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  },
-  "river_guardians": {
-    "name": "river_guardians",
-    "abbr": "RGCS",
-    "label": "River Guardians Citizen Science Network",
-    "description": "Volunteer water quality monitoring network collecting monthly nutrients and field chemistry",
-    "data_dir": "data/custom/river_guardians",
-    "sites_file": "volunteer_survey_points.csv",
-    "id_col": "survey_site_id",
-    "easting_col": "lon",
-    "northing_col": "lat",
-    "crs_epsg": 4326,
-    "datasets": {
-      "wq": {
-        "file": "field_observations.csv",
-        "id_col": "survey_site_id",
-        "datetime_col": "observed_date",
-        "det_col": "chemical_parameter",
-        "det_desc_col": "parameter_name",
-        "val_col": "concentration_ppm",
-        "cens_col": "detection_flag",
-        "cens_flag": "<",
-        "unit_col": "units"
-      }
-    }
-  },
-  "rsn_gam": {
-    "name": "rsn_gam",
-    "abbr": "RSN_GAM",
-    "label": "River Surveillance Network GAM Model Predictions",
-    "short_label": "RSN GAM",
-    "description": "Environment Agency River Surveillance Network GAM Model Estimates with Measurement Error",
-    "data_dir": "data/custom/rsn_gam",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "meas_method": "gam",
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "val_col": "meas_result",
-        "unc_col": "meas_uncertainty",
-        "meth_col": "meas_method"
-      }
-    }
-  },
-  "rsn_gam_mean": {
-    "name": "rsn_gam_mean",
-    "abbr": "RSN_GAM_MEAN",
-    "label": "River Surveillance Network Station Mean GAM Predictions",
-    "short_label": "RSN GAM Mean",
-    "description": "Environment Agency River Surveillance Network Station Mean GAM Model Estimates with Measurement Error",
-    "data_dir": "data/custom/rsn_gam_mean",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "meas_method": "gam",
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "val_col": "meas_result",
-        "unc_col": "meas_uncertainty",
-        "meth_col": "meas_method"
-      }
-    }
-  },
-  "custom_example": {
-    "name": "custom_example",
-    "abbr": "CUSTOM",
-    "label": "Custom River Monitoring Study",
-    "description": "Example configuration template for registering a custom river monitoring dataset",
-    "data_dir": "data/custom/example_study",
-    "sites_file": "sites.csv",
-    "id_col": "site_id",
-    "easting_col": "easting",
-    "northing_col": "northing",
-    "crs_epsg": 27700,
-    "datasets": {
-      "wq": {
-        "file": "samples.csv",
-        "id_col": "site_id",
-        "datetime_col": "sample_datetime",
-        "det_col": "det_code",
-        "det_desc_col": "det_name",
-        "val_col": "meas_result",
-        "cens_col": "meas_sign",
-        "cens_flag": "<",
-        "unit_col": "unit_short_desc"
-      }
-    }
-  }
-}""")
-
-
-def _network_files_exist(net_cfg, base_dir=BASE_DIR, gis_dir=None):
-    if gis_dir is None:
-        gis_dir = GIS_DIR
-    gpkg_paths = net_cfg.get("gpkg_paths", [])
-    parquet_paths = net_cfg.get("parquet_paths", [])
-    network_paths = net_cfg.get("network_paths", [])
-    zip_fallbacks = net_cfg.get("zip_fallbacks", [])
-
-    all_targets = gpkg_paths + parquet_paths + network_paths + zip_fallbacks
-    if not all_targets:
-        return False
-
-    for rel_p in all_targets:
-        p1 = os.path.join(base_dir, rel_p)
-        if os.path.exists(p1):
-            return True
-        rel_sub = rel_p[4:] if rel_p.startswith("gis/") else rel_p
-        p2 = os.path.join(gis_dir, rel_sub)
-        if os.path.exists(p2):
-            return True
-        p3 = os.path.join(gis_dir, rel_p)
-        if os.path.exists(p3):
-            return True
-    return False
-
-
-def _source_files_exist(src_cfg, base_dir=BASE_DIR, data_dir=None):
-    if data_dir is None:
-        data_dir = DATA_DIR
-    raw_data_dir = src_cfg.get("data_dir")
-    if not raw_data_dir:
-        return False
-    cands = [
-        os.path.join(base_dir, raw_data_dir),
-        os.path.join(data_dir, raw_data_dir),
-        os.path.join(data_dir, raw_data_dir[5:]) if raw_data_dir.startswith("data/") else None,
-        os.path.join(data_dir, "custom", os.path.basename(raw_data_dir)),
-    ]
-    for c in cands:
-        if c and os.path.isdir(c):
-            try:
-                if len(os.listdir(c)) > 0:
-                    return True
-            except OSError:
-                pass
-    return False
-
-
-def ensure_network_configs(base_dir=BASE_DIR):
-    """
-    Ensures that configs/networks directory exists and contains default network JSON configuration (ORN).
-    Optional network configurations (e.g. EU-Hydro) are only created if their underlying GIS files exist in gis/.
-    Returns list of paths created.
-    """
-    net_dir = _rel_join(base_dir, "configs", "networks")
-    os.makedirs(net_dir, exist_ok=True)
-    created = []
-
-    # 1. Unconditional Default: ORN
-    for net_name, net_cfg in DEFAULT_NETWORK_CONFIGS.items():
-        dst = os.path.join(net_dir, f"{net_name}.json")
-        if not os.path.exists(dst):
-            try:
-                with open(dst, "w", encoding="utf-8") as f:
-                    json.dump(net_cfg, f, indent=2)
-                    f.write("\n")
-                created.append(dst)
-            except Exception as e:
-                print(f"   [Warning] Failed to write network config {dst}: {e}")
-
-    # 2. Optional Networks (e.g. EU-Hydro): only create if underlying GIS files exist in gis/
-    for net_name, net_cfg in OPTIONAL_NETWORK_CONFIGS.items():
-        dst = os.path.join(net_dir, f"{net_name}.json")
-        if _network_files_exist(net_cfg, base_dir, GIS_DIR):
-            if not os.path.exists(dst):
-                try:
-                    with open(dst, "w", encoding="utf-8") as f:
-                        json.dump(net_cfg, f, indent=2)
-                        f.write("\n")
-                    created.append(dst)
-                except Exception as e:
-                    print(f"   [Warning] Failed to write network config {dst}: {e}")
-        else:
-            # Leave existing config files untouched (e.g. when --gis-dir overrides default path)
-            pass
-
-    if created:
-        print(f"   [Config] Created network configuration(s) in {net_dir}/ ({len(created)} profile(s))")
-    return created
-
-
-def ensure_source_configs(base_dir=BASE_DIR):
-    """
-    Ensures that configs/sources directory exists and contains default source JSON configurations (RSN, SSN, RSS).
-    Optional source configurations (e.g. waterblitz, river_guardians, rsn_gam) are only created if their
-    corresponding directories exist in data/custom/.
-    Returns list of paths created.
-    """
-    src_dir = _rel_join(base_dir, "configs", "sources")
-    os.makedirs(src_dir, exist_ok=True)
-    created = []
-
-    # 1. Unconditional Defaults: RSN, SSN, RSS (composites)
-    for src_name, src_cfg in DEFAULT_SOURCE_CONFIGS.items():
-        dst = os.path.join(src_dir, f"{src_name}.json")
-        if not os.path.exists(dst):
-            try:
-                with open(dst, "w", encoding="utf-8") as f:
-                    json.dump(src_cfg, f, indent=2)
-                    f.write("\n")
-                created.append(dst)
-            except Exception as e:
-                print(f"   [Warning] Failed to write source config {dst}: {e}")
-
-    # 2. Optional Sources: only create if underlying directories exist in data/
-    for src_name, src_cfg in OPTIONAL_SOURCE_CONFIGS.items():
-        dst = os.path.join(src_dir, f"{src_name}.json")
-        if _source_files_exist(src_cfg, base_dir, DATA_DIR):
-            if not os.path.exists(dst):
-                try:
-                    with open(dst, "w", encoding="utf-8") as f:
-                        json.dump(src_cfg, f, indent=2)
-                        f.write("\n")
-                    created.append(dst)
-                except Exception as e:
-                    print(f"   [Warning] Failed to write source config {dst}: {e}")
-        else:
-            # Leave existing config files untouched (e.g. when --gis-dir overrides default path)
-            pass
-
-    if created:
-        print(f"   [Config] Created source configuration(s) in {src_dir}/ ({len(created)} profile(s))")
-    return created
+from s3n_py_utils import (
+    DEFAULT_BASE_DIR,
+    MINIMAL_DEFAULT_NETWORKS,
+    MONTH_TO_SEASON,
+    MONTH_NAME_MAP,
+    RuntimeConfig,
+    _rel_join,
+    apply_forward_transform,
+    apply_ros_to_records,
+    build_runtime_config,
+    compute_polyline_metrics,
+    compute_ros_plotting_positions,
+    detect_range_mode as _shared_detect_range_mode,
+    ensure_directory_config,
+    ensure_network_configs,
+    ensure_source_configs,
+    estimate_boxcox_lambda,
+    estimate_yeojohnson_lambda,
+    find_col,
+    find_directory_config_file,
+    fit_ros_ols,
+    impute_censored_by_site,
+    load_directory_config,
+    load_source_registry as _shared_load_source_registry,
+    parse_gpkg_envelope,
+    parse_gpkg_geometry,
+    parse_gpkg_multilinestring,
+    parse_month_arg,
+    point_to_polyline,
+    print_available_transforms,
+    resolve_source_tag as _shared_resolve_source_tag,
+    transform_coords_batch,
+    wgs84_to_bng,
+)
 
 
 def ensure_all_configs(base_dir=BASE_DIR):
@@ -800,442 +112,41 @@ def ensure_all_configs(base_dir=BASE_DIR):
     ensure_source_configs(base_dir)
 
 
-def load_directory_config(base_dir=BASE_DIR, auto_create=False):
-    """
-    Loads directory configuration from configs/directories.json (or paths.json / config.json).
-    If auto_create=True, creates the file with default locations if not found.
-    Resolves relative paths against base_dir.
-    """
-    cfg_file = find_directory_config_file(base_dir)
-    if not os.path.exists(cfg_file) and auto_create:
-        ensure_directory_config(base_dir)
-
-    raw_cfg = {}
-    if os.path.exists(cfg_file):
-        try:
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                raw_cfg = json.load(f)
-        except Exception as e:
-            print(f"   [Warning] Could not parse directory config {cfg_file}: {e}")
-
-    def _resolve(val, default):
-        p = str(val).strip() if (val is not None and str(val).strip()) else default
-        p = os.path.expanduser(p)
-        if not os.path.isabs(p):
-            p = _rel_join(base_dir, p)
-        return p
-
-    data_dir = _resolve(raw_cfg.get("data_dir") or raw_cfg.get("data") or raw_cfg.get("DATA_DIR"), "data")
-    gis_dir = _resolve(raw_cfg.get("gis_dir") or raw_cfg.get("gis") or raw_cfg.get("GIS_DIR"), "gis")
-    output_dir = _resolve(
-        raw_cfg.get("output_dir") or raw_cfg.get("out_dir") or raw_cfg.get("output") or raw_cfg.get("out") or raw_cfg.get("OUTPUT_DIR"),
-        "output"
-    )
-    proc_val = raw_cfg.get("processed_dir") or raw_cfg.get("processed") or raw_cfg.get("PROCESSED_DIR")
-    proc_dir = _resolve(proc_val, _rel_join(data_dir, "processed")) if proc_val else _rel_join(data_dir, "processed")
-
-    return {
-        "config_file": cfg_file if os.path.exists(cfg_file) else None,
-        "data_dir": data_dir,
-        "gis_dir": gis_dir,
-        "output_dir": output_dir,
-        "processed_dir": proc_dir,
-    }
-
-
 DIR_CONFIG = load_directory_config(BASE_DIR, auto_create=False)
-GIS_DIR = os.environ.get("S3N_GIS_DIR") or DIR_CONFIG["gis_dir"]
-DATA_DIR = os.environ.get("S3N_DATA_DIR") or DIR_CONFIG["data_dir"]
-cand_rsn = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
-RSN_DIR = cand_rsn if os.path.isdir(cand_rsn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")) else cand_rsn)
-cand_ssn = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
-SSN_DIR = cand_ssn if os.path.isdir(cand_ssn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "SSN Water Quality Samples.csv")) else cand_ssn)
-WQ_DIR = RSN_DIR
-CONFIG_DIR = _rel_join(BASE_DIR, "configs", "networks")
-SOURCE_CONFIG_DIR = _rel_join(BASE_DIR, "configs", "sources")
-OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or DIR_CONFIG["processed_dir"]
+RUNTIME_CFG = build_runtime_config(BASE_DIR)
+GIS_DIR = RUNTIME_CFG.gis_dir
+DATA_DIR = RUNTIME_CFG.data_dir
+RSN_DIR = RUNTIME_CFG.rsn_dir
+SSN_DIR = RUNTIME_CFG.ssn_dir
+WQ_DIR = RUNTIME_CFG.wq_dir
+CONFIG_DIR = RUNTIME_CFG.config_dir
+SOURCE_CONFIG_DIR = RUNTIME_CFG.source_config_dir
+OUT_DIR = RUNTIME_CFG.processed_dir
 
 
-def wgs84_to_bng(lat, lon):
-    """
-    Converts WGS84 decimal latitude and longitude into British National Grid
-    (OSGB36 / EPSG:27700) Eastings and Northings in meters using the standard
-    7-parameter Helmert datum shift (WGS84 -> OSGB36) followed by the
-    Airy 1830 Transverse Mercator projection (pure Python standard library).
-    """
-    # 1. WGS84 geodetic (lat, lon) -> 3D Cartesian (X, Y, Z)
-    a_w, b_w = 6378137.0, 6356752.3141
-    e2_w = 1.0 - (b_w * b_w) / (a_w * a_w)
-    phi_w = math.radians(lat)
-    lam_w = math.radians(lon)
-    sin_phi_w = math.sin(phi_w)
-    cos_phi_w = math.cos(phi_w)
-    nu_w = a_w / math.sqrt(max(1e-12, 1.0 - e2_w * sin_phi_w * sin_phi_w))
-    x_w = nu_w * cos_phi_w * math.cos(lam_w)
-    y_w = nu_w * cos_phi_w * math.sin(lam_w)
-    z_w = (1.0 - e2_w) * nu_w * sin_phi_w
-
-    # 2. 7-parameter Helmert transform (WGS84 -> OSGB36)
-    tx, ty, tz = -446.448, 125.157, -542.060
-    s = 1.0 + 20.4894e-6
-    sec2rad = math.pi / (180.0 * 3600.0)
-    rx = -0.1502 * sec2rad
-    ry = -0.2470 * sec2rad
-    rz = -0.8421 * sec2rad
-    x_o = tx + s * x_w - rz * y_w + ry * z_w
-    y_o = ty + rz * x_w + s * y_w - rx * z_w
-    z_o = tz - ry * x_w + rx * y_w + s * z_w
-
-    # 3. 3D Cartesian -> Airy 1830 geodetic (phi, lam)
-    a, b = 6377563.396, 6356256.909
-    e2 = 1.0 - (b * b) / (a * a)
-    p = math.hypot(x_o, y_o)
-    lam = math.atan2(y_o, x_o)
-    phi = math.atan2(z_o, p * (1.0 - e2))
-    for _ in range(8):
-        nu_i = a / math.sqrt(max(1e-12, 1.0 - e2 * (math.sin(phi) ** 2)))
-        phi_new = math.atan2(z_o + e2 * nu_i * math.sin(phi), p)
-        if abs(phi_new - phi) < 1e-11:
-            phi = phi_new
-            break
-        phi = phi_new
-
-    # 4. Airy 1830 Transverse Mercator -> BNG (E, N)
-    F0 = 0.9996012717
-    lat0 = math.radians(49.0)
-    lon0 = math.radians(-2.0)
-    N0, E0 = -100000.0, 400000.0
-    n = (a - b) / (a + b)
-
-    cos_phi = math.cos(phi)
-    sin_phi = math.sin(phi)
-    nu = a * F0 / math.sqrt(max(1e-12, 1.0 - e2 * sin_phi * sin_phi))
-    rho = a * F0 * (1.0 - e2) / (math.pow(max(1e-12, 1.0 - e2 * sin_phi * sin_phi), 1.5))
-    eta2 = max(0.0, nu / rho - 1.0)
-
-    M = b * F0 * (
-        (1.0 + n + 1.25 * (n ** 2) + 1.25 * (n ** 3)) * (phi - lat0)
-        - (3.0 * n + 3.0 * (n ** 2) + 2.625 * (n ** 3)) * math.sin(phi - lat0) * math.cos(phi + lat0)
-        + (1.875 * (n ** 2) + 1.875 * (n ** 3)) * math.sin(2.0 * (phi - lat0)) * math.cos(2.0 * (phi + lat0))
-        - (35.0 / 24.0 * (n ** 3)) * math.sin(3.0 * (phi - lat0)) * math.cos(3.0 * (phi + lat0))
-    )
-
-    I = M + N0
-    II = (nu / 2.0) * sin_phi * cos_phi
-    III = (nu / 24.0) * sin_phi * (cos_phi ** 3) * (5.0 - (math.tan(phi) ** 2) + 9.0 * eta2)
-    IIIA = (nu / 720.0) * sin_phi * (cos_phi ** 5) * (61.0 - 58.0 * (math.tan(phi) ** 2) + (math.tan(phi) ** 4))
-    IV = nu * cos_phi
-    V = (nu / 6.0) * (cos_phi ** 3) * (nu / rho - (math.tan(phi) ** 2))
-    VI = (nu / 120.0) * (cos_phi ** 5) * (5.0 - 18.0 * (math.tan(phi) ** 2) + (math.tan(phi) ** 4) + 14.0 * eta2 - 58.0 * (math.tan(phi) ** 2) * eta2)
-
-    d_lam = lam - lon0
-    N = I + II * (d_lam ** 2) + III * (d_lam ** 4) + IIIA * (d_lam ** 6)
-    E = E0 + IV * d_lam + V * (d_lam ** 3) + VI * (d_lam ** 5)
-    return round(E, 2), round(N, 2)
+def load_source_registry(base_dir=BASE_DIR, runtime_cfg=None):
+    eff_data = runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR
+    return _shared_load_source_registry(base_dir=base_dir, data_dir=eff_data)
 
 
-def find_col(fieldnames, candidate_names):
-    """Case-insensitive matching of column names against candidate variants."""
-    if not fieldnames:
-        return None
-    cols_map = {str(c).lower().strip(): c for c in fieldnames if c}
-    for cand in candidate_names:
-        cand_low = cand.lower().strip()
-        if cand_low in cols_map:
-            return cols_map[cand_low]
-    return None
-
-
-def load_source_registry(base_dir=BASE_DIR):
-    """
-    Loads source configurations from `configs/sources/*.json` and auto-discovers
-    subdirectories in `data/custom/`.
-    """
-    ensure_source_configs(base_dir)
-    cfg_dir = os.path.join(base_dir, "configs", "sources")
-    sources = {}
-    composites = {}
-
-    sources["rsn"] = {
-        "name": "rsn",
-        "abbr": "RSN",
-        "label": "River Surveillance Network (RSN)",
-        "description": "Environment Agency River Surveillance Network (1,382 stations)",
-        "data_dir": "data/NCEA_River_Surveillance_Network_ARD_Open",
-        "sites_file": "RSN Water Quality Sample Points.csv",
-        "id_col": "network_id",
-        "easting_col": "ngr_easting",
-        "northing_col": "ngr_northing",
-        "crs_epsg": 27700,
-    }
-    sources["ssn"] = {
-        "name": "ssn",
-        "abbr": "SSN",
-        "label": "Small Streams Network (SSN)",
-        "description": "Environment Agency Small Streams Network (313 headwater stations)",
-        "data_dir": "data/NCEA_Small_Streams_Network_ARD_Open",
-        "sites_file": "SSN Water Quality Sample Points.csv",
-        "id_col": "network_id",
-        "easting_col": "ngr_easting",
-        "northing_col": "ngr_northing",
-        "crs_epsg": 27700,
-    }
-
-    composites["rss"] = {
-        "name": "rss",
-        "abbr": "RSS",
-        "label": "Combined River Surveillance & Small Streams (RSS)",
-        "description": "Integrated River Surveillance Network and Small Streams Network",
-        "sources": ["rsn", "ssn"],
-    }
-    composites["all"] = {
-        "name": "all",
-        "abbr": "ALL",
-        "label": "All Registered Monitoring Networks",
-        "description": "Union of all active monitoring networks",
-        "sources": ["rsn", "ssn"],
-    }
-
-    if os.path.isdir(cfg_dir):
-        for f in glob.glob(os.path.join(cfg_dir, "*.json")):
-            fname = os.path.basename(f)
-            try:
-                with open(f, "r", encoding="utf-8") as jf:
-                    data = json.load(jf)
-                if fname == "composites.json" or "composites" in data:
-                    comps = data.get("composites", data)
-                    for c_name, c_info in comps.items():
-                        composites[c_name.lower()] = c_info
-                else:
-                    s_name = data.get("name", os.path.splitext(fname)[0]).lower()
-                    sources[s_name] = data
-            except Exception as e:
-                print(f"Warning: Failed to parse source config {f}: {e}")
-
-    # Auto-detect data/custom/* subdirectories
-    cust_dir = os.path.join(base_dir, "data", "custom")
-    if os.path.isdir(cust_dir):
-        for sd in os.listdir(cust_dir):
-            full_sd = os.path.join(cust_dir, sd)
-            if os.path.isdir(full_sd):
-                s_key = sd.lower()
-                if s_key not in sources:
-                    sources[s_key] = {
-                        "name": s_key,
-                        "abbr": s_key.upper(),
-                        "label": f"Custom Dataset: {sd}",
-                        "description": f"User custom dataset in data/custom/{sd}",
-                        "data_dir": full_sd,
-                        "sites_file": "sites.csv",
-                        "id_col": "site_id",
-                        "easting_col": "easting",
-                        "northing_col": "northing",
-                        "crs_epsg": 27700,
-                    }
-
-    return sources, composites
-
-
-def resolve_source_tag(source="rsn", registry=None):
-    """
-    Resolves source tags, aliases, composite groups, and delimiter combinations
-    (e.g., 'rsn+ssn', 'rsn,custom'). Returns (source_key, constituent_list, source_abbr, source_label).
-    """
-    if not source:
-        return "rsn", ["rsn"], "RSN", "River Surveillance Network (RSN)"
-
-    if registry is None:
-        sources_reg, composites_reg = load_source_registry()
-    else:
-        sources_reg, composites_reg = registry
-
-    raw_s = str(source).lower().strip()
-    raw_s = re.sub(r"\btobitz\b", "tobit", raw_s)
-    raw_s = re.sub(r"_tobitz\b", "_tobit", raw_s)
-    tokens = [t.strip().lower() for t in re.split(r"[,+ ]+", raw_s) if t.strip()]
-    if not tokens:
-        tokens = ["rsn"]
-
-    norm_tokens = []
-    for tk in tokens:
-        if tk.endswith("_tobitz"):
-            tk = tk[:-1]
-        elif tk == "tobitz":
-            tk = "tobit"
-        norm_tokens.append(tk)
-    tokens = norm_tokens
-
-    if len(tokens) > 1:
-        if set(tokens) == {"rsn", "ssn"}:
-            return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
-        # Expand composite tokens and check aliases (with hyphen-to-underscore fallback)
-        expanded = []
-        for tk in tokens:
-            if tk in ("ssn", "small_stream", "small_streams", "small-stream", "small-streams"):
-                expanded.append("ssn")
-                continue
-            if tk in ("rsn", "river_surveillance", "river-surveillance"):
-                expanded.append("rsn")
-                continue
-            tk_under = tk.replace("-", "_")
-            cand = tk if (tk in composites_reg or tk in sources_reg or os.path.isdir(os.path.join(DATA_DIR, "custom", tk))) else (
-                tk_under if (tk_under in composites_reg or tk_under in sources_reg or os.path.isdir(os.path.join(DATA_DIR, "custom", tk_under))) else tk
-            )
-            if cand in composites_reg:
-                expanded.extend(composites_reg[cand].get("sources", [cand]))
-            elif cand in sources_reg and sources_reg[cand].get("alias_target"):
-                expanded.append(sources_reg[cand]["alias_target"])
-            elif f"{cand}_tobit" in sources_reg:
-                expanded.append(f"{cand}_tobit")
-            else:
-                expanded.append(cand)
-        unique_tokens = sorted(set(expanded))
-        combo_key = "+".join(unique_tokens)
-        combo_abbr = "+".join(sources_reg[t].get("abbr", t.upper()) if t in sources_reg else t.upper() for t in unique_tokens)
-        combo_label = f"Combined Monitoring Sources ({combo_abbr})"
-        return combo_key, unique_tokens, combo_abbr, combo_label
-
-    s = tokens[0]
-    if s in ("ssn", "small_stream", "small_streams", "small-streams", "small-stream"):
-        return "ssn", ["ssn"], "SSN", "Small Streams Network (SSN)"
-    if s in ("rss", "combined", "both", "all", "rsn_ssn", "ssn_rsn", "rsn+ssn"):
-        return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
-    if s in composites_reg:
-        c_info = composites_reg[s]
-        c_srcs = c_info.get("sources", ["rsn", "ssn"])
-        c_abbr = c_info.get("abbr", s.upper())
-        c_label = c_info.get("label", f"Composite: {s}")
-        return s, c_srcs, c_abbr, c_label
-    if s in sources_reg:
-        s_info = sources_reg[s]
-        if s_info.get("alias_target") and s_info["alias_target"] in sources_reg:
-            t_key = s_info["alias_target"]
-            t_info = sources_reg[t_key]
-            return t_key, [t_key], t_info.get("abbr", t_key.upper()), t_info.get("label", f"Monitoring Source: {t_key}")
-        s_abbr = s_info.get("abbr", s.upper())
-        s_label = s_info.get("label", f"Monitoring Source: {s}")
-        return s, [s], s_abbr, s_label
-
-    # Check if a range-tagged profile exists (e.g. waterblitz -> waterblitz_tobit)
-    for rm in ("tobit", "geometric", "midpoint", "lower", "upper"):
-        cand_key = f"{s}_{rm}"
-        if cand_key in sources_reg:
-            t_info = sources_reg[cand_key]
-            return cand_key, [cand_key], t_info.get("abbr", cand_key.upper()), t_info.get("label", f"Monitoring Source: {cand_key}")
-
-    # Check if s has a range mode suffix
-    for rm in ("tobit", "geometric", "midpoint", "lower", "upper"):
-        if s.endswith(f"_{rm}"):
-            base_s = s[:-len(rm)-1]
-            if base_s in sources_reg:
-                b_info = sources_reg[base_s]
-                b_label = b_info.get("label", base_s.title())
-                if f"[{rm.title()}]" not in b_label:
-                    b_label = f"{b_label} [{rm.title()}]"
-                b_abbr = f"{b_info.get('abbr', base_s.upper())}_{rm.upper()[:3]}"
-                return s, [s], b_abbr, b_label
-
-    # Check if decomposing an underscore-joined string matches multiple registered sources
-    if "_" in s and s not in sources_reg and s not in ("rsn", "ssn", "rss"):
-        reg_names = sorted(list(sources_reg.keys()) + ["rsn", "ssn"], key=len, reverse=True)
-        matched = []
-        rem = s
-        while rem:
-            found = False
-            for sn in reg_names:
-                if rem == sn or rem.startswith(f"{sn}_"):
-                    matched.append(sn)
-                    rem = rem[len(sn):].lstrip("_")
-                    found = True
-                    break
-            if not found:
-                break
-        if matched and not rem and len(matched) > 1:
-            unique_tokens = []
-            for t in matched:
-                if t in sources_reg and sources_reg[t].get("alias_target"):
-                    t = sources_reg[t]["alias_target"]
-                if t not in unique_tokens:
-                    unique_tokens.append(t)
-            combo_key = "_".join(unique_tokens)
-            combo_abbr = "+".join(sources_reg[t].get("abbr", t.upper()) if t in sources_reg else t.upper() for t in unique_tokens)
-            combo_label = f"Combined Monitoring Sources ({combo_abbr})"
-            return combo_key, unique_tokens, combo_abbr, combo_label
-
-    # Generic custom source
-    clean_tag = re.sub(r"[^a-z0-9_]+", "_", s)
-    return clean_tag, [clean_tag], clean_tag.upper(), f"Custom Monitoring Source ({clean_tag.upper()})"
+def resolve_source_tag(source="rsn", registry=None, runtime_cfg=None):
+    eff_data = runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR
+    return _shared_resolve_source_tag(source=source, registry=registry, data_dir=eff_data, base_dir=BASE_DIR)
 
 
 def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=None, cli_mode="auto"):
-    """
-    Detects whether range conversion was used and returns the range mode tag
-    ('tobit', 'geometric', 'midpoint', 'lower', 'upper', or None).
-    Inspects all '+'-delimited constituents when source_key is a multi-source combination.
-    """
-    if cli_mode and cli_mode not in ("auto", "none"):
-        return cli_mode
-    if cli_mode == "none":
-        return None
-
-    constituents = [t for t in str(source_key).split("+") if t]
-    found_modes = []
-    for tk in constituents:
-        tk_mode = None
-        for m in ("tobit", "geometric", "midpoint", "lower", "upper"):
-            if tk.endswith(f"_{m}"):
-                tk_mode = m
-                break
-        if not tk_mode and tk in sources_reg:
-            tk_mode = sources_reg[tk].get("range_mode") or None
-        if tk_mode and tk_mode not in found_modes:
-            found_modes.append(tk_mode)
-
-    if len(found_modes) > 1:
-        print(f"   [Warning] Mixed range modes across combined sources ({', '.join(found_modes)}); using '{found_modes[0]}'.")
-    if found_modes:
-        return found_modes[0]
-
-    cand_paths = []
-    if custom_samples:
-        cand_paths.append(custom_samples)
-    elif custom_dir:
-        cand_paths.append(os.path.join(custom_dir, "samples.csv"))
-    for tk in constituents:
-        if tk in sources_reg:
-            s_dir = sources_reg[tk].get("data_dir", "")
-            if s_dir:
-                cand_paths.append(os.path.join(s_dir, "samples.csv"))
-                cand_paths.append(os.path.join(BASE_DIR, s_dir, "samples.csv"))
-
-    for cand_samples in cand_paths:
-        if cand_samples and os.path.exists(cand_samples):
-            try:
-                with open(cand_samples, "r", encoding="utf-8-sig") as f:
-                    reader = csv.DictReader(f)
-                    if reader.fieldnames and "meas_method" in reader.fieldnames:
-                        for i, r in enumerate(reader):
-                            if i > 500:
-                                break
-                            mm = (r.get("meas_method") or "").strip().lower()
-                            if "tobit" in mm:
-                                return "tobit"
-                            if "geometric" in mm:
-                                return "geometric"
-                            if "midpoint" in mm or "arithmetic" in mm:
-                                return "midpoint"
-                            if "lower" in mm:
-                                return "lower"
-                            if "upper" in mm:
-                                return "upper"
-            except Exception:
-                pass
-
-    return None
+    return _shared_detect_range_mode(
+        source_key=source_key,
+        sources_reg=sources_reg,
+        custom_samples=custom_samples,
+        custom_dir=custom_dir,
+        cli_mode=cli_mode,
+        base_dir=BASE_DIR,
+    )
 
 
-def print_available_sources(base_dir=BASE_DIR):
-    sources_reg, composites_reg = load_source_registry(base_dir=base_dir)
+def print_available_sources(base_dir=BASE_DIR, runtime_cfg=None):
+    sources_reg, composites_reg = load_source_registry(base_dir=base_dir, runtime_cfg=runtime_cfg)
     print("Available Monitoring Data Sources:\n")
     print(f"  {'Source':<18} | {'Abbr':<6} | {'Description':<44} | {'Type':<12}")
     print("-" * 88)
@@ -1260,30 +171,19 @@ def print_available_sources(base_dir=BASE_DIR):
 
 
 def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
-    """Updates global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, and OUT_DIR from CLI or environment overrides."""
-    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, OUT_DIR, DIR_CONFIG
+    """Builds RuntimeConfig and updates module path aliases for backward compatibility."""
+    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, OUT_DIR, DIR_CONFIG, RUNTIME_CFG
     DIR_CONFIG = load_directory_config(BASE_DIR, auto_create=False)
-    if gis_dir:
-        GIS_DIR = gis_dir
-    else:
-        GIS_DIR = os.environ.get("S3N_GIS_DIR") or DIR_CONFIG["gis_dir"]
-
-    if data_dir:
-        DATA_DIR = data_dir
-    else:
-        DATA_DIR = os.environ.get("S3N_DATA_DIR") or DIR_CONFIG["data_dir"]
-
-    cand_rsn = _rel_join(DATA_DIR, "NCEA_River_Surveillance_Network_ARD_Open")
-    RSN_DIR = cand_rsn if os.path.isdir(cand_rsn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "RSN Water Quality Samples.csv")) else cand_rsn)
-    cand_ssn = _rel_join(DATA_DIR, "NCEA_Small_Streams_Network_ARD_Open")
-    SSN_DIR = cand_ssn if os.path.isdir(cand_ssn) else (DATA_DIR if os.path.exists(os.path.join(DATA_DIR, "SSN Water Quality Samples.csv")) else cand_ssn)
-    WQ_DIR = RSN_DIR
-
-    if out_dir:
-        OUT_DIR = out_dir
-    else:
-        OUT_DIR = os.environ.get("S3N_PROCESSED_DIR") or DIR_CONFIG["processed_dir"]
-    os.makedirs(OUT_DIR, exist_ok=True)
+    RUNTIME_CFG = build_runtime_config(
+        base_dir=BASE_DIR, gis_dir=gis_dir, data_dir=data_dir, out_dir=out_dir, create_out_dir=True
+    )
+    GIS_DIR = RUNTIME_CFG.gis_dir
+    DATA_DIR = RUNTIME_CFG.data_dir
+    RSN_DIR = RUNTIME_CFG.rsn_dir
+    SSN_DIR = RUNTIME_CFG.ssn_dir
+    WQ_DIR = RUNTIME_CFG.wq_dir
+    OUT_DIR = RUNTIME_CFG.processed_dir
+    return RUNTIME_CFG
 
 
 def load_monitoring_stations_and_records(
@@ -1556,78 +456,80 @@ def load_monitoring_stations_and_records(
                     for r in csv.DictReader(f):
                         r_det = r.get("det_code")
                         if r_det == det_code or r_det == "0117":
-                            if r_det == det_code:
+                            core_wq_sites.add(r["network_id"])
+                        if r_det == det_code:
+                            try:
+                                val = float(r["meas_result"])
+                            except (ValueError, TypeError):
+                                continue
+                            is_cens = (r.get("meas_sign") == "<")
+                            dt = r.get("sample_datetime", "")
+                            if len(dt) >= 7:
+                                yr = int(dt[0:4])
+                                mo = int(dt[5:7])
+                                seas = MONTH_TO_SEASON[mo]
+                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
+        else:
+            if os.path.exists(wq_samples_path):
+                with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
+                    for r in csv.DictReader(f):
+                        if r.get("det_code") == "0117":
+                            core_wq_sites.add(r["network_id"])
+            if dataset == "lcms":
+                lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
+                if not os.path.exists(lcms_path):
+                    if src_item == "ssn":
+                        raise ValueError("LCMS/GCMS data is only monitored on RSN and is not available in Small Streams Network (SSN).")
+                    continue
+                with open(lcms_path, "r", encoding="utf-8-sig") as f:
+                    for r in csv.DictReader(f):
+                        if r.get("cas_number") == det_code or (r.get("compound_name") and det_code.lower() in r["compound_name"].lower()):
+                            if not r.get("meas_result"):
+                                continue
+                            try:
+                                val = float(r["meas_result"])
+                            except (ValueError, TypeError):
+                                continue
+                            is_cens = (r.get("less_than_flag", "").strip().lower() == "yes")
+                            dt = r.get("sample_datetime", "")
+                            if len(dt) >= 7:
+                                yr = int(dt[0:4])
+                                mo = int(dt[5:7])
+                                seas = MONTH_TO_SEASON[mo]
+                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
                                 core_wq_sites.add(r["network_id"])
-                            if r_det == det_code:
-                                try:
-                                    val = float(r["meas_result"])
-                                except (ValueError, TypeError):
-                                    continue
-                                is_cens = (r.get("meas_sign") == "<")
-                                dt = r.get("sample_datetime", "")
-                                if len(dt) >= 7:
-                                    yr = int(dt[0:4])
-                                    mo = int(dt[5:7])
-                                    seas = MONTH_TO_SEASON[mo]
-                                    all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
-        elif os.path.exists(wq_samples_path):
-            with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
-                for r in csv.DictReader(f):
-                    if r.get("det_code") == "0117":
-                        core_wq_sites.add(r["network_id"])
-        elif dataset == "lcms":
-            lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
-            if not os.path.exists(lcms_path):
-                if src_item == "ssn":
-                    raise ValueError("LCMS/GCMS data is only monitored on RSN and is not available in Small Streams Network (SSN).")
-                continue
-            with open(lcms_path, "r", encoding="utf-8-sig") as f:
-                for r in csv.DictReader(f):
-                    if r.get("cas_number") == det_code or (r.get("compound_name") and det_code.lower() in r["compound_name"].lower()):
-                        if not r.get("meas_result"):
+            else:
+                ds_files = {
+                    "inverts": (f"{prefix} Macroinvertebrate Samples.csv", "sample_datetime"),
+                    "diatoms": (f"{prefix} Diatom Samples.csv", "sample_datetime"),
+                    "macrophytes": (f"{prefix} Macrophyte Samples.csv", "sample_datetime"),
+                    "rhs": (f"{prefix} River Habitat Surveys.csv", "survey_date"),
+                }
+                csv_name, dt_col = ds_files[dataset]
+                csv_path = os.path.join(s_dir, csv_name)
+                if not os.path.exists(csv_path):
+                    if src_item == "ssn":
+                        raise ValueError(f"Dataset '{dataset}' is only monitored on RSN and is not available in Small Streams Network (SSN).")
+                    continue
+                col_key = "whpt_aspt" if (dataset == "inverts" and det_code == "0117") else det_code
+                with open(csv_path, "r", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    if col_key not in reader.fieldnames:
+                        raise ValueError(f"Column '{col_key}' not found in {csv_name}. Available: {reader.fieldnames}")
+                    for r in reader:
+                        raw_s = r.get(col_key, "").strip()
+                        dt = r.get(dt_col, "").strip()
+                        if not raw_s or not dt or len(dt) < 7:
                             continue
                         try:
-                            val = float(r["meas_result"])
+                            val = float(raw_s)
                         except (ValueError, TypeError):
                             continue
-                        is_cens = (r.get("less_than_flag", "").strip().lower() == "yes")
-                        dt = r.get("sample_datetime", "")
-                        if len(dt) >= 7:
-                            yr = int(dt[0:4])
-                            mo = int(dt[5:7])
-                            seas = MONTH_TO_SEASON[mo]
-                            all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
-        else:
-            ds_files = {
-                "inverts": (f"{prefix} Macroinvertebrate Samples.csv", "sample_datetime"),
-                "diatoms": (f"{prefix} Diatom Samples.csv", "sample_datetime"),
-                "macrophytes": (f"{prefix} Macrophyte Samples.csv", "sample_datetime"),
-                "rhs": (f"{prefix} River Habitat Surveys.csv", "survey_date"),
-            }
-            csv_name, dt_col = ds_files[dataset]
-            csv_path = os.path.join(s_dir, csv_name)
-            if not os.path.exists(csv_path):
-                if src_item == "ssn":
-                    raise ValueError(f"Dataset '{dataset}' is only monitored on RSN and is not available in Small Streams Network (SSN).")
-                continue
-            col_key = "whpt_aspt" if (dataset == "inverts" and det_code == "0117") else det_code
-            with open(csv_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                if col_key not in reader.fieldnames:
-                    raise ValueError(f"Column '{col_key}' not found in {csv_name}. Available: {reader.fieldnames}")
-                for r in reader:
-                    raw_s = r.get(col_key, "").strip()
-                    dt = r.get(dt_col, "").strip()
-                    if not raw_s or not dt or len(dt) < 7:
-                        continue
-                    try:
-                        val = float(raw_s)
-                    except (ValueError, TypeError):
-                        continue
-                    yr = int(dt[0:4])
-                    mo = int(dt[5:7])
-                    seas = MONTH_TO_SEASON[mo]
-                    all_records.append((r["network_id"], val, False, yr, mo, seas, None, ""))
+                        yr = int(dt[0:4])
+                        mo = int(dt[5:7])
+                        seas = MONTH_TO_SEASON[mo]
+                        all_records.append((r["network_id"], val, False, yr, mo, seas, None, ""))
+                        core_wq_sites.add(r["network_id"])
 
     return pts, pts_source, core_wq_sites, all_records
 
@@ -1655,374 +557,7 @@ def resolve_gis_path(rel_p, gis_dir=None):
         return cand_gis
     return _rel_join(BASE_DIR, rel_p)
 
-def estimate_boxcox_lambda(vals, lower=-2.0, upper=2.0):
-    pos = [v for v in vals if v is not None and v > 0]
-    n = len(pos)
-    if n < 10:
-        return 0.5
-    log_vals = [math.log(v) for v in pos]
-    sum_log = sum(log_vals)
-
-    def ll(lam):
-        if abs(lam) < 1e-4:
-            z = log_vals
-        else:
-            z = [(math.pow(v, lam) - 1.0) / lam for v in pos]
-        mz = statistics.mean(z)
-        vz = statistics.mean([(x - mz) ** 2 for x in z])
-        if vz < 1e-12:
-            return -1e12
-        return -0.5 * n * math.log(vz) + (lam - 1.0) * sum_log
-
-    gr = (math.sqrt(5.0) - 1.0) / 2.0
-    a, b = lower, upper
-    c = b - gr * (b - a)
-    d = a + gr * (b - a)
-    while abs(b - a) > 1e-4:
-        if ll(c) > ll(d):
-            b = d
-        else:
-            a = c
-        c = b - gr * (b - a)
-        d = a + gr * (b - a)
-    return round((b + a) / 2.0, 4)
-
-
-def estimate_yeojohnson_lambda(vals, lower=-2.0, upper=2.0):
-    clean = [v for v in vals if v is not None and not math.isnan(v)]
-    n = len(clean)
-    if n < 10:
-        return 0.5
-
-    def ll(lam):
-        z = []
-        jac = 0.0
-        for y in clean:
-            if y >= 0:
-                if abs(lam) < 1e-4:
-                    zv = math.log(y + 1.0)
-                else:
-                    zv = (math.pow(y + 1.0, lam) - 1.0) / lam
-                jac += (lam - 1.0) * math.log(y + 1.0)
-            else:
-                if abs(2.0 - lam) < 1e-4:
-                    zv = -math.log(-y + 1.0)
-                else:
-                    zv = -((math.pow(-y + 1.0, 2.0 - lam) - 1.0) / (2.0 - lam))
-                jac += (1.0 - lam) * -math.log(-y + 1.0)
-            z.append(zv)
-        mz = statistics.mean(z)
-        vz = statistics.mean([(x - mz) ** 2 for x in z])
-        if vz < 1e-12:
-            return -1e12
-        return -0.5 * n * math.log(vz) + jac
-
-    gr = (math.sqrt(5.0) - 1.0) / 2.0
-    a, b = lower, upper
-    c = b - gr * (b - a)
-    d = a + gr * (b - a)
-    while abs(b - a) > 1e-4:
-        if ll(c) > ll(d):
-            b = d
-        else:
-            a = c
-        c = b - gr * (b - a)
-        d = a + gr * (b - a)
-    return round((b + a) / 2.0, 4)
-
-
-def apply_forward_transform(val, ttype="log", lam=None, scale=1.0):
-    if val is None:
-        return None
-    try:
-        val = float(val)
-    except (ValueError, TypeError):
-        return None
-    if math.isnan(val):
-        return None
-    t = (ttype or "log").lower().strip()
-    if t in ("log", "ln"):
-        return math.log(max(1e-9, val)) if val > 0 else None
-    elif t == "log10":
-        return math.log10(max(1e-9, val)) if val > 0 else None
-    elif t == "log1p":
-        return math.log1p(max(0.0, val)) if val >= 0 else None
-    elif t in ("sqrt", "square_root"):
-        return math.sqrt(max(0.0, val)) if val >= 0 else None
-    elif t in ("cbrt", "cube_root"):
-        return math.copysign(math.pow(abs(val), 1.0 / 3.0), val)
-    elif t in ("fourthrt", "qtrt"):
-        return math.pow(max(0.0, val), 0.25) if val >= 0 else None
-    elif t in ("reciprocal", "inv"):
-        return -1.0 / max(1e-6, val) if val > 0 else None
-    elif t in ("boxcox", "bc"):
-        if val <= 0:
-            return None
-        l_val = lam if lam is not None else 0.5
-        if abs(l_val) < 1e-4:
-            return math.log(val)
-        return (math.pow(val, l_val) - 1.0) / l_val
-    elif t in ("yeojohnson", "yj"):
-        l_val = lam if lam is not None else 0.5
-        if val >= 0:
-            return math.log(val + 1.0) if abs(l_val) < 1e-4 else (math.pow(val + 1.0, l_val) - 1.0) / l_val
-        else:
-            return -math.log(-val + 1.0) if abs(2.0 - l_val) < 1e-4 else -((math.pow(-val + 1.0, 2.0 - l_val) - 1.0) / (2.0 - l_val))
-    elif t in ("asin", "arcsin", "arcsine", "asin_sqrt"):
-        p = min(1.0, max(0.0, val / scale))
-        return math.asin(math.sqrt(p))
-    elif t == "logit":
-        p = min(1.0 - 1e-4, max(1e-4, val / scale))
-        return math.log(p / (1.0 - p))
-    else:
-        return float(val)
-
-
-def print_available_transforms():
-    rows = [
-        ("log", "ln", "ln(y)", "y > 0", "Default for water chemistry & LCMS. Multiplicative concentrations spanning orders of magnitude."),
-        ("sqrt", "square_root", "y^(1/2)", "y >= 0", "Strongly recommended for moderately skewed concentrations (e.g. UK Nitrate, skewness drop +1.00 -> +0.09) and taxa counts."),
-        ("cbrt", "cube_root", "sign(y)*|y|^(1/3)", "All real y", "Wilson-Hilferty transformation for Gamma-distributed hydrological variables. Compresses high values without crushing near-zero observations."),
-        ("log1p", "log_1p", "ln(1 + y)", "y >= 0", "Accommodates true zeros (y=0) without arbitrary LOD substitution. Gentle log compression for small values."),
-        ("log10", "log_10", "log10(y)", "y > 0", "Order-of-magnitude chemical concentrations (e.g. pathogen counts, electrical conductivity)."),
-        ("fourthrt", "qtrt", "y^(1/4)", "y >= 0", "Intermediate between square root and log; classic ecological standard for heavy-tailed abundance and biomass."),
-        ("boxcox", "bc, box_cox", "(y^lambda-1)/lam", "y > 0", "Analytically optimizes residual normality via Profile Maximum Likelihood lambda in [-2, 2] (or custom --lambda)."),
-        ("yeojohnson", "yj", "Yeo-Johnson(lam)", "All real y", "Extension of Box-Cox supporting zero and negative values. Automatic Profile MLE estimation of lambda."),
-        ("reciprocal", "inv, inverse", "-1 / y", "y > 0", "Monotonic rate-dilution processes. Preserves positive spatial gradient direction (higher y -> higher z)."),
-        ("asin", "arcsin, arcsine", "asin(sqrt(y/sc))", "0 <= y <= scale", "Angular transformation for bounded proportions and percentages (e.g. silt cover, diatom valences)."),
-        ("logit", "logit", "ln(p / (1 - p))", "0 < y < scale", "S-shaped logistic transformation for bounded proportions and sediment percentages."),
-        ("none", "raw, identity", "y", "All real y", "Default for ecological indices (WHPT ASPT, LIFE index, RHS scores) that are already normally distributed.")
-    ]
-    print("\nAvailable Data Transformations (--transform=<type> [--transform-lambda=<val>]):\n")
-    print(f"{'Type':<12} | {'Short Aliases':<16} | {'Formula z = f(y)':<18} | {'Valid Domain':<16} | {'Best Applied When'}")
-    print("-" * 125)
-    for t_type, alias, formula, domain, note in rows:
-        print(f"{t_type:<12} | {alias:<16} | {formula:<18} | {domain:<16} | {note}")
-    print()
-
-
-_STD_NORM = statistics.NormalDist()
-
-
-def compute_ros_plotting_positions(records):
-    """
-    Computes Weibull / Kaplan-Meier plotting positions P_i in (0, 1) for a list
-    of (value, is_censored) tuples with single or multiple censoring thresholds,
-    following Hirsch & Stedinger (1987) and Helsel & Cohn (1988).
-    """
-    n = len(records)
-    if n == 0:
-        return []
-    c_limits = sorted(set(v for v, is_c in records if is_c))
-    if not c_limits:
-        order = sorted(range(n), key=lambda i: records[i][0])
-        pp = [0.0] * n
-        for r_idx, i in enumerate(order, 1):
-            pp[i] = r_idx / (n + 1.0)
-        return pp
-
-    thresholds = [0.0] + c_limits + [float("inf")]
-    J = len(c_limits)
-    A = [[] for _ in range(J + 1)]
-    C = [[] for _ in range(J + 1)]
-    limit_to_j = {lim: idx + 1 for idx, lim in enumerate(c_limits)}
-
-    for idx, (v, is_c) in enumerate(records):
-        if is_c:
-            C[limit_to_j[v]].append(idx)
-        else:
-            placed = False
-            for j in range(J, -1, -1):
-                if v >= thresholds[j]:
-                    A[j].append(idx)
-                    placed = True
-                    break
-            if not placed:
-                A[0].append(idx)
-
-    for j in range(J + 1):
-        A[j].sort(key=lambda i: records[i][0])
-
-    p = [0.0] * (J + 2)
-    p[J + 1] = 0.0
-    for j in range(J, 0, -1):
-        d_j = thresholds[j]
-        A_j = len(A[j])
-        B_j = sum(1 for v, is_c in records if (is_c and v <= d_j) or (not is_c and v < d_j))
-        if A_j + B_j > 0:
-            p[j] = p[j + 1] + (1.0 - p[j + 1]) * (A_j / (A_j + B_j))
-        else:
-            p[j] = p[j + 1]
-    p[0] = 1.0 if len(A[0]) > 0 else p[1]
-
-    pp = [0.0] * n
-    for j in range(J + 1):
-        A_j = len(A[j])
-        for r_idx, i in enumerate(A[j], 1):
-            pp[i] = (1.0 - p[j]) + (p[j] - p[j + 1]) * (r_idx / (A_j + 1.0))
-    for j in range(1, J + 1):
-        C_j = len(C[j])
-        for k_idx, i in enumerate(C[j], 1):
-            pp[i] = (1.0 - p[j]) * (k_idx / (C_j + 1.0))
-
-    return [min(1.0 - 1e-6, max(1e-6, x)) for x in pp]
-
-
-def fit_ros_ols(records, pp):
-    zs = [_STD_NORM.inv_cdf(pp[i]) for i, (v, is_c) in enumerate(records) if not is_c and v > 0]
-    ly = [math.log(v) for v, is_c in records if not is_c and v > 0]
-    if len(zs) < 3:
-        return None
-    mz = statistics.mean(zs)
-    ml = statistics.mean(ly)
-    vz = sum((z - mz) ** 2 for z in zs)
-    if vz < 1e-9:
-        return None
-    cov_zl = sum((z - mz) * (l - ml) for z, l in zip(zs, ly))
-    slope = max(0.05, cov_zl / vz)
-    intercept = ml - slope * mz
-    return (intercept, slope)
-
-
-def apply_ros_to_records(records, fallback_params=None):
-    if not any(is_c for _, is_c in records):
-        return [v for v, _ in records]
-    pp = compute_ros_plotting_positions(records)
-    n_unc = sum(1 for v, is_c in records if not is_c and v > 0)
-    params = None
-    if n_unc >= 3 and (n_unc / len(records)) >= 0.20:
-        params = fit_ros_ols(records, pp)
-    if params is None:
-        params = fallback_params
-    if params is None:
-        return [0.5 * v if is_c else v for v, is_c in records]
-
-    mu_hat, sigma_hat = params
-    out = []
-    for i, (v, is_c) in enumerate(records):
-        if is_c:
-            z_i = _STD_NORM.inv_cdf(pp[i])
-            imp = math.exp(mu_hat + sigma_hat * z_i)
-            out.append(min(v, max(1e-6, imp)))
-        else:
-            out.append(v)
-    return out
-
-
-def impute_censored_by_site(raw_by_site, method="half_lod"):
-    if method == "half_lod":
-        return {
-            nid: [0.5 * v if is_c else v for v, is_c in recs]
-            for nid, recs in raw_by_site.items()
-        }
-
-    flat_nids = []
-    flat_recs = []
-    for nid, recs in sorted(raw_by_site.items()):
-        for rec in recs:
-            flat_nids.append(nid)
-            flat_recs.append(rec)
-
-    pp_glob = compute_ros_plotting_positions(flat_recs)
-    glob_params = fit_ros_ols(flat_recs, pp_glob)
-
-    if method == "ros":
-        flat_imp = apply_ros_to_records(flat_recs, fallback_params=glob_params)
-        out = defaultdict(list)
-        for nid, val in zip(flat_nids, flat_imp):
-            out[nid].append(val)
-        return dict(out)
-    elif method == "ros_site":
-        return {
-            nid: apply_ros_to_records(recs, fallback_params=glob_params)
-            for nid, recs in raw_by_site.items()
-        }
-    else:
-        raise ValueError(f"Unknown censor_method: {method}")
-
-
-def parse_gpkg_geometry(blob):
-    """
-    Universal parser for GeoPackage Binary (GPB) and standard WKB / ISO WKB / EWKB
-    (as used in GeoParquet) LineString & MultiLineString geometries.
-    Supports 2D (XY), 3D (XYZ / XYM), and 4D (XYZM) in both ISO WKB (1000/2000/3000)
-    and OGC EWKB (0x80000000 / 0x40000000 / 0x20000000), returning `(pts_xy, zs)` where:
-      - `pts_xy` : list of (x, y) tuples
-      - `zs`     : list of valid vertex Z elevations (if 3D/4D Z is present, else [])
-    """
-    if not blob:
-        return [], []
-    if isinstance(blob, str):
-        s = blob.strip()
-        if not s:
-            return [], []
-        try:
-            blob = bytes.fromhex(s[2:] if s.lower().startswith("0x") else s)
-        except ValueError:
-            return [], []
-    elif isinstance(blob, memoryview):
-        blob = blob.tobytes()
-
-    if len(blob) < 9:
-        return [], []
-
-    # Detect OGC GeoPackage Binary header ("GP" = 0x47, 0x50) vs raw WKB / ISO WKB / EWKB (0x00 or 0x01)
-    if blob[0] == 0x47 and blob[1] == 0x50:
-        env_sizes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}
-        flags = blob[3]
-        env_ind = (flags >> 1) & 0x07
-        offset = 8 + env_sizes.get(env_ind, 0)
-    else:
-        offset = 0
-
-    if offset + 9 > len(blob):
-        return [], []
-
-    bo = "<" if blob[offset] == 1 else ">"
-    wkb_type = struct.unpack_from(bo + "I", blob, offset + 1)[0]
-    has_srid = (wkb_type & 0x20000000) != 0
-    low16 = wkb_type & 0xFFFF
-    has_z = (wkb_type & 0x80000000) != 0 or (1000 <= low16 < 4000 and (low16 // 1000) in (1, 3))
-    has_m = (wkb_type & 0x40000000) != 0 or (1000 <= low16 < 4000 and (low16 // 1000) in (2, 3))
-    ndim = 2 + (1 if has_z else 0) + (1 if has_m else 0)
-    base_type = low16 % 1000
-    hdr_len = 9 if has_srid else 5
-
-    pts = []
-    zs = []
-    if base_type == 5:  # MultiLineString
-        num_geoms = struct.unpack_from(bo + "I", blob, offset + hdr_len)[0]
-        offset += hdr_len + 4
-        for _ in range(num_geoms):
-            g_bo = "<" if blob[offset] == 1 else ">"
-            g_type = struct.unpack_from(g_bo + "I", blob, offset + 1)[0]
-            g_srid = (g_type & 0x20000000) != 0
-            g_low16 = g_type & 0xFFFF
-            g_z = (g_type & 0x80000000) != 0 or (1000 <= g_low16 < 4000 and (g_low16 // 1000) in (1, 3))
-            g_m = (g_type & 0x40000000) != 0 or (1000 <= g_low16 < 4000 and (g_low16 // 1000) in (2, 3))
-            g_dim = 2 + (1 if g_z else 0) + (1 if g_m else 0)
-            g_hdr = 9 if g_srid else 5
-            npts = struct.unpack_from(g_bo + "I", blob, offset + g_hdr)[0]
-            offset += g_hdr + 4
-            coords = struct.unpack_from(g_bo + f"{g_dim * npts}d", blob, offset)
-            offset += 8 * g_dim * npts
-            for i in range(0, g_dim * npts, g_dim):
-                pts.append((coords[i], coords[i + 1]))
-                if g_z:
-                    zv = coords[i + 2]
-                    if not math.isnan(zv) and -500.0 < zv < 9000.0:
-                        zs.append(zv)
-    elif base_type == 2:  # LineString
-        npts = struct.unpack_from(bo + "I", blob, offset + hdr_len)[0]
-        offset += hdr_len + 4
-        coords = struct.unpack_from(bo + f"{ndim * npts}d", blob, offset)
-        for i in range(0, ndim * npts, ndim):
-            pts.append((coords[i], coords[i + 1]))
-            if has_z:
-                zv = coords[i + 2]
-                if not math.isnan(zv) and -500.0 < zv < 9000.0:
-                    zs.append(zv)
-    return pts, zs
+# Shared transforms, ROS censoring, and GPB/WKB geometry helpers are imported from s3n_py_utils.
 
 
 # ==============================================================================
@@ -2538,120 +1073,6 @@ def convert_gpkg_to_geoparquet(src_gpkg_path, dst_parquet_path, layers=None):
         gdal.GDALClose(src_ds)
 
 
-def parse_gpkg_multilinestring(blob):
-    """Backward-compatible helper returning only 2D (x, y) vertices."""
-    pts, _ = parse_gpkg_geometry(blob)
-    return pts
-
-
-def transform_coords_batch(xy_list, from_epsg, to_epsg):
-    """
-    Transforms a list of (x, y) coordinates from `from_epsg` to `to_epsg` using
-    `cs2cs` with traditional GIS easting/northing (`+init=epsg:...`) order.
-    """
-    if not xy_list or from_epsg == to_epsg:
-        return list(xy_list)
-    inp = "\n".join(f"{x:.4f} {y:.4f}" for x, y in xy_list)
-    cmd = [
-        "cs2cs",
-        "-f",
-        "%.3f",
-        f"+init=epsg:{int(from_epsg)}",
-        "+to",
-        f"+init=epsg:{int(to_epsg)}",
-    ]
-    proc = subprocess.run(cmd, input=inp, text=True, capture_output=True, check=True)
-    out = []
-    for line in proc.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 2:
-            out.append((float(parts[0]), float(parts[1])))
-    if len(out) != len(xy_list):
-        raise RuntimeError(f"cs2cs returned {len(out)} coordinates for {len(xy_list)} inputs.")
-    return out
-
-
-def point_to_polyline(px, py, poly):
-    """Returns (min_dist_m, distance_along_from_start_m) from point (px, py) to poly."""
-    best_d2 = 1e30
-    best_along = 0.0
-    cum_len = 0.0
-    for i in range(len(poly) - 1):
-        x1, y1 = poly[i]
-        x2, y2 = poly[i + 1]
-        dx, dy = x2 - x1, y2 - y1
-        seg_len2 = dx * dx + dy * dy
-        seg_len = math.sqrt(seg_len2)
-        if seg_len2 == 0.0:
-            t = 0.0
-        else:
-            t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / seg_len2))
-        projx = x1 + t * dx
-        projy = y1 + t * dy
-        d2 = (px - projx) ** 2 + (py - projy) ** 2
-        if d2 < best_d2:
-            best_d2 = d2
-            best_along = cum_len + t * seg_len
-        cum_len += seg_len
-    return math.sqrt(best_d2), best_along
-
-
-def compute_polyline_metrics(poly):
-    """Returns (total_length_m, sinuosity, (start_X, start_Y, mid_X, mid_Y, end_X, end_Y))."""
-    if not poly:
-        return 0.0, 1.0, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    if len(poly) == 1:
-        x0, y0 = poly[0]
-        return 0.0, 1.0, (x0, y0, x0, y0, x0, y0)
-    tot = 0.0
-    segs = []
-    for i in range(len(poly) - 1):
-        d = math.hypot(poly[i + 1][0] - poly[i][0], poly[i + 1][1] - poly[i][1])
-        segs.append((d, poly[i], poly[i + 1]))
-        tot += d
-    half = tot * 0.5
-    cur = 0.0
-    mx, my = poly[0]
-    for d, p1, p2 in segs:
-        if cur + d >= half and d > 0:
-            t = (half - cur) / d
-            mx = p1[0] + t * (p2[0] - p1[0])
-            my = p1[1] + t * (p2[1] - p1[1])
-            break
-        cur += d
-    straight = math.hypot(poly[-1][0] - poly[0][0], poly[-1][1] - poly[0][1])
-    sinuosity = max(1.0, tot / straight) if straight > 1e-3 else 1.0
-    return tot, sinuosity, (poly[0][0], poly[0][1], mx, my, poly[-1][0], poly[-1][1])
-
-
-MONTH_TO_SEASON = {
-    12: "winter", 1: "winter", 2: "winter",
-    3: "spring",  4: "spring", 5: "spring",
-    6: "summer",  7: "summer", 8: "summer",
-    9: "autumn", 10: "autumn", 11: "autumn",
-}
-
-MONTH_NAME_MAP = {
-    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
-    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6,
-    "jul": 7, "july": 7, "aug": 8, "august": 8, "sep": 9, "september": 9,
-    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
-}
-
-
-def parse_month_arg(m_str):
-    if m_str is None:
-        return None
-    s = str(m_str).strip().lower()
-    if s.isdigit():
-        m = int(s)
-        if 1 <= m <= 12:
-            return m
-    if s in MONTH_NAME_MAP:
-        return MONTH_NAME_MAP[s]
-    raise ValueError(f"Invalid --month '{m_str}'. Use 1..12 or Jan..Dec.")
-
-
 def _get_config_network_paths(cfg):
     """Returns configured network file paths from `network_paths`, `parquet_paths`, or `gpkg_paths`."""
     paths = []
@@ -2761,16 +1182,11 @@ def load_network_config(network_arg, config_path=None):
         if os.path.exists(target_path):
             with open(target_path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        if mapped in DEFAULT_NETWORK_CONFIGS:
-            return DEFAULT_NETWORK_CONFIGS[mapped]
-        if mapped in OPTIONAL_NETWORK_CONFIGS and _network_files_exist(OPTIONAL_NETWORK_CONFIGS[mapped], BASE_DIR, GIS_DIR):
-            return OPTIONAL_NETWORK_CONFIGS[mapped]
+        if mapped in MINIMAL_DEFAULT_NETWORKS:
+            return MINIMAL_DEFAULT_NETWORKS[mapped]
 
-    if net_clean.lower() in DEFAULT_NETWORK_CONFIGS:
-        return DEFAULT_NETWORK_CONFIGS[net_clean.lower()]
-
-    if net_clean.lower() in OPTIONAL_NETWORK_CONFIGS and _network_files_exist(OPTIONAL_NETWORK_CONFIGS[net_clean.lower()], BASE_DIR, GIS_DIR):
-        return OPTIONAL_NETWORK_CONFIGS[net_clean.lower()]
+    if net_clean.lower() in MINIMAL_DEFAULT_NETWORKS:
+        return MINIMAL_DEFAULT_NETWORKS[net_clean.lower()]
 
     if net_clean.endswith(".json") and os.path.exists(net_clean):
         with open(net_clean, "r", encoding="utf-8") as f:
@@ -2835,15 +1251,17 @@ def ensure_gpkg_paths(cfg):
     return resolved
 
 
-def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
+def write_outputs_to_dirs(net_abbr, files_dict, source="rsn", runtime_cfg=None):
     """
-    Writes generated output files into `data/processed/<net_abbr>_<source>/` (e.g. `orn_rsn`, `orn_ssn`)
-    AND copies them into `data/processed/<net_abbr>/` and `data/processed/` root when source is 'rsn'
+    Writes generated output files into `<data_dir>/processed/<net_abbr>_<source>/` (e.g. `orn_rsn`, `orn_ssn`)
+    AND copies them into `<data_dir>/processed/<net_abbr>/` and `<data_dir>/processed/` root when source is 'rsn'
     so downstream scripts work seamlessly with or without `--network`.
     """
-    source_key, _, _, _ = resolve_source_tag(source)
+    cfg = runtime_cfg if runtime_cfg is not None else RUNTIME_CFG
+    proc_root = os.path.join(cfg.data_dir, "processed")
+    source_key, _, _, _ = resolve_source_tag(source, runtime_cfg=cfg)
     tagged_name = f"{net_abbr}_{source_key}"
-    net_dir = os.path.join(DATA_DIR, "processed", tagged_name)
+    net_dir = os.path.join(proc_root, tagged_name)
     os.makedirs(net_dir, exist_ok=True)
     for fname, src_path in files_dict.items():
         dst_net = os.path.join(net_dir, fname)
@@ -2852,9 +1270,8 @@ def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
 
     # For default RSN, also ensure outputs are available at bare net_abbr (orn) and proc_root fallback
     if source_key == "rsn":
-        bare_dir = os.path.join(DATA_DIR, "processed", net_abbr)
+        bare_dir = os.path.join(proc_root, net_abbr)
         os.makedirs(bare_dir, exist_ok=True)
-        proc_root = os.path.join(DATA_DIR, "processed")
         for fname, src_path in files_dict.items():
             dst_bare = os.path.join(bare_dir, fname)
             if os.path.abspath(src_path) != os.path.abspath(dst_bare):
@@ -2864,20 +1281,23 @@ def write_outputs_to_dirs(net_abbr, files_dict, source="rsn"):
                 shutil.copy2(src_path, dst_root)
 
 
-def load_orn_spatial_reference():
+def load_orn_spatial_reference(runtime_cfg=None):
     """
-    Loads the pre-extracted ORN England reaches (`data/processed/orn_rsn/england_rsn_reaches.csv`)
+    Loads the pre-extracted ORN England reaches (`<data_dir>/processed/orn_rsn/england_rsn_reaches.csv`)
     into a fast 2 km spatial hash grid in EPSG:27700 so non-ORN networks in England
     can inherit BGS bedrock/superficial geology (`Is_Chalk_Limestone`, `Is_Sandstone`,
     `Is_Aquifer`, `Is_Peat`), `RBD_ID`, and fallback `Elevation`/`Slope` in < 0.2s.
     """
-    orn_csv = os.path.join(DATA_DIR, "processed", "orn_rsn", "england_rsn_reaches.csv")
+    cfg = runtime_cfg if runtime_cfg is not None else RUNTIME_CFG
+    data_dir = cfg.data_dir
+    out_dir = cfg.processed_dir
+    orn_csv = os.path.join(data_dir, "processed", "orn_rsn", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
-        orn_csv = os.path.join(DATA_DIR, "processed", "orn", "england_rsn_reaches.csv")
+        orn_csv = os.path.join(data_dir, "processed", "orn", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
-        orn_csv = os.path.join(OUT_DIR, "england_rsn_reaches.csv")
+        orn_csv = os.path.join(out_dir, "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
-        orn_csv = os.path.join(DATA_DIR, "processed", "england_rsn_reaches.csv")
+        orn_csv = os.path.join(data_dir, "processed", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
         return None, {}
     grid = defaultdict(list)
@@ -2900,7 +1320,7 @@ def load_orn_spatial_reference():
             grid[(int(mx // 2000), int(my // 2000))].append(rec)
 
     rbd_names = {}
-    orn_lu = os.path.join(OUT_DIR, "orn", "rsn_catchments_lookup.csv")
+    orn_lu = os.path.join(out_dir, "orn", "rsn_catchments_lookup.csv")
     if os.path.exists(orn_lu):
         with open(orn_lu, "r", encoding="utf-8") as f:
             for r in csv.DictReader(f):
@@ -2929,15 +1349,210 @@ def query_orn_spatial_grid(grid, mx, my):
     return best_rec
 
 
-def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
-                               trans_type="log", eff_lambda=None, pts_source=None, source_key="rsn", range_mode=None):
+REACH_OBS_HEADER_COLS = [
+    "has_obs", "site_id", "snap_dist_m", "obs_up_dist_km",
+    "obs_mean", "obs_median", "trans_obs_mean",
+    "meas_uncertainty", "meas_method", "n_samples",
+]
+
+
+def summarize_reach_site_obs(s_list, d2m_km, trans_type="log", eff_lambda=None):
+    """Computes reach-level observed summary fields for `england_rsn_reaches.csv`."""
+    all_vals = [v for s in s_list for v in s[3]]
+    all_uncs = [u for s in s_list for u in s[4]]
+    all_meths = {m for s in s_list for m in s[5] if m}
+    along_m = statistics.mean(s[2] for s in s_list)
+    snap_d = min(s[1] for s in s_list)
+    obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
+    m_val = statistics.mean(all_vals)
+    med_val = statistics.median(all_vals)
+    trans_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
+    trans_str = round(trans_val, 5) if trans_val is not None else ""
+    r_unc = round(math.sqrt(sum(u * u for u in all_uncs) / len(all_uncs)), 6) if all_uncs else ""
+    r_meth = sorted(all_meths)[0] if all_meths else ""
+    return [
+        1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
+        round(m_val, 4), round(med_val, 4), trans_str,
+        r_unc, r_meth, len(all_vals),
+    ]
+
+
+def write_snapped_sites_and_periods(
+    out_dir,
+    all_station_ids,
+    pts,
+    pts_source,
+    snap_info,
+    imputed_records,
+    obs_by_site,
+    unc_by_site,
+    meth_by_site,
+    trans_type="log",
+    eff_lambda=None,
+):
+    """Writes `rsn_sites.csv` and `rsn_reach_periods.csv` and returns `(site_by_reach, sites_csv_path, periods_csv_path)`."""
+    site_by_reach = defaultdict(list)
+    sites_csv_path = os.path.join(out_dir, "rsn_sites.csv")
+    with open(sites_csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "site_id", "wims_id", "wims_region_code",
+            "easting", "northing", "snap_dist_m", "RivID", "CatchID",
+            "obs_up_dist_km", "n_samples", "obs_mean", "obs_median",
+            "obs_sd", "trans_obs_mean", "mean_trans_obs",
+            "meas_uncertainty", "meas_method", "included_250m",
+            "source",
+        ])
+        for nid in all_station_ids:
+            if nid not in snap_info:
+                continue
+            px, py, meta = pts[nid]
+            d, riv_id, catch_id, along_m, d2m_km, inc = snap_info[nid]
+            obs_up_km = max(0.0, d2m_km - (along_m / 1000.0))
+            src_str = pts_source.get(nid, "RSN")
+            vals = obs_by_site.get(nid, [])
+            u_vals = unc_by_site.get(nid, [])
+            m_set = meth_by_site.get(nid, set())
+            site_u = round(math.sqrt(sum(u * u for u in u_vals) / len(u_vals)), 6) if u_vals else ""
+            site_m = sorted(m_set)[0] if m_set else ""
+            if vals:
+                m_val = statistics.mean(vals)
+                med_val = statistics.median(vals)
+                sd_val = statistics.stdev(vals) if len(vals) > 1 else 0.0
+                trans_m_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
+                trans_m = round(trans_m_val, 5) if trans_m_val is not None else ""
+                trans_clean = [
+                    tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda) for v in vals)
+                    if tv is not None
+                ]
+                m_trans = round(statistics.mean(trans_clean), 5) if trans_clean else ""
+                if inc:
+                    site_by_reach[riv_id].append((nid, d, along_m, vals, u_vals, m_set))
+                w.writerow([
+                    nid, meta["wims_id"], meta["wims_region_code"],
+                    px, py, round(d, 3), riv_id, catch_id,
+                    round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
+                    round(sd_val, 4), trans_m, m_trans, site_u, site_m, inc, src_str,
+                ])
+            else:
+                w.writerow([
+                    nid, meta["wims_id"], meta["wims_region_code"],
+                    px, py, round(d, 3), riv_id, catch_id,
+                    round(obs_up_km, 5), 0, "", "", "", "", "", "", "", inc, src_str,
+                ])
+
+    reach_period_vals = defaultdict(list)
+    reach_period_unc = defaultdict(list)
+    reach_period_meth = defaultdict(set)
+    reach_along_map = defaultdict(list)
+    reach_meta_map = {}
+    for rec in imputed_records:
+        nid, imp_val, yr, mo, seas = rec[0], rec[1], rec[2], rec[3], rec[4]
+        unc_val = rec[6] if len(rec) > 6 else None
+        meth_val = rec[7] if len(rec) > 7 else ""
+        if nid not in snap_info:
+            continue
+        _d, riv_id, catch_id, along_m, d2m_km, inc = snap_info[nid]
+        if inc == 1:
+            reach_along_map[riv_id].append(along_m)
+            reach_meta_map[riv_id] = (catch_id, d2m_km)
+            for p_type, p_val in (
+                ("all", "all"),
+                ("year", str(yr)),
+                ("season", seas),
+                ("month", f"{mo:02d}"),
+                ("year_season", f"{yr}_{seas}"),
+            ):
+                reach_period_vals[(riv_id, p_type, p_val)].append(imp_val)
+                if unc_val is not None:
+                    reach_period_unc[(riv_id, p_type, p_val)].append(unc_val)
+                if meth_val:
+                    reach_period_meth[(riv_id, p_type, p_val)].add(meth_val)
+
+    periods_csv_path = os.path.join(out_dir, "rsn_reach_periods.csv")
+    with open(periods_csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "RivID", "CatchID", "period_type", "period_value",
+            "obs_up_dist_km", "n_samples", "obs_mean", "obs_median", "trans_obs_mean",
+            "meas_uncertainty", "meas_method",
+        ])
+        for (riv_id, p_type, p_val), vals in sorted(reach_period_vals.items()):
+            catch_id, d2m_km = reach_meta_map[riv_id]
+            along_m = statistics.mean(reach_along_map[riv_id])
+            obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
+            m_v = statistics.mean(vals)
+            med_v = statistics.median(vals)
+            trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
+            trans_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
+            u_list = reach_period_unc.get((riv_id, p_type, p_val), [])
+            m_set = reach_period_meth.get((riv_id, p_type, p_val), set())
+            p_unc = round(math.sqrt(sum(u * u for u in u_list) / len(u_list)), 6) if u_list else ""
+            p_meth = sorted(m_set)[0] if m_set else ""
+            w.writerow([
+                riv_id, catch_id, p_type, p_val,
+                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), trans_mv,
+                p_unc, p_meth,
+            ])
+
+    return site_by_reach, sites_csv_path, periods_csv_path
+
+
+def write_catchment_lookup(out_dir, rows):
+    """Writes `rsn_catchments_lookup.csv` from pre-sorted `[CatchID, Main_River, RBD_ID, RBD_Name, n_reaches, n_obs_reaches]` rows."""
+    catch_lu_path = os.path.join(out_dir, "rsn_catchments_lookup.csv")
+    with open(catch_lu_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["CatchID", "Main_River", "RBD_ID", "RBD_Name", "n_reaches", "n_obs_reaches"])
+        w.writerows(rows)
+    return catch_lu_path
+
+
+def write_reaches_and_finalize(
+    out_dir,
+    net_abbr,
+    out_reaches_path,
+    reaches_header,
+    reaches_rows,
+    meta_obj,
+    sites_csv_path,
+    periods_csv_path,
+    catch_lu_path,
+    source_key="rsn",
+    runtime_cfg=None,
+):
+    """Writes `england_rsn_reaches.csv`, `network_metadata.json`, and mirrors processed files to source/root dirs."""
+    with open(out_reaches_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(reaches_header)
+        w.writerows(reaches_rows)
+
+    meta_path = os.path.join(out_dir, "network_metadata.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta_obj, f, indent=2)
+
+    write_outputs_to_dirs(net_abbr, {
+        "england_rsn_reaches.csv": out_reaches_path,
+        "rsn_sites.csv": sites_csv_path,
+        "rsn_reach_periods.csv": periods_csv_path,
+        "rsn_catchments_lookup.csv": catch_lu_path,
+        "network_metadata.json": meta_path,
+    }, source=source_key, runtime_cfg=runtime_cfg)
+    return meta_path
+
+
+def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
+                               trans_type="log", eff_lambda=None, pts_source=None, source_key="rsn", range_mode=None,
+                               runtime_cfg=None, out_dir=None):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
     """
+    eff_cfg = runtime_cfg if runtime_cfg is not None else RUNTIME_CFG
+    eff_out_dir = out_dir if out_dir is not None else eff_cfg.processed_dir
     if pts_source is None:
         pts_source = {}
-    source_key, constituents, source_abbr, source_label = resolve_source_tag(source_key)
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(source_key, runtime_cfg=eff_cfg)
     net_abbr = cfg["abbr"]
     net_label = cfg.get("label", net_abbr)
     short_label = cfg.get("short_label", net_label)
@@ -3026,9 +1641,6 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             return (abs(hash(s)) % 90000) + 1
 
     def _ingest_reach_row(file_idx, rdict, blob):
-        poly, zs = parse_gpkg_geometry(blob)
-        if len(poly) < 2:
-            return
         raw_id_val = rdict.get(id_col) if id_col else None
         if raw_id_val is None:
             raw_id_val = rdict.get("FID", len(raw_reaches) + 1)
@@ -3036,10 +1648,20 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         raw_cid = rdict.get(catch_col) if catch_col else None
         cid_key = (file_idx, _parse_cid_val(raw_cid))
 
+        env = parse_gpkg_envelope(blob)
+        poly = None
+        zs = ()
+        if env is not None:
+            minx, maxx, miny, maxy = env
+        else:
+            poly, zs = parse_gpkg_geometry(blob)
+            if len(poly) < 2:
+                return
+            xs = [p[0] for p in poly]
+            ys = [p[1] for p in poly]
+            minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+
         snap_pad = max(1500.0, max_snap_m + 500.0)
-        xs = [p[0] for p in poly]
-        ys = [p[1] for p in poly]
-        minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
         gx0, gx1 = int((minx - snap_pad) // 2000), int((maxx + snap_pad) // 2000)
         gy0, gy1 = int((miny - snap_pad) // 2000), int((maxy + snap_pad) // 2000)
         cand_sites = []
@@ -3048,12 +1670,17 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                 if (gx, gy) in site_grid:
                     cand_sites.extend(site_grid[(gx, gy)])
 
-        for nid, px, py in cand_sites:
-            d, along = point_to_polyline(px, py, poly)
-            if d < best_snap[nid][0]:
-                best_snap[nid] = (d, (file_idx, orig_id), cid_key, along)
+        if cand_sites:
+            if poly is None:
+                poly, zs = parse_gpkg_geometry(blob)
+                if len(poly) < 2:
+                    return
+            for nid, px, py in cand_sites:
+                d, along = point_to_polyline(px, py, poly)
+                if d < best_snap[nid][0]:
+                    best_snap[nid] = (d, (file_idx, orig_id), cid_key, along)
 
-        raw_reaches.append((file_idx, orig_id, cid_key, poly, zs, rdict))
+        raw_reaches.append((file_idx, orig_id, cid_key, poly, zs, rdict, blob))
 
     for file_idx, gpkg_p in enumerate(gpkg_paths):
         if is_parquet_path(gpkg_p):
@@ -3114,15 +1741,21 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         cid_map[(file_idx, orig_cid)] = cand_cid
         used_cids.add(cand_cid)
 
-    # Assign unique positive integer RivIDs
+    # Assign unique positive integer RivIDs (lazily decoding geometry for reaches without nearby sites)
     key_to_rivid = {}
     global_orig_to_rivid = {}
     reaches_by_id = {}
-    for idx, (file_idx, orig_id, cid_key, poly, zs, rdict) in enumerate(filtered_reaches, 1):
+    riv_idx = 0
+    for file_idx, orig_id, cid_key, poly, zs, rdict, blob in filtered_reaches:
+        if poly is None:
+            poly, zs = parse_gpkg_geometry(blob)
+        if len(poly) < 2:
+            continue
+        riv_idx += 1
         if len(gpkg_paths) == 1 and len(layers) == 1 and str(orig_id).isdigit():
             riv_id = int(orig_id)
         else:
-            riv_id = idx
+            riv_id = riv_idx
         key_to_rivid[(file_idx, orig_id)] = riv_id
         if orig_id not in global_orig_to_rivid:
             global_orig_to_rivid[orig_id] = riv_id
@@ -3387,7 +2020,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
             reaches_by_id[u]["coords_bng"] = reaches_by_id[u]["coords_net"]
 
     # Extract elevation, slope, and BGS geology (via spatial join with ORN reference grid if available)
-    orn_grid, orn_rbd_names = load_orn_spatial_reference()
+    orn_grid, orn_rbd_names = load_orn_spatial_reference(runtime_cfg=eff_cfg)
     for u in topo_order:
         u_info = reaches_by_id[u]
         rdict = u_info["row"]
@@ -3452,224 +2085,98 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         if meth_val:
             meth_by_site[nid].add(meth_val)
 
-    site_by_reach = defaultdict(list)
-    sites_csv_path = os.path.join(OUT_DIR, "rsn_sites.csv")
-    with open(sites_csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "site_id", "wims_id", "wims_region_code",
-            "easting", "northing", "snap_dist_m", "RivID", "CatchID",
-            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median",
-            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate",
-            "meas_uncertainty", "meas_method", "included_250m",
-            "source"
-        ])
-        for nid in all_station_ids:
-            px, py, meta = pts[nid]
-            d, r_key, cid_key, along_m = best_snap[nid]
-            if r_key not in key_to_rivid:
-                continue
-            riv_id = key_to_rivid[r_key]
-            u_info = reaches_by_id[riv_id]
-            catch_id = u_info["catch_id"]
-            d2m_km = u_info["d2m_km"]
-            obs_up_km = max(0.0, d2m_km - (along_m / 1000.0))
-            inc = 1 if d <= max_snap_m else 0
-            src_str = pts_source.get(nid, "RSN")
-            vals = nitrate_by_site.get(nid, [])
-            u_vals = unc_by_site.get(nid, [])
-            m_set = meth_by_site.get(nid, set())
-            site_u = round(math.sqrt(sum(u * u for u in u_vals) / len(u_vals)), 6) if u_vals else ""
-            site_m = sorted(m_set)[0] if m_set else ""
-            if vals:
-                m_val = statistics.mean(vals)
-                med_val = statistics.median(vals)
-                sd_val = statistics.stdev(vals) if len(vals) > 1 else 0.0
-                trans_m_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
-                log_m = round(trans_m_val, 5) if trans_m_val is not None else ""
-                trans_clean = [
-                    tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda) for v in vals)
-                    if tv is not None
-                ]
-                m_log = round(statistics.mean(trans_clean), 5) if trans_clean else ""
-                if inc:
-                    site_by_reach[riv_id].append((nid, d, along_m, vals, u_vals, m_set))
-                w.writerow([
-                    nid, meta["wims_id"], meta["wims_region_code"],
-                    px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), log_m, m_log, site_u, site_m, inc, src_str
-                ])
-            else:
-                w.writerow([
-                    nid, meta["wims_id"], meta["wims_region_code"],
-                    px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), 0, "", "", "", "", "", "", "", inc, src_str
-                ])
-
-    reach_period_vals = defaultdict(list)
-    reach_period_unc = defaultdict(list)
-    reach_period_meth = defaultdict(set)
-    reach_along_map = defaultdict(list)
-    for rec in imputed_records:
-        nid, imp_val, yr, mo, seas = rec[0], rec[1], rec[2], rec[3], rec[4]
-        unc_val = rec[6] if len(rec) > 6 else None
-        meth_val = rec[7] if len(rec) > 7 else ""
-        if nid not in best_snap:
-            continue
+    snap_info = {}
+    for nid in all_station_ids:
         d, r_key, cid_key, along_m = best_snap[nid]
-        if d <= max_snap_m and r_key in key_to_rivid:
-            riv_id = key_to_rivid[r_key]
-            reach_along_map[riv_id].append(along_m)
-            reach_period_vals[(riv_id, "all", "all")].append(imp_val)
-            reach_period_vals[(riv_id, "year", str(yr))].append(imp_val)
-            reach_period_vals[(riv_id, "season", seas)].append(imp_val)
-            reach_period_vals[(riv_id, "month", f"{mo:02d}")].append(imp_val)
-            reach_period_vals[(riv_id, "year_season", f"{yr}_{seas}")].append(imp_val)
-            if unc_val is not None:
-                reach_period_unc[(riv_id, "all", "all")].append(unc_val)
-                reach_period_unc[(riv_id, "year", str(yr))].append(unc_val)
-                reach_period_unc[(riv_id, "season", seas)].append(unc_val)
-                reach_period_unc[(riv_id, "month", f"{mo:02d}")].append(unc_val)
-                reach_period_unc[(riv_id, "year_season", f"{yr}_{seas}")].append(unc_val)
-            if meth_val:
-                reach_period_meth[(riv_id, "all", "all")].add(meth_val)
-                reach_period_meth[(riv_id, "year", str(yr))].add(meth_val)
-                reach_period_meth[(riv_id, "season", seas)].add(meth_val)
-                reach_period_meth[(riv_id, "month", f"{mo:02d}")].add(meth_val)
-                reach_period_meth[(riv_id, "year_season", f"{yr}_{seas}")].add(meth_val)
+        if r_key not in key_to_rivid:
+            continue
+        riv_id = key_to_rivid[r_key]
+        u_info = reaches_by_id[riv_id]
+        snap_info[nid] = (d, riv_id, u_info["catch_id"], along_m, u_info["d2m_km"], 1 if d <= max_snap_m else 0)
 
-    periods_csv_path = os.path.join(OUT_DIR, "rsn_reach_periods.csv")
-    with open(periods_csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "RivID", "CatchID", "period_type", "period_value",
-            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median", "log_nitrate_mean",
-            "meas_uncertainty", "meas_method"
-        ])
-        for (riv_id, p_type, p_val), vals in sorted(reach_period_vals.items()):
-            u_info = reaches_by_id[riv_id]
-            d2m_km = u_info["d2m_km"]
-            along_m = statistics.mean(reach_along_map[riv_id])
-            obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
-            m_v = statistics.mean(vals)
-            med_v = statistics.median(vals)
-            trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
-            log_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
-            u_list = reach_period_unc.get((riv_id, p_type, p_val), [])
-            m_set = reach_period_meth.get((riv_id, p_type, p_val), set())
-            p_unc = round(math.sqrt(sum(u * u for u in u_list) / len(u_list)), 6) if u_list else ""
-            p_meth = sorted(m_set)[0] if m_set else ""
-            w.writerow([
-                riv_id, u_info["catch_id"], p_type, p_val,
-                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv,
-                p_unc, p_meth
-            ])
+    site_by_reach, sites_csv_path, periods_csv_path = write_snapped_sites_and_periods(
+        out_dir=eff_out_dir,
+        all_station_ids=all_station_ids,
+        pts=pts,
+        pts_source=pts_source,
+        snap_info=snap_info,
+        imputed_records=imputed_records,
+        obs_by_site=obs_by_site,
+        unc_by_site=unc_by_site,
+        meth_by_site=meth_by_site,
+        trans_type=trans_type,
+        eff_lambda=eff_lambda,
+    )
 
     # Build catchment lookup table (rsn_catchments_lookup.csv)
     catch_reaches = defaultdict(list)
     for u in topo_order:
         catch_reaches[reaches_by_id[u]["catch_id"]].append(reaches_by_id[u])
 
-    catch_lu_path = os.path.join(OUT_DIR, "rsn_catchments_lookup.csv")
-    with open(catch_lu_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["CatchID", "Main_River", "RBD_ID", "RBD_Name", "n_reaches", "n_obs_reaches"])
-        sorted_cids = sorted(
-            catch_reaches.keys(),
-            key=lambda cid: (-sum(1 for r in catch_reaches[cid] if r["riv_id"] in site_by_reach), -len(catch_reaches[cid]))
-        )
-        for cid in sorted_cids:
-            rlist = catch_reaches[cid]
-            n_obs_c = sum(1 for r in rlist if r["riv_id"] in site_by_reach)
-            rbd_counts = Counter(r["rbd_id"] for r in rlist if r["rbd_id"] > 0)
-            rbd_id = rbd_counts.most_common(1)[0][0] if rbd_counts else 1
-            rbd_name = orn_rbd_names.get(rbd_id, f"RBD {rbd_id}")
+    sorted_cids = sorted(
+        catch_reaches.keys(),
+        key=lambda cid: (-sum(1 for r in catch_reaches[cid] if r["riv_id"] in site_by_reach), -len(catch_reaches[cid])),
+    )
+    catch_rows = []
+    for cid in sorted_cids:
+        rlist = catch_reaches[cid]
+        n_obs_c = sum(1 for r in rlist if r["riv_id"] in site_by_reach)
+        rbd_counts = Counter(r["rbd_id"] for r in rlist if r["rbd_id"] > 0)
+        rbd_id = rbd_counts.most_common(1)[0][0] if rbd_counts else 1
+        rbd_name = orn_rbd_names.get(rbd_id, f"RBD {rbd_id}")
 
-            best_name = ""
-            best_score = -1.0
-            for r in rlist:
-                for nc in name_cols:
-                    val = r["row"].get(nc)
-                    if val and str(val).strip():
-                        sc = r["us_accum_km"]
-                        if sc > best_score:
-                            best_score = sc
-                            best_name = str(val).strip()
-                        break
-            if not best_name:
-                best_name = f"Catchment {cid}"
-            w.writerow([cid, best_name, rbd_id, rbd_name, len(rlist), n_obs_c])
+        best_name = ""
+        best_score = -1.0
+        for r in rlist:
+            for nc in name_cols:
+                val = r["row"].get(nc)
+                if val and str(val).strip():
+                    sc = r["us_accum_km"]
+                    if sc > best_score:
+                        best_score = sc
+                        best_name = str(val).strip()
+                    break
+        if not best_name:
+            best_name = f"Catchment {cid}"
+        catch_rows.append([cid, best_name, rbd_id, rbd_name, len(rlist), n_obs_c])
+    catch_lu_path = write_catchment_lookup(eff_out_dir, catch_rows)
 
     # Write england_rsn_reaches.csv (including any configured extra_numeric_cols)
-    out_reaches_path = os.path.join(OUT_DIR, "england_rsn_reaches.csv")
+    out_reaches_path = os.path.join(eff_out_dir, "england_rsn_reaches.csv")
     print(f"5. Writing {out_reaches_path} ({len(topo_order)} reaches, {len(site_by_reach)} observed)...")
-    base_header = [
+    reaches_header = [
         "RivID", "CatchID", "RBD_ID", "parent_dn",
         "Dist2Mth_km", "up_dist_mid_km", "length_km", "US_Accum_km",
         "log_AFV", "Shreve", "Strahler",
         "start_X", "start_Y", "mid_X", "mid_Y", "end_X", "end_Y",
         "Elevation", "Slope", "Sinuosity", "SrcElevation",
         "Is_Chalk_Limestone", "Is_Sandstone", "Is_Aquifer", "Is_Peat",
-        "has_obs", "site_id", "snap_dist_m", "obs_up_dist_km",
-        "nitrate_mean", "nitrate_median", "log_nitrate_mean",
-        "meas_uncertainty", "meas_method", "n_samples"
-    ]
-    with open(out_reaches_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(base_header + extra_num_cols)
-        for riv_id in topo_order:
-            u_info = reaches_by_id[riv_id]
-            d2m_km = u_info["d2m_km"]
-            l_km = u_info["length_km"]
-            up_mid_km = max(0.0, d2m_km - 0.5 * l_km)
-            sx, sy, mx, my, ex, ey = u_info["coords_bng"]
-            extra_vals = [
-                round(float(u_info["row"].get(ec) or 0.0), 4)
-                for ec in extra_num_cols
-            ]
+    ] + REACH_OBS_HEADER_COLS + extra_num_cols
 
-            if riv_id in site_by_reach:
-                s_list = site_by_reach[riv_id]
-                all_vals = [v for s in s_list for v in s[3]]
-                all_uncs = [u for s in s_list for u in s[4]]
-                all_meths = {m for s in s_list for m in s[5] if m}
-                along_m = statistics.mean(s[2] for s in s_list)
-                snap_d = min(s[1] for s in s_list)
-                obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
-                m_no3 = statistics.mean(all_vals)
-                med_no3 = statistics.median(all_vals)
-                trans_no3_val = apply_forward_transform(m_no3, ttype=trans_type, lam=eff_lambda)
-                log_no3 = round(trans_no3_val, 5) if trans_no3_val is not None else ""
-                r_unc = round(math.sqrt(sum(u * u for u in all_uncs) / len(all_uncs)), 6) if all_uncs else ""
-                r_meth = sorted(all_meths)[0] if all_meths else ""
-                row_out = [
-                    riv_id, u_info["catch_id"], u_info["rbd_id"], parent_dn.get(riv_id, 0),
-                    round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(u_info["us_accum_km"], 5),
-                    round(log_afv[riv_id], 6), u_info["shreve"], u_info["strahler"],
-                    round(sx, 1), round(sy, 1), round(mx, 1), round(my, 1), round(ex, 1), round(ey, 1),
-                    round(u_info["elevation"], 3), round(u_info["slope"], 4), round(u_info["sinuosity"], 4), round(u_info["src_elevation"], 3),
-                    u_info["is_chalk_lime"], u_info["is_sand"], u_info["is_aq"], u_info["is_peat"],
-                    1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
-                    round(m_no3, 4), round(med_no3, 4), log_no3,
-                    r_unc, r_meth, len(all_vals)
-                ]
-            else:
-                row_out = [
-                    riv_id, u_info["catch_id"], u_info["rbd_id"], parent_dn.get(riv_id, 0),
-                    round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(u_info["us_accum_km"], 5),
-                    round(log_afv[riv_id], 6), u_info["shreve"], u_info["strahler"],
-                    round(sx, 1), round(sy, 1), round(mx, 1), round(my, 1), round(ex, 1), round(ey, 1),
-                    round(u_info["elevation"], 3), round(u_info["slope"], 4), round(u_info["sinuosity"], 4), round(u_info["src_elevation"], 3),
-                    u_info["is_chalk_lime"], u_info["is_sand"], u_info["is_aq"], u_info["is_peat"],
-                    0, "", "", round(up_mid_km, 5),
-                    "", "", "", "", "", 0
-                ]
-            w.writerow(row_out + extra_vals)
+    reaches_rows = []
+    for riv_id in topo_order:
+        u_info = reaches_by_id[riv_id]
+        d2m_km = u_info["d2m_km"]
+        l_km = u_info["length_km"]
+        up_mid_km = max(0.0, d2m_km - 0.5 * l_km)
+        sx, sy, mx, my, ex, ey = u_info["coords_bng"]
+        extra_vals = [round(float(u_info["row"].get(ec) or 0.0), 4) for ec in extra_num_cols]
+        base_cols = [
+            riv_id, u_info["catch_id"], u_info["rbd_id"], parent_dn.get(riv_id, 0),
+            round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(u_info["us_accum_km"], 5),
+            round(log_afv[riv_id], 6), u_info["shreve"], u_info["strahler"],
+            round(sx, 1), round(sy, 1), round(mx, 1), round(my, 1), round(ex, 1), round(ey, 1),
+            round(u_info["elevation"], 3), round(u_info["slope"], 4), round(u_info["sinuosity"], 4), round(u_info["src_elevation"], 3),
+            u_info["is_chalk_lime"], u_info["is_sand"], u_info["is_aq"], u_info["is_peat"],
+        ]
+        if riv_id in site_by_reach:
+            obs_cols = summarize_reach_site_obs(site_by_reach[riv_id], d2m_km, trans_type=trans_type, eff_lambda=eff_lambda)
+        else:
+            obs_cols = [0, "", "", round(up_mid_km, 5), "", "", "", "", "", 0]
+        reaches_rows.append(base_cols + obs_cols + extra_vals)
 
     all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m})
     active_meas_method = "gam" if any("gam" in m for m in all_meths) else (all_meths[0] if all_meths else None)
-    meta_path = os.path.join(OUT_DIR, "network_metadata.json")
     meta_obj = {
         "name": cfg.get("name", net_abbr),
         "abbr": net_abbr,
@@ -3692,17 +2199,20 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         "transform_type": trans_type,
         "transform_lambda": eff_lambda,
     }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta_obj, f, indent=2)
-
-    write_outputs_to_dirs(net_abbr, {
-        "england_rsn_reaches.csv": out_reaches_path,
-        "rsn_sites.csv": sites_csv_path,
-        "rsn_reach_periods.csv": periods_csv_path,
-        "rsn_catchments_lookup.csv": catch_lu_path,
-        "network_metadata.json": meta_path,
-    }, source=source_key)
-    print(f"Done in {time.time() - t0:.2f} seconds (saved to {OUT_DIR}/).")
+    write_reaches_and_finalize(
+        out_dir=eff_out_dir,
+        net_abbr=net_abbr,
+        out_reaches_path=out_reaches_path,
+        reaches_header=reaches_header,
+        reaches_rows=reaches_rows,
+        meta_obj=meta_obj,
+        sites_csv_path=sites_csv_path,
+        periods_csv_path=periods_csv_path,
+        catch_lu_path=catch_lu_path,
+        source_key=source_key,
+        runtime_cfg=eff_cfg,
+    )
+    print(f"Done in {time.time() - t0:.2f} seconds (saved to {eff_out_dir}/).")
 
 
 def main():
@@ -3888,7 +2398,7 @@ def main():
         help="List available monitoring data sources (RSN, SSN, RSS, custom) and their configuration, then exit.",
     )
     args = parser.parse_args()
-    configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
+    runtime_cfg = configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
     ensure_all_configs(BASE_DIR)
     if args.list_transforms:
         print_available_transforms()
@@ -3941,8 +2451,11 @@ def main():
 
     if not args.out_dir:
         sub_name = f"{net_abbr}_{source_key}"
-        OUT_DIR = _rel_join(DATA_DIR, "processed", sub_name)
-    os.makedirs(OUT_DIR, exist_ok=True)
+        out_dir = _rel_join(runtime_cfg.data_dir, "processed", sub_name)
+        OUT_DIR = out_dir
+    else:
+        out_dir = runtime_cfg.processed_dir
+    os.makedirs(out_dir, exist_ok=True)
 
     if args.convert_to_geoparquet:
         src_files = ensure_gpkg_paths(cfg)
@@ -4011,7 +2524,7 @@ def main():
         imp_val = imp_all_by_site[nid][idx]
         imputed_records.append((nid, imp_val, yr, mo, seas, is_cens, unc_val, meth_val))
 
-    nitrate_by_site = defaultdict(list)
+    obs_by_site = defaultdict(list)
     unc_by_site = defaultdict(list)
     meth_by_site = defaultdict(set)
     n_slice_samples = 0
@@ -4026,7 +2539,7 @@ def main():
             continue
         if month_filter is not None and mo != month_filter:
             continue
-        nitrate_by_site[nid].append(imp_val)
+        obs_by_site[nid].append(imp_val)
         if unc_val is not None:
             unc_by_site[nid].append(unc_val)
         if meth_val:
@@ -4036,14 +2549,14 @@ def main():
             n_slice_cens += 1
 
     print(
-        f"   Found {len(nitrate_by_site)} active stations in period '{period_label}' "
+        f"   Found {len(obs_by_site)} active stations in period '{period_label}' "
         f"({n_slice_samples} samples; {n_slice_cens} censored '<' "
         f"[{100.0 * n_slice_cens / max(1, n_slice_samples):.2f}%] imputed via '{args.censor_method}')."
     )
 
     # Resolve transformation type and Profile Maximum Likelihood lambda
     trans_type = (args.transform or "log").lower().strip()
-    all_sample_vals = [v for s_vals in nitrate_by_site.values() for v in s_vals if v is not None]
+    all_sample_vals = [v for s_vals in obs_by_site.values() for v in s_vals if v is not None]
     if trans_type in ("boxcox", "bc"):
         eff_lambda = args.transform_lambda if args.transform_lambda is not None else estimate_boxcox_lambda(all_sample_vals)
         print(f"   Estimated Profile Maximum Likelihood lambda = {eff_lambda:.4f} for Box-Cox transformation.")
@@ -4055,10 +2568,11 @@ def main():
 
     # Dispatch to generic network pipeline if not using standard ORN fast path
     if cfg.get("covariates", {}).get("mode") != "orn_100m_table" or args.topology_mode != "auto" or args.afv_col:
-        preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, nitrate_by_site, period_label, t0,
+        preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
                                    trans_type=trans_type, eff_lambda=eff_lambda,
                                    pts_source=pts_source, source_key=source_key,
-                                   range_mode=active_range_mode)
+                                   range_mode=active_range_mode,
+                                   runtime_cfg=runtime_cfg, out_dir=out_dir)
         return
 
     # Standard ORN v2 fast path
@@ -4078,12 +2592,13 @@ def main():
 
     for row in c.execute("SELECT RivID, CatchID, Dist2Mth, Shape FROM ORN"):
         riv_id, catch_id, d2m, blob = row
-        flags = blob[3]
-        env_ind = (flags >> 1) & 0x07
-        if env_ind >= 1:
-            minx, maxx, miny, maxy = struct.unpack_from("<4d", blob, 8)
+        env = parse_gpkg_envelope(blob)
+        if env is not None:
+            minx, maxx, miny, maxy = env
         else:
             poly = parse_gpkg_multilinestring(blob)
+            if not poly:
+                continue
             xs = [p[0] for p in poly]
             ys = [p[1] for p in poly]
             minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
@@ -4105,123 +2620,33 @@ def main():
             if d < best_snap[nid][0]:
                 best_snap[nid] = (d, riv_id, catch_id, along, d2m)
 
-    active_monitored_sites = set(nitrate_by_site.keys()) | core_wq_sites
+    active_monitored_sites = set(obs_by_site.keys()) | core_wq_sites
     monitored_catchments = {
         best_snap[nid][2]
         for nid in active_monitored_sites
         if nid in best_snap and best_snap[nid][0] <= max_snap_m
     }
-    site_by_reach = defaultdict(list)
-    sites_csv_path = os.path.join(OUT_DIR, "rsn_sites.csv")
-    with open(sites_csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "site_id", "wims_id", "wims_region_code",
-            "easting", "northing", "snap_dist_m", "RivID", "CatchID",
-            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median",
-            "nitrate_sd", "log_nitrate_mean", "mean_log_nitrate",
-            "meas_uncertainty", "meas_method", "included_250m",
-            "source"
-        ])
-        for nid in all_station_ids:
-            px, py, meta = pts[nid]
-            d, riv_id, catch_id, along, d2m = best_snap[nid]
-            if catch_id not in monitored_catchments and nid not in core_wq_sites:
-                continue
-            obs_up_km = max(0.0, (d2m - along) / 1000.0)
-            inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
-            src_str = pts_source.get(nid, "RSN")
-            vals = nitrate_by_site.get(nid, [])
-            u_vals = unc_by_site.get(nid, [])
-            m_set = meth_by_site.get(nid, set())
-            site_u = round(math.sqrt(sum(u * u for u in u_vals) / len(u_vals)), 6) if u_vals else ""
-            site_m = sorted(m_set)[0] if m_set else ""
-            if vals:
-                m_val = statistics.mean(vals)
-                med_val = statistics.median(vals)
-                sd_val = statistics.stdev(vals) if len(vals) > 1 else 0.0
-                trans_m_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
-                log_m = round(trans_m_val, 5) if trans_m_val is not None else ""
-                trans_clean = [
-                    tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda) for v in vals)
-                    if tv is not None
-                ]
-                m_log = round(statistics.mean(trans_clean), 5) if trans_clean else ""
-                if inc:
-                    site_by_reach[riv_id].append((nid, d, along, vals, u_vals, m_set))
-                w.writerow([
-                    nid, meta["wims_id"], meta["wims_region_code"],
-                    px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), log_m, m_log, site_u, site_m, inc, src_str
-                ])
-            else:
-                w.writerow([
-                    nid, meta["wims_id"], meta["wims_region_code"],
-                    px, py, round(d, 3), riv_id, catch_id,
-                    round(obs_up_km, 5), 0, "", "", "", "", "", "", "", inc, src_str
-                ])
-
-    reach_period_vals = defaultdict(list)
-    reach_period_unc = defaultdict(list)
-    reach_period_meth = defaultdict(set)
-    reach_along_map = defaultdict(list)
-    reach_catch_map = {}
-    reach_d2m_map = {}
-    for rec in imputed_records:
-        nid, imp_val, yr, mo, seas = rec[0], rec[1], rec[2], rec[3], rec[4]
-        unc_val = rec[6] if len(rec) > 6 else None
-        meth_val = rec[7] if len(rec) > 7 else ""
-        if nid not in best_snap:
-            continue
+    snap_info = {}
+    for nid in all_station_ids:
         d, riv_id, catch_id, along, d2m = best_snap[nid]
-        if d <= max_snap_m and catch_id in monitored_catchments:
-            reach_along_map[riv_id].append(along)
-            reach_catch_map[riv_id] = catch_id
-            reach_d2m_map[riv_id] = d2m
-            reach_period_vals[(riv_id, "all", "all")].append(imp_val)
-            reach_period_vals[(riv_id, "year", str(yr))].append(imp_val)
-            reach_period_vals[(riv_id, "season", seas)].append(imp_val)
-            reach_period_vals[(riv_id, "month", f"{mo:02d}")].append(imp_val)
-            reach_period_vals[(riv_id, "year_season", f"{yr}_{seas}")].append(imp_val)
-            if unc_val is not None:
-                reach_period_unc[(riv_id, "all", "all")].append(unc_val)
-                reach_period_unc[(riv_id, "year", str(yr))].append(unc_val)
-                reach_period_unc[(riv_id, "season", seas)].append(unc_val)
-                reach_period_unc[(riv_id, "month", f"{mo:02d}")].append(unc_val)
-                reach_period_unc[(riv_id, "year_season", f"{yr}_{seas}")].append(unc_val)
-            if meth_val:
-                reach_period_meth[(riv_id, "all", "all")].add(meth_val)
-                reach_period_meth[(riv_id, "year", str(yr))].add(meth_val)
-                reach_period_meth[(riv_id, "season", seas)].add(meth_val)
-                reach_period_meth[(riv_id, "month", f"{mo:02d}")].add(meth_val)
-                reach_period_meth[(riv_id, "year_season", f"{yr}_{seas}")].add(meth_val)
+        if catch_id not in monitored_catchments and nid not in core_wq_sites:
+            continue
+        inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
+        snap_info[nid] = (d, riv_id, catch_id, along, d2m / 1000.0, inc)
 
-    periods_csv_path = os.path.join(OUT_DIR, "rsn_reach_periods.csv")
-    with open(periods_csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "RivID", "CatchID", "period_type", "period_value",
-            "obs_up_dist_km", "n_samples", "nitrate_mean", "nitrate_median", "log_nitrate_mean",
-            "meas_uncertainty", "meas_method"
-        ])
-        for (riv_id, p_type, p_val), vals in sorted(reach_period_vals.items()):
-            d2m_km = reach_d2m_map[riv_id] / 1000.0
-            along_m = statistics.mean(reach_along_map[riv_id])
-            obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
-            m_v = statistics.mean(vals)
-            med_v = statistics.median(vals)
-            trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
-            log_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
-            u_list = reach_period_unc.get((riv_id, p_type, p_val), [])
-            m_set = reach_period_meth.get((riv_id, p_type, p_val), set())
-            p_unc = round(math.sqrt(sum(u * u for u in u_list) / len(u_list)), 6) if u_list else ""
-            p_meth = sorted(m_set)[0] if m_set else ""
-            w.writerow([
-                riv_id, reach_catch_map[riv_id], p_type, p_val,
-                round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), log_mv,
-                p_unc, p_meth
-            ])
+    site_by_reach, sites_csv_path, periods_csv_path = write_snapped_sites_and_periods(
+        out_dir=out_dir,
+        all_station_ids=all_station_ids,
+        pts=pts,
+        pts_source=pts_source,
+        snap_info=snap_info,
+        imputed_records=imputed_records,
+        obs_by_site=obs_by_site,
+        unc_by_site=unc_by_site,
+        meth_by_site=meth_by_site,
+        trans_type=trans_type,
+        eff_lambda=eff_lambda,
+    )
 
     print(
         f"   Snapped {sum(1 for nid in best_snap if best_snap[nid][0] <= max_snap_m)} sites (<={max_snap_m:.0f}m) "
@@ -4282,13 +2707,11 @@ def main():
         if riv_id in reaches:
             catch_obs_cnt[reaches[riv_id][3]] += 1
 
-    catch_lu_path = os.path.join(OUT_DIR, "rsn_catchments_lookup.csv")
-    with open(catch_lu_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["CatchID", "Main_River", "RBD_ID", "RBD_Name", "n_reaches", "n_obs_reaches"])
-        for cid in sorted(monitored_catchments, key=lambda k: (-catch_obs_cnt[k], -catch_reach_cnt[k])):
-            _, nm1, rbd_id = catch_main_river.get(cid, (0, f"Catchment {cid}", 0))
-            w.writerow([cid, nm1, rbd_id, rbd_lu.get(rbd_id, ""), catch_reach_cnt[cid], catch_obs_cnt[cid]])
+    catch_rows = []
+    for cid in sorted(monitored_catchments, key=lambda k: (-catch_obs_cnt[k], -catch_reach_cnt[k])):
+        _, nm1, rbd_id = catch_main_river.get(cid, (0, f"Catchment {cid}", 0))
+        catch_rows.append([cid, nm1, rbd_id, rbd_lu.get(rbd_id, ""), catch_reach_cnt[cid], catch_obs_cnt[cid]])
+    catch_lu_path = write_catchment_lookup(out_dir, catch_rows)
 
     print(f"   Loaded {len(reaches)} reaches across {len(monitored_catchments)} catchments.")
 
@@ -4341,76 +2764,49 @@ def main():
     missing_cnt = sum(1 for u in topo_order if u not in reach_100m or reach_100m[u][0] is None)
     print(f"   Tree traversal complete ({len(topo_order)} reaches, {missing_cnt} missing covariates).")
 
-    out_reaches_path = os.path.join(OUT_DIR, "england_rsn_reaches.csv")
+    out_reaches_path = os.path.join(out_dir, "england_rsn_reaches.csv")
     print(f"5. Writing {out_reaches_path}...")
-    with open(out_reaches_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "RivID", "CatchID", "RBD_ID", "parent_dn",
-            "Dist2Mth_km", "up_dist_mid_km", "length_km", "US_Accum_km",
-            "log_AFV", "Shreve", "Strahler",
-            "start_X", "start_Y", "mid_X", "mid_Y", "end_X", "end_Y",
-            "Elevation", "Slope", "Sinuosity", "SrcElevation",
-            "Is_Chalk_Limestone", "Is_Sandstone", "Is_Aquifer", "Is_Peat",
-            "has_obs", "site_id", "snap_dist_m", "obs_up_dist_km",
-            "nitrate_mean", "nitrate_median", "log_nitrate_mean",
-            "meas_uncertainty", "meas_method", "n_samples"
-        ])
-        for riv_id in topo_order:
-            r = reaches[riv_id]
-            rc = reach_100m.get(riv_id, (50.0, 0.5, 1.05, 0, 0, 100.0))
-            b_desc = bedrock_lu.get(rc[3], "")
-            s_desc = superficial_lu.get(rc[4], "")
-            is_chalk_lime = 1 if ("CHALK" in b_desc or "LIMESTONE" in b_desc or "DOLOSTONE" in b_desc) else 0
-            is_sand = 1 if ("SANDSTONE" in b_desc and "MUDSTONE" not in b_desc and "SILTSTONE" not in b_desc) else 0
-            is_aq = 1 if (is_chalk_lime or is_sand) else 0
-            is_peat = 1 if "PEAT" in s_desc else 0
+    reaches_header = [
+        "RivID", "CatchID", "RBD_ID", "parent_dn",
+        "Dist2Mth_km", "up_dist_mid_km", "length_km", "US_Accum_km",
+        "log_AFV", "Shreve", "Strahler",
+        "start_X", "start_Y", "mid_X", "mid_Y", "end_X", "end_Y",
+        "Elevation", "Slope", "Sinuosity", "SrcElevation",
+        "Is_Chalk_Limestone", "Is_Sandstone", "Is_Aquifer", "Is_Peat",
+    ] + REACH_OBS_HEADER_COLS
 
-            d2m_km = r[5] / 1000.0
-            l_km = reach_len[riv_id] / 1000.0
-            up_mid_km = max(0.0, d2m_km - 0.5 * l_km)
-            sx, sy, mx, my, ex, ey = reach_coords[riv_id]
+    reaches_rows = []
+    for riv_id in topo_order:
+        r = reaches[riv_id]
+        rc = reach_100m.get(riv_id, (50.0, 0.5, 1.05, 0, 0, 100.0))
+        b_desc = bedrock_lu.get(rc[3], "")
+        s_desc = superficial_lu.get(rc[4], "")
+        is_chalk_lime = 1 if ("CHALK" in b_desc or "LIMESTONE" in b_desc or "DOLOSTONE" in b_desc) else 0
+        is_sand = 1 if ("SANDSTONE" in b_desc and "MUDSTONE" not in b_desc and "SILTSTONE" not in b_desc) else 0
+        is_aq = 1 if (is_chalk_lime or is_sand) else 0
+        is_peat = 1 if "PEAT" in s_desc else 0
 
-            if riv_id in site_by_reach:
-                s_list = site_by_reach[riv_id]
-                all_vals = [v for s in s_list for v in s[3]]
-                all_uncs = [u for s in s_list for u in s[4]]
-                all_meths = {m for s in s_list for m in s[5] if m}
-                along_m = statistics.mean(s[2] for s in s_list)
-                snap_d = min(s[1] for s in s_list)
-                obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
-                m_no3 = statistics.mean(all_vals)
-                med_no3 = statistics.median(all_vals)
-                trans_no3_val = apply_forward_transform(m_no3, ttype=trans_type, lam=eff_lambda)
-                log_no3 = round(trans_no3_val, 5) if trans_no3_val is not None else ""
-                r_unc = round(math.sqrt(sum(u * u for u in all_uncs) / len(all_uncs)), 6) if all_uncs else ""
-                r_meth = sorted(all_meths)[0] if all_meths else ""
-                w.writerow([
-                    riv_id, r[3], r[4], parent_dn.get(riv_id, 0),
-                    round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(r[6] / 1000.0, 5),
-                    round(log_afv[riv_id], 6), r[7], r[8],
-                    round(sx, 1), round(sy, 1), round(mx, 1), round(my, 1), round(ex, 1), round(ey, 1),
-                    round(rc[0] or 0.0, 3), round(rc[1] or 0.0, 4), round(rc[2] or 1.0, 4), round(rc[5] or rc[0] or 0.0, 3),
-                    is_chalk_lime, is_sand, is_aq, is_peat,
-                    1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
-                    round(m_no3, 4), round(med_no3, 4), log_no3,
-                    r_unc, r_meth, len(all_vals)
-                ])
-            else:
-                w.writerow([
-                    riv_id, r[3], r[4], parent_dn.get(riv_id, 0),
-                    round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(r[6] / 1000.0, 5),
-                    round(log_afv[riv_id], 6), r[7], r[8],
-                    round(sx, 1), round(sy, 1), round(mx, 1), round(my, 1), round(ex, 1), round(ey, 1),
-                    round(rc[0] or 0.0, 3), round(rc[1] or 0.0, 4), round(rc[2] or 1.0, 4), round(rc[5] or rc[0] or 0.0, 3),
-                    is_chalk_lime, is_sand, is_aq, is_peat,
-                    0, "", "", round(up_mid_km, 5),
-                    "", "", "", "", "", 0
-                ])
+        d2m_km = r[5] / 1000.0
+        l_km = reach_len[riv_id] / 1000.0
+        up_mid_km = max(0.0, d2m_km - 0.5 * l_km)
+        sx, sy, mx, my, ex, ey = reach_coords[riv_id]
+
+        base_cols = [
+            riv_id, r[3], r[4], parent_dn.get(riv_id, 0),
+            round(d2m_km, 5), round(up_mid_km, 5), round(l_km, 5), round(r[6] / 1000.0, 5),
+            round(log_afv[riv_id], 6), r[7], r[8],
+            round(sx, 1), round(sy, 1), round(mx, 1), round(my, 1), round(ex, 1), round(ey, 1),
+            round(rc[0] or 0.0, 3), round(rc[1] or 0.0, 4), round(rc[2] or 1.0, 4), round(rc[5] or rc[0] or 0.0, 3),
+            is_chalk_lime, is_sand, is_aq, is_peat,
+        ]
+        if riv_id in site_by_reach:
+            obs_cols = summarize_reach_site_obs(site_by_reach[riv_id], d2m_km, trans_type=trans_type, eff_lambda=eff_lambda)
+        else:
+            obs_cols = [0, "", "", round(up_mid_km, 5), "", "", "", "", "", 0]
+        reaches_rows.append(base_cols + obs_cols)
 
     all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m})
     active_meas_method = "gam" if any("gam" in m for m in all_meths) else (all_meths[0] if all_meths else None)
-    meta_path = os.path.join(OUT_DIR, "network_metadata.json")
     meta_obj = {
         "name": cfg.get("name", "orn"),
         "abbr": net_abbr,
@@ -4433,17 +2829,20 @@ def main():
         "transform_type": trans_type,
         "transform_lambda": eff_lambda,
     }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta_obj, f, indent=2)
-
-    write_outputs_to_dirs(net_abbr, {
-        "england_rsn_reaches.csv": out_reaches_path,
-        "rsn_sites.csv": sites_csv_path,
-        "rsn_reach_periods.csv": periods_csv_path,
-        "rsn_catchments_lookup.csv": catch_lu_path,
-        "network_metadata.json": meta_path,
-    }, source=source_key)
-    print(f"Done in {time.time() - t0:.2f} seconds (saved to {OUT_DIR}/).")
+    write_reaches_and_finalize(
+        out_dir=out_dir,
+        net_abbr=net_abbr,
+        out_reaches_path=out_reaches_path,
+        reaches_header=reaches_header,
+        reaches_rows=reaches_rows,
+        meta_obj=meta_obj,
+        sites_csv_path=sites_csv_path,
+        periods_csv_path=periods_csv_path,
+        catch_lu_path=catch_lu_path,
+        source_key=source_key,
+        runtime_cfg=runtime_cfg,
+    )
+    print(f"Done in {time.time() - t0:.2f} seconds (saved to {out_dir}/).")
 
 
 if __name__ == "__main__":

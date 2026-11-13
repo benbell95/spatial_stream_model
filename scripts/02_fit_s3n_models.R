@@ -126,9 +126,11 @@ catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
   NULL
 }
 
+obs_col_name <- if ("obs_mean" %in% names(df_full)) "obs_mean" else "nitrate_mean"
+
 # Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson BEFORE computing folder tags
 if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
-  obs_raw <- df_full$nitrate_mean[df_full$has_obs == 1 & !is.na(df_full$nitrate_mean)]
+  obs_raw <- df_full[[obs_col_name]][df_full$has_obs == 1 & !is.na(df_full[[obs_col_name]])]
   trans_obj <- build_transformer(trans_cli, y_obs = obs_raw, lambda = lambda_cli, scale = scale_cli)
   cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for Nitrate (%s)\n",
               trans_obj$lambda, trans_obj$label))
@@ -164,7 +166,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     n_omp = n_omp,
     use_meas_error = isTRUE(meas_error_arg),
     net_meta = net_meta,
-    obs_col = "nitrate_mean",
+    obs_col = obs_col_name,
     legacy_nitrate_mode = TRUE,
     out_root = OUT_ROOT
   )
