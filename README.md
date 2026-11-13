@@ -44,18 +44,18 @@ flowchart LR
 
 ### 1. System Prerequisites
 
-**Common (Linux & Windows):**
+**Common (🐧 Linux & 🪟 Windows):**
 - **Python ≥ 3.8** — uses the standard library only (**zero `pip` packages required**).
 - **R ≥ 3.5.0** (on Windows, ensure `Rscript.exe` is on `PATH`).
 
-**Linux:**
+**🐧 Linux:**
 - Development headers, OpenMP C/C++ compiler, BLAS/LAPACK, Cairo, and SQLite3:
   - **Fedora / RHEL**: `sudo dnf install gcc gcc-c++ libgomp R-core-devel openblas-devel lapack-devel cairo-devel sqlite-libs`
   - **Ubuntu / Debian**: `sudo apt install build-essential libomp-dev r-base-dev libopenblas-dev liblapack-dev libcairo2-dev libsqlite3-0`
 
-**Windows:**
+**🪟 Windows:**
 - Install **[Rtools](https://cran.r-project.org/bin/windows/Rtools/)** matching your R version (provides the MinGW/GCC C++ compiler and OpenMP needed to install `S3N` from GitHub and compile [`src/s3n_fast_neighbors.cpp`](src/s3n_fast_neighbors.cpp)).
-- *(Alternative)* Use **WSL2** (Windows Subsystem for Linux), which runs the Linux setup—including the precompiled `src/s3n_fast_neighbors.so`—natively without Rtools.
+- *(Alternative)* Use **WSL2** (Windows Subsystem for Linux), which runs the 🐧 Linux setup—including the precompiled `src/s3n_fast_neighbors.so`—natively without Rtools.
 
 ### 2. Install R Packages
 ```r
@@ -64,15 +64,15 @@ remotes::install_github("jpierkunke/S3N")
 ```
 
 ### 3. C++ OpenMP Neighbor Engine (`src/s3n_fast_neighbors.cpp`)
-- **Linux (`x86_64`)**: A precompiled binary ([`src/s3n_fast_neighbors.so`](src/s3n_fast_neighbors.so)) is already included in the repository. You only need to recompile if you edit the C++ source or hit an ABI mismatch on a different Linux distro/CPU architecture:
+- **🐧 Linux (`x86_64`)**: A precompiled binary ([`src/s3n_fast_neighbors.so`](src/s3n_fast_neighbors.so)) is already included in the repository. You only need to recompile if you edit the C++ source or hit an ABI mismatch on a different Linux distro/CPU architecture:
   ```bash
   R CMD SHLIB src/s3n_fast_neighbors.cpp
   ```
-- **Windows / macOS / Other Architectures**: A Linux `.so` binary cannot be loaded on Windows, so compile a native `.dll` using Rtools from the repository root (`src/Makevars.win` applies OpenMP flags automatically):
+- **🪟 Windows / macOS / Other Architectures**: A Linux `.so` binary cannot be loaded on Windows, so compile a native `.dll` using Rtools from the repository root (`src/Makevars.win` applies OpenMP flags automatically):
   ```powershell
   R CMD SHLIB src/s3n_fast_neighbors.cpp
   ```
-  R automatically loads `s3n_fast_neighbors.dll` on Windows (`.Platform$dynlib.ext`) once compiled, or you can run inside WSL2 using the precompiled Linux `.so`.
+  R automatically loads `s3n_fast_neighbors.dll` on Windows (`.Platform$dynlib.ext`) once compiled, or you can run inside WSL2 using the precompiled 🐧 Linux `.so`.
 
 ### 4. Configure Data & Output Paths *(Optional)*
 By default, scripts read from `gis/`, `data/`, `data/processed/`, and `output/` as defined in [`configs/directories.json`](configs/directories.json). You can override these via `configs/directories.json`, environment variables (`S3N_GIS_DIR`, `S3N_DATA_DIR`, `S3N_PROCESSED_DIR`, `S3N_OUTPUT_DIR`), or CLI flags (`--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`).
