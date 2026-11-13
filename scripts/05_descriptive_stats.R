@@ -158,6 +158,33 @@ read_basin_catch_id <- function(file_path, fallback_id = NA_integer_) {
   fallback_id
 }
 
+resolve_run_dir_path <- function(dir_path, out_root = NULL, base_dir = BASE_DIR) {
+  default_out <- load_directory_config(base_dir)$output_dir
+  if (is.null(out_root) || !nzchar(out_root)) {
+    out_root <- default_out
+  }
+  if (grepl("^/", dir_path)) return(dir_path)
+
+  out_roots <- unique(c(out_root, default_out))
+  stripped <- sub("^(output|results)/+", "", dir_path)
+
+  cands <- rel_path(base_dir, dir_path)
+  for (root in out_roots) {
+    cands <- c(cands,
+               rel_path(root, "results", dir_path),
+               rel_path(root, dir_path))
+    if (!identical(stripped, dir_path)) {
+      cands <- c(cands,
+                 rel_path(root, "results", stripped),
+                 rel_path(root, stripped))
+    }
+  }
+  for (cp in unique(cands)) {
+    if (dir.exists(cp)) return(cp)
+  }
+  cands[1]
+}
+
 # ------------------------------------------------------------------------------
 # Helper: Load a single model run bundle from an output directory
 # ------------------------------------------------------------------------------
@@ -166,16 +193,7 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
   dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
-  dir_p <- if (grepl("^/", dir_path)) dir_path else rel_path(BASE_DIR, dir_path)
-  if (!dir.exists(dir_p) && !grepl("^/", dir_path)) {
-    cand_in_res <- rel_path(out_root, "results", dir_path)
-    cand_in_out <- rel_path(out_root, dir_path)
-    if (dir.exists(cand_in_res)) {
-      dir_p <- cand_in_res
-    } else if (dir.exists(cand_in_out)) {
-      dir_p <- cand_in_out
-    }
-  }
+  dir_p <- resolve_run_dir_path(dir_path, out_root = out_root, base_dir = BASE_DIR)
   if (!dir.exists(dir_p)) {
     stop(sprintf("Model output directory does not exist: %s", dir_p))
   }
@@ -209,6 +227,9 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   }
 
   eng_pred  <- normalize_pred_df(read.csv(eng_file, stringsAsFactors = FALSE))
+  if (!all(c("pred_z", "pred_robust_z", "pred_minmax", "pred_pct") %in% names(eng_pred))) {
+    eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred)
+  }
   cv_tab    <- normalize_cv_tab(read.csv(cv_t_file, stringsAsFactors = FALSE))
   param_tab <- if (!is.null(par_file) && file.exists(par_file)) read.csv(par_file, stringsAsFactors = FALSE) else NULL
   eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) normalize_cv_pts(read.csv(cv_e_file, stringsAsFactors = FALSE)) else NULL
@@ -241,6 +262,8 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   det_code <- if ("Determinand_Code" %in% names(cv_tab)) {
     c0 <- as.character(cv_tab$Determinand_Code[1])
     if (nchar(c0) < 4 && grepl("^[0-9]+$", c0)) sprintf("%04d", as.integer(c0)) else c0
+  } else if (grepl("^england_.*_predictions\\.csv$", basename(eng_file))) {
+    sub("^england_(.*)_predictions\\.csv$", "\\1", basename(eng_file))
   } else {
     sub("^predictions_(.*)\\.csv$", "\\1", basename(eng_file))
   }
@@ -275,7 +298,8 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   use_log  <- if ("Scale" %in% names(cv_tab)) (tolower(as.character(cv_tab$Scale[1])) == "log") else {
     obs_pos <- eng_pred$obs_value[eng_pred$has_obs == 1 & !is.na(eng_pred$obs_value) & eng_pred$obs_value > 0]
     sc_pos  <- eng_pred$obs_model_sc[eng_pred$has_obs == 1 & !is.na(eng_pred$obs_value) & eng_pred$obs_value > 0]
-    (length(obs_pos) > 0 && max(abs(log(obs_pos) - sc_pos), na.rm = TRUE) < 1e-2)
+    diffs   <- if (length(obs_pos) > 0) abs(log(obs_pos) - sc_pos) else numeric(0)
+    any(!is.na(diffs)) && max(diffs, na.rm = TRUE) < 1e-2
   }
 
   trans_type <- if ("Transform_Type" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Type[1]))) {
@@ -302,15 +326,23 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     as.character(cv_tab$Source[1])
   } else {
     bname <- basename(dir_p)
-    if (grepl("_(src_)?ssn", bname)) "SSN"
-    else if (grepl("_(src_)?rss", bname)) "RSS"
-    else if (grepl("_(src_)?rsn", bname)) "RSN"
-    else "RSN"
+    b_no_t <- sub("_(trans|vars)_.*$", "", bname)
+    reg_s <- load_source_registry(BASE_DIR)
+    cand_s <- names(reg_s$sources)
+    cand_s <- cand_s[order(-nchar(cand_s))]
+    hit_s <- NA_character_
+    for (sk in cand_s) {
+      if (grepl(paste0("_", sk, "($|_)"), b_no_t)) {
+        hit_s <- sk
+        break
+      }
+    }
+    if (!is.na(hit_s)) format_source_abbr(hit_s, base_dir = BASE_DIR) else "RSN"
   }
   source_label <- if ("Source_Desc" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source_Desc[1]))) {
     as.character(cv_tab$Source_Desc[1])
   } else {
-    format_source_label(source_abbr)
+    format_source_label(source_abbr, base_dir = BASE_DIR)
   }
 
   vars_sub <- format_covariates_subtitle(param_tab = param_tab)
@@ -329,10 +361,10 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     } else {
       custom_label <- net_lbl
     }
-    if (grepl("_trans_", bname) && !grepl(trans_type, custom_label, ignore.case = TRUE)) {
+    if (grepl("_trans_", bname, fixed = TRUE) && !grepl(tolower(trans_type), tolower(custom_label), fixed = TRUE)) {
       custom_label <- sprintf("%s [%s]", custom_label, trans_label)
     }
-    if (source_abbr != "RSN" && !grepl(source_abbr, custom_label, ignore.case = TRUE)) {
+    if (source_abbr != "RSN" && !grepl(tolower(source_abbr), tolower(custom_label), fixed = TRUE)) {
       custom_label <- sprintf("%s [Source: %s]", custom_label, source_abbr)
     }
   }
@@ -390,22 +422,44 @@ list_available_model_runs <- function(out_root = NULL) {
   cat(sprintf("Available Model Run Output Directories (under '%s'):\n", out_root))
   cat("==============================================================================\n")
   all_dirs <- if (dir.exists(out_root)) list.dirs(out_root, recursive = TRUE, full.names = TRUE) else character(0)
+  out_norm <- normalizePath(out_root, mustWork = FALSE)
   found <- 0L
   for (d in all_dirs) {
+    if (normalizePath(d, mustWork = FALSE) == out_norm) next
     if (grepl("/(comparisons|descriptives|station_snapping)(/|$)", d)) next
-    has_det_files <- length(list.files(d, pattern = "^cv_comparison_.*\\.csv$")) > 0 &&
-                     length(list.files(d, pattern = "^predictions_.*\\.csv$")) > 0
-    has_std_files <- file.exists(file.path(d, "tables/cv_model_comparison.csv"))
+    cv_det_files <- list.files(d, pattern = "^cv_comparison_.*\\.csv$", full.names = TRUE)
+    has_det_files <- length(cv_det_files) > 0 && length(list.files(d, pattern = "^predictions_.*\\.csv$")) > 0
+    cv_std_file  <- file.path(d, "tables/cv_model_comparison.csv")
+    has_std_files <- file.exists(cv_std_file)
     if (has_det_files || has_std_files) {
       found <- found + 1L
       rel_d <- format_rel_display_path(d, BASE_DIR)
-      b <- tryCatch(load_model_run_bundle(d), error = function(e) NULL)
-      if (!is.null(b)) {
-        r_all <- subset(b$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
+      cv_f  <- if (has_std_files) cv_std_file else cv_det_files[1]
+      info <- tryCatch({
+        cv_t <- normalize_cv_tab(read.csv(cv_f, stringsAsFactors = FALSE))
+        cv_t$Canon_Domain <- canonical_domain(cv_t$Domain)
+        cv_t$Canon_Model  <- canonical_model(cv_t$Model)
+        r_all <- subset(cv_t, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
+        if (nrow(r_all) == 0L) r_all <- cv_t[1, , drop = FALSE]
+        net_lbl <- if ("Network_Label" %in% names(cv_t) && nzchar(as.character(cv_t$Network_Label[1]))) {
+          as.character(cv_t$Network_Label[1])
+        } else {
+          extract_network_label_from_tables(cv_t, NULL, d)
+        }
+        d_name <- if ("Determinand_Name" %in% names(cv_t) && nzchar(as.character(cv_t$Determinand_Name[1]))) {
+          as.character(cv_t$Determinand_Name[1])
+        } else {
+          basename(d)
+        }
         r2_str <- if (nrow(r_all) > 0) sprintf("CV R2 = %.3f, RMSE = %.3f", r_all$R2[1], r_all$RMSE[1]) else "N/A"
+        n_rch  <- if (nrow(r_all) > 0 && "n_reaches" %in% names(r_all)) as.integer(r_all$n_reaches[1]) else 0L
+        n_ob   <- if (nrow(r_all) > 0 && "n_obs" %in% names(r_all)) as.integer(r_all$n_obs[1]) else 0L
+        list(net_label = net_lbl, det_name = d_name, n_reaches = n_rch, n_obs = n_ob, r2_str = r2_str)
+      }, error = function(e) NULL)
+      if (!is.null(info)) {
         cat(sprintf("  [%2d] %-45s | %-20s | %-22s | %6d reaches (%4d obs) | %s\n",
-                    found, rel_d, b$net_label, substr(b$det_name, 1, 22),
-                    nrow(b$eng_pred), sum(b$eng_pred$has_obs == 1), r2_str))
+                    found, rel_d, substr(info$net_label, 1, 20), substr(info$det_name, 1, 22),
+                    info$n_reaches, info$n_obs, info$r2_str))
       } else {
         cat(sprintf("  [%2d] %s\n", found, rel_d))
       }
@@ -523,8 +577,9 @@ compute_stratified_descriptives <- function(bundles) {
     b  <- bundles[[i]]
     ep <- b$eng_pred
     n_tot <- nrow(ep)
-    z_all <- (ep$pred_model_sc - mean(ep$pred_model_sc, na.rm = TRUE)) /
-             max(1e-9, sd(ep$pred_model_sc, na.rm = TRUE))
+    sd_sc <- sd(ep$pred_model_sc, na.rm = TRUE)
+    if (!is.finite(sd_sc) || sd_sc < 1e-9) sd_sc <- 1e-9
+    z_all <- (ep$pred_model_sc - mean(ep$pred_model_sc, na.rm = TRUE)) / sd_sc
 
     add_stratum <- function(dim_name, strat_label, mask, test_name = "", p_val = NA_real_, ratio_vs_ref = NA_real_) {
       idx <- which(mask & !is.na(ep$pred_combined))
@@ -632,21 +687,21 @@ compute_stratified_descriptives <- function(bundles) {
     add_stratum("5. River Basin", "All England Network", rep(TRUE, nrow(ep)), "Reference Network", NA_real_, 1.0)
     if (!is.na(b$hum_cid) && any(ep$CatchID == b$hum_cid)) {
       m_b <- ep$CatchID == b$hum_cid
-      p_b <- suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value
+      p_b <- if (sum(m_b) >= 5L && sum(!m_b) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value else NA_real_
       add_stratum("5. River Basin", "Humber Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
-                  if (abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
+                  if (!is.na(med_eng) && abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
     }
     if (!is.na(b$tha_cid) && any(ep$CatchID == b$tha_cid)) {
       m_b <- ep$CatchID == b$tha_cid
-      p_b <- suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value
+      p_b <- if (sum(m_b) >= 5L && sum(!m_b) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value else NA_real_
       add_stratum("5. River Basin", "Thames Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
-                  if (abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
+                  if (!is.na(med_eng) && abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
     }
     if (!is.na(b$sev_cid) && any(ep$CatchID == b$sev_cid)) {
       m_b <- ep$CatchID == b$sev_cid
-      p_b <- suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value
+      p_b <- if (sum(m_b) >= 5L && sum(!m_b) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value else NA_real_
       add_stratum("5. River Basin", "Severn Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
-                  if (abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
+                  if (!is.na(med_eng) && abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
     }
   }
 
@@ -726,6 +781,10 @@ compute_single_run_stat_tests <- function(b1) {
     }
   }
 
+  fmt_med_ratio <- function(num, den) {
+    if (!is.na(num) && !is.na(den) && abs(den) > 1e-9) sprintf("%.2fx", num / den) else "N/A"
+  }
+
   # 2. Monitoring Representativeness: Observed Stations vs. Full Network Predictions
   obs_v <- ep$obs_value[ep$has_obs == 1 & !is.na(ep$obs_value)]
   if (length(obs_v) >= 5) {
@@ -737,8 +796,8 @@ compute_single_run_stat_tests <- function(b1) {
                  median(obs_v, na.rm = TRUE), median(ep$pred_combined, na.rm = TRUE),
                  median(ep$pred_combined, na.rm = TRUE) - median(obs_v, na.rm = TRUE),
                  "W", as.numeric(mw_rep$statistic), mw_rep$p.value,
-                 sprintf("Pred/Obs median ratio = %.2fx (%s)",
-                         median(ep$pred_combined, na.rm = TRUE) / max(1e-9, median(obs_v, na.rm = TRUE)),
+                 sprintf("Pred/Obs median ratio = %s (%s)",
+                         fmt_med_ratio(median(ep$pred_combined, na.rm = TRUE), median(obs_v, na.rm = TRUE)),
                          sig_stars(mw_rep$p.value)))
     add_stat_row("Network vs. Monitored Sites", "Monitoring Representativeness",
                  "Two-Sample Kolmogorov-Smirnov Test (Predictions vs Observed Stations)",
@@ -794,8 +853,8 @@ compute_single_run_stat_tests <- function(b1) {
                    median(v_up, na.rm = TRUE), median(v_low, na.rm = TRUE),
                    median(v_low, na.rm = TRUE) - median(v_up, na.rm = TRUE),
                    "W", as.numeric(mw_topo$statistic), mw_topo$p.value,
-                   sprintf("Lowland/Upland median ratio = %.2fx (%s)",
-                           median(v_low, na.rm = TRUE) / max(1e-9, median(v_up, na.rm = TRUE)),
+                   sprintf("Lowland/Upland median ratio = %s (%s)",
+                           fmt_med_ratio(median(v_low, na.rm = TRUE), median(v_up, na.rm = TRUE)),
                            sig_stars(mw_topo$p.value)))
     }
   }
@@ -810,8 +869,8 @@ compute_single_run_stat_tests <- function(b1) {
                    median(v_noaq, na.rm = TRUE), median(v_aq, na.rm = TRUE),
                    median(v_aq, na.rm = TRUE) - median(v_noaq, na.rm = TRUE),
                    "W", as.numeric(mw_aq$statistic), mw_aq$p.value,
-                   sprintf("Aquifer/Non-Aquifer median ratio = %.2fx (%s)",
-                           median(v_aq, na.rm = TRUE) / max(1e-9, median(v_noaq, na.rm = TRUE)),
+                   sprintf("Aquifer/Non-Aquifer median ratio = %s (%s)",
+                           fmt_med_ratio(median(v_aq, na.rm = TRUE), median(v_noaq, na.rm = TRUE)),
                            sig_stars(mw_aq$p.value)))
     }
   }
@@ -827,8 +886,8 @@ compute_single_run_stat_tests <- function(b1) {
                    median(v_hw, na.rm = TRUE), median(v_ms, na.rm = TRUE),
                    median(v_ms, na.rm = TRUE) - median(v_hw, na.rm = TRUE),
                    "ChiSq", as.numeric(kw_ord$statistic), kw_ord$p.value,
-                   sprintf("Mainstem/Headwater median ratio = %.2fx (%s)",
-                           median(v_ms, na.rm = TRUE) / max(1e-9, median(v_hw, na.rm = TRUE)),
+                   sprintf("Mainstem/Headwater median ratio = %s (%s)",
+                           fmt_med_ratio(median(v_ms, na.rm = TRUE), median(v_hw, na.rm = TRUE)),
                            sig_stars(kw_ord$p.value)))
     }
   }
@@ -1105,13 +1164,15 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
 # Single-Run Markdown Report Writer
 # ------------------------------------------------------------------------------
 write_descriptive_markdown_report <- function(b1, desc_df, rep_df, strat_df, stat_df, out_dir, report_path) {
-  lines <- character(0)
+  buf   <- character(256L)
+  buf_n <- 0L
   add_line <- function(fmt = "", ...) {
-    if (length(list(...)) == 0L) {
-      lines <<- c(lines, fmt)
-    } else {
-      lines <<- c(lines, sprintf(fmt, ...))
+    line_str <- if (length(list(...)) == 0L) fmt else sprintf(fmt, ...)
+    buf_n <<- buf_n + 1L
+    if (buf_n > length(buf)) {
+      length(buf) <<- length(buf) * 2L
     }
+    buf[buf_n] <<- line_str
   }
 
   add_line("# S3N Single-Run Descriptive Statistics & Diagnostic Report")
@@ -1217,7 +1278,7 @@ write_descriptive_markdown_report <- function(b1, desc_df, rep_df, strat_df, sta
   add_line("- `fig_desc2_stratified_gradients.png` — 4-panel base-R plot of landscape regimes, Strahler stream orders, major river basins, and altitudinal profile.")
   add_line("")
 
-  writeLines(lines, report_path)
+  writeLines(buf[seq_len(buf_n)], report_path)
 }
 
 # ------------------------------------------------------------------------------

@@ -741,11 +741,8 @@ def ensure_network_configs(base_dir=BASE_DIR):
                 except Exception as e:
                     print(f"   [Warning] Failed to write network config {dst}: {e}")
         else:
-            if os.path.exists(dst):
-                try:
-                    os.remove(dst)
-                except Exception:
-                    pass
+            # Leave existing config files untouched (e.g. when --gis-dir overrides default path)
+            pass
 
     if created:
         print(f"   [Config] Created network configuration(s) in {net_dir}/ ({len(created)} profile(s))")
@@ -788,11 +785,8 @@ def ensure_source_configs(base_dir=BASE_DIR):
                 except Exception as e:
                     print(f"   [Warning] Failed to write source config {dst}: {e}")
         else:
-            if os.path.exists(dst):
-                try:
-                    os.remove(dst)
-                except Exception:
-                    pass
+            # Leave existing config files untouched (e.g. when --gis-dir overrides default path)
+            pass
 
     if created:
         print(f"   [Config] Created source configuration(s) in {src_dir}/ ({len(created)} profile(s))")
@@ -866,18 +860,52 @@ def wgs84_to_bng(lat, lon):
     """
     Converts WGS84 decimal latitude and longitude into British National Grid
     (OSGB36 / EPSG:27700) Eastings and Northings in meters using the standard
-    Airy 1830 ellipsoid and Transverse Mercator projection (pure Python standard library).
+    7-parameter Helmert datum shift (WGS84 -> OSGB36) followed by the
+    Airy 1830 Transverse Mercator projection (pure Python standard library).
     """
+    # 1. WGS84 geodetic (lat, lon) -> 3D Cartesian (X, Y, Z)
+    a_w, b_w = 6378137.0, 6356752.3141
+    e2_w = 1.0 - (b_w * b_w) / (a_w * a_w)
+    phi_w = math.radians(lat)
+    lam_w = math.radians(lon)
+    sin_phi_w = math.sin(phi_w)
+    cos_phi_w = math.cos(phi_w)
+    nu_w = a_w / math.sqrt(max(1e-12, 1.0 - e2_w * sin_phi_w * sin_phi_w))
+    x_w = nu_w * cos_phi_w * math.cos(lam_w)
+    y_w = nu_w * cos_phi_w * math.sin(lam_w)
+    z_w = (1.0 - e2_w) * nu_w * sin_phi_w
+
+    # 2. 7-parameter Helmert transform (WGS84 -> OSGB36)
+    tx, ty, tz = -446.448, 125.157, -542.060
+    s = 1.0 + 20.4894e-6
+    sec2rad = math.pi / (180.0 * 3600.0)
+    rx = -0.1502 * sec2rad
+    ry = -0.2470 * sec2rad
+    rz = -0.8421 * sec2rad
+    x_o = tx + s * x_w - rz * y_w + ry * z_w
+    y_o = ty + rz * x_w + s * y_w - rx * z_w
+    z_o = tz - ry * x_w + rx * y_w + s * z_w
+
+    # 3. 3D Cartesian -> Airy 1830 geodetic (phi, lam)
     a, b = 6377563.396, 6356256.909
+    e2 = 1.0 - (b * b) / (a * a)
+    p = math.hypot(x_o, y_o)
+    lam = math.atan2(y_o, x_o)
+    phi = math.atan2(z_o, p * (1.0 - e2))
+    for _ in range(8):
+        nu_i = a / math.sqrt(max(1e-12, 1.0 - e2 * (math.sin(phi) ** 2)))
+        phi_new = math.atan2(z_o + e2 * nu_i * math.sin(phi), p)
+        if abs(phi_new - phi) < 1e-11:
+            phi = phi_new
+            break
+        phi = phi_new
+
+    # 4. Airy 1830 Transverse Mercator -> BNG (E, N)
     F0 = 0.9996012717
     lat0 = math.radians(49.0)
     lon0 = math.radians(-2.0)
     N0, E0 = -100000.0, 400000.0
-    e2 = 1.0 - (b * b) / (a * a)
     n = (a - b) / (a + b)
-
-    phi = math.radians(lat)
-    lam = math.radians(lon)
 
     cos_phi = math.cos(phi)
     sin_phi = math.sin(phi)
@@ -1143,56 +1171,65 @@ def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=N
     """
     Detects whether range conversion was used and returns the range mode tag
     ('tobit', 'geometric', 'midpoint', 'lower', 'upper', or None).
+    Inspects all '+'-delimited constituents when source_key is a multi-source combination.
     """
     if cli_mode and cli_mode not in ("auto", "none"):
         return cli_mode
     if cli_mode == "none":
         return None
 
-    for m in ("tobit", "geometric", "midpoint", "lower", "upper"):
-        if source_key.endswith(f"_{m}"):
-            return m
+    constituents = [t for t in str(source_key).split("+") if t]
+    found_modes = []
+    for tk in constituents:
+        tk_mode = None
+        for m in ("tobit", "geometric", "midpoint", "lower", "upper"):
+            if tk.endswith(f"_{m}"):
+                tk_mode = m
+                break
+        if not tk_mode and tk in sources_reg:
+            tk_mode = sources_reg[tk].get("range_mode") or None
+        if tk_mode and tk_mode not in found_modes:
+            found_modes.append(tk_mode)
 
-    if source_key in sources_reg:
-        rm = sources_reg[source_key].get("range_mode")
-        if rm:
-            return rm
+    if len(found_modes) > 1:
+        print(f"   [Warning] Mixed range modes across combined sources ({', '.join(found_modes)}); using '{found_modes[0]}'.")
+    if found_modes:
+        return found_modes[0]
 
-    cand_samples = custom_samples
-    if not cand_samples and custom_dir:
-        cand_samples = os.path.join(custom_dir, "samples.csv")
-    if not cand_samples and source_key in sources_reg:
-        s_dir = sources_reg[source_key].get("data_dir", "")
-        if s_dir:
-            cand = os.path.join(s_dir, "samples.csv")
-            if os.path.exists(cand):
-                cand_samples = cand
-            else:
-                cand = os.path.join(BASE_DIR, s_dir, "samples.csv")
-                if os.path.exists(cand):
-                    cand_samples = cand
+    cand_paths = []
+    if custom_samples:
+        cand_paths.append(custom_samples)
+    elif custom_dir:
+        cand_paths.append(os.path.join(custom_dir, "samples.csv"))
+    for tk in constituents:
+        if tk in sources_reg:
+            s_dir = sources_reg[tk].get("data_dir", "")
+            if s_dir:
+                cand_paths.append(os.path.join(s_dir, "samples.csv"))
+                cand_paths.append(os.path.join(BASE_DIR, s_dir, "samples.csv"))
 
-    if cand_samples and os.path.exists(cand_samples):
-        try:
-            with open(cand_samples, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                if reader.fieldnames and "meas_method" in reader.fieldnames:
-                    for i, r in enumerate(reader):
-                        if i > 500:
-                            break
-                        mm = (r.get("meas_method") or "").strip().lower()
-                        if "tobit" in mm:
-                            return "tobit"
-                        if "geometric" in mm:
-                            return "geometric"
-                        if "midpoint" in mm or "arithmetic" in mm:
-                            return "midpoint"
-                        if "lower" in mm:
-                            return "lower"
-                        if "upper" in mm:
-                            return "upper"
-        except Exception:
-            pass
+    for cand_samples in cand_paths:
+        if cand_samples and os.path.exists(cand_samples):
+            try:
+                with open(cand_samples, "r", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    if reader.fieldnames and "meas_method" in reader.fieldnames:
+                        for i, r in enumerate(reader):
+                            if i > 500:
+                                break
+                            mm = (r.get("meas_method") or "").strip().lower()
+                            if "tobit" in mm:
+                                return "tobit"
+                            if "geometric" in mm:
+                                return "geometric"
+                            if "midpoint" in mm or "arithmetic" in mm:
+                                return "midpoint"
+                            if "lower" in mm:
+                                return "lower"
+                            if "upper" in mm:
+                                return "upper"
+            except Exception:
+                pass
 
     return None
 
@@ -1513,28 +1550,31 @@ def load_monitoring_stations_and_records(
                         pts_source[nid] = prefix
 
         wq_samples_path = os.path.join(s_dir, f"{prefix} Water Quality Samples.csv")
-        if os.path.exists(wq_samples_path):
-            with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
-                for r in csv.DictReader(f):
-                    if r.get("det_code") == "0117":
-                        core_wq_sites.add(r["network_id"])
-
         if dataset == "wq":
             if os.path.exists(wq_samples_path):
                 with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
                     for r in csv.DictReader(f):
-                        if r.get("det_code") == det_code:
-                            try:
-                                val = float(r["meas_result"])
-                            except (ValueError, TypeError):
-                                continue
-                            is_cens = (r.get("meas_sign") == "<")
-                            dt = r.get("sample_datetime", "")
-                            if len(dt) >= 7:
-                                yr = int(dt[0:4])
-                                mo = int(dt[5:7])
-                                seas = MONTH_TO_SEASON[mo]
-                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
+                        r_det = r.get("det_code")
+                        if r_det == det_code or r_det == "0117":
+                            if r_det == det_code:
+                                core_wq_sites.add(r["network_id"])
+                            if r_det == det_code:
+                                try:
+                                    val = float(r["meas_result"])
+                                except (ValueError, TypeError):
+                                    continue
+                                is_cens = (r.get("meas_sign") == "<")
+                                dt = r.get("sample_datetime", "")
+                                if len(dt) >= 7:
+                                    yr = int(dt[0:4])
+                                    mo = int(dt[5:7])
+                                    seas = MONTH_TO_SEASON[mo]
+                                    all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
+        elif os.path.exists(wq_samples_path):
+            with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    if r.get("det_code") == "0117":
+                        core_wq_sites.add(r["network_id"])
         elif dataset == "lcms":
             lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
             if not os.path.exists(lcms_path):
@@ -2996,11 +3036,12 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
         raw_cid = rdict.get(catch_col) if catch_col else None
         cid_key = (file_idx, _parse_cid_val(raw_cid))
 
+        snap_pad = max(1500.0, max_snap_m + 500.0)
         xs = [p[0] for p in poly]
         ys = [p[1] for p in poly]
         minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
-        gx0, gx1 = int((minx - 1000) // 2000), int((maxx + 1000) // 2000)
-        gy0, gy1 = int((miny - 1000) // 2000), int((maxy + 1000) // 2000)
+        gx0, gx1 = int((minx - snap_pad) // 2000), int((maxx + snap_pad) // 2000)
+        gy0, gy1 = int((miny - snap_pad) // 2000), int((maxy + snap_pad) // 2000)
         cand_sites = []
         for gx in range(gx0, gx1 + 1):
             for gy in range(gy0, gy1 + 1):
@@ -3626,7 +3667,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
                 ]
             w.writerow(row_out + extra_vals)
 
-    active_meas_method = "gam" if any("gam" in s[5] for s_list in site_by_reach.values() for s in s_list) else None
+    all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m})
+    active_meas_method = "gam" if any("gam" in m for m in all_meths) else (all_meths[0] if all_meths else None)
     meta_path = os.path.join(OUT_DIR, "network_metadata.json")
     meta_obj = {
         "name": cfg.get("name", net_abbr),
@@ -3664,6 +3706,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, n
 
 
 def main():
+    global OUT_DIR
     parser = argparse.ArgumentParser(
         description="Preprocess stream network GeoPackages (ORN v2, EU-Hydro, etc.) and EA RSN samples for S3N modeling."
     )
@@ -3845,6 +3888,7 @@ def main():
         help="List available monitoring data sources (RSN, SSN, RSS, custom) and their configuration, then exit.",
     )
     args = parser.parse_args()
+    configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
     ensure_all_configs(BASE_DIR)
     if args.list_transforms:
         print_available_transforms()
@@ -3869,15 +3913,24 @@ def main():
     )
 
     if active_range_mode:
-        if source_key != "rsn" and not source_key.endswith(f"_{active_range_mode}"):
-            source_key = f"{source_key}_{active_range_mode}"
-            if not source_abbr.endswith(active_range_mode.upper()[:3]):
+        # Only append range mode if none of the constituent tags already carry it (e.g. waterblitz_tobit+rsn -> rsn+waterblitz_tobit)
+        has_rm_suffix = ("+" in source_key and any(t.endswith(f"_{active_range_mode}") for t in source_key.split("+"))) or source_key.endswith(f"_{active_range_mode}")
+        if source_key != "rsn" and not has_rm_suffix:
+            # Re-check if an explicit <source>_<mode> alias exists in registry (e.g. waterblitz + --range-mode=midpoint -> waterblitz_midpoint)
+            if args.range_mode not in ("auto", "none") and "+" not in source_key:
+                base_cand = re.sub(r"_(tobit|geometric|midpoint|lower|upper)$", "", source_key)
+                mode_cand = f"{base_cand}_{active_range_mode}"
+                if mode_cand in sources_reg or os.path.isdir(_rel_join(DATA_DIR, "custom", mode_cand)):
+                    source_key, constituents, source_abbr, source_label = resolve_source_tag(mode_cand, (sources_reg, composites_reg))
+                else:
+                    source_key = mode_cand
+            else:
+                source_key = f"{source_key}_{active_range_mode}"
+            if f"_{active_range_mode.upper()[:3]}" not in source_abbr and f"[{active_range_mode.title()}]" not in source_abbr:
                 source_abbr = f"{source_abbr}_{active_range_mode.upper()[:3]}"
             if f"[{active_range_mode.title()}]" not in source_label:
                 source_label = f"{source_label} [{active_range_mode.title()}]"
         print(f"   [Range Handling] Detected range mode: {active_range_mode.upper()} (Processed folder tagged with _{active_range_mode})")
-
-    configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
 
     if args.list_networks:
         list_available_networks()
@@ -3928,7 +3981,7 @@ def main():
     )
     pts, pts_source, core_wq_sites, all_records = load_monitoring_stations_and_records(
         DATA_DIR,
-        source=args.source,
+        source=source_key,
         dataset=args.dataset,
         det_code=args.det_code,
         custom_sites=args.custom_sites,
@@ -3941,7 +3994,10 @@ def main():
     raw_all_by_site = defaultdict(list)
     for rec in all_records:
         nid, val, is_cens = rec[0], rec[1], rec[2]
-        raw_all_by_site[nid].append((val, is_cens))
+        meth_val = rec[7] if len(rec) > 7 else ""
+        # Records already imputed via Tobit conditional expectation E[Y | Y <= b] must not be double-imputed
+        needs_cens_imp = bool(is_cens) and ("tobit" not in meth_val)
+        raw_all_by_site[nid].append((val, needs_cens_imp))
     imp_all_by_site = impute_censored_by_site(raw_all_by_site, method=args.censor_method)
 
     site_cursors = defaultdict(int)
@@ -4032,8 +4088,9 @@ def main():
             ys = [p[1] for p in poly]
             minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
 
-        gx0, gx1 = int((minx - 1000) // 2000), int((maxx + 1000) // 2000)
-        gy0, gy1 = int((miny - 1000) // 2000), int((maxy + 1000) // 2000)
+        snap_pad_orn = max(1500.0, max_snap_m + 500.0)
+        gx0, gx1 = int((minx - snap_pad_orn) // 2000), int((maxx + snap_pad_orn) // 2000)
+        gy0, gy1 = int((miny - snap_pad_orn) // 2000), int((maxy + snap_pad_orn) // 2000)
         cand_sites = []
         for gx in range(gx0, gx1 + 1):
             for gy in range(gy0, gy1 + 1):
@@ -4249,16 +4306,21 @@ def main():
     parent_dn = {}
     log_afv = {}
     topo_order = []
+    visited = set()
     for m_id in sorted(mouths, key=lambda x: reaches[x][3]):
+        if m_id in visited:
+            continue
+        visited.add(m_id)
         log_afv[m_id] = 0.0
         stack = [m_id]
         while stack:
             u = stack.pop()
             topo_order.append(u)
-            ps = parents[u]
+            ps = [p for p in parents[u] if p not in visited]
             if ps:
                 sum_us = sum(max(0.0001, reaches[p][6]) for p in ps)
                 for p in ps:
+                    visited.add(p)
                     parent_dn[p] = u
                     log_afv[p] = log_afv[u] + math.log(max(0.0001, reaches[p][6]) / sum_us)
                     stack.append(p)
@@ -4346,7 +4408,8 @@ def main():
                     "", "", "", "", "", 0
                 ])
 
-    active_meas_method = "gam" if any("gam" in s[5] for s_list in site_by_reach.values() for s in s_list) else None
+    all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m})
+    active_meas_method = "gam" if any("gam" in m for m in all_meths) else (all_meths[0] if all_meths else None)
     meta_path = os.path.join(OUT_DIR, "network_metadata.json")
     meta_obj = {
         "name": cfg.get("name", "orn"),

@@ -138,6 +138,24 @@ match_reaches_between_runs <- function(df1, df2, same_network = FALSE, max_dist_
 # Helper: Reach-by-Reach Relationship, Co-Occurrence & Stoichiometric Analysis
 #         (Supports both Cross-Determinand and Same-Determinand Model Pairs)
 # ------------------------------------------------------------------------------
+safe_zscore <- function(x) {
+  s <- sd(x, na.rm = TRUE)
+  if (!is.finite(s) || s < 1e-9) s <- 1e-9
+  (x - mean(x, na.rm = TRUE)) / s
+}
+
+runs_share_scale <- function(bundles) {
+  if (length(bundles) <= 1L) return(TRUE)
+  same_det <- (length(unique(vapply(bundles, function(b) as.character(b$det_code), character(1)))) == 1L)
+  if (!same_det) return(FALSE)
+  t_types <- unique(vapply(bundles, function(b) tolower(as.character(b$trans_type)), character(1)))
+  if (length(t_types) != 1L) return(FALSE)
+  lams <- vapply(bundles, function(b) if (is.null(b$trans_lambda) || is.na(b$trans_lambda)) NA_real_ else as.numeric(b$trans_lambda), numeric(1))
+  if (all(is.na(lams))) return(TRUE)
+  if (any(is.na(lams))) return(FALSE)
+  (max(lams) - min(lams)) < 1e-3
+}
+
 analyze_reach_relationships <- function(bundles, pair12_pred_match) {
   if (is.null(pair12_pred_match) || nrow(pair12_pred_match) < 20) return(NULL)
 
@@ -147,10 +165,8 @@ analyze_reach_relationships <- function(bundles, pair12_pred_match) {
   same_det <- (b1$det_code == b2$det_code)
 
   # Standardized Z-scores across matched reaches
-  s1 <- max(1e-9, sd(pm$pred1_sc, na.rm = TRUE))
-  s2 <- max(1e-9, sd(pm$pred2_sc, na.rm = TRUE))
-  pm$z1      <- (pm$pred1_sc - mean(pm$pred1_sc, na.rm = TRUE)) / s1
-  pm$z2      <- (pm$pred2_sc - mean(pm$pred2_sc, na.rm = TRUE)) / s2
+  pm$z1      <- safe_zscore(pm$pred1_sc)
+  pm$z2      <- safe_zscore(pm$pred2_sc)
   pm$z_diff  <- pm$z2 - pm$z1
   pm$z_joint <- 0.5 * (pm$z1 + pm$z2)
 
@@ -618,7 +634,9 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     i <- pr[1]; j <- pr[2]
     b1 <- bundles[[i]]; b2 <- bundles[[j]]
     comp_lbl <- sprintf("%s vs. %s", b1$label, b2$label)
-    same_net <- (b1$net_abbr == b2$net_abbr) && (nrow(b1$eng_pred) == nrow(b2$eng_pred))
+    same_net <- (b1$net_abbr == b2$net_abbr) &&
+      (nrow(b1$eng_pred) == nrow(b2$eng_pred)) &&
+      (length(intersect(b1$eng_pred$RivID, b2$eng_pred$RivID)) >= 0.5 * min(nrow(b1$eng_pred), nrow(b2$eng_pred)))
     same_det <- (b1$det_code == b2$det_code)
 
     # A. Fisher's z-test on All England S3N Combined CV R2
@@ -1035,7 +1053,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
 
   # Panel B: S3N Combined 5-Fold CV RMSE by Domain and Run
   rmse_plot <- ifelse(is.na(rmse_mat), 0, rmse_mat)
-  ymax_b <- max(rmse_plot, na.rm = TRUE) * 1.25
+  ymax_b <- max(0.1, max(rmse_plot, na.rm = TRUE) * 1.25)
   bp_b <- matrix(barplot(rmse_plot, beside = TRUE, col = run_cols, border = "#222222",
                          ylim = c(0, ymax_b), ylab = "5-Fold CV RMSE (Model Scale)",
                          main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)", 60),
@@ -1123,6 +1141,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   K <- length(bundles)
   run_labels <- sapply(bundles, function(b) b$label)
   same_det   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
+  same_scale <- runs_share_scale(bundles)
   det_short  <- if (same_det) shorten_det_name(bundles[[1]]$det_name) else sprintf("%s vs. %s", shorten_det_name(bundles[[1]]$det_name), shorten_det_name(bundles[[2]]$det_name))
   det_unit   <- bundles[[1]]$det_unit
   use_log    <- bundles[[1]]$use_log
@@ -1136,15 +1155,15 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     pm <- pair12_pred_match
     set.seed(42)
     idx_pt <- if (nrow(pm) > 8000) sample(nrow(pm), 8000) else seq_len(nrow(pm))
-    if (same_det) {
+    if (same_scale) {
       xlim_a <- quantile(c(pm$pred1_sc, pm$pred2_sc), probs = c(0.005, 0.995), na.rm = TRUE)
       ylim_a <- xlim_a
     } else {
       xlim_a <- quantile(pm$pred1_sc, probs = c(0.005, 0.995), na.rm = TRUE)
       ylim_a <- quantile(pm$pred2_sc, probs = c(0.005, 0.995), na.rm = TRUE)
     }
-    u1_lbl <- if (bundles[[1]]$use_log) sprintf("log(%s)", bundles[[1]]$det_unit) else bundles[[1]]$det_unit
-    u2_lbl <- if (bundles[[2]]$use_log) sprintf("log(%s)", bundles[[2]]$det_unit) else bundles[[2]]$det_unit
+    u1_lbl <- if (bundles[[1]]$use_log) sprintf("log(%s)", bundles[[1]]$det_unit) else sprintf("%s (%s)", bundles[[1]]$det_unit, bundles[[1]]$trans_type)
+    u2_lbl <- if (bundles[[2]]$use_log) sprintf("log(%s)", bundles[[2]]$det_unit) else sprintf("%s (%s)", bundles[[2]]$det_unit, bundles[[2]]$trans_type)
     plot(pm$pred1_sc[idx_pt], pm$pred2_sc[idx_pt],
          xlim = xlim_a, ylim = ylim_a, pch = 16, cex = 0.45, col = rgb(0.12, 0.47, 0.71, 0.25),
          xlab = sprintf("Run 1: %s [%s]", run_labels[1], u1_lbl),
@@ -1155,14 +1174,14 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     grid(col = "#e0e0e0", lty = "dotted")
     fit_a <- lm(pred2_sc ~ pred1_sc, data = pm)
     abline(fit_a, col = "#111111", lwd = 2.0, lty = 1)
-    if (same_det) {
+    if (same_scale) {
       abline(0, 1, col = "#c0392b", lwd = 2, lty = 2)
     }
     r_p   <- cor(pm$pred1_sc, pm$pred2_sc, use = "complete.obs", method = "pearson")
     rho_s <- cor(pm$pred1_sc, pm$pred2_sc, use = "complete.obs", method = "spearman")
     rmsd  <- sqrt(mean((pm$pred2_sc - pm$pred1_sc)^2, na.rm = TRUE))
     bias  <- mean(pm$pred2_sc - pm$pred1_sc, na.rm = TRUE)
-    if (same_det) {
+    if (same_scale) {
       legend("topleft",
              legend = c(
                sprintf("Pearson r = %.4f (Spearman rho = %.4f)", r_p, rho_s),
@@ -1188,18 +1207,16 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   }
 
   # Panel B: Kernel Density Curves of Predicted Concentrations Across Runs
-  if (same_det) {
+  if (same_scale) {
     dens_list <- lapply(bundles, function(b) density(b$eng_pred$pred_model_sc, na.rm = TRUE, n = 512))
-    xlab_b <- if (use_log) sprintf("Predicted log(%s) [%s]", det_short, det_unit) else sprintf("Predicted %s (%s)", det_short, det_unit)
+    xlab_b <- if (use_log) sprintf("Predicted log(%s) [%s]", det_short, det_unit) else sprintf("Predicted %s (%s, %s)", det_short, det_unit, bundles[[1]]$trans_type)
     main_b <- "B. Distribution of Reach-Level Predictions Across Runs"
   } else {
     dens_list <- lapply(bundles, function(b) {
-      z_v <- (b$eng_pred$pred_model_sc - mean(b$eng_pred$pred_model_sc, na.rm = TRUE)) /
-             max(1e-9, sd(b$eng_pred$pred_model_sc, na.rm = TRUE))
-      density(z_v, na.rm = TRUE, n = 512)
+      density(safe_zscore(b$eng_pred$pred_model_sc), na.rm = TRUE, n = 512)
     })
     xlab_b <- "Standardized Reach Prediction Z-Score ((y - mean) / SD)"
-    main_b <- "B. Standardized Distribution Shape Across Determinands"
+    main_b <- "B. Standardized Distribution Shape Across Runs"
   }
   xr_b <- range(unlist(lapply(dens_list, function(d) d$x)), na.rm = TRUE)
   yr_b <- c(0, max(unlist(lapply(dens_list, function(d) d$y)), na.rm = TRUE) * 1.18)
@@ -1211,7 +1228,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   grid(col = "#e0e0e0", lty = "dotted")
   for (i in seq_len(K)) {
     lines(dens_list[[i]]$x, dens_list[[i]]$y, col = run_cols[i], lwd = 2.5)
-    med_v <- if (same_det) median(bundles[[i]]$eng_pred$pred_model_sc, na.rm = TRUE) else 0.0
+    med_v <- if (same_scale) median(bundles[[i]]$eng_pred$pred_model_sc, na.rm = TRUE) else 0.0
     abline(v = med_v, col = run_cols[i], lty = 3, lwd = 1.2)
   }
   leg_b <- sapply(seq_len(K), function(i) {
@@ -1253,12 +1270,11 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   )
 
   # Panel D: Spatial Map of Co-located Prediction Differences (Run 2 minus Run 1 or Z2 - Z1)
-  if (!is.null(pair12_pred_match) && nrow(pair12_pred_match) >= 20) {
+  if (!is.null(pair12_pred_match) && nrow(pair12_pred_match) >= 20 &&
+      all(c("start_X", "start_Y", "mid_X", "mid_Y", "end_X", "end_Y") %in% names(pair12_pred_match))) {
     pm <- pair12_pred_match
-    diff_vec <- if (same_det) pm$diff_sc else if ("z_diff" %in% names(pm)) pm$z_diff else {
-      z1 <- (pm$pred1_sc - mean(pm$pred1_sc, na.rm = TRUE)) / max(1e-9, sd(pm$pred1_sc, na.rm = TRUE))
-      z2 <- (pm$pred2_sc - mean(pm$pred2_sc, na.rm = TRUE)) / max(1e-9, sd(pm$pred2_sc, na.rm = TRUE))
-      z2 - z1
+    diff_vec <- if (same_scale) pm$diff_sc else if ("z_diff" %in% names(pm)) pm$z_diff else {
+      safe_zscore(pm$pred2_sc) - safe_zscore(pm$pred1_sc)
     }
     q_d <- quantile(abs(diff_vec), probs = 0.98, na.rm = TRUE)
     max_abs <- max(0.1, as.numeric(q_d))
@@ -1268,8 +1284,8 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     xr <- range(c(pm$start_X, pm$end_X), na.rm = TRUE)
     yr <- range(c(pm$start_Y, pm$end_Y), na.rm = TRUE)
     pad_x <- diff(xr) * 0.16
-    main_d <- if (same_det) {
-      sprintf("D. Spatial Difference Map: Run 2 minus Run 1 (%s)", if (use_log) "log scale" else det_unit)
+    main_d <- if (same_scale) {
+      sprintf("D. Spatial Difference Map: Run 2 minus Run 1 (%s)", if (use_log) "log scale" else bundles[[1]]$trans_type)
     } else {
       "D. Standardized Spatial Divergence Map: Z(Run 2) minus Z(Run 1)"
     }
@@ -1402,15 +1418,16 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
 # Figure 4: Side-by-Side All England Stream Network Maps
 plot_comp4_side_by_side_maps <- function(bundles, out_file) {
   K <- length(bundles)
-  same_det  <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
-  use_log   <- bundles[[1]]$use_log
-  det_short <- shorten_det_name(bundles[[1]]$det_name)
-  det_unit  <- bundles[[1]]$det_unit
+  same_det   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
+  same_scale <- runs_share_scale(bundles)
+  b0_trans   <- build_transformer(bundles[[1]]$trans_type, lambda = if (is.na(bundles[[1]]$trans_lambda)) NULL else bundles[[1]]$trans_lambda)
+  det_short  <- shorten_det_name(bundles[[1]]$det_name)
+  det_unit   <- bundles[[1]]$det_unit
 
   all_vals <- unlist(lapply(bundles, function(b) {
     c(b$eng_pred$pred_model_sc, b$eng_pred$obs_model_sc[b$eng_pred$has_obs == 1])
   }))
-  shared_sc <- compute_color_scale(all_vals, use_log)
+  shared_sc <- if (same_scale) compute_color_scale(all_vals, b0_trans) else NULL
   pal_use   <- get_val_pal(FALSE)
 
   if (K <= 2) {
@@ -1427,11 +1444,12 @@ plot_comp4_side_by_side_maps <- function(bundles, out_file) {
 
   for (i in seq_len(K)) {
     b <- bundles[[i]]
-    sc_i <- if (same_det) {
+    sc_i <- if (same_scale) {
       shared_sc
     } else {
+      b_tr   <- build_transformer(b$trans_type, lambda = if (is.na(b$trans_lambda)) NULL else b$trans_lambda)
       vals_i <- c(b$eng_pred$pred_model_sc, b$eng_pred$obs_model_sc[b$eng_pred$has_obs == 1])
-      compute_color_scale(vals_i, b$use_log)
+      compute_color_scale(vals_i, b_tr)
     }
     d_short_i <- shorten_det_name(b$det_name)
     r_all <- subset(b$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
@@ -1568,33 +1586,38 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
          fill = c(run_cols, NA), border = c(rep("#222222", K), NA), bty = "n", cex = 0.78)
 
   # Panel C: Spatial Map of 4-Quadrant Co-Occurrence Across England
-  par(mar = c(1.5, 1.5, 4.0, 1.5))
-  xr <- range(c(pm$start_X, pm$end_X), na.rm = TRUE)
-  yr <- range(c(pm$start_Y, pm$end_Y), na.rm = TRUE)
-  pad_x <- diff(xr) * 0.24
-  plot(NULL, xlim = c(xr[1] - diff(xr) * 0.03, xr[2] + pad_x), ylim = yr,
-       asp = 1, axes = FALSE, xlab = "", ylab = "",
-       main = "", cex.main = 1.08)
-  rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#dcdcdc")
-  cols_c <- q_cols[pm$quadrant]
-  lwds_c <- pmin(2.1, 0.32 + 0.34 * log10(pmax(1, pm$Shreve)))
-  segments(pm$start_X, pm$start_Y, pm$mid_X, pm$mid_Y, col = cols_c, lwd = lwds_c)
-  segments(pm$mid_X,   pm$mid_Y,   pm$end_X, pm$end_Y, col = cols_c, lwd = lwds_c)
-  legend(xr[2] - diff(xr) * 0.02, yr[1] + diff(yr) * 0.68,
-         title = "Reach Co-Occurrence",
-         legend = c(
-           sprintf("High R1 & High R2 (%.1f%%)", rel_info$pct_q1),
-           sprintf("Low R1 & Low R2 (%.1f%%)",   rel_info$pct_q2),
-           sprintf("High R1 & Low R2 (%.1f%%)",  rel_info$pct_q3),
-           sprintf("Low R1 & High R2 (%.1f%%)",  rel_info$pct_q4)
-         ),
-         fill = q_cols, border = "#222222", bty = "n", cex = 0.78)
-  draw_plot_header(
-    main_title = "C. Spatial Co-Occurrence Map Across Stream Reaches (4 Quadrants)",
-    sub_title  = sprintf("Concordant Reaches (High/High + Low/Low): %.1f%% | Top-Quartile Hotspot Overlap (Jaccard): %.3f",
-                         rel_info$pct_concordant, rel_info$jaccard_75),
-    max_main = 60, max_sub = 100, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
-  )
+  if (all(c("start_X", "start_Y", "mid_X", "mid_Y", "end_X", "end_Y") %in% names(pm))) {
+    par(mar = c(1.5, 1.5, 4.0, 1.5))
+    xr <- range(c(pm$start_X, pm$end_X), na.rm = TRUE)
+    yr <- range(c(pm$start_Y, pm$end_Y), na.rm = TRUE)
+    pad_x <- diff(xr) * 0.24
+    plot(NULL, xlim = c(xr[1] - diff(xr) * 0.03, xr[2] + pad_x), ylim = yr,
+         asp = 1, axes = FALSE, xlab = "", ylab = "",
+         main = "", cex.main = 1.08)
+    rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#dcdcdc")
+    cols_c <- q_cols[pm$quadrant]
+    lwds_c <- pmin(2.1, 0.32 + 0.34 * log10(pmax(1, pm$Shreve)))
+    segments(pm$start_X, pm$start_Y, pm$mid_X, pm$mid_Y, col = cols_c, lwd = lwds_c)
+    segments(pm$mid_X,   pm$mid_Y,   pm$end_X, pm$end_Y, col = cols_c, lwd = lwds_c)
+    legend(xr[2] - diff(xr) * 0.02, yr[1] + diff(yr) * 0.68,
+           title = "Reach Co-Occurrence",
+           legend = c(
+             sprintf("High R1 & High R2 (%.1f%%)", rel_info$pct_q1),
+             sprintf("Low R1 & Low R2 (%.1f%%)",   rel_info$pct_q2),
+             sprintf("High R1 & Low R2 (%.1f%%)",  rel_info$pct_q3),
+             sprintf("Low R1 & High R2 (%.1f%%)",  rel_info$pct_q4)
+           ),
+           fill = q_cols, border = "#222222", bty = "n", cex = 0.78)
+    draw_plot_header(
+      main_title = "C. Spatial Co-Occurrence Map Across Stream Reaches (4 Quadrants)",
+      sub_title  = sprintf("Concordant Reaches (High/High + Low/Low): %.1f%% | Top-Quartile Hotspot Overlap (Jaccard): %.3f",
+                           rel_info$pct_concordant, rel_info$jaccard_75),
+      max_main = 60, max_sub = 100, cex_main = 1.08, cex_sub = 0.75, adj = 0.5
+    )
+  } else {
+    plot.new()
+    text(0.5, 0.5, "Coordinate columns unavailable for spatial map.", col = "#555555")
+  }
 
   # Panel D: Basin & Regime Distribution of Stoichiometric N:P Ratio or Z-Score Divergence
   par(mar = c(5.2, 4.8, 4.2, 1.8))
@@ -1670,27 +1693,34 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
                                              param_comp_df, pair12_cv_match, pair12_pred_match,
                                              out_dir, report_path) {
   K <- length(bundles)
-  same_det_all <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
-  lines <- character(0)
+  same_det_all   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
+  same_scale_all <- runs_share_scale(bundles)
+  buf   <- character(512L)
+  buf_n <- 0L
   add_line <- function(fmt = "", ...) {
-    if (length(list(...)) == 0L) {
-      lines <<- c(lines, fmt)
-    } else {
-      lines <<- c(lines, sprintf(fmt, ...))
+    line_str <- if (length(list(...)) == 0L) fmt else sprintf(fmt, ...)
+    buf_n <<- buf_n + 1L
+    if (buf_n > length(buf)) {
+      length(buf) <<- length(buf) * 2L
     }
+    buf[buf_n] <<- line_str
   }
 
   add_line("# S3N Model Run & Output Comparison Report")
   add_line("")
-  if (same_det_all) {
-    add_line("- **Comparison Mode**: Same Determinand (`%s` — %s, `%s`, %s scale)",
+  if (same_scale_all) {
+    add_line("- **Comparison Mode**: Same Determinand & Transform (`%s` — %s, `%s`, %s)",
              bundles[[1]]$det_code, bundles[[1]]$det_name, bundles[[1]]$det_unit,
-             if (bundles[[1]]$use_log) "log" else "raw")
+             bundles[[1]]$trans_label)
+  } else if (same_det_all) {
+    tr_desc <- paste(sapply(seq_len(K), function(i) sprintf("Run %d: %s", i, bundles[[i]]$trans_label)), collapse = " vs. ")
+    add_line("- **Comparison Mode**: Cross-Transformation Comparison for `%s` — %s (%s)",
+             bundles[[1]]$det_code, bundles[[1]]$det_name, tr_desc)
   } else {
     det_desc <- paste(sapply(seq_len(K), function(i) {
-      sprintf("Run %d: `%s` (%s, `%s`, %s scale)", i, bundles[[i]]$det_code,
+      sprintf("Run %d: `%s` (%s, `%s`, %s)", i, bundles[[i]]$det_code,
               bundles[[i]]$det_name, bundles[[i]]$det_unit,
-              if (bundles[[i]]$use_log) "log" else "raw")
+              bundles[[i]]$trans_label)
     }), collapse = " vs. ")
     add_line("- **Comparison Mode**: Cross-Determinand Comparison (%s)", det_desc)
   }
@@ -1731,13 +1761,13 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
     w_rmse <- eng_s3n[best_rmse_idx, ]
 
     add_line("### 2.1 Overall Predictive Performance (All England 5-Fold Cross-Validation)")
-    if (same_det_all && w_r2$Run_Index == w_rmse$Run_Index) {
+    if (same_scale_all && w_r2$Run_Index == w_rmse$Run_Index) {
       add_line("- **Overall Winner**: **%s (Run %d)** achieved both the highest out-of-sample 5-fold cross-validation **R² = %.4f** and the lowest **RMSE = %.4f** (MAE = %.4f) across the All England stream network.",
                w_r2$Run_Label, w_r2$Run_Index, w_r2$R2, w_r2$RMSE, w_r2$MAE)
     } else {
       add_line("- **Highest Variance Explained (CV R²)**: **%s (Run %d)** achieved the highest out-of-sample 5-fold CV **R² = %.4f** (RMSE = %.4f, MAE = %.4f, ΔR² over non-spatial OLS = `%+.4f`).",
                w_r2$Run_Label, w_r2$Run_Index, w_r2$R2, w_r2$RMSE, w_r2$MAE, w_r2$Delta_R2_vs_OLS)
-      if (same_det_all) {
+      if (same_scale_all) {
         add_line("- **Lowest Absolute Prediction Error (CV RMSE)**: **%s (Run %d)** achieved the lowest out-of-sample 5-fold CV **RMSE = %.4f** (MAE = %.4f, R² = %.4f) — note that when comparing different water networks, `RMSE` and `R²` can rank differently if one network snaps a slightly different subset of headwater vs. mainstem stations (`n = %d` vs `n = %d` observed reaches).",
                  w_rmse$Run_Label, w_rmse$Run_Index, w_rmse$RMSE, w_rmse$MAE, w_rmse$R2,
                  w_rmse$n_obs, w_r2$n_obs)
@@ -2051,7 +2081,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
   add_line("- `parameter_comparison.csv` — Fixed-effect and spatial covariance parameter estimates with two-sample Wald Z-tests.")
   add_line("")
 
-  writeLines(lines, report_path)
+  writeLines(buf[seq_len(buf_n)], report_path)
 }
 
 # ==============================================================================
@@ -2113,16 +2143,7 @@ if (sys.nframe() == 0L) {
   # If a single directory is passed (or --by=season|year|month is requested),
   # automatically discover temporal subdirectories inside it
   if (length(pos_dirs) == 1 && !is.null(by_mode)) {
-    p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else rel_path(BASE_DIR, pos_dirs[1])
-    if (!dir.exists(p_dir)) {
-      alt_res <- rel_path(out_root_cli, "results", pos_dirs[1])
-      alt_p   <- rel_path(out_root_cli, pos_dirs[1])
-      if (dir.exists(alt_res)) {
-        p_dir <- alt_res
-      } else if (dir.exists(alt_p)) {
-        p_dir <- alt_p
-      }
-    }
+    p_dir <- resolve_run_dir_path(pos_dirs[1], out_root = out_root_cli, base_dir = BASE_DIR)
     subs <- list.dirs(p_dir, recursive = FALSE, full.names = TRUE)
     if (by_mode == "season") {
       order_s <- c("season_winter", "season_spring", "season_summer", "season_autumn")
@@ -2137,16 +2158,7 @@ if (sys.nframe() == 0L) {
     }
   } else if (length(pos_dirs) == 1 && is.null(by_mode)) {
     # Check if single directory contains temporal subdirectories automatically
-    p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else rel_path(BASE_DIR, pos_dirs[1])
-    if (!dir.exists(p_dir)) {
-      alt_res <- rel_path(out_root_cli, "results", pos_dirs[1])
-      alt_p   <- rel_path(out_root_cli, pos_dirs[1])
-      if (dir.exists(alt_res)) {
-        p_dir <- alt_res
-      } else if (dir.exists(alt_p)) {
-        p_dir <- alt_p
-      }
-    }
+    p_dir <- resolve_run_dir_path(pos_dirs[1], out_root = out_root_cli, base_dir = BASE_DIR)
     subs <- list.dirs(p_dir, recursive = FALSE, full.names = TRUE)
     for (m_type in c("season", "year", "month")) {
       m_subs <- subs[grepl(paste0("^", m_type, "_"), basename(subs))]

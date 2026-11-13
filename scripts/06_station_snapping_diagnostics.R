@@ -55,53 +55,43 @@ BASE_DIR <- resolve_base_dir()
 # ------------------------------------------------------------------------------
 compute_snapped_reach_point <- function(st_x, st_y, sx, sy, mx, my, ex, ey, snap_dist_m, along_m = NA_real_, len_m = NA_real_) {
   n <- length(st_x)
-  out_x <- numeric(n)
-  out_y <- numeric(n)
+  if (n == 0L) return(list(x = numeric(0), y = numeric(0)))
 
-  proj_seg <- function(px, py, x1, y1, x2, y2) {
+  valid <- !is.na(sx) & !is.na(sy) & !is.na(mx) & !is.na(my) & !is.na(ex) & !is.na(ey) & !is.na(st_x) & !is.na(st_y)
+  out_x <- rep(NA_real_, n)
+  out_y <- rep(NA_real_, n)
+  if (!any(valid)) return(list(x = out_x, y = out_y))
+
+  proj_vec <- function(px, py, x1, y1, x2, y2) {
     dx <- x2 - x1
     dy <- y2 - y1
     l2 <- dx * dx + dy * dy
-    if (l2 <= 1e-12) return(c(x1, y1, (px - x1)^2 + (py - y1)^2))
-    t_val <- max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / l2))
+    t_val <- ifelse(l2 > 1e-12, pmax(0.0, pmin(1.0, ((px - x1) * dx + (py - y1) * dy) / pmax(1e-12, l2))), 0.0)
     qx <- x1 + t_val * dx
     qy <- y1 + t_val * dy
-    c(qx, qy, (px - qx)^2 + (py - qy)^2)
+    list(qx = qx, qy = qy, d2 = (px - qx)^2 + (py - qy)^2)
   }
 
-  for (i in seq_len(n)) {
-    if (is.na(sx[i]) || is.na(sy[i]) || is.na(mx[i]) || is.na(my[i]) || is.na(ex[i]) || is.na(ey[i])) {
-      out_x[i] <- NA_real_
-      out_y[i] <- NA_real_
-      next
-    }
-    p1 <- proj_seg(st_x[i], st_y[i], sx[i], sy[i], mx[i], my[i])
-    p2 <- proj_seg(st_x[i], st_y[i], mx[i], my[i], ex[i], ey[i])
-    qx <- if (p1[3] <= p2[3]) p1[1] else p2[1]
-    qy <- if (p1[3] <= p2[3]) p1[2] else p2[2]
+  v_idx <- which(valid)
+  p1 <- proj_vec(st_x[v_idx], st_y[v_idx], sx[v_idx], sy[v_idx], mx[v_idx], my[v_idx])
+  p2 <- proj_vec(st_x[v_idx], st_y[v_idx], mx[v_idx], my[v_idx], ex[v_idx], ey[v_idx])
+  use_p1 <- p1$d2 <= p2$d2
+  qx <- ifelse(use_p1, p1$qx, p2$qx)
+  qy <- ifelse(use_p1, p1$qy, p2$qy)
 
-    vx <- qx - st_x[i]
-    vy <- qy - st_y[i]
-    v_norm <- sqrt(vx * vx + vy * vy)
-    d_true <- ifelse(is.na(snap_dist_m[i]), v_norm, snap_dist_m[i])
+  vx <- qx - st_x[v_idx]
+  vy <- qy - st_y[v_idx]
+  v_norm <- sqrt(vx * vx + vy * vy)
+  d_true <- ifelse(is.na(snap_dist_m[v_idx]), v_norm, snap_dist_m[v_idx])
 
-    if (v_norm > 1e-6) {
-      out_x[i] <- round(st_x[i] + d_true * (vx / v_norm), 2)
-      out_y[i] <- round(st_y[i] + d_true * (vy / v_norm), 2)
-    } else {
-      # Station sits directly on the chord; offset along normal to reach direction
-      rx <- ex[i] - sx[i]
-      ry <- ey[i] - sy[i]
-      rn <- sqrt(rx * rx + ry * ry)
-      if (rn > 1e-6) {
-        out_x[i] <- round(st_x[i] + d_true * (-ry / rn), 2)
-        out_y[i] <- round(st_y[i] + d_true * (rx / rn), 2)
-      } else {
-        out_x[i] <- round(st_x[i] + d_true, 2)
-        out_y[i] <- round(st_y[i], 2)
-      }
-    }
-  }
+  # If the station sits already on the reach chord (v_norm <= 1e-6), keep (qx, qy) on the reach
+  # instead of pushing it off along a normal; otherwise step toward the chord clamped to [0, v_norm].
+  step <- ifelse(v_norm > 1e-6, pmin(d_true, v_norm) / pmax(1e-12, v_norm), 0.0)
+  px_out <- ifelse(v_norm > 1e-6, st_x[v_idx] + step * vx, qx)
+  py_out <- ifelse(v_norm > 1e-6, st_y[v_idx] + step * vy, qy)
+
+  out_x[v_idx] <- round(px_out, 2)
+  out_y[v_idx] <- round(py_out, 2)
   list(x = out_x, y = out_y)
 }
 
@@ -225,68 +215,85 @@ build_station_snapping_table <- function(proc_dir, include_excluded = TRUE) {
 # ------------------------------------------------------------------------------
 compute_catchment_snapping_summary <- function(snap_df, reaches_df, catch_lu = NULL) {
   cids <- sort(unique(c(reaches_df$CatchID, snap_df$CatchID[!is.na(snap_df$reach_mid_X)])))
-  rows <- vector("list", length(cids))
+  n_c  <- length(cids)
+  if (n_c == 0L) return(data.frame())
 
-  for (i in seq_along(cids)) {
-    cid <- cids[i]
-    sub_r <- reaches_df[reaches_df$CatchID == cid, ]
-    sub_s <- snap_df[snap_df$CatchID == cid, ]
-    sub_inc <- sub_s[sub_s$included_250m == 1L, ]
-    sub_exc <- sub_s[sub_s$included_250m == 0L, ]
+  reach_counts <- table(reaches_df$CatchID)
+  r_cnt_vec    <- as.integer(reach_counts[as.character(cids)])
+  r_cnt_vec[is.na(r_cnt_vec)] <- 0L
 
-    c_name <- paste0("Catchment ", cid)
-    r_name <- ""
-    if (!is.null(catch_lu) && cid %in% catch_lu$CatchID) {
-      idx <- match(cid, catch_lu$CatchID)
-      c_name <- catch_lu$Main_River[idx]
-      r_name <- catch_lu$RBD_Name[idx]
-    } else if (nrow(sub_s) > 0 && nzchar(sub_s$Catchment_Name[1])) {
-      c_name <- sub_s$Catchment_Name[1]
-      r_name <- sub_s$RBD_Name[1]
+  snap_groups <- split(seq_len(nrow(snap_df)), snap_df$CatchID)
+  lu_idx      <- if (!is.null(catch_lu)) match(cids, catch_lu$CatchID) else rep(NA_integer_, n_c)
+
+  c_names <- paste0("Catchment ", cids)
+  r_names <- rep("", n_c)
+  snapped_r_vec <- integer(n_c)
+  inc_vec       <- integer(n_c)
+  exc_vec       <- integer(n_c)
+  tot_vec       <- integer(n_c)
+  min_v <- q25_v <- med_v <- mean_v <- q75_v <- p95_v <- max_v <- p10_v <- p50_v <- rep(NA_real_, n_c)
+
+  for (i in seq_len(n_c)) {
+    cid_str <- as.character(cids[i])
+    s_idx   <- snap_groups[[cid_str]]
+    if (!is.na(lu_idx[i])) {
+      c_names[i] <- catch_lu$Main_River[lu_idx[i]]
+      r_names[i] <- catch_lu$RBD_Name[lu_idx[i]]
+    } else if (!is.null(s_idx) && length(s_idx) > 0L && nzchar(snap_df$Catchment_Name[s_idx[1]])) {
+      c_names[i] <- snap_df$Catchment_Name[s_idx[1]]
+      r_names[i] <- snap_df$RBD_Name[s_idx[1]]
     }
+    if (is.null(s_idx) || length(s_idx) == 0L) next
 
-    d_inc <- sub_inc$snap_dist_m[!is.na(sub_inc$snap_dist_m)]
-    d_all <- sub_s$snap_dist_m[!is.na(sub_s$snap_dist_m)]
-    d_use <- if (length(d_inc) > 0) d_inc else d_all
+    inc_flag <- snap_df$included_250m[s_idx] == 1L
+    inc_idx  <- s_idx[inc_flag]
+    exc_idx  <- s_idx[!inc_flag]
 
-    if (length(d_use) > 0) {
-      qs <- quantile(d_use, probs = c(0.25, 0.50, 0.75, 0.95), na.rm = TRUE, names = FALSE)
-      min_d  <- round(min(d_use, na.rm = TRUE), 2)
-      q25_d  <- round(qs[1], 2)
-      med_d  <- round(qs[2], 2)
-      mean_d <- round(mean(d_use, na.rm = TRUE), 2)
-      q75_d  <- round(qs[3], 2)
-      p95_d  <- round(qs[4], 2)
-      max_d  <- round(max(d_use, na.rm = TRUE), 2)
-      pct_10m <- round(100.0 * mean(d_use <= 10.0), 1)
-      pct_50m <- round(100.0 * mean(d_use <= 50.0), 1)
-    } else {
-      min_d <- q25_d <- med_d <- mean_d <- q75_d <- p95_d <- max_d <- pct_10m <- pct_50m <- NA_real_
+    snapped_r_vec[i] <- length(unique(snap_df$snapped_RivID[inc_idx]))
+    inc_vec[i]       <- length(inc_idx)
+    exc_vec[i]       <- length(exc_idx)
+    tot_vec[i]       <- length(s_idx)
+
+    d_inc <- snap_df$snap_dist_m[inc_idx]
+    d_inc <- d_inc[!is.na(d_inc)]
+    d_all <- snap_df$snap_dist_m[s_idx]
+    d_all <- d_all[!is.na(d_all)]
+    d_use <- if (length(d_inc) > 0L) d_inc else d_all
+
+    if (length(d_use) > 0L) {
+      qs       <- quantile(d_use, probs = c(0.25, 0.50, 0.75, 0.95), na.rm = TRUE, names = FALSE)
+      min_v[i]  <- round(min(d_use), 2)
+      q25_v[i]  <- round(qs[1], 2)
+      med_v[i]  <- round(qs[2], 2)
+      mean_v[i] <- round(mean(d_use), 2)
+      q75_v[i]  <- round(qs[3], 2)
+      p95_v[i]  <- round(qs[4], 2)
+      max_v[i]  <- round(max(d_use), 2)
+      p10_v[i]  <- round(100.0 * mean(d_use <= 10.0), 1)
+      p50_v[i]  <- round(100.0 * mean(d_use <= 50.0), 1)
     }
-
-    rows[[i]] <- data.frame(
-      CatchID            = cid,
-      Main_River         = c_name,
-      RBD_Name           = r_name,
-      Total_Reaches      = nrow(sub_r),
-      Snapped_Reaches    = length(unique(sub_inc$snapped_RivID)),
-      Stations_Included  = nrow(sub_inc),
-      Stations_Excluded  = nrow(sub_exc),
-      Stations_Total     = nrow(sub_s),
-      Min_Snap_m         = min_d,
-      Q25_Snap_m         = q25_d,
-      Median_Snap_m      = med_d,
-      Mean_Snap_m        = mean_d,
-      Q75_Snap_m         = q75_d,
-      P95_Snap_m         = p95_d,
-      Max_Snap_m         = max_d,
-      Pct_Within_10m     = pct_10m,
-      Pct_Within_50m     = pct_50m,
-      stringsAsFactors   = FALSE
-    )
   }
 
-  out <- do.call(rbind, rows)
+  out <- data.frame(
+    CatchID           = cids,
+    Main_River        = c_names,
+    RBD_Name          = r_names,
+    Total_Reaches     = r_cnt_vec,
+    Snapped_Reaches   = snapped_r_vec,
+    Stations_Included = inc_vec,
+    Stations_Excluded = exc_vec,
+    Stations_Total    = tot_vec,
+    Min_Snap_m        = min_v,
+    Q25_Snap_m        = q25_v,
+    Median_Snap_m     = med_v,
+    Mean_Snap_m       = mean_v,
+    Q75_Snap_m        = q75_v,
+    P95_Snap_m        = p95_v,
+    Max_Snap_m        = max_v,
+    Pct_Within_10m    = p10_v,
+    Pct_Within_50m    = p50_v,
+    stringsAsFactors  = FALSE
+  )
   out <- out[order(-out$Stations_Included, -out$Total_Reaches, out$CatchID), ]
   rownames(out) <- NULL
   out
@@ -549,14 +556,9 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
       }
     }
 
-    # Draw the target snapped reach passing through start -> snap_reach -> mid -> end (ordered along reach)
-    if (!is.na(st$along_reach_m) && !is.na(st$reach_length_m) && st$along_reach_m > 0.5 * st$reach_length_m) {
-      rx_pts <- c(st$reach_start_X, st$reach_mid_X, st$snap_reach_X, st$reach_end_X)
-      ry_pts <- c(st$reach_start_Y, st$reach_mid_Y, st$snap_reach_Y, st$reach_end_Y)
-    } else {
-      rx_pts <- c(st$reach_start_X, st$snap_reach_X, st$reach_mid_X, st$reach_end_X)
-      ry_pts <- c(st$reach_start_Y, st$snap_reach_Y, st$reach_mid_Y, st$reach_end_Y)
-    }
+    # Draw the true target reach polyline (start -> mid -> end) without kinking toward the snapped point
+    rx_pts <- c(st$reach_start_X, st$reach_mid_X, st$reach_end_X)
+    ry_pts <- c(st$reach_start_Y, st$reach_mid_Y, st$reach_end_Y)
     lines(rx_pts, ry_pts, col = "#0284C7", lwd = 4.2)
 
     # Mark reach midpoint (hollow diamond) and orthogonal snapped point (filled blue square)
@@ -601,7 +603,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
 # ------------------------------------------------------------------------------
 # Plot 2: Network-Wide Station Snapping Overview Figure (4 Panels)
 # ------------------------------------------------------------------------------
-plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_png) {
+plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_png, source_abbr = "RSN") {
   png(out_png, width = 2400, height = 1750, res = 150, type = "cairo")
   on.exit(dev.off(), add = TRUE)
 
@@ -610,7 +612,7 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
   # Panel A: Spatial Map of All Stations Colored by Snapping Distance Tier
   xr <- range(snap_df$station_X, na.rm = TRUE)
   yr <- range(snap_df$station_Y, na.rm = TRUE)
-  s_lbl <- if (exists("source_label") && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
+  s_lbl <- if (!is.null(source_abbr) && nzchar(source_abbr)) source_abbr else "RSN"
   plot(NA, xlim = xr, ylim = yr, asp = 1,
        xlab = "Easting (m, BNG EPSG:27700)", ylab = "Northing (m, BNG EPSG:27700)",
        main = wrap_title(sprintf("A. All %s Monitoring Stations by Snapping Distance (%s)", s_lbl, net_label), 60),
@@ -768,7 +770,7 @@ analyze_station_snapping <- function(
 
   # Render network-wide overview figure
   overview_png <- file.path(out_dir, sprintf("fig_snap_overview_%s.png", net_meta$abbr))
-  plot_network_snapping_overview(snap_df, catch_sum, paste0(net_meta$short_label, " [", source_abbr, "]"), overview_png)
+  plot_network_snapping_overview(snap_df, catch_sum, paste0(net_meta$short_label, " [", source_abbr, "]"), overview_png, source_abbr = source_abbr)
 
   # Resolve which catchments to plot & export individual catchment tables for
   target_cids <- resolve_snapping_catchments(catchment, catch_sum)
@@ -788,25 +790,42 @@ analyze_station_snapping <- function(
 
     write.csv(sub_s, c_csv, row.names = FALSE)
     plot_catchment_snapping(cid, snap_df, reaches_df, catch_sum, net_meta$short_label, c_png)
+    has_c_png <- file.exists(c_png)
 
     catch_outputs[[as.character(cid)]] <- list(
       CatchID    = cid,
       Main_River = if (nrow(cs_row) > 0) cs_row$Main_River[1] else paste0("Catchment ", cid),
       csv        = c_csv,
-      png        = c_png,
+      png        = if (has_c_png) c_png else NULL,
       n_stations = nrow(sub_s)
     )
     if (verbose) {
-      cat(sprintf("  + Catchment %d (%s): wrote %d stations to %s & plot %s\n",
+      plot_msg <- if (has_c_png) paste0(" & plot ", format_rel_display_path(c_png, BASE_DIR)) else " (no valid coords for plot)"
+      cat(sprintf("  + Catchment %d (%s): wrote %d stations to %s%s\n",
                   cid, catch_outputs[[as.character(cid)]]$Main_River, nrow(sub_s),
-                  format_rel_display_path(c_csv, BASE_DIR),
-                  format_rel_display_path(c_png, BASE_DIR)))
+                  format_rel_display_path(c_csv, BASE_DIR), plot_msg))
     }
   }
 
   # Write Markdown summary report
   rep_path <- file.path(out_dir, "station_snapping_report.md")
-  d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L]
+  d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L & !is.na(snap_df$snap_dist_m)]
+  if (length(d_inc) > 0L) {
+    dist_summary_line <- sprintf(
+      "- **Included Snapping Distance (`m`)**: Min = `%.2f m`, Q25 = `%.2f m`, **Median = `%.2f m`**, Mean = `%.2f m`, Q75 = `%.2f m`, P95 = `%.2f m`, Max = `%.2f m`",
+      min(d_inc), quantile(d_inc, 0.25, names = FALSE),
+      median(d_inc), mean(d_inc),
+      quantile(d_inc, 0.75, names = FALSE), quantile(d_inc, 0.95, names = FALSE),
+      max(d_inc)
+    )
+    prec_summary_line <- sprintf(
+      "- **Precision Breakdown (Included Stations)**: `%.1f%%` within `<= 5 m`, `%.1f%%` within `<= 10 m`, `%.1f%%` within `<= 25 m`, `%.1f%%` within `<= 50 m`",
+      100 * mean(d_inc <= 5), 100 * mean(d_inc <= 10), 100 * mean(d_inc <= 25), 100 * mean(d_inc <= 50)
+    )
+  } else {
+    dist_summary_line <- "- **Included Snapping Distance (`m`)**: N/A (0 stations snapped within 250 m)"
+    prec_summary_line <- "- **Precision Breakdown (Included Stations)**: N/A"
+  }
   md_lines <- c(
     sprintf("# Station-to-Reach Snapping Diagnostics Report — %s [%s]", net_meta$label, source_abbr),
     "",
@@ -821,13 +840,8 @@ analyze_station_snapping <- function(
             length(unique(snap_df$snapped_RivID[snap_df$included_250m == 1L]))),
     sprintf("- **Stations Excluded (`> 250 m`)**: `%d` (`%.1f%%`)",
             sum(snap_df$included_250m == 0L), 100 * sum(snap_df$included_250m == 0L) / max(1, nrow(snap_df))),
-    sprintf("- **Included Snapping Distance (`m`)**: Min = `%.2f m`, Q25 = `%.2f m`, **Median = `%.2f m`**, Mean = `%.2f m`, Q75 = `%.2f m`, P95 = `%.2f m`, Max = `%.2f m`",
-            min(d_inc, na.rm = TRUE), quantile(d_inc, 0.25, na.rm = TRUE),
-            median(d_inc, na.rm = TRUE), mean(d_inc, na.rm = TRUE),
-            quantile(d_inc, 0.75, na.rm = TRUE), quantile(d_inc, 0.95, na.rm = TRUE),
-            max(d_inc, na.rm = TRUE)),
-    sprintf("- **Precision Breakdown (Included Stations)**: `%.1f%%` within `<= 5 m`, `%.1f%%` within `<= 10 m`, `%.1f%%` within `<= 25 m`, `%.1f%%` within `<= 50 m`",
-            100 * mean(d_inc <= 5), 100 * mean(d_inc <= 10), 100 * mean(d_inc <= 25), 100 * mean(d_inc <= 50)),
+    dist_summary_line,
+    prec_summary_line,
     "",
     "## 2. Top Catchments by Snapped Monitoring Stations",
     "",
@@ -876,9 +890,10 @@ analyze_station_snapping <- function(
     sprintf("- **Network Overview Figure**: `%s`", basename(overview_png))
   )
   for (co in catch_outputs) {
+    fig_desc <- if (!is.null(co$png)) sprintf(" & Figure `%s`", basename(co$png)) else ""
     md_lines <- c(md_lines, sprintf(
-      "- **Catchment %d (%s)**: Table `%s` (`%d` stations) & Figure `%s`",
-      co$CatchID, co$Main_River, basename(co$csv), co$n_stations, basename(co$png)
+      "- **Catchment %d (%s)**: Table `%s` (`%d` stations)%s",
+      co$CatchID, co$Main_River, basename(co$csv), co$n_stations, fig_desc
     ))
   }
   writeLines(md_lines, rep_path)
@@ -909,11 +924,12 @@ if (sys.nframe() == 0L) {
   args    <- commandArgs(trailingOnly = TRUE)
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
-  src_cli <- parse_source_arg(args)
+  src_cli <- resolve_source_tag(parse_source_arg(args), base_dir = BASE_DIR)
   range_arg <- grep("^--range-mode=", args, value = TRUE)
   range_cli <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
   if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
-    if (!grepl(paste0("_", range_cli, "$"), src_cli)) {
+    src_toks <- unlist(strsplit(src_cli, "[+,]+"))
+    if (!any(grepl(paste0("_", range_cli, "$"), src_toks)) && !grepl("[+,]", src_cli)) {
       src_cli <- paste0(src_cli, "_", range_cli)
     }
   }

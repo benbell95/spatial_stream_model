@@ -104,18 +104,52 @@ def wgs84_to_bng(lat, lon):
     """
     Converts WGS84 decimal latitude and longitude into British National Grid
     (OSGB36 / EPSG:27700) Eastings and Northings in meters using the standard
-    Airy 1830 ellipsoid and Transverse Mercator projection (pure Python).
+    7-parameter Helmert datum shift (WGS84 -> OSGB36) followed by the
+    Airy 1830 Transverse Mercator projection (pure Python).
     """
+    # 1. WGS84 geodetic (lat, lon) -> 3D Cartesian (X, Y, Z)
+    a_w, b_w = 6378137.0, 6356752.3141
+    e2_w = 1.0 - (b_w * b_w) / (a_w * a_w)
+    phi_w = math.radians(lat)
+    lam_w = math.radians(lon)
+    sin_phi_w = math.sin(phi_w)
+    cos_phi_w = math.cos(phi_w)
+    nu_w = a_w / math.sqrt(max(1e-12, 1.0 - e2_w * sin_phi_w * sin_phi_w))
+    x_w = nu_w * cos_phi_w * math.cos(lam_w)
+    y_w = nu_w * cos_phi_w * math.sin(lam_w)
+    z_w = (1.0 - e2_w) * nu_w * sin_phi_w
+
+    # 2. 7-parameter Helmert transform (WGS84 -> OSGB36)
+    tx, ty, tz = -446.448, 125.157, -542.060
+    s = 1.0 + 20.4894e-6
+    sec2rad = math.pi / (180.0 * 3600.0)
+    rx = -0.1502 * sec2rad
+    ry = -0.2470 * sec2rad
+    rz = -0.8421 * sec2rad
+    x_o = tx + s * x_w - rz * y_w + ry * z_w
+    y_o = ty + rz * x_w + s * y_w - rx * z_w
+    z_o = tz - ry * x_w + rx * y_w + s * z_w
+
+    # 3. 3D Cartesian -> Airy 1830 geodetic (phi, lam)
     a, b = 6377563.396, 6356256.909
+    e2 = 1.0 - (b * b) / (a * a)
+    p = math.hypot(x_o, y_o)
+    lam = math.atan2(y_o, x_o)
+    phi = math.atan2(z_o, p * (1.0 - e2))
+    for _ in range(8):
+        nu_i = a / math.sqrt(max(1e-12, 1.0 - e2 * (math.sin(phi) ** 2)))
+        phi_new = math.atan2(z_o + e2 * nu_i * math.sin(phi), p)
+        if abs(phi_new - phi) < 1e-11:
+            phi = phi_new
+            break
+        phi = phi_new
+
+    # 4. Airy 1830 Transverse Mercator -> BNG (E, N)
     F0 = 0.9996012717
     lat0 = math.radians(49.0)
     lon0 = math.radians(-2.0)
     N0, E0 = -100000.0, 400000.0
-    e2 = 1.0 - (b * b) / (a * a)
     n = (a - b) / (a + b)
-
-    phi = math.radians(lat)
-    lam = math.radians(lon)
 
     cos_phi = math.cos(phi)
     sin_phi = math.sin(phi)
@@ -225,8 +259,8 @@ def parse_raw_measurement_token(raw_val):
     if not s or s.lower() in ("none", "null", "na", "n/a", "nan", "no_water_available", "-", ".", ""):
         return None
 
-    # 1. Censored prefixes: <, <=, >, >=
-    m_cens = re.match(r"^(<|<=|>|>=)\s*([+-]?\d+(?:\.\d+)?)$", s)
+    # 1. Censored prefixes: <, <=, >, >= (with optional trailing units)
+    m_cens = re.match(r"^(<|<=|>|>=)\s*([+-]?\d+(?:\.\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$", s)
     if m_cens:
         op, num = m_cens.groups()
         try:
@@ -238,8 +272,8 @@ def parse_raw_measurement_token(raw_val):
         except ValueError:
             return None
 
-    # 2. Ranges: e.g. '5-10', '0.2-0.5', '10 to 20', '0.5 – 1.5'
-    m_range = re.match(r"^([+-]?\d+(?:\.\d+)?)\s*(?:-|–|—|\bto\b)\s*([+-]?\d+(?:\.\d+)?)$", s, re.IGNORECASE)
+    # 2. Ranges: e.g. '5-10', '0.2-0.5', '10 to 20', '0.5 – 1.5' (with optional trailing units)
+    m_range = re.match(r"^([+-]?\d+(?:\.\d+)?)\s*(?:-|–|—|\bto\b)\s*([+-]?\d+(?:\.\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$", s, re.IGNORECASE)
     if m_range:
         try:
             a = float(m_range.group(1))
@@ -336,6 +370,7 @@ class IntervalTobitModel:
         init_s = max(0.15, (q75 - q25) / 1.349) if q75 > q25 else 1.0
 
         # 2. Define Log-Likelihood Function
+        half_log_2pi = 0.5 * math.log(2.0 * math.pi)
         def log_likelihood(m, s):
             s = max(0.05, s)
             total = 0.0
@@ -343,7 +378,7 @@ class IntervalTobitModel:
                 if rec_type == "point":
                     if a and a > 0:
                         z = (math.log(a) - m) / s
-                        total += cnt * (-math.log(s) - math.log(a) - 0.5 * z * z)
+                        total += cnt * (-half_log_2pi - math.log(s) - math.log(a) - 0.5 * z * z)
                 elif rec_type == "left":
                     if b and b > 0:
                         zb = (math.log(b) - m) / s
@@ -441,14 +476,16 @@ class IntervalTobitModel:
 
         elif rec_type == "interval":
             # Bounded interval: Y in [a, b]
-            alpha = (math.log(a) - m) / s
-            beta = (math.log(b) - m) / s
+            a_pos = max(1e-6, a) if a is not None else 1e-6
+            b_pos = max(a_pos + 1e-9, b) if b is not None else a_pos + 1e-6
+            alpha = (math.log(a_pos) - m) / s
+            beta = (math.log(b_pos) - m) / s
             denom = normal_cdf(beta) - normal_cdf(alpha)
-            unc = (math.log(b) - math.log(a)) / math.sqrt(12.0)
+            unc = (math.log(b_pos) - math.log(a_pos)) / math.sqrt(12.0)
 
             if denom < 1e-10:
                 # Fallback to geometric midpoint for near-zero probability bins
-                geom = math.sqrt(a * b)
+                geom = math.sqrt(a_pos * b_pos)
                 res = (round(geom, 5), "=", a, b, round(unc, 4), "geometric_midpoint")
             else:
                 pdf_diff = normal_pdf(alpha) - normal_pdf(beta)
@@ -495,8 +532,10 @@ def compute_alternative_range_result(token, range_mode="geometric"):
 
     if rec_type == "interval":
         if range_mode == "geometric":
-            y_star = math.sqrt(a * b)
-            unc = (math.log(b) - math.log(a)) / math.sqrt(12.0)
+            a_pos = max(1e-6, a) if a is not None else 1e-6
+            b_pos = max(a_pos + 1e-9, b) if b is not None else a_pos + 1e-6
+            y_star = math.sqrt(a_pos * b_pos)
+            unc = (math.log(b_pos) - math.log(a_pos)) / math.sqrt(12.0)
             return round(y_star, 5), "=", a, b, round(unc, 4), "geometric_midpoint"
         elif range_mode == "midpoint":
             y_star = 0.5 * (a + b)
@@ -563,7 +602,7 @@ def parse_datetime_iso(date_str, time_str=None):
         tp = time_part or "12:00:00"
         return f"{y:04d}-{m:02d}-{d:02d}T{tp}"
 
-    # Pattern B: M/D/YYYY or D/M/YYYY
+    # Pattern B: D/M/YYYY (UK standard default when ambiguous) or M/D/YYYY
     m_slash = re.match(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})", date_clean)
     if m_slash:
         p1, p2, y = int(m_slash.group(1)), int(m_slash.group(2)), int(m_slash.group(3))
@@ -572,7 +611,7 @@ def parse_datetime_iso(date_str, time_str=None):
         elif p2 > 12:
             m, d = p1, p2
         else:
-            m, d = p1, p2
+            d, m = p1, p2
         tp = time_part or "12:00:00"
         return f"{y:04d}-{m:02d}-{d:02d}T{tp}"
 
@@ -786,7 +825,10 @@ def format_custom_dataset(
         else:
             for f_col in fieldnames:
                 c_norm = normalize_name(f_col)
-                if any(k in c_norm for k in ("nitrate", "phosphate", "ammon", "ph", "turbid", "conduct", "temp", "oxygen")):
+                c_tokens = set(re.split(r"[^a-z0-9]+", c_norm))
+                if any(k in c_norm for k in ("nitrate", "phosphate", "ammon", "turbid", "conduct", "oxygen")) or (
+                    "ph" in c_tokens or "temp" in c_tokens or "temperature" in c_tokens or "water_temp" in c_norm
+                ):
                     val_col_list.append(f_col)
 
             if not val_col_list:

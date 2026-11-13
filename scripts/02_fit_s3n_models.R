@@ -19,6 +19,7 @@
 
 BASE_DIR <- if (file.exists("scripts/s3n_plot_functions.R")) "." else if (file.exists("s3n_plot_functions.R")) ".." else "."
 source(file.path(BASE_DIR, "scripts/s3n_plot_functions.R"))
+source(file.path(BASE_DIR, "scripts/s3n_model_functions.R"))
 BASE_DIR <- resolve_base_dir()
 
 args    <- commandArgs(trailingOnly = TRUE)
@@ -28,19 +29,31 @@ DATA_DIR <- dir_cfg$data_dir
 OUT_BASE <- dir_cfg$out_dir
 
 meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
+n_omp_cli      <- parse_n_omp_arg(args, default = 1L)
 
 src_cli      <- parse_source_arg(args)
-source_cli   <- resolve_source_tag(src_cli)
+source_cli   <- resolve_source_tag(src_cli, base_dir = BASE_DIR)
+source_abbr  <- format_source_abbr(src_cli, base_dir = BASE_DIR)
+source_label <- format_source_label(src_cli, base_dir = BASE_DIR)
+source_tag   <- format_source_folder_tag(source_cli)
 range_arg    <- grep("^--range-mode=", args, value = TRUE)
 range_cli    <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
 if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
-  if (!grepl(paste0("_", range_cli, "$"), source_cli)) {
-    source_cli <- paste0(source_cli, "_", range_cli)
+  src_tokens <- unlist(strsplit(source_cli, "[+,]+"))
+  has_tok <- any(grepl(paste0("_", range_cli, "$"), src_tokens))
+  if (!has_tok) {
+    if (nzchar(source_tag) && !grepl(paste0("_", range_cli, "$"), source_tag)) {
+      source_tag <- paste0(source_tag, "_", range_cli)
+    } else if (!nzchar(source_tag)) {
+      source_tag <- range_cli
+    }
+    if (!grepl("[+,]", source_cli) && !grepl(paste0("_", range_cli, "$"), source_cli)) {
+      source_cli <- paste0(source_cli, "_", range_cli)
+    }
   }
+  source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
+  source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
 }
-source_abbr  <- format_source_abbr(source_cli)
-source_label <- format_source_label(source_cli)
-source_tag   <- format_source_folder_tag(source_cli)
 
 if ("--list-sources" %in% args) {
   print_available_sources()
@@ -98,22 +111,28 @@ use_log   <- trans_obj$is_log
 boot_arg   <- grep("^--(boot|n-boot)=", args, value = TRUE)
 n_boot_cli <- if (length(boot_arg) > 0) as.integer(sub("^--(boot|n-boot)=", "", boot_arg[1])) else 100L
 
-cand_libs <- c(
-  Sys.getenv("R_LIBS_USER"),
-  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.6"),
-  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.5")
-)
-for (cl in cand_libs) {
-  if (nzchar(cl) && dir.exists(cl) && !(normalizePath(cl, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
-    .libPaths(c(cl, .libPaths()))
-  }
+load_s3n_backend(BASE_DIR)
+
+cat("======================================================================\n")
+cat(sprintf("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline [%s | Source: %s]\n",
+            net_meta$label, source_label))
+cat("======================================================================\n\n")
+
+t_start <- proc.time()
+df_full <- read.csv(file.path(PROC_DIR, "england_rsn_reaches.csv"))
+catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
+  read.csv(file.path(PROC_DIR, "rsn_catchments_lookup.csv"), stringsAsFactors = FALSE)
+} else {
+  NULL
 }
 
-suppressPackageStartupMessages({
-  library(S3N)
-})
-
-dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
+# Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson BEFORE computing folder tags
+if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
+  obs_raw <- df_full$nitrate_mean[df_full$has_obs == 1 & !is.na(df_full$nitrate_mean)]
+  trans_obj <- build_transformer(trans_cli, y_obs = obs_raw, lambda = lambda_cli, scale = scale_cli)
+  cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for Nitrate (%s)\n",
+              trans_obj$lambda, trans_obj$label))
+}
 
 trans_tag <- format_transform_folder_tag(trans_obj, default_type = "log")
 vars_tag  <- format_covariates_folder_tag(var_specs)
@@ -129,395 +148,25 @@ dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE
 dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)
 
-cat("======================================================================\n")
-cat(sprintf("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline [%s | Source: %s]\n",
-            net_meta$label, source_label))
-cat("======================================================================\n\n")
-
-t_start <- proc.time()
-df_full <- read.csv(file.path(PROC_DIR, "england_rsn_reaches.csv"))
-catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
-  read.csv(file.path(PROC_DIR, "rsn_catchments_lookup.csv"), stringsAsFactors = FALSE)
-} else {
-  NULL
-}
-
-# Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson if not explicitly supplied
-if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
-  obs_raw <- df_full$nitrate_mean[df_full$has_obs == 1 & !is.na(df_full$nitrate_mean)]
-  trans_obj <- build_transformer(trans_cli, y_obs = obs_raw, lambda = lambda_cli, scale = scale_cli)
-  cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for Nitrate (%s)\n",
-              trans_obj$lambda, trans_obj$label))
-}
-
 cat(sprintf("Loaded %d stream reaches (%d with RSN Nitrate observations) across %d catchments.\n",
             nrow(df_full), sum(df_full$has_obs == 1), length(unique(df_full$CatchID))))
 
-# Function to fit S3N-TU, S3N-TD, Bootstrap CIs, 5-Fold CV, and Full Network Prediction
-analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = 100L, n_omp = 1L) {
-  cat(sprintf("\n----------------------------------------------------------------------\n"))
-  cat(sprintf("  Domain: %s (%d reaches, %d observed)\n",
-              domain_label, nrow(df), sum(df$has_obs == 1)))
-  cat(sprintf("----------------------------------------------------------------------\n"))
-
-  # Order observed reaches downstream-to-upstream within each catchment, followed by prediction reaches
-  obs_idx  <- which(df$has_obs == 1)
-  obs_idx  <- obs_idx[order(df$CatchID[obs_idx], df$obs_up_dist_km[obs_idx])]
-  pred_idx <- which(df$has_obs == 0)
-  ord      <- c(obs_idx, pred_idx)
-  df_ord   <- df[ord, ]
-
-  n_obs <- length(obs_idx)
-  q_tot <- nrow(df_ord)
-
-  id_map   <- setNames(seq_len(q_tot), df_ord$RivID)
-  parent_0 <- ifelse(df_ord$parent_dn == 0, -1L, id_map[as.character(df_ord$parent_dn)] - 1L)
-  up_dist  <- ifelse(df_ord$has_obs == 1, df_ord$obs_up_dist_km, df_ord$up_dist_mid_km)
-
-  X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"), var_specs = var_specs)
-  cat(sprintf("  Fixed-effect covariates (%d): %s\n", ncol(X_all), paste(colnames(X_all), collapse = ", ")))
-  X_obs <- X_all[1:n_obs, , drop = FALSE]
-  y_obs <- as.matrix(trans_obj$fwd(df_ord$nitrate_mean[1:n_obs]))
-
-  # Heteroskedastic measurement error check (Approach A)
-  v_meas <- numeric(n_obs)
-  has_me <- FALSE
-  if ("meas_uncertainty" %in% names(df_ord)) {
-    u_raw   <- df_ord$meas_uncertainty[1:n_obs]
-    val_raw <- df_ord$nitrate_mean[1:n_obs]
-    if (any(!is.na(u_raw) & u_raw > 0)) {
-      v_meas <- calc_response_meas_variance(val_raw, u_raw, trans_obj)
-      has_me <- (mean(v_meas) > 1e-8) && (isTRUE(meas_error_arg) || isTRUE(any(tolower(df_ord$meas_method[1:n_obs]) == "gam", na.rm = TRUE)) || identical(tolower(net_meta$meas_method), "gam"))
-      has_me <- isTRUE(has_me)
-    }
-  }
-
-  if (has_me) {
-    v_bar <- mean(v_meas)
-    mean_se <- mean(sqrt(v_meas))
-    cat(sprintf("  [Approach A: Measurement Error Kriging] Active: accounting for GAM estimation uncertainty\n"))
-    cat(sprintf("    Mean measurement SE: %.4f (%s scale), Mean error variance: %.6f\n",
-                mean_se, trans_obj$short_label, v_bar))
-  }
-
-  # 1. Build Tree & Neighbors (Tail-Up and Tail-Down)
-  t0 <- proc.time()
-  tt <- .Call("C_build_tree_tin_tout", as.integer(parent_0))
-  nb_tu <- .Call("C_compute_s3n_neighbors",
-                 as.integer(n_obs), as.integer(m_neighbors), as.integer(parent_0),
-                 as.integer(df_ord$CatchID), as.integer(tt[[1]]), as.integer(tt[[2]]),
-                 as.double(df_ord$Dist2Mth_km), as.double(up_dist), as.double(df_ord$log_AFV),
-                 as.double(df_ord$mid_X), as.double(df_ord$mid_Y), as.integer(0L))
-  nb_td <- .Call("C_compute_s3n_neighbors",
-                 as.integer(n_obs), as.integer(m_neighbors), as.integer(parent_0),
-                 as.integer(df_ord$CatchID), as.integer(tt[[1]]), as.integer(tt[[2]]),
-                 as.double(df_ord$Dist2Mth_km), as.double(up_dist), as.double(df_ord$log_AFV),
-                 as.double(df_ord$mid_X), as.double(df_ord$mid_Y), as.integer(1L))
-  t_nb <- (proc.time() - t0)[3]
-  cat(sprintf("  [1] Built stream topology & neighbor structures in %.3f sec.\n", t_nb))
-
-  # 2. Fit S3N Tail-Up and S3N Tail-Down Models
-  t1 <- proc.time()
-  fit_tu <- BRISC_estimation_stream(
-    coords = as.matrix(1:n_obs), y = y_obs, x = X_obs,
-    neighbor = nb_tu$obs_neighbors, sigma.sq = 0.4, tau.sq = 0.05, phi = 0.05,
-    cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-  )
-  fit_td <- BRISC_estimation_stream(
-    coords = as.matrix(1:n_obs), y = y_obs, x = X_obs,
-    neighbor = nb_td$obs_neighbors, sigma.sq = 0.4, tau.sq = 0.05, phi = 0.05,
-    cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-  )
-  t_est <- (proc.time() - t1)[3]
-  cat(sprintf("  [2] Estimated S3N-TU (logLik=%.2f) and S3N-TD (logLik=%.2f) in %.3f sec.\n",
-              fit_tu$log_likelihood, fit_td$log_likelihood, t_est))
-
-  if (has_me) {
-    tau_micro_tu <- max(1e-6 * fit_tu$Theta["sigma.sq"], fit_tu$Theta["tau.sq"] - v_bar)
-    theta_tu_me  <- c(fit_tu$Theta["sigma.sq"], tau_micro_tu, fit_tu$Theta["phi"])
-    tau_micro_td <- max(1e-6 * fit_td$Theta["sigma.sq"], fit_td$Theta["tau.sq"] - v_bar)
-    theta_td_me  <- c(fit_td$Theta["sigma.sq"], tau_micro_td, fit_td$Theta["phi"])
-    cat(sprintf("    Tail-Up Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
-                fit_tu$Theta["tau.sq"], tau_micro_tu, v_bar))
-    cat(sprintf("    Tail-Down Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
-                fit_td$Theta["tau.sq"], tau_micro_td, v_bar))
-  }
-
-  # 3. Parametric Bootstrap for 95% Confidence Intervals
-  t2 <- proc.time()
-  bs_tu <- BRISC_bootstrap(fit_tu, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
-  bs_td <- BRISC_bootstrap(fit_td, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
-  t_bs <- (proc.time() - t2)[3]
-  cat(sprintf("  [3] Completed %d bootstrap replicates in %.3f sec.\n", n_boot, t_bs))
-
-  # 4. Predict across all q_tot stream reaches in the domain
-  t3 <- proc.time()
-  if (has_me) {
-    pr_tu <- .Call("C_s3n_predict_meas_error",
-                   X_obs, y_obs, v_meas, X_all,
-                   fit_tu$Beta, theta_tu_me,
-                   as.integer(m_neighbors),
-                   nb_tu$pred_neighbors$nnIndx, nb_tu$pred_neighbors$nnDist, nb_tu$pred_neighbors$nnWght,
-                   nb_tu$obsobs_dist, nb_tu$obsobs_wt)
-    pr_td <- .Call("C_s3n_predict_meas_error",
-                   X_obs, y_obs, v_meas, X_all,
-                   fit_td$Beta, theta_td_me,
-                   as.integer(m_neighbors),
-                   nb_td$pred_neighbors$nnIndx, nb_td$pred_neighbors$nnDist, nb_td$pred_neighbors$nnWght,
-                   nb_td$obsobs_dist, nb_td$obsobs_wt)
-  } else {
-    pr_tu <- BRISC_prediction_stream(
-      BRISC_Out = fit_tu, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-      neighbor = nb_tu$pred_neighbors, obsobs_dist = nb_tu$obsobs_dist, obsobs_wt = nb_tu$obsobs_wt,
-      n_omp = n_omp, verbose = FALSE
-    )
-    pr_td <- BRISC_prediction_stream(
-      BRISC_Out = fit_td, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-      neighbor = nb_td$pred_neighbors, obsobs_dist = nb_td$obsobs_dist, obsobs_wt = nb_td$obsobs_wt,
-      n_omp = n_omp, verbose = FALSE
-    )
-  }
-  t_pred <- (proc.time() - t3)[3]
-  cat(sprintf("  [4] Predicted Nitrate across all %d stream reaches in %.3f sec.\n", q_tot, t_pred))
-
-  se_tu <- (pr_tu$prediction.ci[, 2] - pr_tu$prediction) / 1.959964
-  se_td <- (pr_td$prediction.ci[, 2] - pr_td$prediction) / 1.959964
-  sill_nug_tu <- sum(if (has_me) theta_tu_me[1:2] else fit_tu$Theta[1:2])
-  sill_nug_td <- sum(if (has_me) theta_td_me[1:2] else fit_td$Theta[1:2])
-  info_tu <- pmax(1e-4, 1 - (se_tu^2) / sill_nug_tu)
-  info_td <- pmax(1e-4, 1 - (se_td^2) / sill_nug_td)
-
-  pred_log_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
-  se_comb       <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
-
-  # Save reach-level predictions table
-  pred_df <- data.frame(
-    RivID              = df_ord$RivID,
-    CatchID            = df_ord$CatchID,
-    parent_dn          = df_ord$parent_dn,
-    Shreve             = df_ord$Shreve,
-    Strahler           = df_ord$Strahler,
-    Dist2Mth_km        = df_ord$Dist2Mth_km,
-    US_Accum_km        = df_ord$US_Accum_km,
-    start_X            = df_ord$start_X,
-    start_Y            = df_ord$start_Y,
-    mid_X              = df_ord$mid_X,
-    mid_Y              = df_ord$mid_Y,
-    end_X              = df_ord$end_X,
-    end_Y              = df_ord$end_Y,
-    Elevation          = df_ord$Elevation,
-    Is_Aquifer         = df_ord$Is_Aquifer,
-    has_obs            = df_ord$has_obs,
-    obs_nitrate_mgL    = df_ord$nitrate_mean,
-    obs_model_sc       = ifelse(df_ord$has_obs == 1, trans_obj$fwd(df_ord$nitrate_mean), NA_real_),
-    pred_tu_sc         = round(pr_tu$prediction, 5),
-    se_tu_sc           = round(se_tu, 5),
-    pred_td_sc         = round(pr_td$prediction, 5),
-    se_td_sc           = round(se_td, 5),
-    pred_model_sc      = round(pred_log_comb, 5),
-    se_model_sc        = round(se_comb, 5),
-    pred_tu            = round(trans_obj$inv(pr_tu$prediction), 4),
-    pred_td            = round(trans_obj$inv(pr_td$prediction), 4),
-    pred_combined      = round(trans_obj$inv(pred_log_comb), 4),
-    obs_log_nitrate    = ifelse(df_ord$has_obs == 1, log(df_ord$nitrate_mean), NA_real_),
-    pred_log_tu        = round(pr_tu$prediction, 5),
-    se_log_tu          = round(se_tu, 5),
-    pred_mgL_tu        = round(trans_obj$inv(pr_tu$prediction), 4),
-    pred_log_td        = round(pr_td$prediction, 5),
-    se_log_td          = round(se_td, 5),
-    pred_mgL_td        = round(trans_obj$inv(pr_td$prediction), 4),
-    pred_log_combined  = round(pred_log_comb, 5),
-    se_log_combined    = round(se_comb, 5),
-    pred_mgL_combined  = round(trans_obj$inv(pred_log_comb), 4)
-  )
-  if ("meas_uncertainty" %in% names(df_ord)) {
-    pred_df$meas_uncertainty <- df_ord$meas_uncertainty
-  }
-  if ("meas_method" %in% names(df_ord)) {
-    pred_df$meas_method <- df_ord$meas_method
-  }
-  pred_df <- add_normalised_columns(pred_df)
-  write.csv(pred_df, file.path(OUT_ROOT, sprintf("predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
-
-  # 5. 5-Fold Out-of-Sample Cross-Validation
-  set.seed(2026)
-  folds <- sample(rep(1:5, length.out = n_obs))
-  cv_ols  <- numeric(n_obs)
-  cv_tu   <- numeric(n_obs)
-  cv_td   <- numeric(n_obs)
-  cv_comb <- numeric(n_obs)
-  y_vec   <- as.numeric(y_obs)
-
-  for (k in 1:5) {
-    te <- which(folds == k)
-    tr <- which(folds != k)
-
-    # OLS
-    beta_ols   <- qr.solve(X_obs[tr, , drop = FALSE], y_vec[tr])
-    cv_ols[te] <- as.numeric(X_obs[te, , drop = FALSE] %*% beta_ols)
-
-    # Reorder so training obs are first (1..n_tr), then test obs (n_tr+1..n_obs)
-    ord_cv     <- c(tr, te, (n_obs + 1):q_tot)
-    df_cv      <- df_ord[ord_cv, ]
-    id_map_cv  <- setNames(seq_len(q_tot), df_cv$RivID)
-    par_cv     <- ifelse(df_cv$parent_dn == 0, -1L, id_map_cv[as.character(df_cv$parent_dn)] - 1L)
-    n_tr       <- length(tr)
-    n_eval     <- n_obs
-    up_cv      <- ifelse(df_cv$has_obs == 1, df_cv$obs_up_dist_km, df_cv$up_dist_mid_km)
-    tt_cv      <- .Call("C_build_tree_tin_tout", as.integer(par_cv))
-
-    # CV Tail-Up
-    nb_tu_cv <- .Call("C_compute_s3n_neighbors",
-                      as.integer(n_tr), as.integer(m_neighbors), as.integer(par_cv),
-                      as.integer(df_cv$CatchID), as.integer(tt_cv[[1]]), as.integer(tt_cv[[2]]),
-                      as.double(df_cv$Dist2Mth_km), as.double(up_cv), as.double(df_cv$log_AFV),
-                      as.double(df_cv$mid_X), as.double(df_cv$mid_Y), as.integer(0L))
-    p_tu_cv <- list(
-      nnIndx = nb_tu_cv$pred_neighbors$nnIndx[1:(n_eval * m_neighbors)],
-      nnDist = nb_tu_cv$pred_neighbors$nnDist[1:(n_eval * m_neighbors)],
-      nnWght = nb_tu_cv$pred_neighbors$nnWght[1:(n_eval * m_neighbors)]
-    )
-    f_tu_cv <- BRISC_estimation_stream(
-      coords = as.matrix(1:n_tr), y = as.matrix(y_vec[tr]), x = X_obs[tr, , drop = FALSE],
-      neighbor = nb_tu_cv$obs_neighbors, sigma.sq = 0.4, tau.sq = 0.05, phi = 0.05,
-      cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-    )
-
-    # CV Tail-Down
-    nb_td_cv <- .Call("C_compute_s3n_neighbors",
-                      as.integer(n_tr), as.integer(m_neighbors), as.integer(par_cv),
-                      as.integer(df_cv$CatchID), as.integer(tt_cv[[1]]), as.integer(tt_cv[[2]]),
-                      as.double(df_cv$Dist2Mth_km), as.double(up_cv), as.double(df_cv$log_AFV),
-                      as.double(df_cv$mid_X), as.double(df_cv$mid_Y), as.integer(1L))
-    p_td_cv <- list(
-      nnIndx = nb_td_cv$pred_neighbors$nnIndx[1:(n_eval * m_neighbors)],
-      nnDist = nb_td_cv$pred_neighbors$nnDist[1:(n_eval * m_neighbors)],
-      nnWght = nb_td_cv$pred_neighbors$nnWght[1:(n_eval * m_neighbors)]
-    )
-    f_td_cv <- BRISC_estimation_stream(
-      coords = as.matrix(1:n_tr), y = as.matrix(y_vec[tr]), x = X_obs[tr, , drop = FALSE],
-      neighbor = nb_td_cv$obs_neighbors, sigma.sq = 0.4, tau.sq = 0.05, phi = 0.05,
-      cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-    )
-
-    if (has_me) {
-      v_tr <- v_meas[tr]
-      v_bar_tr <- mean(v_tr)
-      tau_micro_tu_cv <- max(1e-6 * f_tu_cv$Theta["sigma.sq"], f_tu_cv$Theta["tau.sq"] - v_bar_tr)
-      theta_tu_cv_me  <- c(f_tu_cv$Theta["sigma.sq"], tau_micro_tu_cv, f_tu_cv$Theta["phi"])
-      p_tu_cv_raw <- .Call("C_s3n_predict_meas_error",
-                           X_obs[tr, , drop = FALSE], as.matrix(y_vec[tr]), v_tr,
-                           rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-                           f_tu_cv$Beta, theta_tu_cv_me,
-                           as.integer(m_neighbors),
-                           p_tu_cv$nnIndx, p_tu_cv$nnDist, p_tu_cv$nnWght,
-                           nb_tu_cv$obsobs_dist, nb_tu_cv$obsobs_wt)
-      cv_tu[te] <- p_tu_cv_raw$prediction[(n_tr + 1):n_eval]
-      se_tu_cv  <- (p_tu_cv_raw$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
-      inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(theta_tu_cv_me[1:2]))
-
-      tau_micro_td_cv <- max(1e-6 * f_td_cv$Theta["sigma.sq"], f_td_cv$Theta["tau.sq"] - v_bar_tr)
-      theta_td_cv_me  <- c(f_td_cv$Theta["sigma.sq"], tau_micro_td_cv, f_td_cv$Theta["phi"])
-      p_td_cv_raw <- .Call("C_s3n_predict_meas_error",
-                           X_obs[tr, , drop = FALSE], as.matrix(y_vec[tr]), v_tr,
-                           rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-                           f_td_cv$Beta, theta_td_cv_me,
-                           as.integer(m_neighbors),
-                           p_td_cv$nnIndx, p_td_cv$nnDist, p_td_cv$nnWght,
-                           nb_td_cv$obsobs_dist, nb_td_cv$obsobs_wt)
-      cv_td[te] <- p_td_cv_raw$prediction[(n_tr + 1):n_eval]
-      se_td_cv  <- (p_td_cv_raw$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
-      inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(theta_td_cv_me[1:2]))
-    } else {
-      pr_tu_cv <- BRISC_prediction_stream(
-        BRISC_Out = f_tu_cv, coords.0 = as.matrix(1:n_eval),
-        X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-        neighbor = p_tu_cv, obsobs_dist = nb_tu_cv$obsobs_dist, obsobs_wt = nb_tu_cv$obsobs_wt,
-        n_omp = n_omp, verbose = FALSE
-      )
-      cv_tu[te] <- pr_tu_cv$prediction[(n_tr + 1):n_eval]
-      se_tu_cv  <- (pr_tu_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_tu[te]) / 1.959964
-      inf_tu_cv <- pmax(1e-4, 1 - (se_tu_cv^2) / sum(f_tu_cv$Theta[1:2]))
-
-      pr_td_cv <- BRISC_prediction_stream(
-        BRISC_Out = f_td_cv, coords.0 = as.matrix(1:n_eval),
-        X.0 = rbind(X_obs[tr, , drop = FALSE], X_obs[te, , drop = FALSE]),
-        neighbor = p_td_cv, obsobs_dist = nb_td_cv$obsobs_dist, obsobs_wt = nb_td_cv$obsobs_wt,
-        n_omp = n_omp, verbose = FALSE
-      )
-      cv_td[te] <- pr_td_cv$prediction[(n_tr + 1):n_eval]
-      se_td_cv  <- (pr_td_cv$prediction.ci[(n_tr + 1):n_eval, 2] - cv_td[te]) / 1.959964
-      inf_td_cv <- pmax(1e-4, 1 - (se_td_cv^2) / sum(f_td_cv$Theta[1:2]))
-    }
-
-    cv_comb[te] <- (inf_tu_cv * cv_tu[te] + inf_td_cv * cv_td[te]) / (inf_tu_cv + inf_td_cv)
-  }
-
-  rmse <- function(a, b) sqrt(mean((a - b)^2))
-  mae  <- function(a, b) mean(abs(a - b))
-  r2   <- function(a, b) 1 - sum((a - b)^2) / sum((a - mean(a))^2)
-
-  cv_summary <- data.frame(
-    Domain         = domain_label,
-    n_obs          = n_obs,
-    n_reaches      = q_tot,
-    Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
-    Spatial_Method = if (has_me) "Measurement Error Kriging" else "Standard S3N",
-    RMSE_log       = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
-    MAE_log        = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
-    R2_log         = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
-  )
-  print(cv_summary, row.names = FALSE)
-
-  # Format parameter table with 95% Bootstrap CIs
-  param_names <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
-  phi_shift   <- c(rep(0, ncol(X_obs)), 0, 0, 0.001)
-  param_df <- rbind(
-    data.frame(
-      Domain    = domain_label,
-      Model     = "S3N Tail-Up (FC + AFV)",
-      Parameter = param_names,
-      Estimate  = round(c(fit_tu$Beta, fit_tu$Theta) + phi_shift, 4),
-      CI_Lower  = round(bs_tu$confidence.interval[1, ] + phi_shift, 4),
-      CI_Upper  = round(bs_tu$confidence.interval[2, ] + phi_shift, 4)
-    ),
-    data.frame(
-      Domain    = domain_label,
-      Model     = "S3N Tail-Down (Stream)",
-      Parameter = param_names,
-      Estimate  = round(c(fit_td$Beta, fit_td$Theta) + phi_shift, 4),
-      CI_Lower  = round(bs_td$confidence.interval[1, ] + phi_shift, 4),
-      CI_Upper  = round(bs_td$confidence.interval[2, ] + phi_shift, 4)
-    )
-  )
-  if (has_me) {
-    param_df <- rbind(
-      param_df,
-      data.frame(Domain = domain_label, Model = "S3N Tail-Up (FC + AFV)", Parameter = "tau.sq (microscale)",
-                 Estimate = round(tau_micro_tu, 4), CI_Lower = NA, CI_Upper = NA),
-      data.frame(Domain = domain_label, Model = "S3N Tail-Down (Stream)", Parameter = "tau.sq (microscale)",
-                 Estimate = round(tau_micro_td, 4), CI_Lower = NA, CI_Upper = NA),
-      data.frame(Domain = domain_label, Model = "Measurement Error", Parameter = "mean_meas_variance",
-                 Estimate = round(v_bar, 6), CI_Lower = NA, CI_Upper = NA)
-    )
-  }
-
-  # Save CV point predictions for England & Humber for diagnostic plotting
-  cv_pts <- data.frame(
-    RivID     = df_ord$RivID[1:n_obs],
-    CatchID   = df_ord$CatchID[1:n_obs],
-    obs_log   = y_vec,
-    cv_ols    = cv_ols,
-    cv_tu     = cv_tu,
-    cv_td     = cv_td,
-    cv_comb   = cv_comb
-  )
-
-  list(
-    cv_summary = cv_summary,
-    param_df   = param_df,
-    cv_pts     = cv_pts,
-    runtimes   = c(neighbor_sec = t_nb, est_sec = t_est, boot_sec = t_bs, pred_sec = t_pred)
+# Fitting/CV engine lives in scripts/s3n_model_functions.R
+analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = n_boot_cli, n_omp = n_omp_cli) {
+  fit_s3n_domain(
+    df = df,
+    domain_id = domain_id,
+    domain_label = domain_label,
+    trans_obj = trans_obj,
+    var_specs = var_specs,
+    m_neighbors = m_neighbors,
+    n_boot = n_boot,
+    n_omp = n_omp,
+    use_meas_error = isTRUE(meas_error_arg),
+    net_meta = net_meta,
+    obs_col = "nitrate_mean",
+    legacy_nitrate_mode = TRUE,
+    out_root = OUT_ROOT
   )
 }
 
@@ -536,8 +185,18 @@ res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), 
 res_thames  <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
 res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
 
-all_cv <- rbind(res_england$cv_summary, res_humber$cv_summary, res_thames$cv_summary, res_severn$cv_summary)
-all_params <- rbind(res_england$param_df, res_humber$param_df, res_thames$param_df, res_severn$param_df)
+all_cv <- do.call(rbind, Filter(Negate(is.null), list(
+  if (!is.null(res_england)) res_england$cv_summary else NULL,
+  if (!is.null(res_humber))  res_humber$cv_summary  else NULL,
+  if (!is.null(res_thames))  res_thames$cv_summary  else NULL,
+  if (!is.null(res_severn))  res_severn$cv_summary  else NULL
+)))
+all_params <- do.call(rbind, Filter(Negate(is.null), list(
+  if (!is.null(res_england)) res_england$param_df else NULL,
+  if (!is.null(res_humber))  res_humber$param_df  else NULL,
+  if (!is.null(res_thames))  res_thames$param_df  else NULL,
+  if (!is.null(res_severn))  res_severn$param_df  else NULL
+)))
 all_cv$Source               <- source_abbr
 all_cv$Source_Desc          <- source_label
 all_cv$Transform_Type       <- trans_obj$type
@@ -557,8 +216,12 @@ all_params$Network_Label    <- net_meta$short_label
 
 write.csv(all_cv, file.path(OUT_ROOT, "tables/cv_model_comparison.csv"), row.names = FALSE)
 write.csv(all_params, file.path(OUT_ROOT, "tables/s3n_parameter_estimates.csv"), row.names = FALSE)
-write.csv(res_england$cv_pts, file.path(OUT_ROOT, "predictions/england_cv_predictions.csv"), row.names = FALSE)
-write.csv(res_humber$cv_pts, file.path(OUT_ROOT, "predictions/humber_cv_predictions.csv"), row.names = FALSE)
+if (!is.null(res_england) && !is.null(res_england$cv_pts)) {
+  write.csv(res_england$cv_pts, file.path(OUT_ROOT, "predictions/england_cv_predictions.csv"), row.names = FALSE)
+}
+if (!is.null(res_humber) && !is.null(res_humber$cv_pts)) {
+  write.csv(res_humber$cv_pts, file.path(OUT_ROOT, "predictions/humber_cv_predictions.csv"), row.names = FALSE)
+}
 
 saveRDS(list(england = res_england, humber = res_humber, thames = res_thames, severn = res_severn),
         file = file.path(OUT_ROOT, "models/s3n_model_results.rds"))

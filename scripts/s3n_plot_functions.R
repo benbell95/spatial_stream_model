@@ -273,8 +273,14 @@ parse_source_config_file <- function(filepath) {
   )
 }
 
-load_source_registry <- function(base_dir = NULL) {
+.s3n_registry_cache <- new.env(parent = emptyenv())
+
+load_source_registry <- function(base_dir = NULL, force_reload = FALSE) {
   if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
+  cache_key <- normalizePath(base_dir, mustWork = FALSE)
+  if (!isTRUE(force_reload) && exists(cache_key, envir = .s3n_registry_cache, inherits = FALSE)) {
+    return(get(cache_key, envir = .s3n_registry_cache, inherits = FALSE))
+  }
   cfg_dir <- rel_path(base_dir, "configs", "sources")
   sources <- list()
   composites <- list()
@@ -328,7 +334,24 @@ load_source_registry <- function(base_dir = NULL) {
     j_files <- list.files(cfg_dir, pattern = "\\.json$", full.names = TRUE)
     for (jf in j_files) {
       fname <- basename(jf)
-      if (fname == "composites.json") next
+      if (fname == "composites.json") {
+        txt_c <- paste(readLines(jf, warn = FALSE), collapse = " ")
+        m_blocks <- gregexpr('"([a-zA-Z0-9_]+)"\\s*:\\s*\\{[^{}]*"sources"\\s*:\\s*\\[[^\\]]*\\][^{}]*\\}', txt_c, perl = TRUE)
+        blocks <- regmatches(txt_c, m_blocks)[[1]]
+        for (blk in blocks) {
+          c_name <- tolower(sub('^"([a-zA-Z0-9_]+)".*$', "\\1", blk))
+          c_abbr <- if (grepl('"abbr"\\s*:\\s*"([^"]*)"', blk)) sub('^.*"abbr"\\s*:\\s*"([^"]*)".*$', "\\1", blk) else toupper(c_name)
+          c_lbl  <- if (grepl('"label"\\s*:\\s*"([^"]*)"', blk)) sub('^.*"label"\\s*:\\s*"([^"]*)".*$', "\\1", blk) else c_name
+          c_desc <- if (grepl('"description"\\s*:\\s*"([^"]*)"', blk)) sub('^.*"description"\\s*:\\s*"([^"]*)".*$', "\\1", blk) else ""
+          s_inner <- sub('^.*"sources"\\s*:\\s*\\[([^\\]]*)\\].*$', "\\1", blk)
+          s_parts <- trimws(gsub('"', "", unlist(strsplit(s_inner, ","))))
+          s_parts <- tolower(s_parts[nzchar(s_parts)])
+          if (nzchar(c_name) && length(s_parts) > 0) {
+            composites[[c_name]] <- list(name = c_name, abbr = c_abbr, label = c_lbl, description = c_desc, sources = s_parts)
+          }
+        }
+        next
+      }
       parsed <- parse_source_config_file(jf)
       if (!is.null(parsed) && nzchar(parsed$name)) {
         sources[[parsed$name]] <- parsed
@@ -356,15 +379,17 @@ load_source_registry <- function(base_dir = NULL) {
     }
   }
 
-  list(sources = sources, composites = composites)
+  reg_out <- list(sources = sources, composites = composites)
+  assign(cache_key, reg_out, envir = .s3n_registry_cache)
+  reg_out
 }
 
 resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
   if (is.null(source) || !nzchar(trimws(as.character(source)))) return("rsn")
   if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
   raw_orig <- trimws(as.character(source))
-  if (grepl("\\(([A-Za-z0-9_]+)\\)", raw_orig)) {
-    inner <- tolower(sub(".*\\(([A-Za-z0-9_]+)\\).*", "\\1", raw_orig))
+  if (!grepl("[,+]", raw_orig) && grepl("^[^()]*\\(([A-Za-z0-9_]+)\\)[^()]*$", raw_orig)) {
+    inner <- tolower(sub("^[^()]*\\(([A-Za-z0-9_]+)\\)[^()]*$", "\\1", raw_orig))
     if (inner %in% c("rsn", "ssn", "rss")) return(inner)
     reg <- load_source_registry(base_dir)
     for (k in names(reg$sources)) {
@@ -378,8 +403,8 @@ resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
   raw_s <- gsub("\\btobitz\\b", "tobit", raw_s)
   raw_s <- gsub("_tobitz\\b", "_tobit", raw_s)
 
-  # Multi-source delimiter splitting (e.g. "rsn+ssn", "rsn,ssn", "rsn+custom")
-  tokens <- unlist(strsplit(raw_s, "[,+ ]+"))
+  # Multi-source delimiter splitting (e.g. "rsn+ssn", "rsn,ssn", "rsn+custom"; preserve spaces inside a single source name)
+  tokens <- trimws(unlist(strsplit(raw_s, "[,+]+")))
   tokens <- tokens[nzchar(tokens)]
   if (length(tokens) > 1) {
     if (setequal(tokens, c("rsn", "ssn"))) return("rss")
@@ -442,7 +467,17 @@ format_source_abbr <- function(source = "rsn", base_dir = NULL) {
   if (s %in% names(reg$composites)) return(reg$composites[[s]]$abbr)
   if (s %in% names(reg$sources)) return(reg$sources[[s]]$abbr)
 
-  # Check range mode suffix (e.g. waterblitz_tobit)
+  # Multi-source tokens first so constituent range modes resolve individually
+  s_tokens <- trimws(unlist(strsplit(s, "[,+]+")))
+  s_tokens <- s_tokens[nzchar(s_tokens)]
+  if (length(s_tokens) > 1) {
+    tok_abbrs <- vapply(s_tokens, function(tk) {
+      format_source_abbr(tk, base_dir = base_dir)
+    }, character(1))
+    return(paste(tok_abbrs, collapse = "+"))
+  }
+
+  # Check range mode suffix for single source (e.g. waterblitz_tobit)
   if (grepl("_(tobit|geometric|midpoint|lower|upper)$", s)) {
     base_s <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s)
     rm     <- sub(".*_(tobit|geometric|midpoint|lower|upper)$", "\\1", s)
@@ -452,14 +487,6 @@ format_source_abbr <- function(source = "rsn", base_dir = NULL) {
     return(paste0(base_a, " [", rm_str, "]"))
   }
 
-  raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
-  raw_tokens <- raw_tokens[nzchar(raw_tokens)]
-  if (length(raw_tokens) > 1) {
-    tok_abbrs <- vapply(raw_tokens, function(tk) {
-      if (tk %in% names(reg$sources)) reg$sources[[tk]]$abbr else toupper(tk)
-    }, character(1))
-    return(paste(tok_abbrs, collapse = "+"))
-  }
   toupper(s)
 }
 
@@ -474,7 +501,17 @@ format_source_label <- function(source = "rsn", base_dir = NULL) {
       if (s %in% names(reg$composites)) return(reg$composites[[s]]$label)
       if (s %in% names(reg$sources)) return(reg$sources[[s]]$label)
 
-      # Check range mode suffix
+      # Multi-source tokens first so constituent range modes resolve individually
+      s_tokens <- trimws(unlist(strsplit(s, "[,+]+")))
+      s_tokens <- s_tokens[nzchar(s_tokens)]
+      if (length(s_tokens) > 1) {
+        tok_labels <- vapply(s_tokens, function(tk) {
+          format_source_label(tk, base_dir = base_dir)
+        }, character(1))
+        return(paste("Combined Monitoring Sources:", paste(tok_labels, collapse = " + ")))
+      }
+
+      # Check range mode suffix for single source
       if (grepl("_(tobit|geometric|midpoint|lower|upper)$", s)) {
         base_s <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s)
         rm     <- sub(".*_(tobit|geometric|midpoint|lower|upper)$", "\\1", s)
@@ -484,14 +521,6 @@ format_source_label <- function(source = "rsn", base_dir = NULL) {
         return(paste0(base_l, " [", rm_str, "]"))
       }
 
-      raw_tokens <- unlist(strsplit(as.character(source), "[,+ ]+"))
-      raw_tokens <- raw_tokens[nzchar(raw_tokens)]
-      if (length(raw_tokens) > 1) {
-        tok_labels <- vapply(raw_tokens, function(tk) {
-          if (tk %in% names(reg$sources)) reg$sources[[tk]]$label else paste("Custom:", toupper(tk))
-        }, character(1))
-        return(paste("Combined Monitoring Sources:", paste(tok_labels, collapse = " + ")))
-      }
       paste0("Custom Monitoring Source (", toupper(s), ")")
     }
   )
@@ -1022,23 +1051,46 @@ calc_response_meas_variance <- function(raw_val, raw_unc, trans_obj) {
   if (is.null(raw_unc) || all(is.na(raw_unc))) return(v_resp)
 
   u_clean <- ifelse(is.na(raw_unc) | raw_unc < 0, 0, as.numeric(raw_unc))
-  x_clean <- pmax(1e-6, ifelse(is.na(raw_val), 1.0, as.numeric(raw_val)))
+  x_raw   <- ifelse(is.na(raw_val), 1.0, as.numeric(raw_val))
+  x_pos   <- pmax(1e-6, x_raw)
 
   tt <- tolower(trans_obj$type)
   if (tt == "log") {
     # Delta method: Var(log(X)) approx (u / X)^2
-    v_resp <- (u_clean / x_clean)^2
+    v_resp <- (u_clean / x_pos)^2
+  } else if (tt == "log1p") {
+    # Delta method: g'(X) = 1 / (1 + X)
+    v_resp <- (u_clean / pmax(1e-6, 1.0 + x_raw))^2
+  } else if (tt == "log10") {
+    # Delta method: g'(X) = 1 / (X * ln(10))
+    v_resp <- (u_clean / (x_pos * log(10)))^2
   } else if (tt %in% c("raw", "identity", "none")) {
     v_resp <- u_clean^2
   } else if (tt %in% c("sqrt", "square_root")) {
     # Delta method: g'(X) = 1 / (2 * sqrt(X)) -> Var(sqrt(X)) approx u^2 / (4 * X)
-    v_resp <- (u_clean / (2.0 * sqrt(x_clean)))^2
+    v_resp <- (u_clean / (2.0 * sqrt(x_pos)))^2
+  } else if (tt %in% c("cbrt", "cube_root")) {
+    # Delta method: g'(X) = 1 / (3 * |X|^(2/3))
+    v_resp <- (u_clean / (3.0 * (pmax(1e-6, abs(x_raw))^(2.0 / 3.0))))^2
+  } else if (tt %in% c("fourthrt", "qtrt")) {
+    v_resp <- (u_clean / (4.0 * (x_pos^0.75)))^2
+  } else if (tt %in% c("reciprocal", "inv", "inverse")) {
+    v_resp <- (u_clean / (x_pos^2))^2
+  } else if (tt %in% c("asin", "arcsin", "arcsine")) {
+    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 100.0
+    p_cl <- pmin(1.0 - 1e-6, pmax(1e-6, x_raw / sc))
+    v_resp <- (u_clean / (2.0 * sc * sqrt(p_cl * (1.0 - p_cl))))^2
+  } else if (tt == "logit") {
+    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 100.0
+    p_cl <- pmin(1.0 - 1e-6, pmax(1e-6, x_raw / sc))
+    v_resp <- (u_clean / (sc * p_cl * (1.0 - p_cl)))^2
   } else if (tt %in% c("boxcox", "bc")) {
     lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
-    v_resp <- (x_clean^(lam - 1) * u_clean)^2
+    v_resp <- (x_pos^(lam - 1.0) * u_clean)^2
   } else if (tt %in% c("yeojohnson", "yj")) {
     lam <- if (!is.na(trans_obj$lambda)) trans_obj$lambda else 0.0
-    v_resp <- ((x_clean + 1.0)^(lam - 1) * u_clean)^2
+    deriv <- ifelse(x_raw >= 0, (x_raw + 1.0)^(lam - 1.0), (-x_raw + 1.0)^(1.0 - lam))
+    v_resp <- (deriv * u_clean)^2
   } else {
     v_resp <- u_clean^2
   }
@@ -1093,9 +1145,7 @@ map_to_colors <- function(vals, vmin, vmax, pal) {
 draw_colorbar <- function(x0, y0, x1, y1, vmin, vmax, pal, ticks, tick_labels, title_txt) {
   n <- length(pal)
   ys <- seq(y0, y1, length.out = n + 1)
-  for (i in seq_len(n)) {
-    rect(x0, ys[i], x1, ys[i + 1], col = pal[i], border = NA)
-  }
+  rect(x0, ys[seq_len(n)], x1, ys[seq_len(n) + 1L], col = pal, border = NA)
   rect(x0, y0, x1, y1, border = "#333333", lwd = 0.8)
   for (j in seq_along(ticks)) {
     ty <- y0 + (ticks[j] - vmin) / max(1e-9, vmax - vmin) * (y1 - y0)
@@ -1112,11 +1162,13 @@ compute_color_scale <- function(vals_model_sc, use_log, vmin_raw = NULL, vmax_ra
   qs <- quantile(vals_model_sc, probs = c(0.01, 0.99), na.rm = TRUE)
   vmin <- as.numeric(qs[1])
   vmax <- as.numeric(qs[2])
-  if (!is.null(vmin_raw) && !is.na(vmin_raw)) {
-    vmin <- tr$fwd(as.numeric(vmin_raw))
+  has_vmin <- !is.null(vmin_raw) && length(vmin_raw) > 0 && is.finite(suppressWarnings(as.numeric(vmin_raw[1])))
+  has_vmax <- !is.null(vmax_raw) && length(vmax_raw) > 0 && is.finite(suppressWarnings(as.numeric(vmax_raw[1])))
+  if (has_vmin) {
+    vmin <- tr$fwd(as.numeric(vmin_raw[1]))
   }
-  if (!is.null(vmax_raw) && !is.na(vmax_raw)) {
-    vmax <- tr$fwd(as.numeric(vmax_raw))
+  if (has_vmax) {
+    vmax <- tr$fwd(as.numeric(vmax_raw[1]))
   }
   if (!is.finite(vmin) || !is.finite(vmax) || vmax - vmin < 1e-4) {
     vmin <- ifelse(is.finite(vmin), vmin, 0.0) - 0.5
@@ -1166,8 +1218,8 @@ compute_se_scale <- function(se_vals, vmin_se = NULL, vmax_se = NULL) {
   qs <- quantile(se_vals, probs = c(0.02, 0.98), na.rm = TRUE)
   vmin <- max(0.01, floor(qs[1] * 20) / 20)
   vmax <- max(vmin + 0.15, ceiling(qs[2] * 20) / 20)
-  if (!is.null(vmin_se) && !is.na(vmin_se)) vmin <- max(0.001, as.numeric(vmin_se))
-  if (!is.null(vmax_se) && !is.na(vmax_se)) vmax <- max(vmin + 0.05, as.numeric(vmax_se))
+  if (!is.null(vmin_se) && length(vmin_se) > 0 && is.finite(suppressWarnings(as.numeric(vmin_se[1])))) vmin <- max(0.001, as.numeric(vmin_se[1]))
+  if (!is.null(vmax_se) && length(vmax_se) > 0 && is.finite(suppressWarnings(as.numeric(vmax_se[1])))) vmax <- max(vmin + 0.05, as.numeric(vmax_se[1]))
   ticks <- pretty(c(vmin, vmax), n = 5)
   ticks <- ticks[ticks >= vmin & ticks <= vmax]
   if (length(ticks) < 3) ticks <- seq(vmin, vmax, length.out = 5)
@@ -1286,13 +1338,15 @@ get_norm_pal <- function(norm_mode = "none", reverse_color = FALSE) {
 
 compute_norm_color_scale <- function(vals, norm_mode = "none", vmin_raw = NULL, vmax_raw = NULL) {
   nm <- get_norm_meta(norm_mode)
+  has_vmin <- !is.null(vmin_raw) && length(vmin_raw) > 0 && is.finite(suppressWarnings(as.numeric(vmin_raw[1])))
+  has_vmax <- !is.null(vmax_raw) && length(vmax_raw) > 0 && is.finite(suppressWarnings(as.numeric(vmax_raw[1])))
   if (nm$mode %in% c("zscore", "robust_zscore")) {
     qs <- quantile(vals, probs = c(0.01, 0.99), na.rm = TRUE)
     lim <- max(abs(qs), na.rm = TRUE)
     if (!is.finite(lim) || lim < 0.5) lim <- 2.0
     lim <- ceiling(lim * 2) / 2
-    vmin <- if (!is.null(vmin_raw) && !is.na(vmin_raw)) as.numeric(vmin_raw) else -lim
-    vmax <- if (!is.null(vmax_raw) && !is.na(vmax_raw)) as.numeric(vmax_raw) else lim
+    vmin <- if (has_vmin) as.numeric(vmin_raw[1]) else -lim
+    vmax <- if (has_vmax) as.numeric(vmax_raw[1]) else lim
     if (vmax <= vmin) { vmin <- -2.0; vmax <- 2.0 }
     ticks <- pretty(c(vmin, vmax), n = 6)
     ticks <- ticks[ticks >= vmin - 1e-9 & ticks <= vmax + 1e-9]
@@ -1895,15 +1949,17 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
 
   # Panel B: 5-Fold CV R2 Comparison Across Domains
   avail_doms <- unique(cv_tab$Domain)
-  r2_mat <- sapply(avail_doms, function(d) {
+  model_order <- c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)",
+                   "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)")
+  r2_mat <- vapply(avail_doms, function(d) {
     sub <- cv_tab[cv_tab$Domain == d, ]
-    pmax(0, c(
-      sub$R2[sub$Model == "OLS (Non-Spatial)"],
-      sub$R2[sub$Model == "S3N Tail-Down (Stream Distance)"],
-      sub$R2[sub$Model == "S3N Tail-Up (Flow-Connected + AFV)"],
-      sub$R2[sub$Model == "S3N Combined (Tail-Up + Tail-Down)"]
-    ))
-  })
+    vals <- vapply(model_order, function(mn) {
+      hit <- sub$R2[sub$Model == mn]
+      if (length(hit) > 0 && is.finite(hit[1])) max(0, hit[1]) else NA_real_
+    }, numeric(1))
+    unname(vals)
+  }, numeric(4))
+  if (is.null(dim(r2_mat))) r2_mat <- matrix(r2_mat, nrow = 4, ncol = length(avail_doms))
   short_map <- c(
     "Humber Basin (CatchID=80)"   = "Humber Basin",
     "Severn Basin (CatchID=2786)" = "Severn Basin",
@@ -1931,15 +1987,16 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   } else {
     "All England RSN Network"
   }
+  non_cov_params <- c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance")
   eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
-                     !(Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi")))
+                     !(Parameter %in% non_cov_params))
   eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
-                     !(Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi")))
+                     !(Parameter %in% non_cov_params))
   if (nrow(eng_td_p) == 0) {
     eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
-                       !(Parameter %in% c("sigma.sq", "tau.sq", "phi")))
+                       !(Parameter %in% setdiff(non_cov_params, "Intercept")))
     eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
-                       !(Parameter %in% c("sigma.sq", "tau.sq", "phi")))
+                       !(Parameter %in% setdiff(non_cov_params, "Intercept")))
   }
 
   nice_labels <- c(
@@ -2276,10 +2333,9 @@ match_covariate_token <- function(tok) {
 }
 
 resolve_covariate_terms <- function(df, include_peat = TRUE, var_specs = NULL) {
-  has_split_geol <- include_peat &&
-    ("Is_Peat" %in% colnames(df)) && ("Is_Sandstone" %in% colnames(df)) &&
-    sd(df$Is_Peat[df$has_obs == 1], na.rm = TRUE) > 0 &&
-    sd(df$Is_Sandstone[df$has_obs == 1], na.rm = TRUE) > 0
+  sd_peat <- if ("Is_Peat" %in% colnames(df)) suppressWarnings(sd(df$Is_Peat[df$has_obs == 1], na.rm = TRUE)) else NA_real_
+  sd_sand <- if ("Is_Sandstone" %in% colnames(df)) suppressWarnings(sd(df$Is_Sandstone[df$has_obs == 1], na.rm = TRUE)) else NA_real_
+  has_split_geol <- include_peat && is.finite(sd_peat) && sd_peat > 0 && is.finite(sd_sand) && sd_sand > 0
 
   default_terms <- if (has_split_geol) {
     c("Elevation_z", "Slope_z", "log10_US_Accum_z",
@@ -2355,7 +2411,8 @@ build_design_matrix <- function(df, include_peat = TRUE, var_specs = NULL) {
       next
     }
     vec <- info$eval_fn(df)
-    if (all(!is.na(vec)) && sd(vec[df$has_obs == 1], na.rm = TRUE) > 0) {
+    sd_obs <- suppressWarnings(sd(vec[df$has_obs == 1], na.rm = TRUE))
+    if (all(!is.na(vec)) && is.finite(sd_obs) && sd_obs > 0) {
       col_list[[nm]] <- vec
     }
   }
@@ -2451,7 +2508,7 @@ format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
   if (!is.null(param_tab) && nrow(param_tab) > 0) {
     eng_p <- unique(as.character(param_tab$Parameter[
       grepl("All England", param_tab$Domain) &
-      !(param_tab$Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi"))
+      !(param_tab$Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance"))
     ]))
     if (!has_cli_vars && (identical(eng_p, default_eng) || identical(eng_p, default_bas))) {
       return(NULL)
@@ -2652,6 +2709,8 @@ load_network_metadata <- function(proc_dir) {
     source       = src_key,
     source_abbr  = parse_json_string_field(lines, "source_abbr", format_source_abbr(src_key)),
     source_label = parse_json_string_field(lines, "source_label", format_source_label(src_key)),
+    range_mode   = parse_json_string_field(lines, "range_mode", ""),
+    meas_method  = parse_json_string_field(lines, "meas_method", ""),
     humber_cid   = parse_json_int_field(lines, "humber", NA_integer_),
     thames_cid   = parse_json_int_field(lines, "thames", NA_integer_),
     severn_cid   = parse_json_int_field(lines, "severn", NA_integer_)

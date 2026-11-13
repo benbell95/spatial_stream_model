@@ -3,6 +3,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -117,10 +118,12 @@ SEXP C_compute_s3n_neighbors(
                 }
             } else {
                 int anc = parent_dn[a];
-                while (anc >= 0 && !(tin[anc] <= tb && tout[b] <= tout[anc])) {
+                int hops = 0;
+                while (anc >= 0 && anc < q && hops < q && !(tin[anc] <= tb && tout[b] <= tout[anc])) {
                     anc = parent_dn[anc];
+                    ++hops;
                 }
-                double ncj_up = (anc >= 0) ? d2m_km[anc] : 0.0;
+                double ncj_up = (anc >= 0 && anc < q && hops < q) ? d2m_km[anc] : 0.0;
                 dist = std::max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * ncj_up);
                 if (model_type == 1) {
                     fc = true;
@@ -235,6 +238,14 @@ SEXP C_compute_s3n_neighbors(
     }
 
     // 3. Build pred_neighbors for all q locations (0..n-1 are obs, n..q-1 are unobserved preds)
+    // Pre-index observations by net_id: since same-network pairs have dist < 1e6 (vs >= 1e6 cross-network),
+    // any net_id with >= m observations finds its exact top-m neighbors without scanning other basins.
+    std::unordered_map<int, std::vector<int>> obs_by_net;
+    obs_by_net.reserve(256);
+    for (int j = 0; j < n; ++j) {
+        obs_by_net[net_id[j]].push_back(j);
+    }
+
     SEXP pred_nnIndx_r = PROTECT(Rf_allocVector(INTSXP, q * m));
     SEXP pred_nnDist_r = PROTECT(Rf_allocVector(REALSXP, q * m));
     SEXP pred_nnWght_r = PROTECT(Rf_allocVector(REALSXP, q * m));
@@ -242,28 +253,61 @@ SEXP C_compute_s3n_neighbors(
     double* pred_nnDist = REAL(pred_nnDist_r);
     double* pred_nnWght = REAL(pred_nnWght_r);
 
-    #pragma omp parallel for schedule(dynamic, 64)
-    for (int i = 0; i < q; ++i) {
-        std::vector<Cand> cands(n);
-        if (i < n) {
-            for (int j = 0; j < n; ++j) {
-                double wt = obsobs_wt[i + j * n];
-                double dist = obsobs_dist[i + j * n];
-                cands[j] = {wt > 0.0, dist, wt, j};
+    int m_use_pred = (n < m) ? n : m;
+
+    #pragma omp parallel
+    {
+        std::vector<Cand> cands;
+        cands.reserve(n);
+
+        #pragma omp for schedule(dynamic, 64)
+        for (int i = 0; i < q; ++i) {
+            auto it_net = obs_by_net.find(net_id[i]);
+            bool use_same_net_only = (it_net != obs_by_net.end() && (int)it_net->second.size() >= m_use_pred && n > 0);
+            cands.clear();
+            if (use_same_net_only) {
+                const std::vector<int>& same_obs = it_net->second;
+                for (int j : same_obs) {
+                    if (i < n) {
+                        double wt = obsobs_wt[i + j * n];
+                        double dist = obsobs_dist[i + j * n];
+                        cands.push_back({wt > 0.0, dist, wt, j});
+                    } else {
+                        bool fc; double dist, wt;
+                        calc_pair(i, j, fc, dist, wt);
+                        cands.push_back({fc, dist, wt, j});
+                    }
+                }
+            } else {
+                for (int j = 0; j < n; ++j) {
+                    if (i < n) {
+                        double wt = obsobs_wt[i + j * n];
+                        double dist = obsobs_dist[i + j * n];
+                        cands.push_back({wt > 0.0, dist, wt, j});
+                    } else {
+                        bool fc; double dist, wt;
+                        calc_pair(i, j, fc, dist, wt);
+                        cands.push_back({fc, dist, wt, j});
+                    }
+                }
             }
-        } else {
-            for (int j = 0; j < n; ++j) {
-                bool fc; double dist, wt;
-                calc_pair(i, j, fc, dist, wt);
-                cands[j] = {fc, dist, wt, j};
+            if ((int)cands.size() > m_use_pred) {
+                std::partial_sort(cands.begin(), cands.begin() + m_use_pred, cands.end());
+            } else {
+                std::sort(cands.begin(), cands.end());
             }
-        }
-        std::partial_sort(cands.begin(), cands.begin() + m, cands.end());
-        int base_p = i * m;
-        for (int k = 0; k < m; ++k) {
-            pred_nnIndx[base_p + k] = cands[k].idx;
-            pred_nnDist[base_p + k] = cands[k].dist;
-            pred_nnWght[base_p + k] = cands[k].wt;
+            int base_p = i * m;
+            for (int k = 0; k < m; ++k) {
+                if (k < m_use_pred) {
+                    pred_nnIndx[base_p + k] = cands[k].idx;
+                    pred_nnDist[base_p + k] = cands[k].dist;
+                    pred_nnWght[base_p + k] = cands[k].wt;
+                } else {
+                    pred_nnIndx[base_p + k] = (m_use_pred > 0) ? cands[m_use_pred - 1].idx : 0;
+                    pred_nnDist[base_p + k] = 1e6;
+                    pred_nnWght[base_p + k] = 0.0;
+                }
+            }
         }
     }
 
@@ -375,8 +419,10 @@ SEXP C_s3n_predict_meas_error(
     int n = Rf_nrows(X_r);
     int p = Rf_ncols(X_r);
     int q = Rf_nrows(X0_r);
-    int m = INTEGER(m_r)[0];
+    int m_stride = INTEGER(m_r)[0];
+    int m = m_stride;
     if (m > 64) m = 64;
+    if (m > n) m = n;
 
     const double* X = REAL(X_r);
     const double* y = REAL(y_r);
@@ -410,7 +456,15 @@ SEXP C_s3n_predict_meas_error(
         }
 
         // 2. Neighbor indices, distances, weights
-        int base_p = i * m;
+        int base_p = i * m_stride;
+        if (m <= 0 || n <= 0) {
+            double s_pred = std::sqrt(std::max(1e-8, sigma_sq + tau_sq));
+            pred[i] = mu_0;
+            se[i] = s_pred;
+            ci[i] = mu_0 - 1.959964 * s_pred;
+            ci[i + q] = mu_0 + 1.959964 * s_pred;
+            continue;
+        }
         double C[64 * 64];
         double c[64];
         double lambda[64];

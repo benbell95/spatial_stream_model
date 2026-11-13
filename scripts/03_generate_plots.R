@@ -111,17 +111,20 @@ load_plot_bundle <- function(dir_p) {
     dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
 
     eng_pred_file <- find_first_csv(PRED_DIR, "^england_.*_predictions\\.csv$", "_cv_predictions\\.csv$")
-    hum_pred_file <- find_first_csv(PRED_DIR, "^humber_.*_predictions\\.csv$",  "_cv_predictions\\.csv$")
-    tha_pred_file <- find_first_csv(PRED_DIR, "^thames_.*_predictions\\.csv$",  "_cv_predictions\\.csv$")
-    sev_pred_file <- find_first_csv(PRED_DIR, "^severn_.*_predictions\\.csv$",  "_cv_predictions\\.csv$")
+    hum_pred_file <- find_first_csv(PRED_DIR, "^humber_.*_predictions\\.csv$",  "_cv_predictions\\.csv$", required = FALSE)
+    tha_pred_file <- find_first_csv(PRED_DIR, "^thames_.*_predictions\\.csv$",  "_cv_predictions\\.csv$", required = FALSE)
+    sev_pred_file <- find_first_csv(PRED_DIR, "^severn_.*_predictions\\.csv$",  "_cv_predictions\\.csv$", required = FALSE)
 
     eng_cv_file   <- find_first_csv(PRED_DIR, "^england_.*cv_predictions\\.csv$")
     hum_cv_file   <- find_first_csv(PRED_DIR, "^humber_.*cv_predictions\\.csv$", required = FALSE)
 
     eng_pred  <- normalize_pred_df(read.csv(eng_pred_file))
-    hum_pred  <- normalize_pred_df(read.csv(hum_pred_file))
-    tha_pred  <- normalize_pred_df(read.csv(tha_pred_file))
-    sev_pred  <- normalize_pred_df(read.csv(sev_pred_file))
+    hum_cid   <- resolve_core_basin(eng_pred, target = "humber")$catch_id
+    tha_cid   <- resolve_core_basin(eng_pred, target = "thames")$catch_id
+    sev_cid   <- resolve_core_basin(eng_pred, target = "severn")$catch_id
+    hum_pred  <- if (!is.null(hum_pred_file)) normalize_pred_df(read.csv(hum_pred_file)) else subset(eng_pred, CatchID == hum_cid)
+    tha_pred  <- if (!is.null(tha_pred_file)) normalize_pred_df(read.csv(tha_pred_file)) else subset(eng_pred, CatchID == tha_cid)
+    sev_pred  <- if (!is.null(sev_pred_file)) normalize_pred_df(read.csv(sev_pred_file)) else subset(eng_pred, CatchID == sev_cid)
 
     cv_tab    <- normalize_cv_tab(read.csv(file.path(TAB_DIR, "cv_model_comparison.csv")))
     param_tab <- read.csv(file.path(TAB_DIR, "s3n_parameter_estimates.csv"))
@@ -203,15 +206,34 @@ load_plot_bundle <- function(dir_p) {
     }
   }
 
+  trans_obj <- NULL
   use_log <- use_log_cli
-  if (is.null(use_log)) {
-    if ("Scale" %in% names(cv_tab)) {
-      use_log <- (as.character(cv_tab$Scale[1]) == "log")
+  if (!is.null(use_log)) {
+    trans_obj <- build_transformer(if (isTRUE(use_log)) "log" else "none")
+  } else {
+    t_type <- if ("Transform_Type" %in% names(cv_tab)) tolower(trimws(as.character(cv_tab$Transform_Type[1]))) else NA_character_
+    t_lam  <- if ("Transform_Lambda" %in% names(cv_tab)) suppressWarnings(as.numeric(as.character(cv_tab$Transform_Lambda[1]))) else NA_real_
+    if (!is.na(t_type) && nzchar(t_type)) {
+      trans_obj <- build_transformer(t_type, lambda = if (is.finite(t_lam)) t_lam else NULL)
+    } else if ("Scale" %in% names(cv_tab) && as.character(cv_tab$Scale[1]) %in% c("log", "none", "raw")) {
+      sc_str <- tolower(as.character(cv_tab$Scale[1]))
+      trans_obj <- build_transformer(if (sc_str == "log") "log" else "none")
     } else {
-      use_log <- ("pred_log_combined" %in% names(eng_pred)) ||
-                 any(abs(exp(eng_pred$pred_model_sc[1:min(20, nrow(eng_pred))]) -
-                         eng_pred$pred_combined[1:min(20, nrow(eng_pred))]) < 1e-4, na.rm = TRUE)
+      diffs <- abs(exp(eng_pred$pred_model_sc[1:min(20, nrow(eng_pred))]) -
+                     eng_pred$pred_combined[1:min(20, nrow(eng_pred))])
+      is_log_guess <- ("pred_log_combined" %in% names(eng_pred)) ||
+        (any(!is.na(diffs)) && all(diffs < 1e-4, na.rm = TRUE))
+      trans_obj <- build_transformer(if (is_log_guess) "log" else "none")
     }
+    use_log <- trans_obj$is_log
+  }
+
+  source_lbl <- if ("Source_Desc" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source_Desc[1]))) {
+    as.character(cv_tab$Source_Desc[1])
+  } else if ("Source" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source[1]))) {
+    as.character(cv_tab$Source[1])
+  } else {
+    NULL
   }
 
   if (norm_meta$mode != "none") {
@@ -222,12 +244,16 @@ load_plot_bundle <- function(dir_p) {
   }
 
   list(
+    bundle_dir     = dir_p,
+    eng_pred_file  = eng_pred_file,
     FIG_DIR        = FIG_DIR,
     is_default_out = is_default_out,
     det_code       = det_code,
     det_name       = det_name,
     det_unit       = det_unit,
     use_log        = use_log,
+    trans_obj      = trans_obj,
+    source_label   = source_lbl,
     eng_pred       = eng_pred,
     hum_pred       = hum_pred,
     tha_pred       = tha_pred,
@@ -264,9 +290,11 @@ scale_se_h <- unlist(lapply(bundles, function(b) b$hum_pred$se_model_sc))
 
 if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir))) {
   parent_d <- dirname(target_dir)
+  self_eng_p <- normalizePath(bundles[[1]]$eng_pred_file, mustWork = FALSE)
   sib_csvs <- list.files(parent_d, pattern = "^predictions_.*\\.csv$", recursive = TRUE, full.names = TRUE)
   sib_csvs <- sib_csvs[!grepl("^predictions_(humber|thames|severn|river_|catchid_)", basename(sib_csvs))]
-  if (length(sib_csvs) > 1) {
+  sib_csvs <- sib_csvs[normalizePath(sib_csvs, mustWork = FALSE) != self_eng_p]
+  if (length(sib_csvs) > 0) {
     for (sc in sib_csvs) {
       sdf <- tryCatch(normalize_pred_df(read.csv(sc)), error = function(e) NULL)
       if (!is.null(sdf)) {
@@ -276,13 +304,20 @@ if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir
         scale_vals <- c(scale_vals, sdf[[norm_meta$pred_col]])
         scale_se_e <- c(scale_se_e, sdf$se_model_sc)
       }
+      hf <- file.path(dirname(sc), paste0("predictions_humber_", bundles[[1]]$det_code, ".csv"))
+      if (file.exists(hf)) {
+        hdf <- tryCatch(normalize_pred_df(read.csv(hf)), error = function(e) NULL)
+        if (!is.null(hdf) && "se_model_sc" %in% names(hdf)) {
+          scale_se_h <- c(scale_se_h, hdf$se_model_sc)
+        }
+      }
     }
   }
 }
 
-use_log_shared <- bundles[[1]]$use_log
+trans_shared   <- bundles[[1]]$trans_obj
 shared_sc_val  <- if (norm_meta$mode == "none") {
-  compute_color_scale(scale_vals, use_log_shared, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+  compute_color_scale(scale_vals, trans_shared, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
 } else {
   compute_norm_color_scale(scale_vals, norm_meta$mode, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
 }
@@ -298,6 +333,14 @@ all_raw_preds <- unlist(lapply(bundles, function(b) quantile(b$eng_pred$pred_com
 yr_d          <- range(all_raw_preds, na.rm = TRUE)
 ylim_d_shared <- if (length(bundles) > 1) c(max(0, yr_d[1] - 0.05 * diff(yr_d)), yr_d[2] + 0.15 * diff(yr_d)) else NULL
 
+catch_lu_plot <- NULL
+if (length(custom_basins) > 0) {
+  cands_lu <- list.files(rel_path(dir_cfg$data_dir, "processed"), pattern = "^rsn_catchments_lookup\\.csv$", recursive = TRUE, full.names = TRUE)
+  if (length(cands_lu) > 0) {
+    catch_lu_plot <- tryCatch(read.csv(cands_lu[1], stringsAsFactors = FALSE), error = function(e) NULL)
+  }
+}
+
 for (b in bundles) {
   ftag    <- norm_meta$file_tag
   f1_name <- if (b$is_default_out) sprintf("fig1_england_stream_nitrate_map%s.png", ftag) else sprintf("fig1_england_stream_%s_map%s.png", b$det_code, ftag)
@@ -305,8 +348,8 @@ for (b in bundles) {
   f3_name <- if (b$is_default_out) sprintf("fig3_thames_severn_s3n_maps%s.png", ftag)     else sprintf("fig3_thames_severn_%s_maps%s.png", b$det_code, ftag)
   f4_name <- if (b$is_default_out) "fig4_cv_and_diagnostics.png"         else sprintf("fig4_cv_and_diagnostics_%s.png", b$det_code)
 
-  sc_lo_disp <- if (norm_meta$mode == "none") (if (b$use_log) exp(shared_sc_val$vmin) else shared_sc_val$vmin) else shared_sc_val$vmin
-  sc_hi_disp <- if (norm_meta$mode == "none") (if (b$use_log) exp(shared_sc_val$vmax) else shared_sc_val$vmax) else shared_sc_val$vmax
+  sc_lo_disp <- if (norm_meta$mode == "none") b$trans_obj$inv(shared_sc_val$vmin) else shared_sc_val$vmin
+  sc_hi_disp <- if (norm_meta$mode == "none") b$trans_obj$inv(shared_sc_val$vmax) else shared_sc_val$vmax
   cat(sprintf("Rendering 4 figures in %s (shared scale [%s, %s]%s)...\n",
               b$FIG_DIR,
               formatC(sc_lo_disp, format = "fg", digits = 3),
@@ -316,48 +359,81 @@ for (b in bundles) {
   vars_sub <- format_covariates_subtitle(param_tab = b$param_tab)
   net_lbl  <- extract_network_label_from_tables(b$cv_tab, b$param_tab, b$FIG_DIR)
 
-  plot_fig1_england_map(b$eng_pred, b$det_code, b$det_name, b$det_unit, b$use_log,
+  plot_fig1_england_map(b$eng_pred, b$det_code, b$det_name, b$det_unit, b$trans_obj,
                         file.path(b$FIG_DIR, f1_name), reverse_color = reverse_color,
                         sc_val = shared_sc_val, sc_se = shared_sc_se_e,
-                        vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
+                        vars_label = vars_sub, network_label = net_lbl,
+                        source_label = b$source_label, norm_mode = norm_cli)
 
-  plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
+  plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
                        file.path(b$FIG_DIR, f2_name), reverse_color = reverse_color,
-                       sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
+                       sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl,
+                       source_label = b$source_label, norm_mode = norm_cli)
 
-  plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
+  plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
                               file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color,
-                              vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
+                              vars_label = vars_sub, network_label = net_lbl,
+                              source_label = b$source_label, norm_mode = norm_cli)
 
   plot_fig4_diagnostics(b$eng_pred, b$eng_cv, b$hum_cv, b$cv_tab, b$param_tab,
-                        b$det_code, b$det_name, b$det_unit, b$use_log,
+                        b$det_code, b$det_name, b$det_unit, b$trans_obj,
                         file.path(b$FIG_DIR, f4_name),
                         lims_a = if (length(bundles) > 1) lims_a_shared else NULL,
                         ylim_d = ylim_d_shared,
-                        vars_label = vars_sub, network_label = net_lbl)
+                        vars_label = vars_sub, network_label = net_lbl,
+                        source_label = b$source_label)
 
   if (length(custom_basins) > 0) {
     for (bi in seq_along(custom_basins)) {
       b_spec <- custom_basins[bi]
+      b_cids <- integer(0)
+      b_title <- b_spec
       if (tolower(b_spec) %in% c("thames", "humber", "severn")) {
-        b_res <- resolve_core_basin(b$eng_pred, target = tolower(b_spec))
-        b_cid <- b_res$catch_id
+        b_res <- resolve_core_basin(b$eng_pred, catch_lu_plot, target = tolower(b_spec))
+        b_cids <- b_res$catch_id
         b_title <- b_res$domain_label
       } else if (grepl("^[0-9]+$", b_spec)) {
-        b_cid <- as.integer(b_spec)
-        b_title <- sprintf("CatchID %d Basin", b_cid)
-      } else {
-        b_cid <- NA_integer_
-        b_title <- b_spec
+        cid_num <- as.integer(b_spec)
+        b_cids <- cid_num
+        if (!is.null(catch_lu_plot) && any(catch_lu_plot$CatchID == cid_num)) {
+          b_title <- sprintf("%s (CatchID=%d)", catch_lu_plot$Main_River[catch_lu_plot$CatchID == cid_num][1], cid_num)
+        } else {
+          b_title <- sprintf("CatchID %d Basin", cid_num)
+        }
+      } else if (!is.null(catch_lu_plot)) {
+        if (grepl("^rbd:", tolower(b_spec))) {
+          rid <- suppressWarnings(as.integer(sub("^rbd:", "", tolower(b_spec))))
+          sub_r <- catch_lu_plot[catch_lu_plot$RBD_ID == rid, ]
+          if (nrow(sub_r) > 0) {
+            b_cids <- unique(sub_r$CatchID)
+            b_title <- sprintf("%s RBD (RBD=%d)", sub_r$RBD_Name[1], rid)
+          }
+        } else {
+          m_idx_lu <- grep(b_spec, catch_lu_plot$Main_River, ignore.case = TRUE)
+          if (length(m_idx_lu) > 0) {
+            sub_m <- catch_lu_plot[m_idx_lu, ]
+            sub_m <- sub_m[order(-sub_m$n_obs_reaches, -sub_m$n_reaches), ]
+            b_cids <- sub_m$CatchID[1]
+            b_title <- sprintf("%s (CatchID=%d)", sub_m$Main_River[1], b_cids)
+          } else {
+            r_idx_lu <- grep(b_spec, catch_lu_plot$RBD_Name, ignore.case = TRUE)
+            if (length(r_idx_lu) > 0) {
+              rid <- catch_lu_plot$RBD_ID[r_idx_lu[1]]
+              b_cids <- unique(catch_lu_plot$CatchID[catch_lu_plot$RBD_ID == rid])
+              b_title <- sprintf("%s RBD (RBD=%d)", catch_lu_plot$RBD_Name[r_idx_lu[1]], rid)
+            }
+          }
+        }
       }
-      b_pred <- subset(b$eng_pred, CatchID == b_cid)
+      b_pred <- subset(b$eng_pred, CatchID %in% b_cids)
       if (nrow(b_pred) > 0) {
         b_slug <- gsub("[^a-z0-9]+", "_", tolower(b_title))
         b_slug <- gsub("^_|_$", "", b_slug)
         f5_b_name <- file.path(b$FIG_DIR, sprintf("fig%d_%s_%s_map%s.png", 4 + bi, b_slug, b$det_code, ftag))
         cat(sprintf("Rendering custom basin figure: %s (%d reaches)...\n", basename(f5_b_name), nrow(b_pred)))
-        plot_basin_map(b_pred, b_title, b_title, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
-                       f5_b_name, reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
+        plot_basin_map(b_pred, b_title, b_title, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
+                       f5_b_name, reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl,
+                       source_label = b$source_label, norm_mode = norm_cli)
       }
     }
   }
@@ -370,7 +446,7 @@ for (m_type in c("season", "year", "month")) {
   if (length(m_idx) >= 2) {
     m_bundles <- bundles[m_idx]
     grid_items <- lapply(m_bundles, function(b) {
-      d_base <- basename(b$FIG_DIR)
+      d_base <- basename(b$bundle_dir)
       lbl <- if (m_type == "season") {
         paste0("Season: ", sub("^season_", "", d_base))
       } else if (m_type == "year") {
@@ -387,9 +463,10 @@ for (m_type in c("season", "year", "month")) {
     cat(sprintf("Rendering Figure 5 (%d-panel All England %s comparison grid): %s...\n",
                 length(grid_items), m_type, fig5_path))
     plot_fig5_temporal_england_grid(grid_items, m_type, shared_sc_val,
-                                    b0$det_code, b0$det_name, b0$det_unit, b0$use_log,
+                                    b0$det_code, b0$det_name, b0$det_unit, b0$trans_obj,
                                     fig5_path, reverse_color = reverse_color,
-                                    vars_label = vars_sub_g, network_label = net_lbl_g, norm_mode = norm_cli)
+                                    vars_label = vars_sub_g, network_label = net_lbl_g,
+                                    source_label = b0$source_label, norm_mode = norm_cli)
   }
 }
 
