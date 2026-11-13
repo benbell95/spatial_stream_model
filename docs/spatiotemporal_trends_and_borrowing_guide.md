@@ -69,7 +69,10 @@ After all $T$ slices ($t = 1, \dots, T$) are fitted by S3N:
 
 2. **Precision-Weighted Exponential Smoothing**:
    Let $\hat{z}_{i,s}$ and $v_{i,s} = \text{SE}_{i,s}^2$ be the independent S3N kriging prediction and variance at reach $i$ in period $s$. For target period $t$, each period $s$ receives temporal weight $w_{t,s} = \hat{\rho}_t^{|t - s|}$ multiplied by its local spatial precision $1 / v_{i,s}$:
-   $$\hat{z}_{i,t}^{\text{ST}} = \frac{\sum_{s=1}^T \hat{\rho}_t^{|t - s|} \, \hat{z}_{i,s} / v_{i,s}}{\sum_{s=1}^T \hat{\rho}_t^{|t - s|} / v_{i,s}}, \qquad \text{SE}_{i,t}^{\text{ST}} = \left(\sum_{s=1}^T \frac{\hat{\rho}_t^{|t - s|}}{v_{i,s}}\right)^{-1/2}$$
+
+   $$
+   \hat{z}_{i,t}^{\text{ST}} = \frac{\sum_{s=1}^T \hat{\rho}_t^{|t - s|} \, \hat{z}_{i,s} / v_{i,s}}{\sum_{s=1}^T \hat{\rho}_t^{|t - s|} / v_{i,s}}, \qquad \text{SE}_{i,t}^{\text{ST}} = \left(\sum_{s=1}^T \frac{\hat{\rho}_t^{|t - s|}}{v_{i,s}}\right)^{-1/2}
+   $$
 
    **Key intuition**:
    - **Densely monitored reach in period $t$**: $v_{i,t}$ is small, so own-period precision $1/v_{i,t}$ dominates and $\hat{z}_{i,t}^{\text{ST}} \approx \hat{z}_{i,t}$.
@@ -87,13 +90,18 @@ Whenever `--by=` produces at least $T \ge 2$ valid slices, `compute_spatiotempor
 ### 4.1 Precision-Weighted Least Squares (WLS) Slope
 For each reach $i$, we regress the predicted model-scale values $\hat{z}_{i,1}, \dots, \hat{z}_{i,T}$ against the integer period index $t = 1, \dots, T$ using inverse-variance weights $w_{i,t} = 1 / \max(\text{SE}_{i,t}^2, 10^{-8})$:
 
-$$\hat{\beta}_{\text{time}}(i) = \frac{\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)(\hat{z}_{i,t} - \bar{z}_i)}{\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)^2}, \qquad \text{SE}\big(\hat{\beta}_{\text{time}}(i)\big) = \left(\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)^2\right)^{-1/2}$$
+$$
+\hat{\beta}_{\text{time}}(i) = \frac{\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)(\hat{z}_{i,t} - \bar{z}_i)}{\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)^2}, \qquad \text{SE}\big(\hat{\beta}_{\text{time}}(i)\big) = \left(\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)^2\right)^{-1/2}
+$$
 
 Why precision weighting? Reaches far from monitoring stations have large $\text{SE}_{i,t}$ (high uncertainty), so they receive lower weight and **smaller $Z$-scores**—preventing noisy extrapolation in unmonitored headwaters from falsely lighting up as "significant trends".
 
 ### 4.2 Wald $Z$-Test & 5-Tier Significance Classification
 From the slope and its standard error:
-$$Z_i = \frac{\hat{\beta}_{\text{time}}(i)}{\text{SE}\big(\hat{\beta}_{\text{time}}(i)\big)}, \qquad p_i = 2\,\Phi(-|Z_i|)$$
+
+$$
+Z_i = \frac{\hat{\beta}_{\text{time}}(i)}{\text{SE}\big(\hat{\beta}_{\text{time}}(i)\big)}, \qquad p_i = 2\,\Phi(-|Z_i|)
+$$
 
 Every reach is classified into one of five `trend_tier` categories:
 

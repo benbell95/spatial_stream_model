@@ -49,12 +49,23 @@ Given the selected response transformation $g(\cdot)$ (e.g. $g(y) = \ln(y)$ for 
 
 1. Transform the regulatory threshold onto the model scale: $z_T = g(T)$.
 2. Compute the standardized normal deviate using the combined S3N prediction $\hat{z}(s_0)$ and kriging standard error $\text{SE}(s_0)$:
-   $$z_0 = \frac{z_T - \hat{z}(s_0)}{\max(\text{SE}(s_0), 10^{-8})}$$
+
+   $$
+   z_0 = \frac{z_T - \hat{z}(s_0)}{\max(\text{SE}(s_0), 10^{-8})}
+   $$
+
 3. Evaluate the exact Gaussian exceedance probability:
    - **Upper threshold (`--threshold-dir=above`)**:
-     $$P\big(Y(s_0) > T\big) = 1 - \Phi(z_0)$$
+
+     $$
+     P\big(Y(s_0) > T\big) = 1 - \Phi(z_0)
+     $$
+
    - **Lower threshold (`--threshold-dir=below`)**:
-     $$P\big(Y(s_0) < T\big) = \Phi(z_0)$$
+
+     $$
+     P\big(Y(s_0) < T\big) = \Phi(z_0)
+     $$
 
 Because both $\hat{z}(s_0)$ and $\text{SE}(s_0)$ are evaluated on the transformed scale where S3N normality holds, this approach naturally handles skewed water-quality concentrations (such as log-normal Nitrate or Orthophosphate) without back-transformation bias.
 
@@ -84,7 +95,7 @@ When `--threshold=<val>` is supplied:
 2. **`exceedance_summary_<det>.csv`** is written in the output directory, summarising across all fitted domains (`All England`, `Humber`, `Thames`, `Severn`, and any `--basin=` domains):
    - `Domain`, `Threshold_Raw`, `Threshold_Sc`, `Direction`, `Tier`, `Reach_Count`, `Reach_Pct`.
 3. **Dedicated Management Classification & Exceedance Probability Plots** (generated automatically by `run_s3n_determinand.R` and `03_generate_plots.R`):
-   - `fig_exceedance_england_<det>.png`: Two-panel All England map showing **Panel A: Assigned Management Classification** (5-tier green-to-red map with reach counts and percentages in the legend) and **Panel B: Continuous Exceedance Probability** ($0\%\text{–}100\%$).
+   - `fig_exceedance_england_<det>.png`: Two-panel All England map showing **Panel A: Assigned Management Classification** (5-tier green-to-red map with reach counts and percentages in the legend) and **Panel B: Continuous Exceedance Probability** ($0\%$–$100\%$).
    - `fig_exceedance_basins_<det>.png`: Three-panel regional map for **Humber**, **Thames**, and **Severn** showing reaches coloured by their assigned management classification and monitoring site locations.
    - `fig_exceedance_basin_<slug>_<det>.png`: Two-panel management classification + exceedance probability map for each custom `--basin=<name>` domain.
 

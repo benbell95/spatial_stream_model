@@ -64,7 +64,11 @@ If you run standard homoskedastic kriging on GAM estimates:
 In Stage 1, a temporal GAM produces an estimated concentration $\hat{x}_i$ for station $i$ with standard error $u_i = \text{SE}(\hat{x}_i)$.
 
 In Stage 2, S3N models the transformed response $y_i = g(\hat{x}_i)$ (e.g. $g(x) = \log(x)$ or $\sqrt{x}$). The observation equation at reach $s_i$ is:
-$$y_i = \boldsymbol{x}_i^T \boldsymbol{\beta} + w_{\text{TU}}(s_i) + w_{\text{TD}}(s_i) + \varepsilon_{\text{micro}}(s_i) + \eta_i$$
+
+$$
+y_i = \boldsymbol{x}_i^T \boldsymbol{\beta} + w_{\text{TU}}(s_i) + w_{\text{TD}}(s_i) + \varepsilon_{\text{micro}}(s_i) + \eta_i
+$$
+
 where:
 - $\boldsymbol{x}_i^T \boldsymbol{\beta}$ represents fixed-effect landscape and geomorphic covariates (elevation, slope, upstream catchment accumulation, geology/aquifer, coordinates).
 - $w_{\text{TU}}(s_i) \sim \mathcal{GP}(0, \sigma_{\text{TU}}^2 \boldsymbol{R}_{\text{TU}})$ is the **Tail-Up process** representing downstream advective mass transport and dilution across stream confluences with Shreve-based Additive Function Values ($\pi_i$).
@@ -77,7 +81,10 @@ where:
 ### 2.2 The Delta Method for Response Variance Conversion
 
 Because the first-stage GAM estimates uncertainty on the natural concentration scale ($u_i = \text{SE}(\hat{x}_i)$) while spatial modeling occurs on a transformed scale $y = g(x)$, we apply the first-order Taylor expansion (the **Delta Method**):
-$$\text{Var}(g(X)) \approx \left[ g'(E[X]) \right]^2 \text{Var}(X)$$
+
+$$
+\text{Var}(g(X)) \approx \left[ g'(E[X]) \right]^2 \text{Var}(X)
+$$
 
 The pipeline implements transformation-specific formulas via `calc_response_meas_variance()` in [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R):
 
@@ -102,10 +109,17 @@ When fitting spatial covariance parameters via Maximum Likelihood (using Vecchia
 - Spatial decay parameter: $\hat{\phi}$
 
 In standard homoskedastic kriging, $\hat{\tau}_{\text{total}}^2$ is used directly as the nugget. In **Measurement Error Kriging**, we recognize that $\hat{\tau}_{\text{total}}^2$ bundles both intrinsic spatial microscale variation $\tau_{\text{micro}}^2$ and the mean first-stage measurement error:
-$$\hat{\tau}_{\text{total}}^2 = \tau_{\text{micro}}^2 + \bar{v}, \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i$$
+
+$$
+\hat{\tau}_{\text{total}}^2 = \tau_{\text{micro}}^2 + \bar{v}, \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i
+$$
 
 Therefore, the intrinsic microscale nugget is recovered via:
-$$\tau_{\text{micro}}^2 = \max\left(10^{-6}\hat{\sigma}^2, \; \hat{\tau}_{\text{total}}^2 - \bar{v}\right)$$
+
+$$
+\tau_{\text{micro}}^2 = \max\left(10^{-6}\hat{\sigma}^2, \; \hat{\tau}_{\text{total}}^2 - \bar{v}\right)
+$$
+
 This decomposition guarantees numerical stability even when the mean GAM error variance $\bar{v}$ approaches or exceeds $\hat{\tau}_{\text{total}}^2$.
 
 ---
@@ -115,15 +129,26 @@ This decomposition guarantees numerical stability even when the mean GAM error v
 For an arbitrary reach $s_0$ (either an unmonitored reach or an observed station reach being denoised), S3N finds the $m$ nearest conditioning observed reaches $s_{(1)}, \dots, s_{(m)}$ using hydrologic stream distance and confluence branching.
 
 The conditional expectation $\hat{y}(s_0)$ and kriging variance $\text{Var}(\hat{y}(s_0))$ solve:
-$$\hat{y}(s_0) = \boldsymbol{x}_0^T \hat{\boldsymbol{\beta}} + \boldsymbol{c}_0^T \boldsymbol{\Sigma}_m^{-1} (\boldsymbol{y}_m - \boldsymbol{X}_m \hat{\boldsymbol{\beta}})$$
+
+$$
+\hat{y}(s_0) = \boldsymbol{x}_0^T \hat{\boldsymbol{\beta}} + \boldsymbol{c}_0^T \boldsymbol{\Sigma}_m^{-1} (\boldsymbol{y}_m - \boldsymbol{X}_m \hat{\boldsymbol{\beta}})
+$$
+
 where:
 - $\boldsymbol{c}_0 = [C(s_0, s_{(1)}), \dots, C(s_0, s_{(m)})]^T$ is the cross-covariance vector.
 - $\boldsymbol{\Sigma}_m$ is the $m \times m$ local neighbor covariance matrix:
-$$\boldsymbol{\Sigma}_m = \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_{(1)}, v_{(2)}, \dots, v_{(m)})$$
+
+$$
+\boldsymbol{\Sigma}_m = \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_{(1)}, v_{(2)}, \dots, v_{(m)})
+$$
 
 #### Why Denoising Occurs
 Notice that for an observed reach $s_i$, the $i$-th diagonal element of $\boldsymbol{\Sigma}_m$ contains $\sigma^2 + \tau_{\text{micro}}^2 + v_i$. Because $v_i > 0$:
-$$E[w(s_i) \mid \boldsymbol{y}] \ne y_i$$
+
+$$
+E[w(s_i) \mid \boldsymbol{y}] \ne y_i
+$$
+
 The spatial prediction **filters out the measurement error $\eta_i$**. An observed station with large GAM uncertainty $v_i$ is smoothed toward its neighbors, while an observed station with negligible uncertainty ($v_i \to 0$) is closely honoured.
 
 ---
@@ -143,7 +168,11 @@ In `C_s3n_predict_meas_error`:
 
 ### 3.2 Machine-Precision Consistency Verification
 When $v_i = 0$ (no measurement error), `C_s3n_predict_meas_error` was benchmarked against the standard BRISC prediction engine across the Thames River Basin (7,491 reaches, 116 observed). The maximum absolute discrepancy was:
-$$\max |\hat{y}_{\text{C++}} - \hat{y}_{\text{BRISC}}| = 1.86 \times 10^{-14}$$
+
+$$
+\max \lvert \hat{y}_{\text{C++}} - \hat{y}_{\text{BRISC}} \rvert = 1.86 \times 10^{-14}
+$$
+
 This confirms that Approach A reduces to standard homoskedastic kriging to exact double-precision machine tolerance when error variance vanishes.
 
 ---
@@ -185,7 +214,10 @@ RSN003,2023-06-01,1.0540,0.4520,gam,mg/L
 If your custom dataset contains weekly, monthly, or daily GAM estimates (e.g. a custom folder `data/custom/rsn_gam/` containing repeated station time series), the preprocessor and pipeline runner automatically aggregate multiple samples per reach:
 - Reach-level concentration is the mean: $\bar{X} = \frac{1}{K}\sum_{k=1}^K x_k$.
 - Reach-level standard error is the Root-Mean-Square (RMS) pooled error:
-$$\text{SE}(\bar{X}) = \frac{\sqrt{\sum_{k=1}^K u_k^2}}{K}$$
+
+$$
+\text{SE}(\bar{X}) = \frac{\sqrt{\sum_{k=1}^K u_k^2}}{K}
+$$
 
 ---
 

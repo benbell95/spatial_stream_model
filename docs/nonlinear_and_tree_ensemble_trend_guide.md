@@ -60,14 +60,26 @@ A naive "fit Random Forest/GAM, then krige the in-sample residuals" approach fai
    - **`rf`**: Each station's trend prediction $\hat{f}_{\text{OOF}}(s_i)$ is averaged **only over bootstrap trees that did not contain station $i$** (Out-of-Bag).
    - **`gbm`**: Uses **5-fold cross-fitting** on the training stations so each station is predicted by a boosted ensemble that never saw it, while also selecting the optimal stopping iteration $M^*$ by minimizing OOF MSE.
    - **`gam` / `spline`**: Applies exact Leave-One-Out hat-matrix adjustment:
-     $$\hat{f}_{\text{LOO}}(s_i) = y_i - \frac{y_i - \hat{f}_{\text{in}}(s_i)}{1 - h_{ii}}$$
+
+     $$
+     \hat{f}_{\text{LOO}}(s_i) = y_i - \frac{y_i - \hat{f}_{\text{in}}(s_i)}{1 - h_{ii}}
+     $$
+
    - **Range Clamping for `gam`**: Evaluation covariates are clamped to `[min - 0.25*range, max + 0.25*range]` of the training range so cubic polynomials cannot explode at extreme unmonitored headwaters.
 2. **Orthogonal Projection Against Linear Design Matrix $X$**:
    - Projects $\hat{f}$ onto the column space of $X_{\text{obs}}$ via $\hat{\beta}_{\text{proj}} = (X_{\text{obs}}^\top X_{\text{obs}})^{-1} X_{\text{obs}}^\top \hat{f}_{\text{OOF}}$ to isolate the **purely non-linear / interaction component**:
-     $$\hat{g}_{\perp}(s) = \hat{f}(s) - X(s)\hat{\beta}_{\text{proj}}, \qquad X_{\text{obs}}^\top \hat{g}_{\perp}(s_{\text{obs}}) = 0$$
+
+     $$
+     \hat{g}_{\perp}(s) = \hat{f}(s) - X(s)\hat{\beta}_{\text{proj}}, \qquad X_{\text{obs}}^\top \hat{g}_{\perp}(s_{\text{obs}}) = 0
+     $$
+
 3. **S3N Fitting & Kriging on $Y^*(s) = Y(s) - \hat{g}_{\perp}(s)$**:
    - Fits S3N `Tail-Up`, `Tail-Down`, and `Joint (TU + TD + Euc)` to $Y^*(s_{\text{obs}})$ with design matrix $X_{\text{obs}}$, then adds $\hat{g}_{\perp}(s_0)$ back to every prediction:
-     $$\hat{Y}(s_0) = \underbrace{x(s_0)^\top \hat{\beta}_{\text{GLS}} + \hat{g}_{\perp}(s_0)}_{\text{Non-Linear / Ensemble Trend } \hat{\mu}(s_0)} + \sum_{k=1}^m \lambda_k(s_0) \left( Y(s_{j_k}) - \hat{\mu}_{\text{OOF}}(s_{j_k}) \right)$$
+
+     $$
+     \hat{Y}(s_0) = \underbrace{x(s_0)^\top \hat{\beta}_{\text{GLS}} + \hat{g}_{\perp}(s_0)}_{\text{Non-Linear / Ensemble Trend } \hat{\mu}(s_0)} + \sum_{k=1}^m \lambda_k(s_0) \left( Y(s_{j_k}) - \hat{\mu}_{\text{OOF}}(s_{j_k}) \right)
+     $$
+
 4. **Zero-Leakage 5-Fold Cross-Validation**:
    - Inside each CV fold $k \in \{1,\dots,5\}$, `fit_nonlinear_trend()` is re-fitted **exclusively on the 80% training stations**, predicting $\hat{g}_{\perp}$ onto the 20% held-out test stations before fold-specific S3N kriging.
 

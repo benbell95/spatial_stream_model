@@ -123,19 +123,19 @@ Both [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and [`
 5. **Station & Reach Aggregation and Universal Response Transformation**:
    - After imputation (and any optional `--year`, `--season`, or `--month` filter), all samples at a station are averaged to form the station arithmetic mean `obs_value` (or `obs_mean` in raw preprocessing summaries).
    - **Universal Transformation Engine**: Because S3N Gaussian process estimation and kriging assume normally distributed residuals, the pipeline provides a mathematical transformation engine (`--transform=<type>`, defaulting to `log` for water chemistry and LCMS, and `none` for ecological indices):
-     - **Natural Logarithm (`log`)**: \(z = \ln(y)\), back-transform \(\hat{y} = \exp(\hat{z})\). Ideal for multiplicative concentrations spanning orders of magnitude (`0180` Orthophosphate, `0301` DOC, `0077` Conductivity).
-     - **Square Root (`sqrt`)**: \(z = \sqrt{y}\), back-transform \(\hat{y} = \hat{z}^2\). **Recommended for moderately skewed concentrations** (e.g. UK Nitrate `0117`, reducing skewness from \(+1.00\) to \(+0.09\)) and macroinvertebrate taxa richness (`whpt_ntaxa`). Unlike \(\ln y\), square root avoids over-stretching low clean headwater concentrations toward \(-\infty\).
-     - **Cube Root (`cbrt`)**: \(z = \text{sign}(y) \cdot |y|^{1/3}\), back-transform \(\hat{y} = \hat{z}^3\). Wilson-Hilferty transformation for Gamma-distributed hydrological variables.
-     - **Zero-Tolerant Logarithm (`log1p`)**: \(z = \ln(1 + y)\), back-transform \(\hat{y} = \exp(\hat{z}) - 1\). Accommodates true zeros (\(y = 0\)) without arbitrary LOD substitution.
-     - **Base-10 Logarithm (`log10`)**: \(z = \log_{10}(y)\), back-transform \(\hat{y} = 10^{\hat{z}}\). Order-of-magnitude scaling.
-     - **Fourth Root (`fourthrt`)**: \(z = y^{1/4}\), back-transform \(\hat{y} = \hat{z}^4\). Classic ecological power transform for heavy-tailed community abundances.
-     - **Box-Cox (`boxcox`)**: \(z = (y^\lambda - 1)/\lambda\) (or \(\ln y\) when \(\lambda = 0\)). Maximizes Gaussian profile likelihood \(L(\lambda) = -0.5 n \ln(\hat{\sigma}^2(\lambda)) + (\lambda - 1) \sum \ln(y_i)\) over \(\lambda \in [-2, 2]\) via Golden Section search if `--lambda` is omitted.
+     - **Natural Logarithm (`log`)**: $z = \ln(y)$, back-transform $\hat{y} = \exp(\hat{z})$. Ideal for multiplicative concentrations spanning orders of magnitude (`0180` Orthophosphate, `0301` DOC, `0077` Conductivity).
+     - **Square Root (`sqrt`)**: $z = \sqrt{y}$, back-transform $\hat{y} = \hat{z}^2$. **Recommended for moderately skewed concentrations** (e.g. UK Nitrate `0117`, reducing skewness from $+1.00$ to $+0.09$) and macroinvertebrate taxa richness (`whpt_ntaxa`). Unlike $\ln y$, square root avoids over-stretching low clean headwater concentrations toward $-\infty$.
+     - **Cube Root (`cbrt`)**: $z = \text{sign}(y) \cdot \lvert y \rvert^{1/3}$, back-transform $\hat{y} = \hat{z}^3$. Wilson-Hilferty transformation for Gamma-distributed hydrological variables.
+     - **Zero-Tolerant Logarithm (`log1p`)**: $z = \ln(1 + y)$, back-transform $\hat{y} = \exp(\hat{z}) - 1$. Accommodates true zeros ($y = 0$) without arbitrary LOD substitution.
+     - **Base-10 Logarithm (`log10`)**: $z = \log_{10}(y)$, back-transform $\hat{y} = 10^{\hat{z}}$. Order-of-magnitude scaling.
+     - **Fourth Root (`fourthrt`)**: $z = y^{1/4}$, back-transform $\hat{y} = \hat{z}^4$. Classic ecological power transform for heavy-tailed community abundances.
+     - **Box-Cox (`boxcox`)**: $z = (y^\lambda - 1)/\lambda$ (or $\ln y$ when $\lambda = 0$). Maximizes Gaussian profile likelihood $L(\lambda) = -0.5 n \ln(\hat{\sigma}^2(\lambda)) + (\lambda - 1) \sum \ln(y_i)$ over $\lambda \in [-2, 2]$ via Golden Section search if `--lambda` is omitted.
      - **Yeo-Johnson (`yeojohnson`)**: Continuous extension of Box-Cox supporting zero and negative observations, optimized via Profile MLE.
-     - **Reciprocal (`reciprocal`)**: \(z = -1/y\), back-transform \(\hat{y} = -1/\hat{z}\). Preserves positive spatial gradient direction for rate-dilution modeling.
-     - **Arcsine Square Root (`asin`)**: \(z = \arcsin(\sqrt{y / \text{scale}})\). Angular transformation for bounded \([0, 1]\) or \([0, 100]\%\) proportions (e.g. sediment silt cover, diatom valences; upper bound controlled via `--scale`).
-     - **Logit (`logit`)**: \(z = \ln(p / (1 - p))\) with \(p = y / \text{scale}\). S-shaped logistic stretching for bounded proportions.
-     - **Identity / Raw (`none` / `raw`)**: \(z = y\). Standard for multimetric ecological indices that are already approximately interval/normal (`WHPT ASPT`, `LIFE`, `PSI`, `RMNI`, `RHS HQA`).
-   - Multiple stations on the same reach are aggregated into a single reach observation `obs_y = mean(z_k)` (with arithmetic reach mean `obs_mean` also preserved). Predictions at unmonitored reaches are mapped back to natural units via \(\hat{y} = f^{-1}(\hat{z})\), and `add_normalised_columns()` in [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R) additionally exports Z-scores, robust MAD Z-scores, min-max `[0, 1]`, and empirical percentiles `[0, 100]`.
+     - **Reciprocal (`reciprocal`)**: $z = -1/y$, back-transform $\hat{y} = -1/\hat{z}$. Preserves positive spatial gradient direction for rate-dilution modeling.
+     - **Arcsine Square Root (`asin`)**: $z = \arcsin(\sqrt{y / \text{scale}})$. Angular transformation for bounded $[0, 1]$ or $[0, 100]\%$ proportions (e.g. sediment silt cover, diatom valences; upper bound controlled via `--scale`).
+     - **Logit (`logit`)**: $z = \ln(p / (1 - p))$ with $p = y / \text{scale}$. S-shaped logistic stretching for bounded proportions.
+     - **Identity / Raw (`none` / `raw`)**: $z = y$. Standard for multimetric ecological indices that are already approximately interval/normal (`WHPT ASPT`, `LIFE`, `PSI`, `RMNI`, `RHS HQA`).
+   - Multiple stations on the same reach are aggregated into a single reach observation `obs_y = mean(z_k)` (with arithmetic reach mean `obs_mean` also preserved). Predictions at unmonitored reaches are mapped back to natural units via $\hat{y} = f^{-1}(\hat{z})$, and `add_normalised_columns()` in [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R) additionally exports Z-scores, robust MAD Z-scores, min-max `[0, 1]`, and empirical percentiles `[0, 100]`.
 
 ---
 
@@ -231,7 +231,11 @@ To combine non-linear / tree-ensemble trends $\hat{f}_{\text{trend}}(s)$ with S3
 1. **Out-of-Fold / Penalized Evaluation on Observed Reaches**: Computes out-of-bag / out-of-fold trend predictions $\hat{f}_{\text{OOF}}(s_{\text{obs}})$ on the $n_{\text{obs}}$ monitored reaches and full-model predictions $\hat{f}_{\text{eval}}(s)$ across all $q_{\text{tot}}$ reaches.
 2. **Orthogonal Decomposition against Linear Design Matrix $X$**: Projects $\hat{f}$ onto the column space of the linear design matrix $X_{\text{obs}}$ via $\hat{\beta}_{\text{proj}} = (X_{\text{obs}}^\top X_{\text{obs}})^{-1} X_{\text{obs}}^\top \hat{f}_{\text{OOF}}$ to isolate the **purely non-linear / interaction surface** $\hat{g}_{\perp}(s) = \hat{f}(s) - X(s)\hat{\beta}_{\text{proj}}$, satisfying $X_{\text{obs}}^\top \hat{g}_{\perp}(s_{\text{obs}}) = 0$.
 3. **Spatial GLS + S3N Kriging on $Y^*(s) = Y(s) - \hat{g}_{\perp}(s)$**: Fits the S3N `Tail-Up`, `Tail-Down`, and `Joint (TU + TD + Euc)` models to $Y^*(s_{\text{obs}})$ with design matrix $X_{\text{obs}}$, and adds $\hat{g}_{\perp}(s_0)$ back to the kriged predictions:
-   $$\hat{Y}(s_0) = \underbrace{x(s_0)^\top \hat{\beta}_{\text{GLS}} + \hat{g}_{\perp}(s_0)}_{\text{Non-Linear / Ensemble Trend } \hat{\mu}(s_0)} + \sum_{k=1}^m \lambda_k(s_0) \left( Y(s_{j_k}) - \hat{\mu}_{\text{OOF}}(s_{j_k}) \right)$$
+
+   $$
+   \hat{Y}(s_0) = \underbrace{x(s_0)^\top \hat{\beta}_{\text{GLS}} + \hat{g}_{\perp}(s_0)}_{\text{Non-Linear / Ensemble Trend } \hat{\mu}(s_0)} + \sum_{k=1}^m \lambda_k(s_0) \left( Y(s_{j_k}) - \hat{\mu}_{\text{OOF}}(s_{j_k}) \right)
+   $$
+
    This preserves spatial GLS inference and 95% CIs on all primary linear slopes $\hat{\beta}_{\text{GLS}}$, prevents tree ensembles from shrinking $\hat{\sigma}^2$ and $\hat{\tau}^2$, and exports `pred_trend_sc` in `predictions_*.csv`.
 
 > **Full Guide**: See [`./nonlinear_and_tree_ensemble_trend_guide.md`](./nonlinear_and_tree_ensemble_trend_guide.md) for package details (zero extra CRAN installs needed), compatibility with standard raw data vs. `meas_method="gam"`, tuning flags (`--spline-df=`, `--trees=`), and output interpretation.
@@ -304,7 +308,7 @@ In addition to the standard Exponential covariance kernel, the C++ NNGP engine (
 | :--- | :--- | :--- | :--- |
 | **`exponential`** *(default)* | $\exp(-u)$ | Infinite support; Markovian on trees | General water chemistry, conservative solutes, and baseline stream network kriging. |
 | **`spherical`** | $(1 - \frac{3}{2}u + \frac{1}{2}u^3) \cdot \mathbb{I}(u < 1)$ | **Compact support** ($\rho = 0$ for $d \ge 1/\phi$) | Point-source discharges, localized urban/agricultural plumes, and sharp sub-basin boundaries. |
-| **`mariah`** | $\frac{\ln(u + 1)}{u}$ for $u > 0$, $1$ for $u = 0$ | **Heavy-tailed** algebraic decay ($\sim \ln(u)/u$) | Long-range river continuum gradients (e.g. Nitrate `0117`, Alkalinity, Conductivity) that persist over $50\text{–}150\text{ km}$ of mainstem flow. |
+| **`mariah`** | $\frac{\ln(u + 1)}{u}$ for $u > 0$, $1$ for $u = 0$ | **Heavy-tailed** algebraic decay ($\sim \ln(u)/u$) | Long-range river continuum gradients (e.g. Nitrate `0117`, Alkalinity, Conductivity) that persist over $50$–$150\text{ km}$ of mainstem flow. |
 | **`linear`** | $\max(0, 1 - u)$ | **Compact support** (linear tent with sill at $d = 1/\phi$) | Rapidly mixing or reactive headwater processes with a strict cutoff range. |
 | **`auto`** | Selects best kernel per component (`TU`, `TD`) by NNGP $\text{AIC} = -2\ell + 2(p + 3)$ | Data-adaptive | Automatically tests all 4 kernels and reports the full AIC table in the console log. |
 
@@ -313,7 +317,9 @@ In addition to the standard Exponential covariance kernel, the C++ NNGP engine (
 ### 4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`, `--combine=joint`)
 Following the classical Ver Hoef & Peterson (2010) mixed spatial stream network specification, the pipeline supports **Joint Additive NNGP Estimation and Kriging** (`--combine=joint`, default) via `C_s3n_joint_nngp()` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp):
 
-$$C_{\text{joint}}(s_i, s_j) = \sigma^2_{\text{TU}} \, w_{\text{TU}}(s_i, s_j) \, \rho_k(d_{\text{TU}}; \phi_{\text{TU}}) + \sigma^2_{\text{TD}} \, w_{\text{TD}}(s_i, s_j) \, \rho_k(d_{\text{TD}}; \phi_{\text{TD}}) + \sigma^2_{\text{Euc}} \, \rho_k(d_{\text{Euc}}; \phi_{\text{Euc}}) + (\tau^2 + v_{\text{meas}, i}) \, \mathbb{I}(i = j)$$
+$$
+C_{\text{joint}}(s_i, s_j) = \sigma^2_{\text{TU}} \, w_{\text{TU}}(s_i, s_j) \, \rho_k(d_{\text{TU}}; \phi_{\text{TU}}) + \sigma^2_{\text{TD}} \, w_{\text{TD}}(s_i, s_j) \, \rho_k(d_{\text{TD}}; \phi_{\text{TD}}) + \sigma^2_{\text{Euc}} \, \rho_k(d_{\text{Euc}}; \phi_{\text{Euc}}) + (\tau^2 + v_{\text{meas}, i}) \, \mathbb{I}(i = j)
+$$
 
 - **Simultaneous Variance Partitioning**: Estimates how much residual variance is driven by downstream advective flow ($\sigma^2_{\text{TU}}$), along-channel dispersal/shared valley corridors ($\sigma^2_{\text{TD}}$), 2D overland/atmospheric/cross-divide proximity ($\sigma^2_{\text{Euc}}$), and microscale nugget ($\tau^2$), recording all joint parameters under `Model = "S3N Joint (TU + TD + Euc)"` in `model_parameters_*.csv`.
 - **Single Cholesky Conditioning System**: Ranks candidate conditioning stations from the union of `Tail-Up`, `Tail-Down`, and `2D Euclidean` neighborhoods by composite covariance $c_{\text{joint}}(s_0, s_j)$ and solves a single $m \times m$ Cholesky system $C_{\text{joint}} \lambda = c_{\text{joint}}$ that accounts for the exact cross-covariance between upstream, sibling-tributary, and adjacent-catchment stations.
@@ -632,7 +638,9 @@ Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes the OpenMP C
 
 Starting from the current kriging variance $\sigma^2_{\text{curr}}(s_j) = \text{SE}_{\text{curr}}(s_j)^2$ at evaluation reaches $s_j \in \mathcal{E}$, at each step $t = 1, \dots, K$ the solver evaluates every unmonitored candidate reach $c \in \mathcal{C}$ and computes the Schur-complement variance reduction across all evaluation reaches if a new station were placed at $c$:
 
-$$\Delta V(c) = \sum_{j \in \mathcal{E}} \frac{\big[C_{\text{S3N}}(s_j, c)\big]^2}{\sigma^2_{\text{curr}}(c) + \tau^2}$$
+$$
+\Delta V(c) = \sum_{j \in \mathcal{E}} \frac{\big[C_{\text{S3N}}(s_j, c)\big]^2}{\sigma^2_{\text{curr}}(c) + \tau^2}
+$$
 
 The candidate $c^*$ maximising $\Delta V(c)$ is selected, $\sigma^2_{\text{curr}}(s_j)$ is updated in place for all $j \in \mathcal{E}$, and the loop repeats until $K$ stations are ranked. For huge national domains ($> 4{,}000$ reaches), candidates and evaluation reaches are deterministically thinned to $4{,}000$ evenly spaced reaches to keep runtime under a second.
 
@@ -655,7 +663,11 @@ When running temporal batch mode (`--by=year`, `--by=season`, or `--by=month`), 
 
 - **Dynamic Borrowing Across Time (`--st-borrow`, alias `--temporal-borrow`)**:
   Estimates the lag-1 temporal correlation $\hat{\rho}_t \in [0.15, 0.85]$ from overlapping monitored reaches across consecutive slices and applies precision-weighted exponential temporal smoothing:
-  $$\hat{z}_{i,t}^{\text{ST}} = \frac{\sum_{s=1}^T \hat{\rho}_t^{|t-s|} \, \hat{z}_{i,s} / v_{i,s}}{\sum_{s=1}^T \hat{\rho}_t^{|t-s|} / v_{i,s}}, \qquad \text{SE}_{i,t}^{\text{ST}} = \left(\sum_{s=1}^T \frac{\hat{\rho}_t^{|t-s|}}{v_{i,s}}\right)^{-1/2}$$
+
+  $$
+  \hat{z}_{i,t}^{\text{ST}} = \frac{\sum_{s=1}^T \hat{\rho}_t^{|t-s|} \, \hat{z}_{i,s} / v_{i,s}}{\sum_{s=1}^T \hat{\rho}_t^{|t-s|} / v_{i,s}}, \qquad \text{SE}_{i,t}^{\text{ST}} = \left(\sum_{s=1}^T \frac{\hat{\rho}_t^{|t-s|}}{v_{i,s}}\right)^{-1/2}
+  $$
+
   Reaches that are well-monitored in slice $t$ retain their own-slice estimate, while reaches left unmonitored in a sparse period borrow strength from adjacent periods—reducing $\text{SE}_{i,t}$ and updating `predictions_*.csv` (including `exceed_prob` and `compliance_tier` when `--threshold=` is active).
 
 - **Reach-Level Spatio-Temporal Trend Mapping**:
@@ -668,7 +680,11 @@ Standard non-spatial ROS (`--censor=ros`) imputes left-censored `< LOD` samples 
 1. **Initialisation**: Starts from ROS-imputed values bounded below $c_i = g(\text{LOD}_i)$.
 2. **M-step**: Fits the S3N Tail-Down NNGP on all $n_{\text{obs}}$ stations using the current completed response vector $y^{(t-1)}$.
 3. **E-step**: Conditions each censored reach $i$ on its $m$ nearest uncensored spatial neighbors via `C_s3n_predict_meas_error()` to obtain $(\mu_i, s_i)$, and updates $y_i^{(t)}$ to its exact truncated-normal conditional expectation:
-   $$y_i^{(t)} = \mathbb{E}[Z_i \mid Z_i \le c_i, Z_{\text{uncens}}] = \mu_i - s_i \frac{\phi(\alpha_i)}{\Phi(\alpha_i)}, \qquad \alpha_i = \frac{c_i - \mu_i}{s_i}$$
+
+   $$
+   y_i^{(t)} = \mathbb{E}[Z_i \mid Z_i \le c_i, Z_{\text{uncens}}] = \mu_i - s_i \frac{\phi(\alpha_i)}{\Phi(\alpha_i)}, \qquad \alpha_i = \frac{c_i - \mu_i}{s_i}
+   $$
+
 4. **Convergence & Outputs**: Iterates until $\max_i |y_i^{(t)} - y_i^{(t-1)}| < 10^{-3}$ (up to 6 iterations), tags `Spatial_Method` with `[Tobit-EM]`, and records `Tobit_EM_Censored_N` and `Tobit_EM_Iterations` in `parameters_<det>.csv`.
 
 ```bash

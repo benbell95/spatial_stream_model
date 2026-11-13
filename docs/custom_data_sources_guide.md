@@ -136,7 +136,11 @@ To eliminate manual data manipulation, the repository provides a standalone Pyth
    Citizen-science and test-strip datasets frequently record concentrations as ranges (e.g. `5-10`, `0.2-0.5`, `1-2`, `<0.2`, `>10`).
    - **Why Arithmetic Midpoints Fail**: Water quality determinands follow right-skewed lognormal distributions. Taking a linear midpoint ($\frac{5+10}{2} = 7.5$) introduces a systematic upward bias in log-transformed models ($\log(7.5) = 2.015$ vs log-midpoint $1.956$), and cannot handle open boundaries ($<0.2$ or $>10$) without arbitrary multipliers.
    - **The Gold Standard Solution**: The script fits an **interval-censored lognormal maximum likelihood model (Tobit formulation)** per determinand. It computes mathematically unbiased conditional expectations:
-     $$E[Y \mid a \le Y \le b] = \exp\left( \mu + \sigma \left[ \frac{\phi(\alpha) - \phi(\beta)}{\Phi(\beta) - \Phi(\alpha)} \right] \right)$$
+
+     $$
+     E[Y \mid a \le Y \le b] = \exp\left( \mu + \sigma \left[ \frac{\phi(\alpha) - \phi(\beta)}{\Phi(\beta) - \Phi(\alpha)} \right] \right)
+     $$
+
      where $\alpha = \frac{\log a - \mu}{\sigma}$, $\beta = \frac{\log b - \mu}{\sigma}$, and $\phi, \Phi$ are the standard normal PDF and CDF.
    - **Open-Ended Boundaries Handled Rigorously**: Non-detects ($<0.2$) and saturation limits ($>10$) are estimated strictly from the fitted distribution's tail probabilities ($0.119\text{ mg/L}$ for $<0.2$, $16.92\text{ mg/L}$ for $>10$) rather than ad-hoc guesses.
    - **Analytical Binning Uncertainty**: Calculates analytical interval variance $\sigma_{\text{bin}} = \frac{\log(b) - \log(a)}{\sqrt{12}}$ and stores interval bounds in `samples.csv` (`meas_lower`, `meas_upper`, `meas_uncertainty`, `meas_method`).
@@ -418,7 +422,11 @@ If standard homoskedastic kriging is used on pre-modelled values, two statistica
 
 #### The Solution: Approach A — Heteroskedastic Measurement Error Kriging
 Under Approach A, the observation equation for reach $i$ becomes:
-$$y_i = \boldsymbol{x}_i^T \boldsymbol{\beta} + w_{\text{TU}}(s_i) + w_{\text{TD}}(s_i) + \varepsilon_{\text{micro}, i} + \eta_i$$
+
+$$
+y_i = \boldsymbol{x}_i^T \boldsymbol{\beta} + w_{\text{TU}}(s_i) + w_{\text{TD}}(s_i) + \varepsilon_{\text{micro}, i} + \eta_i
+$$
+
 where:
 - $w_{\text{TU}}(s_i), w_{\text{TD}}(s_i)$ are the spatial stream network processes.
 - $\varepsilon_{\text{micro}, i} \sim \mathcal{N}(0, \tau_{\text{micro}}^2)$ is the intrinsic microscale spatial nugget variation.
@@ -433,9 +441,17 @@ Because S3N models log-transformed (or sqrt/Box-Cox/Yeo-Johnson transformed) con
 
 #### 2. Nugget Decomposition & C++ NNGP Solver
 The total estimated nugget $\hat{\tau}_{\text{total}}^2$ from BRISC reflects both spatial microscale variation and measurement noise:
-$$\tau_{\text{micro}}^2 = \max\left(10^{-6}\sigma^2, \hat{\tau}_{\text{total}}^2 - \bar{v}\right), \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i$$
+
+$$
+\tau_{\text{micro}}^2 = \max\left(10^{-6}\sigma^2, \hat{\tau}_{\text{total}}^2 - \bar{v}\right), \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i
+$$
+
 In S3N's high-speed C++ solver (`src/s3n_fast_neighbors.cpp`), the NNGP prediction weights $\boldsymbol{\lambda}_0$ for target reach $s_0$ solve:
-$$\left[ \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_1, \dots, v_m) \right] \boldsymbol{\lambda}_0 = \boldsymbol{c}_0$$
+
+$$
+\left[ \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_1, \dots, v_m) \right] \boldsymbol{\lambda}_0 = \boldsymbol{c}_0
+$$
+
 This downweights uncertain stations in spatial interpolation, denoises observation locations, and produces exact prediction standard errors.
 
 #### Providing GAM Estimates to the Pipeline

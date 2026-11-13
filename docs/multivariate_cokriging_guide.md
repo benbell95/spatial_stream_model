@@ -42,22 +42,26 @@ Even though catchment covariates explain part of both Nitrate and Orthophosphate
 
 For $P$ response variables $y(s) = (y_1(s), \dots, y_P(s))^\top$ observed (possibly partially/heterotopically) along river reaches $s \in \mathcal{S}$, the standardized model-scale spatial process is:
 
-$$y(s) = B^\top x(s) + w_{\text{TU}}(s) + w_{\text{TD}}(s) + \varepsilon(s)$$
+$$
+y(s) = B^\top x(s) + w_{\text{TU}}(s) + w_{\text{TD}}(s) + \varepsilon(s)
+$$
 
 where:
 - $x(s) \in \mathbb{R}^p$ is the reach covariate vector and $B \in \mathbb{R}^{p \times P}$ is the multivariate regression coefficient matrix estimated via **exact Multivariate Spatial Generalized Least Squares (GLS)** inside the C++ NNGP likelihood.
 - $w_{\text{TU}}(s)$ and $w_{\text{TD}}(s)$ follow a **Linear Model of Coregionalization (LMC)** with Tail-Up spatial correlation $C_{\text{TU}}(h; \phi_{\text{tu}})$ (weighted by Additive Function Values `AFV`) and Tail-Down stream correlation $C_{\text{TD}}(h; \phi_{\text{td}})$:
 
-$$\text{Cov}\big(y(s_i), y(s_j)\big) = A_{\text{tu}} C_{\text{TU}}(s_i, s_j; \phi_{\text{tu}}) + A_{\text{td}} C_{\text{TD}}(s_i, s_j; \phi_{\text{td}}) + \delta_{ij} \Psi$$
+$$
+\text{Cov}\big(y(s_i), y(s_j)\big) = A_{\text{tu}} C_{\text{TU}}(s_i, s_j; \phi_{\text{tu}}) + A_{\text{td}} C_{\text{TD}}(s_i, s_j; \phi_{\text{td}}) + \delta_{ij} \Psi
+$$
 
-### How $P = 2\text{–}4$ vs. $P = 5+$ Variables Scale (`--factors=K`)
+### How $P = 2$–$4$ vs. $P = 5+$ Variables Scale (`--factors=K`)
 
 Each $P \times P$ cross-covariance matrix is parameterized via **Factor Cholesky loadings** $A = L L^\top$, where $L \in \mathbb{R}^{P \times K}$ has rank $K \le P$:
 
 | Regime | Latent Factors $K$ | Behavior | Best Use Case |
 | :--- | :---: | :--- | :--- |
 | **Full-Rank LMC** | $K = P$ | Unconstrained positive-semidefinite cross-covariance across all pairs ($P = 2, 3, 4$) | Core 2–4 variable pairs (e.g. `0117,0180` or `whpt_aspt,0117,0180,9924`) |
-| **Latent-Factor LMC** *(default `K = 3`)* | $K < P$ (e.g. $K = 3$ for $P = 6\text{–}10$) | Captures the top $K$ shared hydrochemical/ecological watershed gradients + variable-specific diagonal nugget $\Psi$ | Large 5–10+ multi-pollutant or cross-taxon syntheses without quadratic parameter explosion |
+| **Latent-Factor LMC** *(default `K = 3`)* | $K < P$ (e.g. $K = 3$ for $P = 6$–$10$) | Captures the top $K$ shared hydrochemical/ecological watershed gradients + variable-specific diagonal nugget $\Psi$ | Large 5–10+ multi-pollutant or cross-taxon syntheses without quadratic parameter explosion |
 | **Sequential Residual (`--method=colocated`)** | — | Fast two-stage kriging: fits univariate S3N per target, then blends co-located cross-residual OLS predictions across sites | Rapid exploratory screening across many variables ($P \ge 8$) |
 
 All NNGP conditional mean and block-Cholesky operations in `C_s3n_multivariate_nngp` dynamically mask missing entries (`NA`/`NaN`) at heterotopic stations, so a reach sampled for Nitrate & Conductivity but missing Orthophosphate contributes exact partial information to the joint likelihood and receives full cross-aided predictions.
