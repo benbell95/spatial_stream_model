@@ -1569,14 +1569,15 @@ static void chol_back_sub(int n, const double* L, const double* y, double* x) {
 //   1 = Multivariate Co-Kriging Prediction across all q reaches (pred, se)
 //   2 = Aux-Aided Leave-One-Target-Out CV across n_obs reaches (aux_pred, aux_se)
 // =============================================================================
-SEXP C_s3n_multivariate_nngp(
+static SEXP s3n_multivariate_nngp_impl(
     SEXP X_obs_r, SEXP Y_obs_r,
     SEXP X0_r, SEXP Beta_r,
     SEXP nb_tu_r, SEXP nb_td_r,
     SEXP mid_x_r, SEXP mid_y_r,
     SEXP m_r,
     SEXP A_tu_r, SEXP A_td_r, SEXP A_euc_r, SEXP Psi_r,
-    SEXP phis_r, SEXP mode_r
+    SEXP phis_r, SEXP mode_r,
+    const double* V_obs, bool has_v
 ) {
     int n     = Rf_nrows(X_obs_r);
     int p_cov = Rf_ncols(X_obs_r);
@@ -1723,6 +1724,10 @@ SEXP C_s3n_multivariate_nngp(
                         int b1 = obs_b[r], b2 = obs_b[s];
                         double v = A_tu[b1 + b2 * P] + A_td[b1 + b2 * P] +
                                    A_euc[b1 + b2 * P] + Psi[b1 + b2 * P];
+                        if (has_v && r == s) {
+                            double vi = V_obs[i + b1 * n];
+                            if (R_FINITE(vi) && vi > 0.0) v += vi;
+                        }
                         C_ii[r * di + s] = v;
                         C_ii[s * di + r] = v;
                     }
@@ -1744,8 +1749,13 @@ SEXP C_s3n_multivariate_nngp(
                     std::vector<double> C_NN((size_t)K * K, 0.0);
                     for (int s1 = 0; s1 < K; ++s1) {
                         int u1 = nb_u[s1], a1 = nb_a[s1];
-                        C_NN[(size_t)s1 * K + s1] = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] +
-                                                   A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                        double diag_v = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] +
+                                        A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                        if (has_v) {
+                            double vi = V_obs[u1 + a1 * n];
+                            if (R_FINITE(vi) && vi > 0.0) diag_v += vi;
+                        }
+                        C_NN[(size_t)s1 * K + s1] = diag_v;
                         for (int s2 = s1 + 1; s2 < K; ++s2) {
                             int u2 = nb_u[s2], a2 = nb_a[s2];
                             double w1, w2, w3;
@@ -1998,7 +2008,12 @@ SEXP C_s3n_multivariate_nngp(
                     std::vector<double> C_NN((size_t)K * K, 0.0);
                     for (int s1 = 0; s1 < K; ++s1) {
                         int u1 = nb_u[s1], a1 = nb_a[s1];
-                        C_NN[(size_t)s1 * K + s1] = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] + A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                        double diag_v = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] + A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                        if (has_v) {
+                            double vi = V_obs[u1 + a1 * n];
+                            if (R_FINITE(vi) && vi > 0.0) diag_v += vi;
+                        }
+                        C_NN[(size_t)s1 * K + s1] = diag_v;
                         for (int s2 = s1 + 1; s2 < K; ++s2) {
                             int u2 = nb_u[s2], a2 = nb_a[s2];
                             double w1, w2, w3;
@@ -2129,7 +2144,12 @@ SEXP C_s3n_multivariate_nngp(
                 std::vector<double> C_NN((size_t)K * K, 0.0), c_b(K), alpha(K), tmp(K);
                 for (int s1 = 0; s1 < K; ++s1) {
                     int u1 = nb_u[s1], a1 = nb_a[s1];
-                    C_NN[(size_t)s1 * K + s1] = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] + A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                    double diag_v = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] + A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                    if (has_v) {
+                        double vi = V_obs[u1 + a1 * n];
+                        if (R_FINITE(vi) && vi > 0.0) diag_v += vi;
+                    }
+                    C_NN[(size_t)s1 * K + s1] = diag_v;
                     c_b[s1] = obs_scalar_cov(u1, a1, i, b, nb_w1[s1], nb_w2[s1], nb_w3[s1]);
                     for (int s2 = s1 + 1; s2 < K; ++s2) {
                         int u2 = nb_u[s2], a2 = nb_a[s2];
@@ -2165,6 +2185,42 @@ SEXP C_s3n_multivariate_nngp(
     Rf_setAttrib(out, R_NamesSymbol, nms);
     UNPROTECT(4);
     return out;
+}
+
+SEXP C_s3n_multivariate_nngp(
+    SEXP X_obs_r, SEXP Y_obs_r,
+    SEXP X0_r, SEXP Beta_r,
+    SEXP nb_tu_r, SEXP nb_td_r,
+    SEXP mid_x_r, SEXP mid_y_r,
+    SEXP m_r,
+    SEXP A_tu_r, SEXP A_td_r, SEXP A_euc_r, SEXP Psi_r,
+    SEXP phis_r, SEXP mode_r
+) {
+    return s3n_multivariate_nngp_impl(
+        X_obs_r, Y_obs_r, X0_r, Beta_r, nb_tu_r, nb_td_r,
+        mid_x_r, mid_y_r, m_r, A_tu_r, A_td_r, A_euc_r, Psi_r, phis_r, mode_r,
+        nullptr, false
+    );
+}
+
+SEXP C_s3n_multivariate_nngp_weighted(
+    SEXP X_obs_r, SEXP Y_obs_r,
+    SEXP X0_r, SEXP Beta_r,
+    SEXP nb_tu_r, SEXP nb_td_r,
+    SEXP mid_x_r, SEXP mid_y_r,
+    SEXP m_r,
+    SEXP A_tu_r, SEXP A_td_r, SEXP A_euc_r, SEXP Psi_r,
+    SEXP phis_r, SEXP mode_r, SEXP V_obs_r
+) {
+    int n = Rf_nrows(X_obs_r);
+    int P = Rf_ncols(Y_obs_r);
+    bool has_v = (!Rf_isNull(V_obs_r) && Rf_isReal(V_obs_r) && Rf_length(V_obs_r) == n * P);
+    const double* V_obs = has_v ? REAL(V_obs_r) : nullptr;
+    return s3n_multivariate_nngp_impl(
+        X_obs_r, Y_obs_r, X0_r, Beta_r, nb_tu_r, nb_td_r,
+        mid_x_r, mid_y_r, m_r, A_tu_r, A_td_r, A_euc_r, Psi_r, phis_r, mode_r,
+        V_obs, has_v
+    );
 }
 
 }

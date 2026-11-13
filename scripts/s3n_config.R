@@ -873,3 +873,189 @@ extract_network_label_from_tables <- function(cv_tab = NULL, param_tab = NULL, d
   }
   "ORN v2"
 }
+
+# ==============================================================================
+# MULTI-SOURCE PREFERENCE, RELIABILITY WEIGHTING & UNCERTAINTY HELPERS
+# ==============================================================================
+
+#' Parse --prefer-source=<s1[,s2,...]> CLI flag into ordered lowercase source tokens.
+parse_prefer_source_arg <- function(args) {
+  hit <- grep("^--prefer-source=", args, value = TRUE)
+  if (length(hit) == 0L) return(character(0))
+  raw <- sub("^--prefer-source=", "", hit[length(hit)])
+  toks <- tolower(trimws(unlist(strsplit(raw, "[,+]+"))))
+  unique(toks[nzchar(toks)])
+}
+
+#' Parse --source-weight=rsn:1,wb:0.25 or --source-se=rsn:0.01,wb:0.5 CLI flags.
+parse_source_kv_arg <- function(args, flag_prefix = "--source-weight=",
+                                min_val = 1e-4, normalize_gt1 = FALSE) {
+  hits <- grep(paste0("^", flag_prefix), args, value = TRUE)
+  if (length(hits) == 0L) return(numeric(0))
+  out <- numeric(0)
+  for (h in hits) {
+    raw <- sub(paste0("^", flag_prefix), "", h)
+    pairs <- trimws(unlist(strsplit(raw, "[,;]+")))
+    pairs <- pairs[nzchar(pairs)]
+    for (pr in pairs) {
+      parts <- trimws(unlist(strsplit(pr, "[:=]")))
+      if (length(parts) != 2L || !nzchar(parts[1]) || !nzchar(parts[2])) {
+        stop(sprintf("Invalid entry '%s' in %s (expected <source>:<numeric_value>).", pr, flag_prefix))
+      }
+      key <- tolower(parts[1])
+      val <- suppressWarnings(as.numeric(parts[2]))
+      if (!is.finite(val) || val < min_val) {
+        stop(sprintf("Invalid numeric value '%s' for source '%s' in %s (must be >= %g).",
+                     parts[2], key, flag_prefix, min_val))
+      }
+      out[key] <- val
+    }
+  }
+  if (normalize_gt1 && length(out) > 0L && max(out) > 1.0) {
+    out <- out / max(out)
+  }
+  out
+}
+
+#' Vectorized source lookup matching exact lowercase name first, then base name without range suffix.
+lookup_source_numeric <- function(src_vec, kv_map, default_val = NA_real_) {
+  n <- length(src_vec)
+  if (n == 0L) return(numeric(0))
+  if (length(kv_map) == 0L) return(rep(as.numeric(default_val), n))
+  s_low  <- tolower(trimws(as.character(src_vec)))
+  s_base <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s_low)
+  res    <- rep(as.numeric(default_val), n)
+  nms    <- names(kv_map)
+  for (i in seq_len(n)) {
+    if (s_low[i] %in% nms) {
+      res[i] <- unname(kv_map[s_low[i]])
+    } else if (s_base[i] %in% nms) {
+      res[i] <- unname(kv_map[s_base[i]])
+    }
+  }
+  res
+}
+
+#' Filter co-located samples on identical RivIDs according to --prefer-source priority order.
+filter_samples_by_source_priority <- function(df, prefer_sources, reach_col = "RivID", source_col = "data_source") {
+  if (length(prefer_sources) == 0L || nrow(df) == 0L || !(reach_col %in% names(df))) {
+    return(list(df = df, n_dropped = 0L, n_reaches = 0L))
+  }
+  src_vec <- if (source_col %in% names(df)) as.character(df[[source_col]]) else rep("unknown", nrow(df))
+  rank_map <- stats::setNames(seq_along(prefer_sources), tolower(prefer_sources))
+  ranks    <- lookup_source_numeric(src_vec, rank_map, default_val = length(prefer_sources) + 1.0)
+
+  reach_idx <- split(seq_len(nrow(df)), df[[reach_col]])
+  keep <- rep(TRUE, nrow(df))
+  n_affected <- 0L
+  for (ix in reach_idx) {
+    r_ix  <- ranks[ix]
+    r_min <- min(r_ix)
+    drop_local <- r_ix > r_min
+    if (any(drop_local)) {
+      keep[ix[drop_local]] <- FALSE
+      n_affected <- n_affected + 1L
+    }
+  }
+  list(
+    df        = df[keep, , drop = FALSE],
+    n_dropped = as.integer(sum(!keep)),
+    n_reaches = as.integer(n_affected)
+  )
+}
+
+#' Aggregate sample rows to reach level, supporting --source-weight and --source-se.
+aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = numeric(0), src_se = numeric(0)) {
+  if (!"data_source" %in% names(df)) df$data_source <- "RSN"
+  if (!"meas_uncertainty" %in% names(df)) df$meas_uncertainty <- NA_real_
+  if (!"meas_method" %in% names(df)) df$meas_method <- ""
+  if (!"is_cens" %in% names(df)) df$is_cens <- FALSE
+  if (!"raw_lod" %in% names(df)) df$raw_lod <- df$val
+
+  if (length(src_se) > 0L) {
+    se_ov <- lookup_source_numeric(df$data_source, src_se, default_val = NA_real_)
+    has_ov <- !is.na(se_ov) & is.finite(se_ov) & se_ov >= 0
+    df$meas_uncertainty[has_ov] <- se_ov[has_ov]
+  }
+
+  has_sw <- (length(src_weights) > 0L)
+  riv_groups <- split(seq_len(nrow(df)), df$RivID)
+  n_r <- length(riv_groups)
+
+  riv_ids <- as.integer(names(riv_groups))
+  val_out <- numeric(n_r)
+  y_out   <- numeric(n_r)
+  up_out  <- numeric(n_r)
+  cens_o  <- integer(n_r)
+  lod_out <- rep(NA_real_, n_r)
+  unc_out <- rep(NA_real_, n_r)
+  mth_out <- character(n_r)
+  wt_out  <- rep(1.0, n_r)
+
+  for (k in seq_len(n_r)) {
+    ix <- riv_groups[[k]]
+    if (!has_sw) {
+      val_out[k] <- mean(df$val[ix])
+      y_out[k]   <- mean(df$y_sample[ix])
+      up_out[k]  <- mean(df$obs_up_dist_km[ix])
+      all_c      <- all(df$is_cens[ix] == 1L)
+      cens_o[k]  <- as.integer(all_c)
+      if (all_c) lod_out[k] <- mean(trans_obj$fwd(df$raw_lod[ix]), na.rm = TRUE)
+      u <- df$meas_uncertainty[ix]
+      u_clean <- u[!is.na(u) & is.finite(u) & u >= 0]
+      if (length(u_clean) > 0L) unc_out[k] <- sqrt(sum(u_clean^2)) / length(u_clean)
+      m <- df$meas_method[ix]
+      m_clean <- m[!is.na(m) & nzchar(m)]
+      if (length(m_clean) > 0L) mth_out[k] <- m_clean[1]
+      wt_out[k] <- 1.0
+    } else {
+      # Group by data_source first so high sampling frequency within one campaign never outvotes another network
+      src_splits <- split(ix, tolower(trimws(as.character(df$data_source[ix]))))
+      ns <- length(src_splits)
+      s_val  <- numeric(ns); s_y <- numeric(ns); s_up <- numeric(ns)
+      s_w    <- numeric(ns); s_u <- rep(NA_real_, ns); s_c <- logical(ns)
+      s_lod  <- rep(NA_real_, ns)
+      for (j in seq_len(ns)) {
+        sj <- src_splits[[j]]
+        s_val[j] <- mean(df$val[sj])
+        s_y[j]   <- mean(df$y_sample[sj])
+        s_up[j]  <- mean(df$obs_up_dist_km[sj])
+        s_w[j]   <- lookup_source_numeric(df$data_source[sj[1]], src_weights, default_val = 1.0)
+        s_c[j]   <- all(df$is_cens[sj] == 1L)
+        if (s_c[j]) s_lod[j] <- mean(trans_obj$fwd(df$raw_lod[sj]), na.rm = TRUE)
+        u_j <- df$meas_uncertainty[sj]
+        u_clean <- u_j[!is.na(u_j) & is.finite(u_j) & u_j >= 0]
+        if (length(u_clean) > 0L) s_u[j] <- sqrt(sum(u_clean^2)) / length(u_clean)
+      }
+      w_norm <- s_w / sum(s_w)
+      val_out[k] <- sum(w_norm * s_val)
+      y_out[k]   <- sum(w_norm * s_y)
+      up_out[k]  <- sum(w_norm * s_up)
+      all_c      <- all(s_c)
+      cens_o[k]  <- as.integer(all_c)
+      if (all_c) lod_out[k] <- sum(w_norm * s_lod, na.rm = TRUE)
+      ok_u <- !is.na(s_u) & is.finite(s_u)
+      if (any(ok_u)) {
+        w_u <- s_w[ok_u] / sum(s_w[ok_u])
+        unc_out[k] <- sqrt(sum((w_u * s_u[ok_u])^2))
+      }
+      m <- df$meas_method[ix]
+      m_clean <- m[!is.na(m) & nzchar(m)]
+      if (length(m_clean) > 0L) mth_out[k] <- m_clean[1]
+      wt_out[k] <- max(1e-4, min(1.0, max(s_w)))
+    }
+  }
+
+  data.frame(
+    RivID            = riv_ids,
+    val              = val_out,
+    y_resp           = y_out,
+    obs_up_dist_km   = up_out,
+    is_censored      = cens_o,
+    lod_sc           = lod_out,
+    meas_uncertainty = unc_out,
+    meas_method      = mth_out,
+    source_weight    = wt_out,
+    stringsAsFactors = FALSE
+  )
+}

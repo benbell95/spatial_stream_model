@@ -219,7 +219,8 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
     }
   }
 cat("Usage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
-  cat("        [--source=rsn|ssn|rss] [--list-sources] [--transform=<type>] [--lambda=<val>] [--scale=<val>]\n")
+  cat("        [--source=rsn|ssn|rss] [--list-sources] [--prefer-source=<s1,s2>] [--source-weight=<s:w,...>] [--source-se=<s:sd,...>]\n")
+  cat("        [--transform=<type>] [--lambda=<val>] [--scale=<val>]\n")
   cat("        [--reverse-color] [--censor=ros|half_lod] [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins]\n")
   cat("        [--network=<name>] [--list-networks] [--gis-dir=<dir>] [--data-dir=<dir>] [--output-dir=<dir>]\n")
   cat("        [--year=YYYY] [--season=winter|spring|summer|autumn] [--month=1..12] [--by=year|season|month]\n")
@@ -317,8 +318,11 @@ var_specs <- if (length(vars_args) > 0) {
 var_specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
 
 load_s3n_backend(BASE_DIR)
-meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
-norm_cli       <- parse_norm_mode(args, default = "none")
+meas_error_arg     <- any(c("--meas-error", "--gam") %in% args)
+prefer_sources_cli <- parse_prefer_source_arg(args)
+src_weights_cli    <- parse_source_kv_arg(args, "--source-weight=", min_val = 1e-4, normalize_gt1 = TRUE)
+src_se_cli         <- parse_source_kv_arg(args, "--source-se=", min_val = 0.0, normalize_gt1 = FALSE)
+norm_cli           <- parse_norm_mode(args, default = "none")
 norm_meta      <- get_norm_meta(norm_cli)
 
 # Range mode handling and folder tagging
@@ -863,7 +867,10 @@ slice_ctx <- list(
   threshold      = threshold_cli,
   threshold_dir  = threshold_dir_cli,
   design_sites   = design_sites_cli,
-  censor_mode    = censor_m
+  censor_mode    = censor_m,
+  prefer_sources = prefer_sources_cli,
+  src_weights    = src_weights_cli,
+  src_se         = src_se_cli
 )
 
 fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
@@ -878,43 +885,22 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
     cat(sprintf("  No snapped samples found for period '%s'; skipping.\n", period_tag))
     return(NULL)
   }
+  if (length(ctx$prefer_sources) > 0L) {
+    pf <- filter_samples_by_source_priority(det_WithRiv, ctx$prefer_sources)
+    det_WithRiv <- pf$df
+    if (pf$n_dropped > 0L) {
+      cat(sprintf("  [Source Priority: %s] Dropped %d lower-priority sample(s) across %d co-located reach(es).\n",
+                  paste(ctx$prefer_sources, collapse = " > "), pf$n_dropped, pf$n_reaches))
+    }
+  }
   det_WithRiv$y_sample <- ctx$trans_obj$fwd(det_WithRiv$val)
-  riv_groups <- split(seq_len(nrow(det_WithRiv)), det_WithRiv$RivID)
-  riv_ids_u  <- names(riv_groups)
-  reach_agg <- data.frame(
-    RivID          = as.integer(riv_ids_u),
-    val            = vapply(riv_groups, function(idx) mean(det_WithRiv$val[idx]), numeric(1)),
-    y_resp         = vapply(riv_groups, function(idx) mean(det_WithRiv$y_sample[idx]), numeric(1)),
-    obs_up_dist_km = vapply(riv_groups, function(idx) mean(det_WithRiv$obs_up_dist_km[idx]), numeric(1)),
-    is_censored    = vapply(riv_groups, function(idx) as.integer(all(det_WithRiv$is_cens[idx] == 1L)), integer(1)),
-    lod_sc         = vapply(riv_groups, function(idx) {
-      if (all(det_WithRiv$is_cens[idx] == 1L)) {
-        mean(ctx$trans_obj$fwd(det_WithRiv$raw_lod[idx]), na.rm = TRUE)
-      } else {
-        NA_real_
-      }
-    }, numeric(1)),
-    stringsAsFactors = FALSE
+  reach_agg <- aggregate_samples_by_reach_weighted(
+    det_WithRiv, ctx$trans_obj,
+    src_weights = ctx$src_weights,
+    src_se      = ctx$src_se
   )
-
-  has_samp_unc <- "meas_uncertainty" %in% names(det_WithRiv) && any(!is.na(det_WithRiv$meas_uncertainty))
-  if (has_samp_unc) {
-    reach_agg$meas_uncertainty <- vapply(riv_groups, function(idx) {
-      u <- det_WithRiv$meas_uncertainty[idx]
-      u_clean <- u[!is.na(u) & u >= 0]
-      if (length(u_clean) == 0L) return(NA_real_)
-      sqrt(sum(u_clean^2)) / length(u_clean)
-    }, numeric(1))
-  }
-  has_samp_meth <- "meas_method" %in% names(det_WithRiv) && isTRUE(any(nzchar(det_WithRiv$meas_method[!is.na(det_WithRiv$meas_method)])))
-  if (has_samp_meth) {
-    reach_agg$meas_method <- vapply(riv_groups, function(idx) {
-      m <- det_WithRiv$meas_method[idx]
-      m_clean <- m[!is.na(m) & nzchar(m)]
-      if (length(m_clean) == 0L) return("")
-      m_clean[1]
-    }, character(1))
-  }
+  has_samp_unc  <- any(!is.na(reach_agg$meas_uncertainty))
+  has_samp_meth <- any(nzchar(reach_agg$meas_method))
 
   df_full <- ctx$df_reaches
   idx_match   <- match(df_full$RivID, reach_agg$RivID)
@@ -933,20 +919,17 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   df_full$is_censored[has_obs_idx] <- reach_agg$is_censored[matched_row]
   df_full$lod_sc <- NA_real_
   df_full$lod_sc[has_obs_idx] <- reach_agg$lod_sc[matched_row]
-  if ("meas_uncertainty" %in% names(reach_agg)) {
-    df_full$meas_uncertainty <- NA_real_
-    df_full$meas_uncertainty[has_obs_idx] <- reach_agg$meas_uncertainty[matched_row]
-  } else if (!"meas_uncertainty" %in% names(df_full)) {
-    df_full$meas_uncertainty <- NA_real_
-  }
+  df_full$obs_source_weight <- 1.0
+  df_full$obs_source_weight[has_obs_idx] <- reach_agg$source_weight[matched_row]
+  df_full$meas_uncertainty <- NA_real_
+  df_full$meas_uncertainty[has_obs_idx] <- reach_agg$meas_uncertainty[matched_row]
   df_full$meas_method <- rep("", nrow(df_full))
-  if ("meas_method" %in% names(reach_agg)) {
-    mm <- as.character(reach_agg$meas_method[matched_row])
-    mm[is.na(mm)] <- ""
-    df_full$meas_method[has_obs_idx] <- mm
-  }
+  mm <- as.character(reach_agg$meas_method[matched_row])
+  mm[is.na(mm)] <- ""
+  df_full$meas_method[has_obs_idx] <- mm
 
   active_meas_error <- isTRUE(ctx$meas_error_arg) ||
+    (length(ctx$src_se) > 0L) ||
     (has_samp_meth && isTRUE(any(tolower(det_WithRiv$meas_method) == "gam", na.rm = TRUE))) ||
     ("meas_method" %in% names(df_full) && isTRUE(any(tolower(df_full$meas_method[df_full$has_obs == 1L]) == "gam", na.rm = TRUE))) ||
     (!is.null(ctx$net_meta$meas_method) && identical(tolower(ctx$net_meta$meas_method), "gam"))

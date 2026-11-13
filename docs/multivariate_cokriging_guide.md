@@ -96,6 +96,9 @@ Rscript scripts/run_s3n_cokriging.R --targets=<t1>,<t2>[,<t3>,...] [OPTIONS]
 | `--threshold=uk\|<vals>` | *(None)* | Regulatory exceedance evaluation: pass `uk` for automatic UK DWI/WFD thresholds per target (where defined), or comma-separated raw thresholds aligned with `--targets`. Combine with `--threshold-dir=above\|below,...`. |
 | `--basin=<spec>` | *(None)* | Custom river basin(s) or CatchID(s) to fit alongside England, Humber, Thames, and Severn. |
 | `--source=<src>` | `rsn` | Monitoring source (`rsn`, `ssn`, `rss`, or custom profiles). |
+| `--prefer-source=<s..>` | None | Reach-level priority order (e.g. `rsn` or `rsn,ssn,campaign`); excludes lower-priority sources only on co-located reaches. |
+| `--source-weight=<s:w>` | `1` | Per-source reliability weights in `(0, 1]` (e.g. `rsn:1,waterblitz:0.35`) governing reach averaging, NNGP likelihood/prediction, and CV. |
+| `--source-se=<s:sd,...>` | None | Per-source physical observation SE in raw measurement units (e.g. `rsn:0.02,waterblitz:0.4`), propagated via Delta Method into NNGP covariance. |
 | `--year` / `--season` / `--month` | *(All)* | Restrict all targets to a matching survey year, season, or calendar month. |
 | `--omp=<N>` | `1` | OpenMP threads used by `C_s3n_multivariate_nngp`. |
 | `--fig-format=<png\|pdf\|svg>` | `png` | Output figure format (`png`, vector `pdf`, or vector `svg`). |
@@ -190,6 +193,7 @@ Each target determinand produces a national two-panel Figure 1 (`fig_cokrig_engl
 ---
 
 ## Related Guides
+- [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md) — Supplementing statutory `RSN` with citizen science or local campaigns (`--prefer-source`, `--source-weight`, `--source-se`), workflow & pitfalls.
 - [`docs/s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md) — Univariate S3N NNGP theory, multi-kernel options, CV modes, and optimal design.
 - [`docs/usage_guide.md`](./usage_guide.md) — Full CLI flag reference for single-determinand modeling.
 - [`docs/regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md) — UK/WFD exceedance threshold presets and 5-tier management mapping.

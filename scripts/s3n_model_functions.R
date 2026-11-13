@@ -1191,7 +1191,8 @@ bootstrap_nngp_cpp <- function(fit_obj, X_obs) {
 
 fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
                                       nb_tu, nb_td, mid_x, mid_y, m_use,
-                                      fit_tu, fit_td, kernel_id = 0L, estimate_only = FALSE) {
+                                      fit_tu, fit_td, kernel_id = 0L, estimate_only = FALSE,
+                                      tau_init = NULL) {
   y_dbl <- as.double(y_vec_obs)
   v_use <- if (has_me) as.double(v_meas) else numeric(0)
   p_cov <- ncol(X_obs)
@@ -1205,7 +1206,11 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
   vy <- max(1e-4, var(y_dbl))
   sig_tu_0 <- max(1e-5, as.numeric(fit_tu$Theta["sigma.sq"]))
   sig_td_0 <- max(1e-5, as.numeric(fit_td$Theta["sigma.sq"]))
-  tau_0    <- max(1e-5, 0.5 * (as.numeric(fit_tu$Theta["tau.sq"]) + as.numeric(fit_td$Theta["tau.sq"])) - (if (has_me) mean(v_use) else 0.0))
+  tau_0    <- if (!is.null(tau_init) && is.finite(tau_init)) {
+    max(1e-5, as.numeric(tau_init))
+  } else {
+    max(1e-5, 0.5 * (as.numeric(fit_tu$Theta["tau.sq"]) + as.numeric(fit_td$Theta["tau.sq"])) - (if (has_me) mean(v_use) else 0.0))
+  }
 
   eval_joint <- function(par) {
     r_td   <- exp(max(-8.0, min(8.0, par[1])))
@@ -1350,25 +1355,41 @@ fit_s3n_domain <- function(df,
   }
   y_obs <- as.matrix(y_vec_obs)
 
-  # Heteroskedastic measurement error check (Approach A)
-  v_meas <- numeric(n_obs)
-  has_me <- FALSE
+  # Heteroskedastic measurement error (Approach A) & source-reliability weights
+  v_phys      <- numeric(n_obs)
+  v_bar_phys  <- 0.0
+  has_phys_me <- FALSE
   if ("meas_uncertainty" %in% names(df_ord)) {
     u_raw <- df_ord$meas_uncertainty[1:n_obs]
     if (any(!is.na(u_raw) & u_raw > 0)) {
-      v_meas <- calc_response_meas_variance(raw_obs_vals, u_raw, trans_obj)
+      v_phys <- calc_response_meas_variance(raw_obs_vals, u_raw, trans_obj)
       has_gam <- ("meas_method" %in% names(df_ord)) && isTRUE(any(tolower(df_ord$meas_method[1:n_obs]) == "gam", na.rm = TRUE))
       has_meta_gam <- !is.null(net_meta) && !is.null(net_meta$meas_method) && identical(tolower(net_meta$meas_method), "gam")
-      has_me <- isTRUE((mean(v_meas) > 1e-8) && (isTRUE(use_meas_error) || has_gam || has_meta_gam))
+      has_phys_me <- isTRUE((mean(v_phys) > 1e-8) && (isTRUE(use_meas_error) || has_gam || has_meta_gam))
+      if (!has_phys_me) v_phys <- numeric(n_obs)
     }
   }
+  w_obs <- if ("obs_source_weight" %in% names(df_ord)) {
+    w_tmp <- suppressWarnings(as.numeric(df_ord$obs_source_weight[1:n_obs]))
+    ifelse(is.finite(w_tmp) & w_tmp > 0, pmin(1.0, pmax(1e-4, w_tmp)), 1.0)
+  } else {
+    rep(1.0, n_obs)
+  }
+  has_sw <- isTRUE(any(w_obs < (1.0 - 1e-6)))
+  v_meas <- v_phys
+  has_me <- isTRUE(has_phys_me || has_sw)
 
-  if (has_me) {
-    v_bar   <- mean(v_meas)
-    mean_se <- mean(sqrt(v_meas))
+  if (has_phys_me) {
+    v_bar_phys <- mean(v_phys)
+    mean_se    <- mean(sqrt(v_phys))
     cat("  [Approach A: Measurement Error Kriging] Active: accounting for observation uncertainty\n")
     cat(sprintf("    Mean measurement SE: %.4f (%s scale), Mean error variance: %.6f\n",
-                mean_se, trans_obj$short_label, v_bar))
+                mean_se, trans_obj$short_label, v_bar_phys))
+  }
+  if (has_sw) {
+    n_dw <- sum(w_obs < (1.0 - 1e-6))
+    cat(sprintf("  [Source Reliability Weighting] Active: %d/%d reaches weighted < 1.0 (min weight = %.3f)\n",
+                n_dw, n_obs, min(w_obs)))
   }
 
   # Integer topology lookup (avoids as.character string hashing on 90k+ reaches)
@@ -1467,14 +1488,20 @@ fit_s3n_domain <- function(df,
   t_est <- (proc.time() - t1)[3]
 
   if (has_me) {
-    tau_micro_tu <- max(1e-6 * fit_tu$Theta["sigma.sq"], fit_tu$Theta["tau.sq"] - v_bar)
+    tau_micro_tu <- max(1e-6 * fit_tu$Theta["sigma.sq"], fit_tu$Theta["tau.sq"] - v_bar_phys)
     theta_tu_me  <- c(fit_tu$Theta["sigma.sq"], tau_micro_tu, fit_tu$Theta["phi"], kid_tu)
-    tau_micro_td <- max(1e-6 * fit_td$Theta["sigma.sq"], fit_td$Theta["tau.sq"] - v_bar)
+    tau_micro_td <- max(1e-6 * fit_td$Theta["sigma.sq"], fit_td$Theta["tau.sq"] - v_bar_phys)
     theta_td_me  <- c(fit_td$Theta["sigma.sq"], tau_micro_td, fit_td$Theta["phi"], kid_td)
-    cat(sprintf("    Tail-Up Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
-                fit_tu$Theta["tau.sq"], tau_micro_tu, v_bar))
-    cat(sprintf("    Tail-Down Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
-                fit_td$Theta["tau.sq"], tau_micro_td, v_bar))
+    tau_base     <- max(1e-5 * 0.5 * (fit_tu$Theta["sigma.sq"] + fit_td$Theta["sigma.sq"]),
+                        0.5 * (tau_micro_tu + tau_micro_td))
+    v_wt         <- if (has_sw) (1.0 / w_obs - 1.0) * tau_base else numeric(n_obs)
+    v_meas       <- v_phys + v_wt
+    if (has_phys_me) {
+      cat(sprintf("    Tail-Up Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
+                  fit_tu$Theta["tau.sq"], tau_micro_tu, v_bar_phys))
+      cat(sprintf("    Tail-Down Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
+                  fit_td$Theta["tau.sq"], tau_micro_td, v_bar_phys))
+    }
   }
 
   t2 <- proc.time()
@@ -1534,7 +1561,8 @@ fit_s3n_domain <- function(df,
       X_obs = X_obs, y_vec_obs = y_vec_s3n, v_meas = v_meas, has_me = has_me,
       X_all = X_all, nb_tu = nb_tu, nb_td = nb_td,
       mid_x = df_ord$mid_X, mid_y = df_ord$mid_Y, m_use = m_use,
-      fit_tu = fit_tu, fit_td = fit_td, kernel_id = kid_tu
+      fit_tu = fit_tu, fit_td = fit_td, kernel_id = kid_tu,
+      tau_init = if (has_me) tau_base else NULL
     )
     joint_fit$prediction <- joint_fit$prediction + trend_fit$g_perp_eval
     joint_fit$ci         <- joint_fit$ci + trend_fit$g_perp_eval
@@ -1732,9 +1760,12 @@ fit_s3n_domain <- function(df,
       )
       f_cv <- estimate_component(X_tr, y_tr, nb_cv$obs_neighbors, vy_cv, k_name)
       if (has_me) {
-        v_tr       <- v_meas[tr]
-        v_bar_tr   <- mean(v_tr)
+        v_phys_tr  <- v_phys[tr]
+        v_bar_tr   <- mean(v_phys_tr)
         tau_mic_cv <- max(1e-6 * f_cv$Theta["sigma.sq"], f_cv$Theta["tau.sq"] - v_bar_tr)
+        tau_b_cv   <- max(1e-5 * f_cv$Theta["sigma.sq"], tau_mic_cv)
+        v_wt_tr    <- if (has_sw) (1.0 / w_obs[tr] - 1.0) * tau_b_cv else numeric(length(tr))
+        v_tr       <- v_phys_tr + v_wt_tr
         theta_me   <- c(f_cv$Theta["sigma.sq"], tau_mic_cv, f_cv$Theta["phi"], kid)
         pr_raw     <- .Call("C_s3n_predict_meas_error",
                             X_tr, y_tr, v_tr, X_eval,
@@ -1881,8 +1912,15 @@ fit_s3n_domain <- function(df,
       data.frame(Domain = domain_label, Model = "S3N Tail-Down (Stream)", Parameter = "tau.sq (microscale)",
                  Estimate = round(tau_micro_td, 4), CI_Lower = NA, CI_Upper = NA),
       data.frame(Domain = domain_label, Model = "Measurement Error", Parameter = "mean_meas_variance",
-                 Estimate = round(v_bar, 6), CI_Lower = NA, CI_Upper = NA)
+                 Estimate = round(v_bar_phys, 6), CI_Lower = NA, CI_Upper = NA)
     )
+    if (has_sw) {
+      param_df <- rbind(
+        param_df,
+        data.frame(Domain = domain_label, Model = "Source Weighting", Parameter = "mean_source_penalty_var",
+                   Estimate = round(mean(v_wt), 6), CI_Lower = NA, CI_Upper = NA)
+      )
+    }
   }
   if (!is.null(em_res) && em_res$n_cens > 0L) {
     param_df <- rbind(

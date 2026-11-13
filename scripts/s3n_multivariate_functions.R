@@ -145,7 +145,9 @@ fit_multivariate_s3n_domain <- function(df_reaches,
                                         cv_mode = "random",
                                         thresholds = NULL,
                                         threshold_dirs = NULL,
-                                        n_omp = 4L) {
+                                        n_omp = 4L,
+                                        V_obs_phys_sc = NULL,
+                                        W_obs_mat = NULL) {
   if (!is.null(catch_filter)) {
     keep_dom <- df_reaches$CatchID %in% catch_filter
   } else {
@@ -166,12 +168,16 @@ fit_multivariate_s3n_domain <- function(df_reaches,
   dom_obs_local <- dom_riv_match[in_dom]
   Y_sub_sc <- Y_obs_raw_sc[in_dom, , drop = FALSE]
   up_sub   <- obs_up_dist_obs[in_dom]
+  V_sub_in <- if (!is.null(V_obs_phys_sc)) V_obs_phys_sc[in_dom, , drop = FALSE] else matrix(0.0, nrow = sum(in_dom), ncol = P)
+  W_sub_in <- if (!is.null(W_obs_mat))     W_obs_mat[in_dom, , drop = FALSE]     else matrix(1.0, nrow = sum(in_dom), ncol = P)
 
   # Order observed reaches by (CatchID, up_dist) and place unmonitored reaches after
   ord_o <- order(df_dom$CatchID[dom_obs_local], up_sub)
   obs_rows_dom <- dom_obs_local[ord_o]
   Y_obs_sc     <- Y_sub_sc[ord_o, , drop = FALSE]
   up_obs       <- up_sub[ord_o]
+  V_sub_sc     <- V_sub_in[ord_o, , drop = FALSE]
+  W_sub        <- W_sub_in[ord_o, , drop = FALSE]
 
   n_obs <- length(obs_rows_dom)
   pred_rows_dom <- setdiff(seq_len(nrow(df_dom)), obs_rows_dom)
@@ -280,6 +286,33 @@ fit_multivariate_s3n_domain <- function(df_reaches,
   sig_td_vec <- vapply(uni_fits, function(u) 0.5 * max(0.05, u$f_td$Theta["sigma.sq"]), numeric(1))
   tau_vec    <- vapply(uni_fits, function(u) max(0.03, 0.5 * (u$f_tu$Theta["tau.sq"] + u$f_td$Theta["tau.sq"])), numeric(1))
 
+  # Standardized observation-error variance matrix combining physical SE & source-reliability weights
+  V_std_phys <- sweep(V_sub_sc, 2L, y_sds^2, "/")
+  V_std_phys[!is.finite(V_std_phys) | V_std_phys < 0] <- 0.0
+  W_clamped  <- ifelse(is.finite(W_sub) & W_sub > 0, pmin(1.0, pmax(1e-4, W_sub)), 1.0)
+  V_std_wt   <- sweep((1.0 / W_clamped) - 1.0, 2L, pmax(1e-4, tau_vec), "*")
+  V_eff      <- V_std_phys + V_std_wt
+  has_v_eff  <- isTRUE(any(V_eff > 1e-12))
+  if (has_v_eff) {
+    n_dw_mv <- sum(W_clamped < (1.0 - 1e-6) & is.finite(Y_std))
+    n_se_mv <- sum(V_std_phys > 1e-12 & is.finite(Y_std))
+    cat(sprintf("  [Multivariate Observation Weighting] Weighted obs=%d, SE obs=%d (mean extra var=%.4f)\n",
+                n_dw_mv, n_se_mv, mean(V_eff[is.finite(Y_std)])))
+  }
+
+  call_mv_nngp <- function(X_o, Y_o, X0_m, B_m, nb_u, nb_d, mx, my, m_arg, pars, mode_i, V_m = NULL) {
+    phis_v <- as.double(c(pars$phi_tu, pars$phi_td, pars$phi_euc, kid))
+    if (!is.null(V_m) && any(V_m > 1e-12)) {
+      .Call("C_s3n_multivariate_nngp_weighted",
+            X_o, Y_o, X0_m, B_m, nb_u, nb_d, as.double(mx), as.double(my), as.integer(m_arg),
+            pars$A_tu, pars$A_td, pars$A_euc, pars$Psi, phis_v, as.integer(mode_i), V_m)
+    } else {
+      .Call("C_s3n_multivariate_nngp",
+            X_o, Y_o, X0_m, B_m, nb_u, nb_d, as.double(mx), as.double(my), as.integer(m_arg),
+            pars$A_tu, pars$A_td, pars$A_euc, pars$Psi, phis_v, as.integer(mode_i))
+    }
+  }
+
   init_factor_vec <- function(sd_vec, R_mat, K_f) {
     M <- diag(sd_vec, P, P) %*% R_mat %*% diag(sd_vec, P, P)
     eg <- eigen(M, symmetric = TRUE)
@@ -314,15 +347,12 @@ fit_multivariate_s3n_domain <- function(df_reaches,
     log(max(1e-3, median(phi_tds)))
   )
 
-  eval_mv_nll <- function(th, X_tr_m, Y_tr_m, nb_t_u, nb_t_d, mx, my, m_arg) {
+  eval_mv_nll <- function(th, X_tr_m, Y_tr_m, nb_t_u, nb_t_d, mx, my, m_arg, V_tr_m = V_eff) {
     pars <- unpack_lmc_params(th, P, K_use, full_psi = full_psi, fit_euc = fit_euc)
-    res <- .Call(
-      "C_s3n_multivariate_nngp",
+    res <- call_mv_nngp(
       X_tr_m, Y_tr_m, X_tr_m, matrix(0.0, ncol(X_tr_m), P),
-      nb_t_u, nb_t_d, as.double(mx), as.double(my), as.integer(m_arg),
-      pars$A_tu, pars$A_td, pars$A_euc, pars$Psi,
-      as.double(c(pars$phi_tu, pars$phi_td, pars$phi_euc, kid)),
-      0L
+      nb_t_u, nb_t_d, mx, my, m_arg, pars, 0L,
+      V_m = if (has_v_eff) V_tr_m else NULL
     )
     list(nll = res$neg2loglik, Beta = res$Beta, pars = pars)
   }
@@ -342,7 +372,8 @@ fit_multivariate_s3n_domain <- function(df_reaches,
       f_p   <- uni_fits[[p]]$f_td
       p_n   <- uni_fits[[p]]$nb_td$pred_neighbors
       m_p   <- uni_fits[[p]]$m_p
-      pr <- .Call("C_s3n_predict_meas_error", Xp_o, as.matrix(Y_std[ok_p, p]), numeric(0),
+      v_p   <- if (has_v_eff) as.double(V_eff[ok_p, p]) else numeric(0)
+      pr <- .Call("C_s3n_predict_meas_error", Xp_o, as.matrix(Y_std[ok_p, p]), v_p,
                   Xp_e, as.double(f_p$Beta), as.double(c(f_p$Theta, kid)), as.integer(m_p),
                   p_n$nnIndx[1:(q_tot * m_p)], p_n$nnDist[1:(q_tot * m_p)], p_n$nnWght[1:(q_tot * m_p)],
                   uni_fits[[p]]$nb_td$obsobs_dist, uni_fits[[p]]$nb_td$obsobs_wt)
@@ -369,7 +400,8 @@ fit_multivariate_s3n_domain <- function(df_reaches,
                                   c(r_obs_q, rep(0, q_tot - n_obs)), r_all_q)
       }
       r_p_obs <- Y_std[ok_p, p] - as.numeric(X_obs[ok_p, , drop = FALSE] %*% Beta_fin[, p])
-      fit_co  <- lm.fit(cbind(1, R_aux_obs), r_p_obs)
+      w_co    <- 1.0 / (1.0 + V_eff[ok_p, p] / max(1e-4, tau_vec[p]))
+      fit_co  <- lm.wfit(cbind(1, R_aux_obs), r_p_obs, w = w_co)
       gamma   <- fit_co$coefficients
       gamma[!is.finite(gamma)] <- 0.0
       adj_all <- as.numeric(cbind(1, R_aux_all) %*% gamma)
@@ -398,25 +430,19 @@ fit_multivariate_s3n_domain <- function(df_reaches,
     pars_fin <- fit_fin$pars
     Beta_fin <- fit_fin$Beta
 
-    pr_full <- .Call(
-      "C_s3n_multivariate_nngp",
+    pr_full <- call_mv_nngp(
       X_obs, Y_std, X_all, Beta_fin,
-      nb_tu, nb_td, as.double(df_ord$mid_X), as.double(df_ord$mid_Y), as.integer(m_use),
-      pars_fin$A_tu, pars_fin$A_td, pars_fin$A_euc, pars_fin$Psi,
-      as.double(c(pars_fin$phi_tu, pars_fin$phi_td, pars_fin$phi_euc, kid)),
-      1L
+      nb_tu, nb_td, df_ord$mid_X, df_ord$mid_Y, m_use,
+      pars_fin, 1L, V_m = if (has_v_eff) V_eff else NULL
     )
     pred_std <- pr_full$prediction
     se_std   <- pr_full$se
 
     # Mode 2: Aux-Aided Leave-One-Target-Out CV across observed stations
-    pr_aux <- .Call(
-      "C_s3n_multivariate_nngp",
+    pr_aux <- call_mv_nngp(
       X_obs, Y_std, X_obs, Beta_fin,
-      nb_tu, nb_td, as.double(df_ord$mid_X[1:n_obs]), as.double(df_ord$mid_Y[1:n_obs]), as.integer(m_use),
-      pars_fin$A_tu, pars_fin$A_td, pars_fin$A_euc, pars_fin$Psi,
-      as.double(c(pars_fin$phi_tu, pars_fin$phi_td, pars_fin$phi_euc, kid)),
-      2L
+      nb_tu, nb_td, df_ord$mid_X[1:n_obs], df_ord$mid_Y[1:n_obs], m_use,
+      pars_fin, 2L, V_m = if (has_v_eff) V_eff else NULL
     )
     aux_cv_std <- pr_aux$aux_pred
     cat(sprintf("    Converged in %.2fs (-2*logL = %.2f, phi_tu = %.4f, phi_td = %.4f)\n",
@@ -465,11 +491,12 @@ fit_multivariate_s3n_domain <- function(df_reaches,
       f_k_tu <- fit_nngp_cpp(Xp_tr, yp_tr, nb_k_tu$obs_neighbors, max(1e-4, var(yp_tr)), kernel_name = kernel_req)
       f_k_td <- fit_nngp_cpp(Xp_tr, yp_tr, nb_k_td$obs_neighbors, max(1e-4, var(yp_tr)), kernel_name = kernel_req)
       ne <- length(ord_k)
-      p1 <- .Call("C_s3n_predict_meas_error", Xp_tr, as.matrix(yp_tr), numeric(0), Xp_ev, f_k_tu$Beta,
+      v_tr_p <- if (has_v_eff) as.double(V_eff[tr_p, p] * (y_sds[p]^2)) else numeric(0)
+      p1 <- .Call("C_s3n_predict_meas_error", Xp_tr, as.matrix(yp_tr), v_tr_p, Xp_ev, f_k_tu$Beta,
                   as.double(c(f_k_tu$Theta, kid)), as.integer(m_k),
                   nb_k_tu$pred_neighbors$nnIndx[1:(ne * m_k)], nb_k_tu$pred_neighbors$nnDist[1:(ne * m_k)], nb_k_tu$pred_neighbors$nnWght[1:(ne * m_k)],
                   nb_k_tu$obsobs_dist, nb_k_tu$obsobs_wt)
-      p2 <- .Call("C_s3n_predict_meas_error", Xp_tr, as.matrix(yp_tr), numeric(0), Xp_ev, f_k_td$Beta,
+      p2 <- .Call("C_s3n_predict_meas_error", Xp_tr, as.matrix(yp_tr), v_tr_p, Xp_ev, f_k_td$Beta,
                   as.double(c(f_k_td$Theta, kid)), as.integer(m_k),
                   nb_k_td$pred_neighbors$nnIndx[1:(ne * m_k)], nb_k_td$pred_neighbors$nnDist[1:(ne * m_k)], nb_k_td$pred_neighbors$nnWght[1:(ne * m_k)],
                   nb_k_td$obsobs_dist, nb_k_td$obsobs_wt)
@@ -491,14 +518,11 @@ fit_multivariate_s3n_domain <- function(df_reaches,
                       as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
                       as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
                       as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 1L)
-    pr_cv <- .Call(
-      "C_s3n_multivariate_nngp",
+    pr_cv <- call_mv_nngp(
       X_obs[tr, , drop = FALSE], Y_std[tr, , drop = FALSE],
       X_obs[ord_mv, , drop = FALSE], Beta_fin,
-      nb_mv_tu, nb_mv_td, as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), as.integer(m_mv),
-      pars_fin$A_tu, pars_fin$A_td, pars_fin$A_euc, pars_fin$Psi,
-      as.double(c(pars_fin$phi_tu, pars_fin$phi_td, pars_fin$phi_euc, kid)),
-      1L
+      nb_mv_tu, nb_mv_td, df_ord$mid_X[ord_mv], df_ord$mid_Y[ord_mv], m_mv,
+      pars_fin, 1L, V_m = if (has_v_eff) V_eff[tr, , drop = FALSE] else NULL
     )
     tl_mv <- (length(tr) + 1L):length(ord_mv)
     pr_cv_sc <- sweep(sweep(pr_cv$prediction[tl_mv, , drop = FALSE], 2L, y_sds, "*"), 2L, y_means, "+")

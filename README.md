@@ -22,6 +22,29 @@ Designed to run cleanly on Linux servers, laptops, and Databricks clusters **wit
 
 ---
 
+## 📑 Table of Contents
+
+- [Key Features](#-key-features)
+- [Pipeline Architecture](#-pipeline-architecture)
+- [Setup & Installation](#-setup--installation)
+  - [1. System Prerequisites](#1-system-prerequisites)
+  - [2. Install R Packages](#2-install-r-packages)
+  - [3. C++ OpenMP Neighbor Engine](#3-c-openmp-neighbor-engine-srcs3n_fast_neighborscpp)
+  - [4. Configure Data & Output Paths](#4-configure-data--output-paths-optional)
+- [Quickstart](#-quickstart)
+  - [Step 1 — Preprocess the River Network & Monitoring Data](#step-1--preprocess-the-river-network--monitoring-data)
+  - [Step 2 — Inspect Station-to-Reach Snapping](#step-2--inspect-station-to-reach-snapping-optional)
+  - [Step 3 — Fit S3N Models, Krige & Render Maps](#step-3--fit-s3n-models-krige--render-maps)
+  - [Step 4 — Generate Statistical Reports & Multi-Run Comparisons](#step-4--generate-statistical-reports--multi-run-comparisons)
+- [Key Outputs](#-key-outputs)
+- [Repository Structure](#-repository-structure)
+- [Running Automated Tests](#-running-automated-tests)
+- [Documentation](#-documentation)
+- [AI Disclosure](#-ai-disclosure)
+- [License](#-license)
+
+---
+
 ## ✨ Key Features
 
 - ⚡ **Sub-Second C++/OpenMP Stream-Tree & Joint NNGP Engine** ([`src/s3n_fast_neighbors.cpp`](src/s3n_fast_neighbors.cpp)): Replaces slow R tree walks with an Euler-tour LCA & Nearest-Neighbor Gaussian Process (NNGP) builder, multi-kernel profile MLE solver (`exponential`, `spherical`, `mariah`, `linear`, `auto`), physical confluence `AFV` weighting (`length`, `shreve`, `hydro_yield`), and **Joint Additive `Tail-Up + Tail-Down + Euclidean` Universal Kriging** (`--combine=joint`), processing ~91,000 river reaches in under a second.
@@ -215,10 +238,19 @@ See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 | Category | Guides |
 | :--- | :--- |
 | **Getting Started & CLI** | [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
-| **Specialised Workflows** | [Regulatory Exceedance & WFD Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
+| **Specialised Workflows** | [Regulatory Exceedance & WFD Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Multi-Source & Citizen-Science Fusion](docs/multi_source_and_citizen_science_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
 | **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks (`BYOWN`)](docs/custom_water_network_guide.md) · [ORN Covariates Reference (`--vars`)](docs/orn_variables_reference.md) |
 | **Diagnostics & Interpretation** | [Station Snapping Guide](docs/station_snapping_guide.md) · [Descriptive Statistics Guide](docs/descriptive_stats_interpretation_guide.md) · [Model Comparison Guide](docs/model_comparison_interpretation_guide.md) |
 | **Methodology & Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) · [Where This Differs from `S3N`](docs/where_this_differs_from_s3n.md) |
+
+---
+
+## 🤖 AI Disclosure
+
+This project was created with the assistance of artificial intelligence.
+
+- **Models Used:** Gemini Hydrogen, Gemini Argon
+- **Human Oversight:** All code, statistical methods, documentation, and generated outputs were reviewed and verified by a human maintainer. Users remain responsible for validating model assumptions, outputs, and suitability for any downstream scientific or regulatory use.
 
 ---
 

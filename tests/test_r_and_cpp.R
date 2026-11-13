@@ -810,4 +810,164 @@ options(s3n.fig_format = "png", s3n.fig_dpi = NULL, s3n.fig_scale = 1.0)
 unlink(c(tmp_base, tmp_dpi, tmp_sz, tmp_pdf, tmp_svg))
 
 cat("  [PASS] Figure formats (png/pdf/svg), DPI, and percentage size scaling\n")
+
+# ==============================================================================
+# 11. Multi-Source Preference (--prefer-source), Weights & Weighted Multivariate NNGP
+# ==============================================================================
+cat("[11/11] Testing Multi-Source Priority, Weights, SE, and Weighted C++ Multivariate NNGP...\n")
+
+pref_test <- parse_prefer_source_arg(c("--prefer-source=RSN,WaterBlitz"))
+assert_true(identical(pref_test, c("rsn", "waterblitz")), "parse_prefer_source_arg parses ordered lowercase sources")
+
+sw_frac <- parse_source_kv_arg(c("--source-weight=rsn:1,waterblitz:0.25"), "--source-weight=", min_val = 1e-4, normalize_gt1 = TRUE)
+assert_near(unname(sw_frac["rsn"]), 1.0, tol = 1e-8, msg = "source-weight rsn=1")
+assert_near(unname(sw_frac["waterblitz"]), 0.25, tol = 1e-8, msg = "source-weight waterblitz=0.25")
+
+sw_gt1 <- parse_source_kv_arg(c("--source-weight=rsn:5,waterblitz:1"), "--source-weight=", min_val = 1e-4, normalize_gt1 = TRUE)
+assert_near(unname(sw_gt1["rsn"]), 1.0, tol = 1e-8, msg = "source-weight normalizes max > 1 to 1.0")
+assert_near(unname(sw_gt1["waterblitz"]), 0.2, tol = 1e-8, msg = "source-weight normalizes 1/5 to 0.2")
+
+df_prio <- data.frame(
+  RivID            = c(10L, 10L, 10L, 20L, 20L, 30L),
+  data_source      = c("RSN", "WATERBLITZ_TOBIT", "WATERBLITZ_TOBIT", "WATERBLITZ_TOBIT", "SSN", "WATERBLITZ_TOBIT"),
+  val              = c(4.0, 20.0, 22.0, 8.0, 12.0, 9.0),
+  y_sample         = log(c(4.0, 20.0, 22.0, 8.0, 12.0, 9.0)),
+  obs_up_dist_km   = c(10, 10, 10, 20, 20, 30),
+  meas_uncertainty = NA_real_,
+  meas_method      = "",
+  stringsAsFactors = FALSE
+)
+
+pf_res <- filter_samples_by_source_priority(df_prio, c("rsn", "ssn"))
+assert_true(pf_res$n_dropped == 3L && pf_res$n_reaches == 2L,
+            sprintf("filter_samples_by_source_priority drops 3 lower-priority rows across 2 reaches (got %d/%d)", pf_res$n_dropped, pf_res$n_reaches))
+assert_true(all(pf_res$df$RivID == c(10L, 20L, 30L)) &&
+            identical(pf_res$df$data_source, c("RSN", "SSN", "WATERBLITZ_TOBIT")),
+            "Priority filter keeps RSN on RivID 10, SSN on RivID 20, and retains WaterBlitz on RivID 30")
+
+# Repeat WaterBlitz visits (10 rows on RivID 10 if pooled) should not outvote 1 RSN visit when waterblitz weight=0.25
+tr_log_t <- build_transformer("log")
+agg_wt <- aggregate_samples_by_reach_weighted(
+  df_prio[df_prio$RivID %in% c(10L, 30L), ],
+  tr_log_t,
+  src_weights = c(rsn = 1.0, waterblitz = 0.25),
+  src_se      = c(rsn = 0.02, waterblitz = 0.8)
+)
+# RivID 10: mean(RSN)=4.0 (w=1), mean(WB)=21.0 (w=0.25) -> (1*4 + 0.25*21)/1.25 = 7.4 (vs unweighted 15.33)
+assert_near(agg_wt$val[agg_wt$RivID == 10L], 7.4, tol = 1e-6, msg = "Source-grouped weighted mean prevents frequency bias")
+assert_near(agg_wt$source_weight[agg_wt$RivID == 10L], 1.0, tol = 1e-6, msg = "Mixed reach retains max weight 1.0")
+assert_near(agg_wt$source_weight[agg_wt$RivID == 30L], 0.25, tol = 1e-6, msg = "WaterBlitz-only reach gets weight 0.25")
+assert_near(agg_wt$meas_uncertainty[agg_wt$RivID == 30L], 0.8, tol = 1e-6, msg = "Source SE applied cleanly")
+
+# Verify C_s3n_multivariate_nngp_weighted matches unweighted when V_obs = 0 and responds cleanly when V_obs > 0
+V_zero <- matrix(0.0, nrow = nrow(Y_std_test), ncol = 3L)
+m0_wt0 <- .Call("C_s3n_multivariate_nngp_weighted", X_mv_test, Y_std_test, X_mv_test, matrix(0, ncol(X_mv_test), 3),
+                nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X[obs_mv_rows]), as.double(df_mv$mid_Y[obs_mv_rows]), 5L,
+                A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 0L, V_zero)
+assert_near(m0_wt0$neg2loglik, m0_res$neg2loglik, tol = 1e-8, msg = "Zero-V weighted NNGP Mode 0 matches exact unweighted NLL")
+
+m1_wt0 <- .Call("C_s3n_multivariate_nngp_weighted", X_mv_test, Y_std_test, cbind(1, scale(df_mv$Elevation)), m0_res$Beta,
+                nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X), as.double(df_mv$mid_Y), 5L,
+                A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 1L, V_zero)
+assert_near(m1_wt0$prediction, m1_res$prediction, tol = 1e-8, msg = "Zero-V weighted NNGP Mode 1 matches unweighted predictions")
+
+V_hi <- matrix(0.0, nrow = nrow(Y_std_test), ncol = 3L)
+V_hi[seq(1L, nrow(Y_std_test), by = 2L), 1L] <- 5.0
+m1_wthi <- .Call("C_s3n_multivariate_nngp_weighted", X_mv_test, Y_std_test, cbind(1, scale(df_mv$Elevation)), m0_res$Beta,
+                 nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X), as.double(df_mv$mid_Y), 5L,
+                 A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 1L, V_hi)
+assert_true(all(m1_wthi$se[seq(1L, nrow(Y_std_test), by = 2L), 1L] > m1_res$se[seq(1L, nrow(Y_std_test), by = 2L), 1L] + 1e-3),
+            "Down-weighted (V_obs > 0) reaches strictly exhibit larger posterior kriging SE than unweighted reaches")
+
+m2_wthi <- .Call("C_s3n_multivariate_nngp_weighted", X_mv_test, Y_std_test, X_mv_test, m0_res$Beta,
+                 nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X[obs_mv_rows]), as.double(df_mv$mid_Y[obs_mv_rows]), 5L,
+                 A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 2L, V_hi)
+assert_true(all(is.finite(m2_wthi$aux_pred[ok_t1, 1])) && all(m2_wthi$aux_se[ok_t1, 1] > 0),
+            "Weighted NNGP Mode 2 Aux-Aided LOO CV runs cleanly with V_obs > 0")
+
+# End-to-end fit_multivariate_s3n_domain with W_obs_mat & V_obs_phys_sc (both lmc & colocated)
+W_test_mat <- matrix(1.0, nrow = nrow(Y_mv_raw), ncol = 3L)
+W_test_mat[seq(1L, nrow(Y_mv_raw), by = 2L), 1L] <- 0.2
+V_test_phys <- matrix(0.0, nrow = nrow(Y_mv_raw), ncol = 3L)
+V_test_phys[seq(1L, nrow(Y_mv_raw), by = 2L), 2L] <- 0.25
+
+fit_mv_wt <- fit_multivariate_s3n_domain(
+  df_reaches      = df_mv,
+  Y_obs_raw_sc    = Y_mv_raw,
+  obs_up_dist_obs = df_mv$up_dist_mid_km[obs_mv_rows],
+  obs_reach_rows  = obs_mv_rows,
+  targets_meta    = targets_mv_meta,
+  trans_list      = trans_mv_list,
+  domain_id       = "mv_toy",
+  domain_label    = "Toy Weighted Multivariate Basin",
+  m_neighbors     = 5L,
+  k_factors       = 3L,
+  method          = "lmc",
+  n_omp           = 1L,
+  V_obs_phys_sc   = V_test_phys,
+  W_obs_mat       = W_test_mat
+)
+assert_true(all(is.finite(fit_mv_wt$pred_dfs[[1]]$pred_combined)) && all(fit_mv_wt$pred_dfs[[1]]$se_model_sc > 0),
+            "fit_multivariate_s3n_domain (lmc) runs end-to-end with source weights and physical SEs")
+
+fit_coloc_wt <- fit_multivariate_s3n_domain(
+  df_reaches      = df_mv,
+  Y_obs_raw_sc    = Y_mv_raw,
+  obs_up_dist_obs = df_mv$up_dist_mid_km[obs_mv_rows],
+  obs_reach_rows  = obs_mv_rows,
+  targets_meta    = targets_mv_meta,
+  trans_list      = trans_mv_list,
+  domain_id       = "mv_toy",
+  domain_label    = "Toy Weighted Colocated Basin",
+  m_neighbors     = 5L,
+  k_factors       = 3L,
+  method          = "colocated",
+  n_omp           = 1L,
+  V_obs_phys_sc   = V_test_phys,
+  W_obs_mat       = W_test_mat
+)
+assert_true(all(is.finite(fit_coloc_wt$pred_dfs[[1]]$pred_combined)),
+            "fit_multivariate_s3n_domain (colocated) runs end-to-end with source weights and physical SEs")
+
+# Single-determinand fit_s3n_domain with obs_source_weight (paired comparison on identical reaches)
+df_syn_unw <- df_syn
+df_syn_unw$obs_source_weight <- 1.0
+df_syn_sw <- df_syn
+obs_sw_idx <- which(df_syn_sw$has_obs == 1L)
+df_syn_sw$obs_source_weight <- 1.0
+low_w_idx <- obs_sw_idx[seq(1L, length(obs_sw_idx), by = 2L)]
+df_syn_sw$obs_source_weight[low_w_idx] <- 0.2
+
+sink(tempfile())
+dom_unw_v <- fit_s3n_domain(
+  df = df_syn_unw, domain_id = "test", domain_label = "Synthetic Unweighted Basin",
+  trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+  kernel = "exponential", combine_mode = "precision", afv_scheme = "length"
+)
+dom_sw_v <- fit_s3n_domain(
+  df = df_syn_sw, domain_id = "test", domain_label = "Synthetic Source-Weighted Basin",
+  trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+  kernel = "exponential", combine_mode = "precision", afv_scheme = "length"
+)
+dom_sw_j <- fit_s3n_domain(
+  df = df_syn_sw, domain_id = "test", domain_label = "Synthetic Source-Weighted Joint",
+  trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+  kernel = "exponential", combine_mode = "joint", afv_scheme = "length"
+)
+sink()
+assert_true(!is.null(dom_sw_j) && all(is.finite(dom_sw_j$pred_df$pred_combined)) && all(dom_sw_j$pred_df$se_model_sc > 0),
+            "fit_s3n_domain (joint) runs cleanly with obs_source_weight")
+rivs_low <- df_syn_sw$RivID[low_w_idx]
+se_low_unw <- mean(dom_unw_v$pred_df$se_model_sc[match(rivs_low, dom_unw_v$pred_df$RivID)])
+se_low_wt  <- mean(dom_sw_v$pred_df$se_model_sc[match(rivs_low,  dom_sw_v$pred_df$RivID)])
+assert_true(se_low_wt > se_low_unw,
+            sprintf("Down-weighted (w=0.2) reaches have larger posterior SE than when unweighted (%.5f > %.5f)",
+                    se_low_wt, se_low_unw))
+assert_true(any(dom_sw_j$param_df$Parameter == "mean_source_penalty_var" & dom_sw_j$param_df$Estimate > 0),
+            "param_df logs positive mean_source_penalty_var when source weights < 1")
+
+cat("  [PASS] Multi-source priority filtering, reliability weights, source SEs, and weighted C++ NNGP\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

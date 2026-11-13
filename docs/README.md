@@ -21,6 +21,7 @@ Use this index to find the right guide for your task.
 | [**Regulatory Exceedance & WFD Risk Mapping**](./regulatory_exceedance_mapping_guide.md) | Reach-level Gaussian exceedance probabilities (`--threshold=`, `--threshold-dir=`), built-in UK/WFD presets (`--threshold=uk`), 5-tier compliance classification, and dedicated risk maps. |
 | [**Spatio-Temporal Trends & Dynamic Borrowing**](./spatiotemporal_trends_and_borrowing_guide.md) | Multi-year/seasonal/monthly batch mapping (`--by=`), precision-weighted dynamic temporal borrowing (`--st-borrow`), and reach-level WLS trend significance (`fig6`). |
 | [**Multivariate Stream Co-Kriging (Factor-LMC)**](./multivariate_cokriging_guide.md) | Jointly modelling $P \ge 2$ chemical and ecological targets across heterotopic networks via `scripts/run_s3n_cokriging.R`, Factor-LMC NNGP (`--factors`), and Dual CV benchmarks. |
+| [**Multi-Source Fusion & Citizen-Science Co-Kriging**](./multi_source_and_citizen_science_guide.md) | Supplementing statutory networks (`RSN` / `SSN`) with citizen science or campaign data via Factor-LMC / Colocated co-kriging, reach priority (`--prefer-source`), reliability weighting (`--source-weight`), and source SE (`--source-se`). |
 | [**Non-Linear Spline (`GAM + S3N`) & Tree-Ensemble (`RF / GBM + S3N`) Guide**](./nonlinear_and_tree_ensemble_trend_guide.md) | Using `--trend=spline\|gam\|rf\|gbm` on standard raw or GAM-weighted data, zero-external-package architecture, orthogonal OOB/OOF residual kriging, and interpreting `GAM_EDF` / `VarImp(%)`. |
 
 ---

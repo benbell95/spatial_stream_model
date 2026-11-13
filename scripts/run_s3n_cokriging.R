@@ -45,6 +45,9 @@ print_cokrig_usage <- function() {
   cat("  --censor=ros|half_lod  Left-censored ('<') handling (default: ros)\n\n")
   cat("Domain, Temporal & Runtime Options:\n")
   cat("  --source=rsn|ssn|rss   Monitoring network source (default: rsn; see --list-sources)\n")
+  cat("  --prefer-source=<s..>  Priority order across co-located reaches (e.g. --prefer-source=rsn)\n")
+  cat("  --source-weight=<s:w>  Per-source reliability weights in (0,1] (e.g. rsn:1,waterblitz:0.25)\n")
+  cat("  --source-se=<s:sd,...> Per-source observation SE on raw units (e.g. rsn:0.01,waterblitz:0.5)\n")
   cat("  --network=<name>       Stream network (default: orn; see --list-networks)\n")
   cat("  --basin=<CatchID|Name> Additional custom basin(s) to fit & map (see --list-basins)\n")
   cat("  --year=YYYY            Filter all targets to survey year\n")
@@ -203,6 +206,10 @@ if (!is.na(season_f) && season_f == "fall") season_f <- "autumn"
 month_arg  <- grep("^--month=", args, value = TRUE)
 month_f    <- if (length(month_arg) > 0) as.integer(sub("^--month=", "", month_arg[1])) else NA_integer_
 
+prefer_sources_cli <- parse_prefer_source_arg(args)
+src_weights_cli    <- parse_source_kv_arg(args, "--source-weight=", min_val = 1e-4, normalize_gt1 = TRUE)
+src_se_cli         <- parse_source_kv_arg(args, "--source-se=", min_val = 0.0, normalize_gt1 = FALSE)
+
 basin_args  <- grep("^--basin=", args, value = TRUE)
 basin_specs <- if (length(basin_args) > 0) trimws(unlist(strsplit(sub("^--basin=", "", basin_args), ",", fixed = TRUE))) else character(0)
 basin_specs <- basin_specs[nzchar(basin_specs)]
@@ -315,14 +322,18 @@ read_wq_target_file <- function(f_path, source_label_tag, det_code, allow_substr
   sub_raw <- raw[keep_rows, , drop = FALSE]
   rm(raw)
   if (nrow(sub_raw) == 0) return(NULL)
+  unc_c  <- find_first_col(fnames, c("meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"))
+  meth_c <- find_first_col(fnames, c("meas_method", "method", "model_type", "type"))
   data.frame(
-    network_id      = as.character(sub_raw[[id_c]]),
-    sample_datetime = if (!is.null(dt_c)) as.character(sub_raw[[dt_c]]) else rep("2023-06-01", nrow(sub_raw)),
-    det_desc        = if (!is.null(desc_c)) as.character(sub_raw[[desc_c]]) else rep(det_code, nrow(sub_raw)),
-    meas_sign       = if (!is.null(sign_c)) as.character(sub_raw[[sign_c]]) else rep("=", nrow(sub_raw)),
-    meas_result     = as.character(sub_raw[[val_c]]),
-    unit_short_desc = if (!is.null(unit_c)) as.character(sub_raw[[unit_c]]) else rep("mg/L", nrow(sub_raw)),
-    data_source     = source_label_tag,
+    network_id       = as.character(sub_raw[[id_c]]),
+    sample_datetime  = if (!is.null(dt_c)) as.character(sub_raw[[dt_c]]) else rep("2023-06-01", nrow(sub_raw)),
+    det_desc         = if (!is.null(desc_c)) as.character(sub_raw[[desc_c]]) else rep(det_code, nrow(sub_raw)),
+    meas_sign        = if (!is.null(sign_c)) as.character(sub_raw[[sign_c]]) else rep("=", nrow(sub_raw)),
+    meas_result      = as.character(sub_raw[[val_c]]),
+    meas_uncertainty = if (!is.null(unc_c)) suppressWarnings(as.numeric(sub_raw[[unc_c]])) else rep(NA_real_, nrow(sub_raw)),
+    meas_method      = if (!is.null(meth_c)) tolower(trimws(as.character(sub_raw[[meth_c]]))) else rep("", nrow(sub_raw)),
+    unit_short_desc  = if (!is.null(unit_c)) as.character(sub_raw[[unit_c]]) else rep("mg/L", nrow(sub_raw)),
+    data_source      = source_label_tag,
     stringsAsFactors = FALSE
   )
 }
@@ -355,6 +366,9 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
     det_samples <- all_samples[keep_m, c("network_id", "sample_datetime", "compound_name", "less_than_flag", "meas_result", "unit_short_desc")]
     rm(all_samples)
     if (nrow(det_samples) == 0) stop(sprintf("No LCMS samples found for '%s'.", det_code))
+    det_samples$data_source      <- "RSN"
+    det_samples$meas_uncertainty <- NA_real_
+    det_samples$meas_method      <- ""
     det_name <- det_samples$compound_name[1]
     det_unit <- det_samples$unit_short_desc[1]
     raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
@@ -374,9 +388,12 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
         if (is.null(id_c)) id_c <- fnames[1]
         if (det_code %in% fnames) {
           s_dfs[[s_name]] <- data.frame(
-            network_id      = as.character(raw[[id_c]]),
-            sample_datetime = if (!is.null(dt_c)) as.character(raw[[dt_c]]) else rep("2023-06-01", nrow(raw)),
-            meas_result     = as.character(raw[[det_code]]),
+            network_id       = as.character(raw[[id_c]]),
+            sample_datetime  = if (!is.null(dt_c)) as.character(raw[[dt_c]]) else rep("2023-06-01", nrow(raw)),
+            meas_result      = as.character(raw[[det_code]]),
+            meas_uncertainty = rep(NA_real_, nrow(raw)),
+            meas_method      = rep("", nrow(raw)),
+            data_source      = toupper(s_name),
             stringsAsFactors = FALSE
           )
         }
@@ -397,6 +414,8 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
   raw_vals    <- raw_vals[valid_k]
   is_cens     <- is_cens[valid_k]
 
+  det_samples$is_cens <- is_cens
+  det_samples$raw_lod <- raw_vals
   det_samples$val <- if (any(is_cens) && tolower(censor_m) %in% c("ros", "em", "tobit")) {
     impute_censored_ros(raw_vals, is_cens)
   } else if (any(is_cens)) {
@@ -427,7 +446,8 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
   det_samples <- det_samples[valid_t, , drop = FALSE]
   tr_obj <- build_transformer(t_type, y_obs = det_samples$val)
 
-  det_samples$y_sc <- tr_obj$fwd(det_samples$val)
+  det_samples$y_sample <- tr_obj$fwd(det_samples$val)
+  det_samples$y_sc     <- det_samples$y_sample
   label_short <- shorten_det_name(det_name)
   list(
     samples = det_samples,
@@ -468,16 +488,35 @@ for (p in seq_len(P)) {
   if (nrow(merged_p) == 0) {
     stop(sprintf("No spatially snapped samples found for target '%s'.", res_p$meta$code))
   }
-  grp_p <- split(seq_len(nrow(merged_p)), merged_p$RivID)
+  if (length(prefer_sources_cli) > 0L) {
+    pf_p <- filter_samples_by_source_priority(merged_p, prefer_sources_cli)
+    merged_p <- pf_p$df
+    if (pf_p$n_dropped > 0L) {
+      cat(sprintf("    [Source Priority %s] Dropped %d lower-priority sample(s) on %d co-located reach(es).\n",
+                  res_p$meta$code, pf_p$n_dropped, pf_p$n_reaches))
+    }
+  }
+  agg_p <- aggregate_samples_by_reach_weighted(
+    merged_p, res_p$trans,
+    src_weights = src_weights_cli,
+    src_se      = src_se_cli
+  )
+  v_sc_p <- rep(0.0, nrow(agg_p))
+  ok_u_p <- !is.na(agg_p$meas_uncertainty) & is.finite(agg_p$meas_uncertainty) & agg_p$meas_uncertainty >= 0
+  if (any(ok_u_p)) {
+    v_sc_p[ok_u_p] <- calc_response_meas_variance(agg_p$val[ok_u_p], agg_p$meas_uncertainty[ok_u_p], res_p$trans)
+  }
   reach_tables[[p]] <- data.frame(
-    RivID          = as.integer(names(grp_p)),
-    y_sc           = vapply(grp_p, function(ix) mean(merged_p$y_sc[ix]), numeric(1)),
-    obs_up_dist_km = vapply(grp_p, function(ix) mean(merged_p$obs_up_dist_km[ix]), numeric(1)),
+    RivID          = agg_p$RivID,
+    y_sc           = agg_p$y_resp,
+    v_sc           = v_sc_p,
+    source_weight  = agg_p$source_weight,
+    obs_up_dist_km = agg_p$obs_up_dist_km,
     stringsAsFactors = FALSE
   )
   cat(sprintf("  [%d/%d] %-24s (%s:%s | trans=%s): %d samples -> %d reaches\n",
               p, P, res_p$meta$label, res_p$meta$dataset, res_p$meta$code,
-              res_p$trans$type, nrow(res_p$samples), nrow(reach_tables[[p]])))
+              res_p$trans$type, nrow(merged_p), nrow(reach_tables[[p]])))
 }
 
 # Build union of observed RivIDs across all P targets (supporting heterotopic designs!)
@@ -488,12 +527,16 @@ all_obs_rivs   <- all_obs_rivs[keep_valid]
 obs_reach_rows <- obs_reach_rows[keep_valid]
 
 n_obs_union <- length(all_obs_rivs)
-Y_obs_raw_sc <- matrix(NA_real_, nrow = n_obs_union, ncol = P)
-up_mat       <- matrix(NA_real_, nrow = n_obs_union, ncol = P)
+Y_obs_raw_sc  <- matrix(NA_real_, nrow = n_obs_union, ncol = P)
+V_obs_phys_sc <- matrix(0.0,      nrow = n_obs_union, ncol = P)
+W_obs_mat     <- matrix(1.0,      nrow = n_obs_union, ncol = P)
+up_mat        <- matrix(NA_real_, nrow = n_obs_union, ncol = P)
 for (p in seq_len(P)) {
   ix <- match(reach_tables[[p]]$RivID, all_obs_rivs)
-  Y_obs_raw_sc[ix, p] <- reach_tables[[p]]$y_sc
-  up_mat[ix, p]       <- reach_tables[[p]]$obs_up_dist_km
+  Y_obs_raw_sc[ix, p]  <- reach_tables[[p]]$y_sc
+  V_obs_phys_sc[ix, p] <- reach_tables[[p]]$v_sc
+  W_obs_mat[ix, p]     <- reach_tables[[p]]$source_weight
+  up_mat[ix, p]        <- reach_tables[[p]]$obs_up_dist_km
 }
 obs_up_dist_obs <- apply(up_mat, 1L, function(r) {
   ok <- r[is.finite(r)]
@@ -604,7 +647,9 @@ for (dom in domains) {
     cv_mode         = cv_mode_cli,
     thresholds      = thresholds_vec,
     threshold_dirs  = threshold_dirs_vec,
-    n_omp           = n_omp_cli
+    n_omp           = n_omp_cli,
+    V_obs_phys_sc   = V_obs_phys_sc,
+    W_obs_mat       = W_obs_mat
   )
   if (is.null(res_dom)) next
 
