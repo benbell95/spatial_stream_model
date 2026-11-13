@@ -540,4 +540,204 @@ assert_true(file.exists(tmp_fig7_y) && file.info(tmp_fig7_y)$size > 1000, "Figur
 unlink(c(tmp_fig7_s, tmp_fig7_y))
 
 cat("  [PASS] Spatial Tobit EM censored kriging, dynamic temporal borrowing & trend mapping\n")
+
+# ==============================================================================
+# 9. Multivariate Stream Co-Kriging (Factor-LMC Joint NNGP & Co-Located)
+# ==============================================================================
+cat("[9/9] Testing Multivariate Stream Co-Kriging (Factor-LMC Joint NNGP & Dual CV)...\n")
+
+source("scripts/s3n_multivariate_functions.R")
+
+parsed_u <- parse_cokrig_targets("0117,0180")
+assert_true(length(parsed_u) == 2L && parsed_u[[1]]$dataset == "wq" && parsed_u[[2]]$code == "0180",
+            "parse_cokrig_targets unprefixed defaults to wq")
+parsed_m <- parse_cokrig_targets("inverts:whpt_aspt,wq:0117,wq:0180,wq:9924")
+assert_true(length(parsed_m) == 4L && parsed_m[[1]]$dataset == "inverts" && parsed_m[[4]]$code == "9924",
+            "parse_cokrig_targets handles mixed cross-dataset targets")
+
+# Synthetic P=3 heterotopic network (reusing df_toy-style stream tree)
+set.seed(2026)
+q_mv <- 60L
+n_mv <- 40L
+df_mv <- data.frame(
+  RivID          = seq_len(q_mv),
+  CatchID        = rep(901L, q_mv),
+  parent_dn      = c(0L, seq_len(q_mv - 1L)),
+  Shreve         = pmax(1L, as.integer(round(seq(20, 1, length.out = q_mv)))),
+  Strahler       = rep(2L, q_mv),
+  Dist2Mth_km    = seq(0.5, 30.0, length.out = q_mv),
+  up_dist_mid_km = seq(1.0, 30.5, length.out = q_mv),
+  US_Accum_km    = seq(150.0, 5.0, length.out = q_mv),
+  log_AFV        = seq(0.0, -2.5, length.out = q_mv),
+  Elevation      = seq(10, 220, length.out = q_mv),
+  Slope          = rep(2.0, q_mv),
+  BFIHOST        = rep(0.55, q_mv),
+  PROPWET        = rep(0.40, q_mv),
+  SAAR           = rep(900, q_mv),
+  URBEXT2000     = seq(0.18, 0.01, length.out = q_mv),
+  ARABLE_PCT     = seq(35, 5, length.out = q_mv),
+  PASTURE_PCT    = rep(25, q_mv),
+  WOODLAND_PCT   = rep(15, q_mv),
+  PEAT_PCT       = rep(2, q_mv),
+  Is_Aquifer     = rep(0L, q_mv),
+  start_X        = rep(400000, q_mv),
+  start_Y        = seq(300000, 329500, length.out = q_mv),
+  mid_X          = rep(400000, q_mv),
+  mid_Y          = seq(300250, 329750, length.out = q_mv),
+  end_X          = rep(400000, q_mv),
+  end_Y          = seq(300500, 330000, length.out = q_mv),
+  stringsAsFactors = FALSE
+)
+obs_mv_rows <- seq(1L, 55L, length.out = n_mv)
+obs_mv_rows <- unique(as.integer(round(obs_mv_rows)))
+if (length(obs_mv_rows) < n_mv) obs_mv_rows <- seq_len(n_mv)
+
+# Latent shared spatial driver along downstream/upstream gradient -> strong cross-correlation
+lat_f <- sin(seq(0, 2.2 * pi, length.out = length(obs_mv_rows))) + 0.6 * cos(seq(0, pi, length.out = length(obs_mv_rows)))
+Y_mv_raw <- cbind(
+  log(pmax(0.2, 5.0 + 2.2 * lat_f + rnorm(length(obs_mv_rows), 0, 0.25))),
+  log(pmax(0.02, 0.25 + 0.14 * lat_f + rnorm(length(obs_mv_rows), 0, 0.025))),
+  5.8 - 0.85 * lat_f + rnorm(length(obs_mv_rows), 0, 0.18)
+)
+# Introduce heterotopic missingness (target 1 missing at 20% of sites)
+miss_t1 <- seq(3L, length(obs_mv_rows), by = 5L)
+Y_mv_raw[miss_t1, 1] <- NA_real_
+
+targets_mv_meta <- list(
+  list(code = "0117", dataset = "wq", slug = "wq_0117", label = "Nitrate", name = "Nitrate-N", unit = "mg/L"),
+  list(code = "0180", dataset = "wq", slug = "wq_0180", label = "Orthophosphate", name = "Ortho-P", unit = "mg/L"),
+  list(code = "whpt_aspt", dataset = "inverts", slug = "inverts_whpt_aspt", label = "WHPT ASPT", name = "WHPT ASPT", unit = "score")
+)
+trans_mv_list <- list(
+  build_transformer("log"),
+  build_transformer("log"),
+  build_transformer("none")
+)
+
+# Direct C++ Engine Test (Modes 0, 1, 2)
+X_mv_test <- cbind(1, scale(df_mv$Elevation[obs_mv_rows]))
+par_mv    <- match(df_mv$parent_dn, df_mv$RivID, nomatch = 0L)
+p0_mv     <- ifelse(df_mv$parent_dn == 0 | par_mv == 0L, -1L, par_mv - 1L)
+tt_mv     <- .Call("C_build_tree_tin_tout", as.integer(p0_mv))
+nb_mv_tu  <- .Call("C_compute_s3n_neighbors", as.integer(length(obs_mv_rows)), 5L, as.integer(p0_mv),
+                   as.integer(df_mv$CatchID), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
+                   as.double(df_mv$Dist2Mth_km), as.double(df_mv$up_dist_mid_km), as.double(df_mv$log_AFV),
+                   as.double(df_mv$mid_X), as.double(df_mv$mid_Y), 0L)
+nb_mv_td  <- .Call("C_compute_s3n_neighbors", as.integer(length(obs_mv_rows)), 5L, as.integer(p0_mv),
+                   as.integer(df_mv$CatchID), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
+                   as.double(df_mv$Dist2Mth_km), as.double(df_mv$up_dist_mid_km), as.double(df_mv$log_AFV),
+                   as.double(df_mv$mid_X), as.double(df_mv$mid_Y), 1L)
+Y_std_test <- scale(Y_mv_raw)
+A_tu_t <- matrix(c(0.5, 0.35, -0.35, 0.35, 0.5, -0.35, -0.35, -0.35, 0.5), 3, 3)
+A_td_t <- diag(0.3, 3)
+A_eu_t <- matrix(0.0, 3, 3)
+Psi_t  <- diag(0.15, 3)
+phis_t <- c(0.1, 0.1, 0.1, 1.0)
+
+m0_res <- .Call("C_s3n_multivariate_nngp", X_mv_test, Y_std_test, X_mv_test, matrix(0, ncol(X_mv_test), 3),
+                nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X[obs_mv_rows]), as.double(df_mv$mid_Y[obs_mv_rows]), 5L,
+                A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 0L)
+assert_true(is.finite(m0_res$neg2loglik) && identical(dim(m0_res$Beta), c(2L, 3L)),
+            "C_s3n_multivariate_nngp Mode 0 produces finite -2*logL and Beta matrix")
+
+m1_res <- .Call("C_s3n_multivariate_nngp", X_mv_test, Y_std_test, cbind(1, scale(df_mv$Elevation)), m0_res$Beta,
+                nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X), as.double(df_mv$mid_Y), 5L,
+                A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 1L)
+assert_true(identical(dim(m1_res$prediction), c(q_mv, 3L)) && all(is.finite(m1_res$prediction)) && all(m1_res$se > 0),
+            "C_s3n_multivariate_nngp Mode 1 produces finite predictions and positive SEs across P=3 targets")
+
+m2_res <- .Call("C_s3n_multivariate_nngp", X_mv_test, Y_std_test, X_mv_test, m0_res$Beta,
+                nb_mv_tu, nb_mv_td, as.double(df_mv$mid_X[obs_mv_rows]), as.double(df_mv$mid_Y[obs_mv_rows]), 5L,
+                A_tu_t, A_td_t, A_eu_t, Psi_t, phis_t, 2L)
+ok_t1 <- which(is.finite(Y_std_test[, 1]))
+r2_aux_direct <- 1 - sum((Y_std_test[ok_t1, 1] - m2_res$aux_pred[ok_t1, 1])^2) / sum((Y_std_test[ok_t1, 1] - mean(Y_std_test[ok_t1, 1]))^2)
+assert_true(r2_aux_direct > 0.65, sprintf("Mode 2 Aux-Aided LOO CV accurately exploits cross-variable correlation (R2=%.3f)", r2_aux_direct))
+
+# End-to-end Factor-LMC NNGP (K=3 full rank & K=2 reduced latent factors) + Colocated fallback
+fit_lmc_full <- fit_multivariate_s3n_domain(
+  df_reaches      = df_mv,
+  Y_obs_raw_sc    = Y_mv_raw,
+  obs_up_dist_obs = df_mv$up_dist_mid_km[obs_mv_rows],
+  obs_reach_rows  = obs_mv_rows,
+  targets_meta    = targets_mv_meta,
+  trans_list      = trans_mv_list,
+  domain_id       = "mv_toy",
+  domain_label    = "Toy Multivariate Basin",
+  m_neighbors     = 5L,
+  k_factors       = 3L,
+  method          = "lmc",
+  thresholds      = c(11.3, 0.2, 6.0),
+  threshold_dirs  = c("above", "above", "below"),
+  n_omp           = 1L
+)
+assert_true(length(fit_lmc_full$pred_dfs) == 3L && all(c("pred_combined", "exceed_prob") %in% names(fit_lmc_full$pred_dfs[[1]])),
+            "fit_multivariate_s3n_domain returns full-network predictions + exceedance tiers per target")
+assert_true(all(c("Univariate S3N", "Co-Kriging (All-Holdout)", "Co-Kriging (Aux-Aided)") %in% fit_lmc_full$cv_compare_df$Model),
+            "Dual CV summary contains Univariate, All-Holdout Co-Kriging, and Aux-Aided Co-Kriging")
+assert_true(all(abs(fit_lmc_full$cross_cov_df$Corr_TU) <= 1.0 + 1e-6 & abs(fit_lmc_full$cross_cov_df$Corr_TD) <= 1.0 + 1e-6),
+            "Extracted cross-correlations are valid within [-1, 1]")
+
+fit_lmc_k2 <- fit_multivariate_s3n_domain(
+  df_reaches      = df_mv,
+  Y_obs_raw_sc    = Y_mv_raw,
+  obs_up_dist_obs = df_mv$up_dist_mid_km[obs_mv_rows],
+  obs_reach_rows  = obs_mv_rows,
+  targets_meta    = targets_mv_meta,
+  trans_list      = trans_mv_list,
+  domain_id       = "mv_toy",
+  domain_label    = "Toy Multivariate Basin (K=2)",
+  m_neighbors     = 5L,
+  k_factors       = 2L,
+  method          = "lmc",
+  n_omp           = 1L
+)
+assert_true(nrow(fit_lmc_k2$cv_compare_df) == 9L, "Factor-reduced K=2 LMC fits and evaluates all 3 targets cleanly")
+
+fit_coloc <- fit_multivariate_s3n_domain(
+  df_reaches      = df_mv,
+  Y_obs_raw_sc    = Y_mv_raw,
+  obs_up_dist_obs = df_mv$up_dist_mid_km[obs_mv_rows],
+  obs_reach_rows  = obs_mv_rows,
+  targets_meta    = targets_mv_meta,
+  trans_list      = trans_mv_list,
+  domain_id       = "mv_toy",
+  domain_label    = "Toy Multivariate Basin (Colocated)",
+  m_neighbors     = 5L,
+  k_factors       = 3L,
+  method          = "colocated",
+  n_omp           = 1L
+)
+assert_true(all(is.finite(fit_coloc$pred_dfs[[1]]$pred_combined)), "Co-located residual co-kriging fallback produces finite predictions")
+
+tmp_fig_ck <- tempfile(fileext = ".png")
+plot_fig_cokrig_diagnostics(
+  cross_cov_df  = fit_lmc_full$cross_cov_df,
+  cv_compare_df = fit_lmc_full$cv_compare_df,
+  var_names     = vapply(targets_mv_meta, function(t) t$label, character(1)),
+  out_file      = tmp_fig_ck,
+  network_label = "Test Network",
+  source_label  = "RSN"
+)
+assert_true(file.exists(tmp_fig_ck) && file.info(tmp_fig_ck)$size > 5000,
+            "Co-kriging cross-correlation & dual CV diagnostic PNG rendered cleanly")
+unlink(tmp_fig_ck)
+
+assert_true(!is.null(fit_lmc_full$coverage_df) && fit_lmc_full$coverage_df$Aux_Gap_Reaches[1] > 0L,
+            "Heterotopic gap-filling reach counts tracked accurately in coverage_df")
+
+tmp_rep_ck <- tempfile(fileext = ".md")
+rep_lines <- generate_cokriging_report(
+  cv_all       = fit_lmc_full$cv_compare_df,
+  cc_all       = fit_lmc_full$cross_cov_df,
+  coverage_df  = fit_lmc_full$coverage_df,
+  exceed_df    = fit_lmc_full$exceed_summary,
+  out_file     = tmp_rep_ck,
+  method_label = "Factor-LMC Joint NNGP (K=3)",
+  cv_mode      = "random"
+)
+assert_true(file.exists(tmp_rep_ck) && any(grepl("Executive Verdict", rep_lines)) && any(grepl("Where Co-Kriging Helps", rep_lines)),
+            "Co-kriging markdown evaluation report written cleanly")
+unlink(tmp_rep_ck)
+
+cat("  [PASS] Multivariate Stream Co-Kriging (Factor-LMC Joint NNGP & Co-Located)\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

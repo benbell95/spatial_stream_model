@@ -1394,3 +1394,133 @@ plot_fig7_spatiotemporal_transitions <- function(transitions, by_mode, det_code,
         side = 3, line = 1.6, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
   draw_top_banner(banner)
 }
+
+#' Plot Multivariate Stream Co-Kriging Cross-Correlation & Dual-CV Diagnostics
+#'
+#' Renders a two-tier diagnostic PNG: top row shows decomposed Tail-Up, Tail-Down,
+#' and Co-Located Nugget cross-correlation heatmaps across modeled targets; bottom
+#' panel compares Univariate S3N against Co-Kriging (All-Holdout) and Co-Kriging
+#' (Aux-Aided) out-of-sample CV R2 and RMSE across every target determinand.
+plot_fig_cokrig_diagnostics <- function(cross_cov_df,
+                                        cv_compare_df,
+                                        var_names,
+                                        out_file,
+                                        network_label = NULL,
+                                        vars_label = NULL,
+                                        source_label = NULL,
+                                        method_label = "Factor-LMC Joint NNGP") {
+  banner <- format_top_banner(network_label, vars_label, source_label)
+
+  P <- length(var_names)
+  short_lbl <- vapply(var_names, function(v) {
+    v <- trimws(as.character(v))
+    if (nchar(v) > 16L) paste0(substr(v, 1, 14), "..") else v
+  }, character(1))
+
+  build_corr_mat <- function(col_nm) {
+    M <- diag(1.0, nrow = P, ncol = P)
+    for (r in seq_len(nrow(cross_cov_df))) {
+      i <- match(cross_cov_df$Var_A[r], var_names)
+      j <- match(cross_cov_df$Var_B[r], var_names)
+      if (!is.na(i) && !is.na(j)) {
+        val <- suppressWarnings(as.numeric(cross_cov_df[[col_nm]][r]))
+        if (is.finite(val)) {
+          M[i, j] <- max(-1.0, min(1.0, val))
+          M[j, i] <- M[i, j]
+        }
+      }
+    }
+    M
+  }
+
+  div_pal <- colorRampPalette(c("#2166ac", "#f7f7f7", "#b2182b"))(101)
+  draw_corr_heatmap <- function(M, title_txt) {
+    par(mar = c(5.2, 6.2, 3.0, 1.2))
+    # image() expects x along rows; reverse columns vertically so (1,1) is top-left
+    Z <- t(M[P:1, , drop = FALSE])
+    image(seq_len(P), seq_len(P), Z, zlim = c(-1, 1), col = div_pal,
+          axes = FALSE, xlab = "", ylab = "", main = "")
+    box(col = "#555555")
+    axis(1, at = seq_len(P), labels = short_lbl, las = 2, cex.axis = 0.78, tick = FALSE, line = -0.3)
+    axis(2, at = seq_len(P), labels = rev(short_lbl), las = 2, cex.axis = 0.78, tick = FALSE, line = -0.3)
+    cex_cell <- if (P <= 4L) 0.92 else if (P <= 6L) 0.76 else 0.62
+    for (i in seq_len(P)) {
+      for (j in seq_len(P)) {
+        v <- M[i, j]
+        txt_col <- if (abs(v) > 0.58) "white" else "#111111"
+        text(j, P - i + 1L, sprintf("%.2f", v), col = txt_col, cex = cex_cell, font = if (i == j) 2 else 1)
+      }
+    }
+    mtext(title_txt, side = 3, line = 0.8, cex = 0.95, font = 2, col = "#222222")
+  }
+
+  png_w <- max(2800L, 1900L + 220L * P)
+  open_png_device(out_file, width = png_w, height = 2100L, res = 220)
+  on.exit(dev.off(), add = TRUE)
+  oma_v <- get_banner_oma(banner)
+  oma_v[3] <- oma_v[3] + 1.2
+  par(oma = oma_v, bg = "white")
+  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(1.0, 1.15))
+
+  draw_corr_heatmap(build_corr_mat("Corr_TU"),     "A1. Tail-Up Network Correlation")
+  draw_corr_heatmap(build_corr_mat("Corr_TD"),     "A2. Tail-Down Network Correlation")
+  draw_corr_heatmap(build_corr_mat("Corr_Nugget"), "A3. Co-Located Nugget Correlation")
+
+  # Panel B: Paired Grouped Bar Chart of Dual CV R2 vs Univariate S3N
+  par(mar = c(6.4, 5.2, 3.8, 1.8))
+  mod_levels <- c("Univariate S3N", "Co-Kriging (All-Holdout)", "Co-Kriging (Aux-Aided)")
+  mod_cols   <- c("#7f8c8d", "#2b8cbe", "#d95f02")
+  r2_mat   <- matrix(NA_real_, nrow = 3L, ncol = P)
+  rmse_mat <- matrix(NA_real_, nrow = 3L, ncol = P)
+  for (mi in seq_along(mod_levels)) {
+    for (p in seq_len(P)) {
+      idx <- which(cv_compare_df$Target == var_names[p] & cv_compare_df$Model == mod_levels[mi])
+      if (length(idx) > 0L) {
+        r2_mat[mi, p]   <- suppressWarnings(as.numeric(cv_compare_df$R2[idx[1]]))
+        rmse_mat[mi, p] <- suppressWarnings(as.numeric(cv_compare_df$RMSE[idx[1]]))
+      }
+    }
+  }
+  r2_min <- min(0.0, min(r2_mat, na.rm = TRUE) - 0.08)
+  r2_max <- min(1.12, max(0.35, max(r2_mat, na.rm = TRUE) + 0.16))
+  bp <- barplot(
+    r2_mat, beside = TRUE, col = mod_cols, border = "#333333",
+    ylim = c(r2_min, r2_max), names.arg = rep("", P),
+    ylab = expression("Out-of-Sample Cross-Validation " * R^2),
+    las = 1, cex.axis = 0.88, cex.lab = 0.95
+  )
+  abline(h = 0, col = "#444444", lwd = 0.9)
+  grid(nx = NA, ny = NULL, col = "#e5e7eb", lty = "dotted")
+  # Re-draw bars cleanly over grid lines
+  bp <- barplot(
+    r2_mat, beside = TRUE, col = mod_cols, border = "#333333",
+    ylim = c(r2_min, r2_max), names.arg = rep("", P),
+    add = TRUE, axes = FALSE
+  )
+  for (p in seq_len(P)) {
+    for (mi in seq_len(3L)) {
+      val <- r2_mat[mi, p]
+      if (is.finite(val)) {
+        y_txt <- if (val >= 0) val + 0.018 * (r2_max - r2_min) else val - 0.030 * (r2_max - r2_min)
+        text(bp[mi, p], y_txt, sprintf("%.3f", val), cex = 0.68, font = 2, col = "#222222")
+      }
+    }
+    r_uni <- rmse_mat[1L, p]
+    r_aux <- rmse_mat[3L, p]
+    lbl_sub <- var_names[p]
+    if (is.finite(r_uni) && is.finite(r_aux) && r_uni > 0) {
+      d_pct <- 100 * (r_uni - r_aux) / r_uni
+      lbl_sub <- sprintf("%s\n(Aux RMSE %+.1f%%)", var_names[p], -d_pct)
+    }
+    mtext(lbl_sub, side = 1, at = mean(bp[, p]), line = 1.0, cex = if (P <= 5L) 0.78 else 0.68)
+  }
+  legend("topleft", legend = mod_levels, fill = mod_cols, border = "#333333",
+         horiz = TRUE, bty = "n", cex = 0.85, inset = c(0.01, -0.10), xpd = TRUE)
+  mtext("B. Dual Cross-Validation: Univariate S3N vs All-Holdout vs Aux-Aided Co-Kriging",
+        side = 3, line = 1.8, adj = 0, cex = 0.98, font = 2, col = "#222222")
+
+  dom_lbl <- if (nrow(cv_compare_df) > 0L) cv_compare_df$Domain[1] else "Domain"
+  mtext(wrap_title(sprintf("Multivariate Stream Co-Kriging Diagnostics (%s) — %s", dom_lbl, method_label), 140),
+        side = 3, line = 1.3, outer = TRUE, cex = 1.12, font = 2, col = "#111111")
+  draw_top_banner(banner)
+}

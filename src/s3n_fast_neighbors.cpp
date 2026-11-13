@@ -1500,6 +1500,673 @@ SEXP C_s3n_optimal_design(
     return out;
 }
 
+// =============================================================================
+// Heap-backed Cholesky factorization and multi-RHS solver (supports d up to ~512)
+// C is row-major n x n symmetric positive semi-definite.
+// On success returns L (lower triangular, row-major n x n).
+// =============================================================================
+static bool chol_factor_dyn(int n, const double* C, std::vector<double>& L) {
+    L.assign((size_t)n * n, 0.0);
+    if (n <= 0) return true;
+    double trace_avg = 0.0;
+    for (int i = 0; i < n; ++i) trace_avg += std::max(0.0, C[(size_t)i * n + i]);
+    trace_avg = std::max(1e-6, trace_avg / n);
+    double jitter = 1e-8 * trace_avg;
+
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        bool ok = true;
+        std::fill(L.begin(), L.end(), 0.0);
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j <= i; ++j) {
+                double s = C[(size_t)i * n + j];
+                if (i == j) s += jitter;
+                const double* Li = &L[(size_t)i * n];
+                const double* Lj = &L[(size_t)j * n];
+                for (int k = 0; k < j; ++k) s -= Li[k] * Lj[k];
+                if (i == j) {
+                    if (s <= 1e-12 * trace_avg) {
+                        ok = false;
+                        break;
+                    }
+                    L[(size_t)i * n + j] = std::sqrt(s);
+                } else {
+                    L[(size_t)i * n + j] = s / L[(size_t)j * n + j];
+                }
+            }
+            if (!ok) break;
+        }
+        if (ok) return true;
+        jitter *= 10.0;
+    }
+    for (int i = 0; i < n; ++i) {
+        L[(size_t)i * n + i] = std::sqrt(std::max(1e-6, C[(size_t)i * n + i] + 1e-4));
+    }
+    return false;
+}
+
+static void chol_forward_sub(int n, const double* L, const double* b, double* y) {
+    for (int i = 0; i < n; ++i) {
+        double s = b[i];
+        const double* Li = &L[(size_t)i * n];
+        for (int k = 0; k < i; ++k) s -= Li[k] * y[k];
+        y[i] = s / Li[i];
+    }
+}
+
+static void chol_back_sub(int n, const double* L, const double* y, double* x) {
+    for (int i = n - 1; i >= 0; --i) {
+        double s = y[i];
+        for (int k = i + 1; k < n; ++k) s -= L[(size_t)k * n + i] * x[k];
+        x[i] = s / L[(size_t)i * n + i];
+    }
+}
+
+// =============================================================================
+// Multivariate Factor-LMC NNGP Engine (Heterotopic TU + TD + Euclidean)
+//
+// Modes:
+//   0 = Exact Multivariate NNGP -2*loglik & Spatial GLS Beta_mat (p_cov x P)
+//   1 = Multivariate Co-Kriging Prediction across all q reaches (pred, se)
+//   2 = Aux-Aided Leave-One-Target-Out CV across n_obs reaches (aux_pred, aux_se)
+// =============================================================================
+SEXP C_s3n_multivariate_nngp(
+    SEXP X_obs_r, SEXP Y_obs_r,
+    SEXP X0_r, SEXP Beta_r,
+    SEXP nb_tu_r, SEXP nb_td_r,
+    SEXP mid_x_r, SEXP mid_y_r,
+    SEXP m_r,
+    SEXP A_tu_r, SEXP A_td_r, SEXP A_euc_r, SEXP Psi_r,
+    SEXP phis_r, SEXP mode_r
+) {
+    int n     = Rf_nrows(X_obs_r);
+    int p_cov = Rf_ncols(X_obs_r);
+    int P     = Rf_ncols(Y_obs_r);
+    int m     = std::min(32, std::max(1, Rf_asInteger(m_r)));
+    int mode  = Rf_asInteger(mode_r);
+
+    const double* X_obs = REAL(X_obs_r);
+    const double* Y_obs = REAL(Y_obs_r);
+    const double* mid_x = REAL(mid_x_r);
+    const double* mid_y = REAL(mid_y_r);
+
+    const double* A_tu  = REAL(A_tu_r);
+    const double* A_td  = REAL(A_td_r);
+    const double* A_euc = REAL(A_euc_r);
+    const double* Psi   = REAL(Psi_r);
+
+    const double* phis = REAL(phis_r);
+    double phi_tu  = std::max(1e-6, phis[0]);
+    double phi_td  = std::max(1e-6, phis[1]);
+    double phi_euc = std::max(1e-6, phis[2]);
+    int kernel_id  = (Rf_length(phis_r) >= 4) ? (int)std::round(phis[3]) : 0;
+
+    bool has_tu  = false, has_td = false, has_euc = false;
+    for (int a = 0; a < P; ++a) {
+        if (A_tu[a + a * P]  > 1e-12) has_tu  = true;
+        if (A_td[a + a * P]  > 1e-12) has_td  = true;
+        if (A_euc[a + a * P] > 1e-12) has_euc = true;
+    }
+
+    const double* tu_oo_dist = REAL(VECTOR_ELT(nb_tu_r, 0));
+    const double* tu_oo_wt   = REAL(VECTOR_ELT(nb_tu_r, 1));
+    const double* td_oo_dist = REAL(VECTOR_ELT(nb_td_r, 0));
+    const double* td_oo_wt   = REAL(VECTOR_ELT(nb_td_r, 1));
+
+    // Precompute spatial scalar kernel weights between observed reaches u1, u2
+    auto obs_spatial_weights = [&](int u1, int u2, double& wtu_k, double& wtd_k, double& weuc_k) {
+        if (u1 == u2) {
+            wtu_k = has_tu ? 1.0 : 0.0;
+            wtd_k = has_td ? 1.0 : 0.0;
+            weuc_k = has_euc ? 1.0 : 0.0;
+            return;
+        }
+        wtu_k = 0.0; wtd_k = 0.0; weuc_k = 0.0;
+        if (has_tu) {
+            double w = tu_oo_wt[u1 + u2 * n];
+            double d = tu_oo_dist[u1 + u2 * n];
+            if (w > 0.0 && d < 1e5) wtu_k = w * eval_stream_kernel(d, phi_tu, kernel_id);
+        }
+        if (has_td) {
+            double w = td_oo_wt[u1 + u2 * n];
+            double d = td_oo_dist[u1 + u2 * n];
+            if (w > 0.0 && d < 1e5) wtd_k = w * eval_stream_kernel(d, phi_td, kernel_id);
+        }
+        if (has_euc) {
+            double dx = (mid_x[u1] - mid_x[u2]) * 0.001;
+            double dy = (mid_y[u1] - mid_y[u2]) * 0.001;
+            weuc_k = eval_stream_kernel(std::hypot(dx, dy), phi_euc, kernel_id);
+        }
+    };
+
+    auto obs_scalar_cov = [&](int u1, int a1, int u2, int a2,
+                              double wtu_k, double wtd_k, double weuc_k) -> double {
+        double cov = 0.0;
+        int idx = a1 + a2 * P;
+        if (has_tu && wtu_k > 0.0)   cov += wtu_k  * A_tu[idx];
+        if (has_td && wtd_k > 0.0)   cov += wtd_k  * A_td[idx];
+        if (has_euc && weuc_k > 0.0) cov += weuc_k * A_euc[idx];
+        if (u1 == u2)                cov += Psi[idx];
+        return cov;
+    };
+
+    if (mode == 0) {
+        int P_beta = P * p_cov;
+        int n_thr = 1;
+        #ifdef _OPENMP
+        n_thr = std::max(1, omp_get_max_threads());
+        #endif
+        std::vector<std::vector<double>> XtX_thr(n_thr, std::vector<double>((size_t)P_beta * P_beta, 0.0));
+        std::vector<std::vector<double>> Xty_thr(n_thr, std::vector<double>(P_beta, 0.0));
+        std::vector<double> sum_logd_thr(n_thr, 0.0);
+        std::vector<double> yt_sum2_thr(n_thr, 0.0);
+        std::vector<int> n_eff_thr(n_thr, 0);
+
+        #pragma omp parallel
+        {
+            int tid = 0;
+            #ifdef _OPENMP
+            tid = omp_get_thread_num();
+            #endif
+            std::vector<double> L_N, L_D;
+
+            #pragma omp for schedule(dynamic, 8)
+            for (int i = 0; i < n; ++i) {
+                std::vector<int> obs_b;
+                for (int b = 0; b < P; ++b) {
+                    if (R_FINITE(Y_obs[i + b * n])) obs_b.push_back(b);
+                }
+                int di = (int)obs_b.size();
+                if (di == 0) continue;
+
+                // Gather up to m predecessor reaches j < i
+                std::vector<std::pair<double, int>> cands;
+                if (i > 0) {
+                    cands.reserve(i);
+                    for (int j = 0; j < i; ++j) {
+                        double wtu_k, wtd_k, weuc_k;
+                        obs_spatial_weights(i, j, wtu_k, wtd_k, weuc_k);
+                        double score = wtu_k + wtd_k + weuc_k;
+                        if (score > 1e-10) cands.push_back({-score, j});
+                    }
+                    int k_use = std::min(m, (int)cands.size());
+                    if ((int)cands.size() > k_use) {
+                        std::partial_sort(cands.begin(), cands.begin() + k_use, cands.end());
+                        cands.resize(k_use);
+                    } else {
+                        std::sort(cands.begin(), cands.end());
+                    }
+                }
+
+                // Flatten observed neighbor entries (u, a)
+                std::vector<int> nb_u, nb_a;
+                std::vector<double> nb_wtu, nb_wtd, nb_weuc;
+                for (size_t c = 0; c < cands.size(); ++c) {
+                    int u = cands[c].second;
+                    double wtu_k, wtd_k, weuc_k;
+                    obs_spatial_weights(i, u, wtu_k, wtd_k, weuc_k);
+                    for (int a = 0; a < P; ++a) {
+                        if (R_FINITE(Y_obs[u + a * n])) {
+                            nb_u.push_back(u);
+                            nb_a.push_back(a);
+                            nb_wtu.push_back(wtu_k);
+                            nb_wtd.push_back(wtd_k);
+                            nb_weuc.push_back(weuc_k);
+                        }
+                    }
+                }
+                int K = (int)nb_u.size();
+
+                // Block covariance C_ii (di x di)
+                std::vector<double> C_ii((size_t)di * di, 0.0);
+                for (int r = 0; r < di; ++r) {
+                    for (int s = 0; s <= r; ++s) {
+                        int b1 = obs_b[r], b2 = obs_b[s];
+                        double v = A_tu[b1 + b2 * P] + A_td[b1 + b2 * P] +
+                                   A_euc[b1 + b2 * P] + Psi[b1 + b2 * P];
+                        C_ii[r * di + s] = v;
+                        C_ii[s * di + r] = v;
+                    }
+                }
+
+                // Residual block dy_i (di) and dX_i (di x P_beta)
+                std::vector<double> dy(di, 0.0);
+                std::vector<double> dX((size_t)di * P_beta, 0.0);
+                for (int r = 0; r < di; ++r) {
+                    int br = obs_b[r];
+                    dy[r] = Y_obs[i + br * n];
+                    for (int pc = 0; pc < p_cov; ++pc) {
+                        dX[r + (br * p_cov + pc) * di] = X_obs[i + pc * n];
+                    }
+                }
+
+                std::vector<double> D_i = C_ii;
+                if (K > 0) {
+                    std::vector<double> C_NN((size_t)K * K, 0.0);
+                    for (int s1 = 0; s1 < K; ++s1) {
+                        int u1 = nb_u[s1], a1 = nb_a[s1];
+                        C_NN[(size_t)s1 * K + s1] = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] +
+                                                   A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                        for (int s2 = s1 + 1; s2 < K; ++s2) {
+                            int u2 = nb_u[s2], a2 = nb_a[s2];
+                            double w1, w2, w3;
+                            obs_spatial_weights(u1, u2, w1, w2, w3);
+                            double cov = obs_scalar_cov(u1, a1, u2, a2, w1, w2, w3);
+                            C_NN[(size_t)s1 * K + s2] = cov;
+                            C_NN[(size_t)s2 * K + s1] = cov;
+                        }
+                    }
+                    chol_factor_dyn(K, C_NN.data(), L_N);
+
+                    std::vector<double> tmp(K), col_U(K);
+                    std::vector<double> B_i((size_t)K * di, 0.0); // B_i[s, r]
+                    std::vector<double> c_col(K);
+                    for (int r = 0; r < di; ++r) {
+                        int br = obs_b[r];
+                        for (int s = 0; s < K; ++s) {
+                            c_col[s] = obs_scalar_cov(nb_u[s], nb_a[s], i, br, nb_wtu[s], nb_wtd[s], nb_weuc[s]);
+                        }
+                        chol_forward_sub(K, L_N.data(), c_col.data(), col_U.data());
+                        chol_back_sub(K, L_N.data(), col_U.data(), tmp.data());
+                        for (int s = 0; s < K; ++s) {
+                            B_i[(size_t)s * di + r] = tmp[s];
+                            dy[r] -= tmp[s] * Y_obs[nb_u[s] + nb_a[s] * n];
+                            for (int pc = 0; pc < p_cov; ++pc) {
+                                dX[r + (nb_a[s] * p_cov + pc) * di] -= tmp[s] * X_obs[nb_u[s] + pc * n];
+                            }
+                        }
+                    }
+                    // D_i = C_ii - B_i^T * C_Ni
+                    for (int r1 = 0; r1 < di; ++r1) {
+                        int br1 = obs_b[r1];
+                        for (int r2 = r1; r2 < di; ++r2) {
+                            double dot = 0.0;
+                            for (int s = 0; s < K; ++s) {
+                                double c_sr2 = obs_scalar_cov(nb_u[s], nb_a[s], i, br1, nb_wtu[s], nb_wtd[s], nb_weuc[s]);
+                                if (r1 == r2) {
+                                    dot += B_i[(size_t)s * di + r2] * c_sr2;
+                                } else {
+                                    double c_sr = obs_scalar_cov(nb_u[s], nb_a[s], i, obs_b[r2], nb_wtu[s], nb_wtd[s], nb_weuc[s]);
+                                    dot += B_i[(size_t)s * di + r1] * c_sr;
+                                }
+                            }
+                            D_i[r1 * di + r2] -= dot;
+                            D_i[r2 * di + r1] = D_i[r1 * di + r2];
+                        }
+                    }
+                }
+
+                chol_factor_dyn(di, D_i.data(), L_D);
+                double logd = 0.0;
+                for (int r = 0; r < di; ++r) logd += 2.0 * std::log(L_D[r * di + r]);
+                sum_logd_thr[tid] += logd;
+                n_eff_thr[tid]    += di;
+
+                std::vector<double> yt(di), Xt((size_t)di * P_beta);
+                chol_forward_sub(di, L_D.data(), dy.data(), yt.data());
+                for (int r = 0; r < di; ++r) yt_sum2_thr[tid] += yt[r] * yt[r];
+
+                std::vector<double> col_x(di), col_xt(di);
+                for (int b = 0; b < P_beta; ++b) {
+                    for (int r = 0; r < di; ++r) col_x[r] = dX[r + b * di];
+                    chol_forward_sub(di, L_D.data(), col_x.data(), col_xt.data());
+                    for (int r = 0; r < di; ++r) Xt[r + b * di] = col_xt[r];
+                }
+
+                for (int b1 = 0; b1 < P_beta; ++b1) {
+                    double sy = 0.0;
+                    for (int r = 0; r < di; ++r) sy += Xt[r + b1 * di] * yt[r];
+                    Xty_thr[tid][b1] += sy;
+                    for (int b2 = b1; b2 < P_beta; ++b2) {
+                        double sx = 0.0;
+                        for (int r = 0; r < di; ++r) sx += Xt[r + b1 * di] * Xt[r + b2 * di];
+                        XtX_thr[tid][(size_t)b1 * P_beta + b2] += sx;
+                        if (b1 != b2) XtX_thr[tid][(size_t)b2 * P_beta + b1] += sx;
+                    }
+                }
+            }
+        }
+
+        std::vector<double> XtX((size_t)P_beta * P_beta, 0.0), Xty(P_beta, 0.0);
+        double sum_logd = 0.0, yt_sum2 = 0.0;
+        int n_eff = 0;
+        for (int t = 0; t < n_thr; ++t) {
+            sum_logd += sum_logd_thr[t];
+            yt_sum2  += yt_sum2_thr[t];
+            n_eff    += n_eff_thr[t];
+            for (int b = 0; b < P_beta; ++b) Xty[b] += Xty_thr[t][b];
+            for (size_t idx = 0; idx < XtX.size(); ++idx) XtX[idx] += XtX_thr[t][idx];
+        }
+
+        std::vector<double> L_B, y_b(P_beta), beta_vec(P_beta, 0.0);
+        chol_factor_dyn(P_beta, XtX.data(), L_B);
+        chol_forward_sub(P_beta, L_B.data(), Xty.data(), y_b.data());
+        chol_back_sub(P_beta, L_B.data(), y_b.data(), beta_vec.data());
+
+        // Exact GLS RSS = ||y_tilde||^2 - beta^T Xty
+        double quad_fit = 0.0;
+        for (int b = 0; b < P_beta; ++b) quad_fit += beta_vec[b] * Xty[b];
+        double rss = std::max(1e-10, yt_sum2 - quad_fit);
+        double neg2ll = rss + sum_logd;
+
+        SEXP beta_mat_r = PROTECT(Rf_allocMatrix(REALSXP, p_cov, P));
+        double* bm = REAL(beta_mat_r);
+        for (int v = 0; v < P; ++v) {
+            for (int pc = 0; pc < p_cov; ++pc) bm[pc + v * p_cov] = beta_vec[v * p_cov + pc];
+        }
+
+        SEXP out = PROTECT(Rf_allocVector(VECSXP, 4));
+        SET_VECTOR_ELT(out, 0, Rf_ScalarReal(neg2ll));
+        SET_VECTOR_ELT(out, 1, Rf_ScalarReal(rss / std::max(1, n_eff)));
+        SET_VECTOR_ELT(out, 2, beta_mat_r);
+        SET_VECTOR_ELT(out, 3, Rf_ScalarInteger(n_eff));
+        SEXP nms = PROTECT(Rf_allocVector(STRSXP, 4));
+        SET_STRING_ELT(nms, 0, Rf_mkChar("neg2loglik"));
+        SET_STRING_ELT(nms, 1, Rf_mkChar("whitened_var"));
+        SET_STRING_ELT(nms, 2, Rf_mkChar("Beta"));
+        SET_STRING_ELT(nms, 3, Rf_mkChar("n_eff"));
+        Rf_setAttrib(out, R_NamesSymbol, nms);
+        UNPROTECT(3);
+        return out;
+    }
+
+    // Precompute observed residual matrix r_obs (n x P) for Modes 1 & 2
+    const double* Beta = REAL(Beta_r);
+    std::vector<double> r_obs((size_t)n * P, NA_REAL);
+    for (int i = 0; i < n; ++i) {
+        for (int b = 0; b < P; ++b) {
+            if (!R_FINITE(Y_obs[i + b * n])) continue;
+            double mu = 0.0;
+            for (int pc = 0; pc < p_cov; ++pc) mu += X_obs[i + pc * n] * Beta[pc + b * p_cov];
+            r_obs[i + b * n] = Y_obs[i + b * n] - mu;
+        }
+    }
+
+    if (mode == 1) {
+        // Mode 1: Full network multivariate Co-Kriging prediction across all q reaches
+        int q = Rf_nrows(X0_r);
+        const double* X0 = REAL(X0_r);
+
+        SEXP pred_nb_tu = VECTOR_ELT(nb_tu_r, 3);
+        SEXP pred_nb_td = VECTOR_ELT(nb_td_r, 3);
+        const int*    tu_p_idx  = INTEGER(VECTOR_ELT(pred_nb_tu, 0));
+        const double* tu_p_dist = REAL(VECTOR_ELT(pred_nb_tu, 1));
+        const double* tu_p_wt   = REAL(VECTOR_ELT(pred_nb_tu, 2));
+        const int*    td_p_idx  = INTEGER(VECTOR_ELT(pred_nb_td, 0));
+        const double* td_p_dist = REAL(VECTOR_ELT(pred_nb_td, 1));
+        const double* td_p_wt   = REAL(VECTOR_ELT(pred_nb_td, 2));
+        int m_stride = Rf_length(VECTOR_ELT(pred_nb_tu, 0)) / std::max(1, q);
+
+        SEXP pred_r = PROTECT(Rf_allocMatrix(REALSXP, q, P));
+        SEXP se_r   = PROTECT(Rf_allocMatrix(REALSXP, q, P));
+        double* pred = REAL(pred_r);
+        double* se   = REAL(se_r);
+
+        #pragma omp parallel
+        {
+            std::vector<double> L_N;
+            #pragma omp for schedule(dynamic, 32)
+            for (int i = 0; i < q; ++i) {
+                int base_p = i * m_stride;
+                int cand_ids[128];
+                double cand_wtu[128], cand_wtd[128], cand_weuc[128], cand_sc[128];
+                int n_cand = 0;
+
+                auto add_cand = [&](int u) -> int {
+                    if (u < 0 || u >= n) return -1;
+                    for (int c = 0; c < n_cand; ++c) if (cand_ids[c] == u) return c;
+                    if (n_cand >= 128) return -1;
+                    int c = n_cand++;
+                    cand_ids[c] = u;
+                    cand_wtu[c] = 0.0; cand_wtd[c] = 0.0; cand_weuc[c] = 0.0; cand_sc[c] = 0.0;
+                    return c;
+                };
+
+                for (int k = 0; k < m_stride; ++k) {
+                    int c = add_cand(tu_p_idx[base_p + k]);
+                    if (c >= 0) {
+                        double d = tu_p_dist[base_p + k], w = tu_p_wt[base_p + k];
+                        if (w > 0.0 && d < 1e5 && has_tu) cand_wtu[c] = w * eval_stream_kernel(d, phi_tu, kernel_id);
+                        if (w > 0.0 && d < 1e5 && has_td) cand_wtd[c] = eval_stream_kernel(d, phi_td, kernel_id);
+                    }
+                }
+                for (int k = 0; k < m_stride; ++k) {
+                    int c = add_cand(td_p_idx[base_p + k]);
+                    if (c >= 0) {
+                        double d = td_p_dist[base_p + k], w = td_p_wt[base_p + k];
+                        if (w > 0.0 && d < 1e5 && has_td) {
+                            cand_wtd[c] = std::max(cand_wtd[c], w * eval_stream_kernel(d, phi_td, kernel_id));
+                        }
+                    }
+                }
+                if (has_euc) {
+                    for (int c = 0; c < n_cand; ++c) {
+                        int u = cand_ids[c];
+                        cand_weuc[c] = eval_stream_kernel(
+                            std::hypot((mid_x[i] - mid_x[u]) * 0.001, (mid_y[i] - mid_y[u]) * 0.001),
+                            phi_euc, kernel_id);
+                    }
+                    double best_d2[32]; int best_j[32]; int nb_e = 0;
+                    int e_cap = std::min(m, 32);
+                    for (int j = 0; j < n; ++j) {
+                        double d2 = std::pow((mid_x[i] - mid_x[j]) * 0.001, 2) + std::pow((mid_y[i] - mid_y[j]) * 0.001, 2);
+                        if (nb_e < e_cap) {
+                            int pos = nb_e++;
+                            while (pos > 0 && best_d2[pos - 1] > d2) { best_d2[pos] = best_d2[pos - 1]; best_j[pos] = best_j[pos - 1]; --pos; }
+                            best_d2[pos] = d2; best_j[pos] = j;
+                        } else if (d2 < best_d2[nb_e - 1]) {
+                            int pos = nb_e - 1;
+                            while (pos > 0 && best_d2[pos - 1] > d2) { best_d2[pos] = best_d2[pos - 1]; best_j[pos] = best_j[pos - 1]; --pos; }
+                            best_d2[pos] = d2; best_j[pos] = j;
+                        }
+                    }
+                    for (int e = 0; e < nb_e; ++e) {
+                        int c = add_cand(best_j[e]);
+                        if (c >= 0) cand_weuc[c] = eval_stream_kernel(std::sqrt(best_d2[e]), phi_euc, kernel_id);
+                    }
+                }
+
+                std::vector<std::pair<double, int>> ranked;
+                ranked.reserve(n_cand);
+                for (int c = 0; c < n_cand; ++c) {
+                    cand_sc[c] = cand_wtu[c] + cand_wtd[c] + cand_weuc[c];
+                    if (cand_sc[c] > 1e-10) ranked.push_back({-cand_sc[c], c});
+                }
+                int k_use = std::min(m, (int)ranked.size());
+                if (k_use > 0) {
+                    std::partial_sort(ranked.begin(), ranked.begin() + k_use, ranked.end());
+                    ranked.resize(k_use);
+                }
+
+                std::vector<int> nb_u, nb_a;
+                std::vector<double> nb_wtu, nb_wtd, nb_weuc, r_vec;
+                for (int r = 0; r < k_use; ++r) {
+                    int c = ranked[r].second;
+                    int u = cand_ids[c];
+                    for (int a = 0; a < P; ++a) {
+                        double rv = r_obs[u + a * n];
+                        if (R_FINITE(rv)) {
+                            nb_u.push_back(u); nb_a.push_back(a);
+                            nb_wtu.push_back(cand_wtu[c]); nb_wtd.push_back(cand_wtd[c]); nb_weuc.push_back(cand_weuc[c]);
+                            r_vec.push_back(rv);
+                        }
+                    }
+                }
+
+                int K = (int)nb_u.size();
+                std::vector<double> alpha(K, 0.0);
+                if (K > 0) {
+                    std::vector<double> C_NN((size_t)K * K, 0.0);
+                    for (int s1 = 0; s1 < K; ++s1) {
+                        int u1 = nb_u[s1], a1 = nb_a[s1];
+                        C_NN[(size_t)s1 * K + s1] = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] + A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                        for (int s2 = s1 + 1; s2 < K; ++s2) {
+                            int u2 = nb_u[s2], a2 = nb_a[s2];
+                            double w1, w2, w3;
+                            obs_spatial_weights(u1, u2, w1, w2, w3);
+                            double cov = obs_scalar_cov(u1, a1, u2, a2, w1, w2, w3);
+                            C_NN[(size_t)s1 * K + s2] = cov;
+                            C_NN[(size_t)s2 * K + s1] = cov;
+                        }
+                    }
+                    chol_factor_dyn(K, C_NN.data(), L_N);
+                    std::vector<double> yt_n(K);
+                    chol_forward_sub(K, L_N.data(), r_vec.data(), yt_n.data());
+                    chol_back_sub(K, L_N.data(), yt_n.data(), alpha.data());
+                }
+
+                std::vector<double> c_b(K), v_b(K);
+                for (int b = 0; b < P; ++b) {
+                    double mu_b = 0.0;
+                    for (int pc = 0; pc < p_cov; ++pc) mu_b += X0[i + pc * q] * Beta[pc + b * p_cov];
+                    double var_b = A_tu[b + b * P] + A_td[b + b * P] + A_euc[b + b * P] + Psi[b + b * P];
+                    double shift = 0.0, red = 0.0;
+                    if (K > 0) {
+                        for (int s = 0; s < K; ++s) {
+                            double w_tu_s  = nb_wtu[s];
+                            double w_td_s  = nb_wtd[s];
+                            double w_euc_s = nb_weuc[s];
+                            double cov = 0.0;
+                            int idx = nb_a[s] + b * P;
+                            if (has_tu  && w_tu_s  > 0.0) cov += w_tu_s  * A_tu[idx];
+                            if (has_td  && w_td_s  > 0.0) cov += w_td_s  * A_td[idx];
+                            if (has_euc && w_euc_s > 0.0) cov += w_euc_s * A_euc[idx];
+                            if (nb_u[s] == i) cov += Psi[idx];
+                            c_b[s] = cov;
+                            shift += cov * alpha[s];
+                        }
+                        chol_forward_sub(K, L_N.data(), c_b.data(), v_b.data());
+                        for (int s = 0; s < K; ++s) red += v_b[s] * v_b[s];
+                    }
+                    pred[i + b * q] = mu_b + shift;
+                    se[i + b * q]   = std::sqrt(std::max(1e-8, var_b - red));
+                }
+            }
+        }
+
+        SEXP out = PROTECT(Rf_allocVector(VECSXP, 2));
+        SET_VECTOR_ELT(out, 0, pred_r);
+        SET_VECTOR_ELT(out, 1, se_r);
+        SEXP nms = PROTECT(Rf_allocVector(STRSXP, 2));
+        SET_STRING_ELT(nms, 0, Rf_mkChar("prediction"));
+        SET_STRING_ELT(nms, 1, Rf_mkChar("se"));
+        Rf_setAttrib(out, R_NamesSymbol, nms);
+        UNPROTECT(4);
+        return out;
+    }
+
+    // Mode 2: Aux-Aided Leave-One-Target-Out CV across n observed stations
+    SEXP aux_pred_r = PROTECT(Rf_allocMatrix(REALSXP, n, P));
+    SEXP aux_se_r   = PROTECT(Rf_allocMatrix(REALSXP, n, P));
+    double* aux_pred = REAL(aux_pred_r);
+    double* aux_se   = REAL(aux_se_r);
+    for (size_t k = 0; k < (size_t)n * P; ++k) {
+        aux_pred[k] = NA_REAL;
+        aux_se[k]   = NA_REAL;
+    }
+
+    #pragma omp parallel
+    {
+        std::vector<double> L_N;
+        #pragma omp for schedule(dynamic, 8)
+        for (int i = 0; i < n; ++i) {
+            std::vector<std::pair<double, int>> cands;
+            cands.reserve(n);
+            for (int j = 0; j < n; ++j) {
+                if (j == i) continue;
+                double w1, w2, w3;
+                obs_spatial_weights(i, j, w1, w2, w3);
+                double sc = w1 + w2 + w3;
+                if (sc > 1e-10) cands.push_back({-sc, j});
+            }
+            int k_use = std::min(m, (int)cands.size());
+            if ((int)cands.size() > k_use) {
+                std::partial_sort(cands.begin(), cands.begin() + k_use, cands.end());
+                cands.resize(k_use);
+            } else {
+                std::sort(cands.begin(), cands.end());
+            }
+
+            for (int b = 0; b < P; ++b) {
+                if (!R_FINITE(Y_obs[i + b * n])) continue;
+                std::vector<int> nb_u, nb_a;
+                std::vector<double> nb_w1, nb_w2, nb_w3, r_vec;
+
+                // Co-located auxiliary observations at reach i itself (a != b)
+                for (int a = 0; a < P; ++a) {
+                    if (a == b || !R_FINITE(r_obs[i + a * n])) continue;
+                    nb_u.push_back(i); nb_a.push_back(a);
+                    nb_w1.push_back(has_tu ? 1.0 : 0.0);
+                    nb_w2.push_back(has_td ? 1.0 : 0.0);
+                    nb_w3.push_back(has_euc ? 1.0 : 0.0);
+                    r_vec.push_back(r_obs[i + a * n]);
+                }
+                // Neighboring station observations (u != i)
+                for (int c = 0; c < k_use; ++c) {
+                    int u = cands[c].second;
+                    double w1, w2, w3;
+                    obs_spatial_weights(i, u, w1, w2, w3);
+                    for (int a = 0; a < P; ++a) {
+                        double rv = r_obs[u + a * n];
+                        if (R_FINITE(rv)) {
+                            nb_u.push_back(u); nb_a.push_back(a);
+                            nb_w1.push_back(w1); nb_w2.push_back(w2); nb_w3.push_back(w3);
+                            r_vec.push_back(rv);
+                        }
+                    }
+                }
+
+                double mu_b = 0.0;
+                for (int pc = 0; pc < p_cov; ++pc) mu_b += X_obs[i + pc * n] * Beta[pc + b * p_cov];
+                double var_b = A_tu[b + b * P] + A_td[b + b * P] + A_euc[b + b * P] + Psi[b + b * P];
+
+                int K = (int)nb_u.size();
+                if (K == 0) {
+                    aux_pred[i + b * n] = mu_b;
+                    aux_se[i + b * n]   = std::sqrt(std::max(1e-8, var_b));
+                    continue;
+                }
+
+                std::vector<double> C_NN((size_t)K * K, 0.0), c_b(K), alpha(K), tmp(K);
+                for (int s1 = 0; s1 < K; ++s1) {
+                    int u1 = nb_u[s1], a1 = nb_a[s1];
+                    C_NN[(size_t)s1 * K + s1] = A_tu[a1 + a1 * P] + A_td[a1 + a1 * P] + A_euc[a1 + a1 * P] + Psi[a1 + a1 * P];
+                    c_b[s1] = obs_scalar_cov(u1, a1, i, b, nb_w1[s1], nb_w2[s1], nb_w3[s1]);
+                    for (int s2 = s1 + 1; s2 < K; ++s2) {
+                        int u2 = nb_u[s2], a2 = nb_a[s2];
+                        double w1, w2, w3;
+                        obs_spatial_weights(u1, u2, w1, w2, w3);
+                        double cov = obs_scalar_cov(u1, a1, u2, a2, w1, w2, w3);
+                        C_NN[(size_t)s1 * K + s2] = cov;
+                        C_NN[(size_t)s2 * K + s1] = cov;
+                    }
+                }
+                chol_factor_dyn(K, C_NN.data(), L_N);
+                chol_forward_sub(K, L_N.data(), r_vec.data(), tmp.data());
+                chol_back_sub(K, L_N.data(), tmp.data(), alpha.data());
+
+                double shift = 0.0;
+                for (int s = 0; s < K; ++s) shift += c_b[s] * alpha[s];
+                chol_forward_sub(K, L_N.data(), c_b.data(), tmp.data());
+                double red = 0.0;
+                for (int s = 0; s < K; ++s) red += tmp[s] * tmp[s];
+
+                aux_pred[i + b * n] = mu_b + shift;
+                aux_se[i + b * n]   = std::sqrt(std::max(1e-8, var_b - red));
+            }
+        }
+    }
+
+    SEXP out = PROTECT(Rf_allocVector(VECSXP, 2));
+    SET_VECTOR_ELT(out, 0, aux_pred_r);
+    SET_VECTOR_ELT(out, 1, aux_se_r);
+    SEXP nms = PROTECT(Rf_allocVector(STRSXP, 2));
+    SET_STRING_ELT(nms, 0, Rf_mkChar("aux_pred"));
+    SET_STRING_ELT(nms, 1, Rf_mkChar("aux_se"));
+    Rf_setAttrib(out, R_NamesSymbol, nms);
+    UNPROTECT(4);
+    return out;
+}
+
 }
 
 
