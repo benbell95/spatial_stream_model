@@ -17,7 +17,7 @@ Full credit belongs to the authors of the foundational packages and theory on wh
 
 In this repository, `S3N` is used for standard univariate exponential model fitting, bootstrapping, and kriging, while the surrounding codebase wraps and extends it (alongside a built-in OpenMP C++ NNGP fallback and extensions) into an end-to-end national preprocessing, modelling, validation, multivariate co-kriging, risk-mapping, and reporting platform.
 
-> **Citation:** If you use this pipeline, please cite the original `S3N` paper: Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. arXiv:2512.12398 ([https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)).
+> **Citation:** If you use this pipeline, please cite both the original `S3N` paper — Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. arXiv:2512.12398 ([https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)) — and the `BRISC` paper — Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
 
 ---
 

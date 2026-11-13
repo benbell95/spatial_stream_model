@@ -13,10 +13,12 @@ Designed to run cleanly on Linux servers, laptops, and Databricks clusters **wit
 > **Attribution:** This pipeline is built upon and inspired by the **Scalable Spatial Stream Network (`S3N`)** framework ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear $\mathcal{O}(n)$ Nearest-Neighbor Gaussian Process (`NNGP`) scaling to river networks. Full credit belongs to the authors of the foundational packages and theory on which this repository stands:
 > - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
 >   Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
+> - **`BRISC` R Package** — **Arkajyoti Saha and Abhirup Datta**:
+>   Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
 >
-> **If you use this pipeline in published work or downstream analysis, please cite the original `S3N` paper above (Kunke et al., 2025, `arXiv:2512.12398`).**
+> **If you use this pipeline in published work or downstream analysis, please cite both the original `S3N` paper (Kunke et al., 2025, `arXiv:2512.12398`) and the `BRISC` paper (Saha & Datta, 2018, *Stat*, 7(1), e184).**
 >
-> See [Where This Pipeline Differs from `S3N`](docs/where_this_differs_from_s3n.md) for `BRISC` attribution and a full breakdown of what is shared, replaced, or added.
+> See [Where This Pipeline Differs from `S3N`](docs/where_this_differs_from_s3n.md) for a full breakdown of what is shared, replaced, or added.
 
 ---
 
