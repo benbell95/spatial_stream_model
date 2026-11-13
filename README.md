@@ -13,11 +13,12 @@ Designed to run cleanly on Linux servers, laptops, and Databricks clusters **wit
 
 ## ✨ Key Features
 
-- ⚡ **Sub-Second C++/OpenMP Stream-Tree Engine** ([`src/s3n_fast_neighbors.cpp`](src/s3n_fast_neighbors.cpp)): Replaces slow R tree walks with an Euler-tour LCA & Nearest-Neighbor Gaussian Process (NNGP) builder, processing ~91,000 river reaches in under a second.
+- ⚡ **Sub-Second C++/OpenMP Stream-Tree & Joint NNGP Engine** ([`src/s3n_fast_neighbors.cpp`](src/s3n_fast_neighbors.cpp)): Replaces slow R tree walks with an Euler-tour LCA & Nearest-Neighbor Gaussian Process (NNGP) builder, multi-kernel profile MLE solver (`exponential`, `spherical`, `mariah`, `linear`, `auto`), physical confluence `AFV` weighting (`length`, `shreve`, `hydro_yield`), and **Joint Additive `Tail-Up + Tail-Down + Euclidean` Universal Kriging** (`--combine=joint`), processing ~91,000 river reaches in under a second.
 - 🐍 **Zero-Dependency Python GIS Extractor** ([`scripts/01_preprocess_orn.py`](scripts/01_preprocess_orn.py)): Reads multi-gigabyte OGC GeoPackages (`.gpkg`) via Python's built-in `sqlite3` and binary WKB decoder, builds directed river trees, computes Strahler/Shreve orders and Additive Function Values (`log_AFV`), snaps stations (`≤ 250 m`), and auto-generates `configs/determinands.json`.
 - 🧪 **Censored & Interval-Range Imputation**: Supports Robust Lognormal Regression on Order Statistics (`ROS`) for `<LOD` values and multiple range-handling strategies (`tobit`, `geometric`, `midpoint`, `lower`, `upper`, or `ros_site`).
 - 📐 **12 Response Transformations & 4 Normalisation Methods**: Built-in `log`, `log10`, `log1p`, `sqrt`, `cbrt`, `fourthrt`, `reciprocal`, `boxcox`, `yeojohnson`, `asin`, `logit`, and `none` transforms (with Taylor/Duan back-transformation), plus automatic `zscore`, `robust_zscore`, `minmax`, and `percentile` outputs.
 - 📉 **Two-Stage GAM & Measurement-Error Kriging**: Propagate site-level temporal/GAM standard errors (`meas_uncertainty`) directly into spatial variance estimation and kriging uncertainty via `--meas-error` / `--gam`.
+- 🌲 **Non-Linear Spline (`GAM + S3N`) & Tree-Ensemble (`RF / GBM + S3N`) Regression Kriging**: Capture non-linear environmental thresholds and high-order catchment interactions using REML-penalized cubic regression splines (`--trend=gam`), GCV natural cubic splines (`--trend=spline`), Out-of-Bag Random Forests (`--trend=rf`), or cross-fitted Gradient Boosted Trees (`--trend=gbm`) combined with S3N residual stream kriging.
 - 🗺️ **Multi-Source, Multi-Network & Temporal Batching**: Combine built-in (`rsn`, `ssn`, `rss`) and custom CSV data sources (`+` / `,` delimiters via [`scripts/format_custom_data.py`](scripts/format_custom_data.py)), bring custom river networks (`BYOWN`), customize `15` covariates with `--vars=`, and batch-fit by `--by=year|season|month`.
 - 📊 **Automated Diagnostics, Statistics & Maps**: Exports publication-grade Base-R maps (`fig1`–`fig5`), station snapping diagnostics ([`06_station_snapping_diagnostics.R`](scripts/06_station_snapping_diagnostics.R)), single-run environmental gradient reports ([`05_descriptive_stats.R`](scripts/05_descriptive_stats.R)), and multi-run / `N:P` stoichiometry comparisons ([`04_compare_model_runs.R`](scripts/04_compare_model_runs.R)).
 
@@ -99,6 +100,13 @@ Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
 ```bash
 # Nitrate (0117) with square-root transform and robust Z-score maps
 Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --norm=robust_zscore
+
+# Auto-select best stream covariance kernel (Exponential, Spherical, Mariah, Linear) + Hydrological-Yield AFV
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --kernel=auto --afv=hydro_yield --combine=joint
+
+# Penalized GAM Smooths + S3N or Tree-Ensemble Regression Kriging (Random Forest / Gradient Boosting + S3N)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=gam
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=rf --trees=150
 
 # Orthophosphate (0180) with default log transform
 Rscript scripts/run_s3n_determinand.R 0180
@@ -196,4 +204,4 @@ See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 | **Getting Started & CLI** | [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) · [Running on Databricks](docs/databricks_guide.md) |
 | **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks (`BYOWN`)](docs/custom_water_network_guide.md) · [ORN Covariates Reference (`--vars`)](docs/orn_variables_reference.md) |
 | **Diagnostics & Interpretation** | [Station Snapping Guide](docs/station_snapping_guide.md) · [Descriptive Statistics Guide](docs/descriptive_stats_interpretation_guide.md) · [Model Comparison Guide](docs/model_comparison_interpretation_guide.md) |
-| **Statistical Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) |
+| **Statistical Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) · [Regulatory Exceedance & WFD Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) |

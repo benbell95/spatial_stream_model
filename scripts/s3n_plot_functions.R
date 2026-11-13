@@ -1209,3 +1209,188 @@ plot_fig_exceedance_basin <- function(basin_pred, basin_title, det_code, det_nam
   }
   draw_top_banner(banner)
 }
+
+# ==============================================================================
+# Figure 6: Spatio-Temporal Trend Mapping (--by=year|season|month)
+# ==============================================================================
+
+TREND_TIER_LEVELS <- c(
+  "Significant Decrease (p < 0.05)",
+  "Moderate Decrease (p < 0.20)",
+  "Stable / No Clear Trend",
+  "Moderate Increase (p < 0.20)",
+  "Significant Increase (p < 0.05)"
+)
+
+TREND_TIER_COLORS <- c(
+  "Significant Decrease (p < 0.05)" = "#2166ac",
+  "Moderate Decrease (p < 0.20)"    = "#67a9cf",
+  "Stable / No Clear Trend"         = "#cfd4da",
+  "Moderate Increase (p < 0.20)"    = "#ef8a62",
+  "Significant Increase (p < 0.05)" = "#b2182b"
+)
+
+TREND_DIV_PAL <- colorRampPalette(c("#2166ac", "#67a9cf", "#f7f7f7", "#ef8a62", "#b2182b"))(256)
+
+plot_fig6_spatiotemporal_trends <- function(trend_df, by_mode, period_labels, det_code, det_name, det_unit,
+                                            trans_obj, out_file, borrowed = FALSE, rho_t = NA_real_,
+                                            vars_label = NULL, network_label = NULL, source_label = NULL) {
+  if (is.null(trend_df) || nrow(trend_df) == 0L) return(invisible(NULL))
+  tr        <- as_transformer(trans_obj)
+  det_short <- shorten_det_name(det_name)
+  has_net   <- !is.null(network_label) && nzchar(network_label)
+  net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
+  banner    <- format_top_banner(network_label, vars_label, source_label)
+  mode_cap  <- paste0(toupper(substr(by_mode, 1, 1)), substr(by_mode, 2, nchar(by_mode)))
+  st_tag    <- if (isTRUE(borrowed) && is.finite(rho_t)) {
+    sprintf("Dynamic Temporal Borrowing (rho_t = %.2f)", rho_t)
+  } else {
+    "Precision-Weighted WLS Trend"
+  }
+
+  slp <- as.numeric(trend_df$trend_slope_sc)
+  lim <- max(1e-4, as.numeric(quantile(abs(slp), probs = 0.985, na.rm = TRUE)))
+  ticks_a <- seq(-lim, lim, length.out = 5L)
+  labs_a  <- sprintf("%+.3f", ticks_a)
+
+  open_png_device(out_file, width = 2600, height = 1350, res = 200)
+  on.exit(dev.off(), add = TRUE)
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
+
+  plot_stream_network(
+    trend_df, "trend_slope_sc", vmin = -lim, vmax = lim, pal = TREND_DIV_PAL,
+    main_title = sprintf("A. All England: %s-to-%s Trend Slope (%s)", mode_cap, mode_cap, det_short),
+    sub_title  = sprintf("%s -> %s (%s)%s", period_labels[1], tail(period_labels, 1), st_tag, net_tag),
+    cbar_ticks = ticks_a, cbar_labels = labs_a,
+    cbar_title = sprintf("Slope / %s\n(%s scale)", tolower(by_mode), tr$short_label),
+    show_obs = FALSE, base_lwd = 0.25, max_lwd = 2.0
+  )
+
+  # Panel B: Trend Significance Classification
+  ord <- order(trend_df$Shreve)
+  d   <- trend_df[ord, ]
+  xr  <- range(c(d$start_X, d$end_X), na.rm = TRUE)
+  yr  <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
+  dx  <- diff(xr)
+  dy  <- diff(yr)
+  plot(NA, xlim = c(xr[1] - 0.03 * dx, xr[2] + 0.04 * dx),
+       ylim = c(yr[1] - 0.03 * dy, yr[2] + 0.06 * dy),
+       asp = 1, axes = FALSE, xlab = "", ylab = "")
+  rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
+  lwds <- 0.25 + (2.0 - 0.25) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+  tier_chr <- as.character(d$trend_tier)
+  cols <- unname(TREND_TIER_COLORS[tier_chr])
+  cols[is.na(cols)] <- "#cfd4da"
+  segments(d$start_X, d$start_Y, d$end_X, d$end_Y, col = cols, lwd = lwds)
+
+  tab <- table(factor(tier_chr, levels = TREND_TIER_LEVELS))
+  pct <- 100 * as.numeric(tab) / max(1L, nrow(d))
+  leg_labels <- sprintf("%s (%s, %.1f%%)", TREND_TIER_LEVELS, format(as.integer(tab), big.mark = ","), pct)
+  legend("topleft", legend = leg_labels, col = unname(TREND_TIER_COLORS[TREND_TIER_LEVELS]),
+         lwd = 3.5, bg = rgb(1, 1, 1, 0.90), box.col = "#cccccc", cex = 0.75,
+         title = "Trend Significance (Wald Z-test)", title.cex = 0.80)
+  draw_plot_header(
+    main_title = sprintf("B. All England: Trend Direction & Significance (%s)", det_short),
+    sub_title  = sprintf("Two-sided Wald Z-test across %d %ss (%s reaches)%s",
+                         length(period_labels), tolower(by_mode), format(nrow(d), big.mark = ","), net_tag),
+    max_main = 65, max_sub = 90, cex_main = 0.96, cex_sub = 0.80, adj = 0
+  )
+  draw_top_banner(banner)
+}
+
+plot_fig7_spatiotemporal_transitions <- function(transitions, by_mode, det_code, det_name, det_unit,
+                                                 trans_obj, out_file, borrowed = FALSE, rho_t = NA_real_,
+                                                 vars_label = NULL, network_label = NULL, source_label = NULL) {
+  if (is.null(transitions) || length(transitions) == 0L) return(invisible(NULL))
+  tr        <- as_transformer(trans_obj)
+  det_short <- shorten_det_name(det_name)
+  banner    <- format_top_banner(network_label, vars_label, source_label)
+  mode_cap  <- paste0(toupper(substr(by_mode, 1, 1)), substr(by_mode, 2, nchar(by_mode)))
+  st_tag    <- if (isTRUE(borrowed) && is.finite(rho_t)) {
+    sprintf("Dynamic Temporal Borrowing (rho_t = %.2f)", rho_t)
+  } else {
+    "Precision-Weighted Wald Z"
+  }
+
+  k_tr    <- length(transitions)
+  n_cols  <- min(4L, k_tr)
+  n_blk   <- ceiling(k_tr / n_cols)
+  all_dz  <- unlist(lapply(transitions, function(x) as.numeric(x$df$delta_sc)))
+  lim     <- max(1e-4, as.numeric(quantile(abs(all_dz), probs = 0.985, na.rm = TRUE)))
+  ticks_a <- seq(-lim, lim, length.out = 5L)
+  labs_a  <- sprintf("%+.2f", ticks_a)
+
+  w_px <- max(2200L, 900L * n_cols)
+  h_px <- 1950L * n_blk
+  open_png_device(out_file, width = w_px, height = h_px, res = 200)
+  on.exit(dev.off(), add = TRUE)
+  oma_b    <- get_banner_oma(banner)
+  oma_b[3] <- max(oma_b[3], 3.8)
+  par(mfrow = c(2L * n_blk, n_cols), mar = c(1.0, 1.0, 3.6, 1.0), oma = oma_b, bg = "white")
+
+  panel_lbl <- function(idx) {
+    if (idx <= 26L) LETTERS[idx] else paste0("P", idx)
+  }
+
+  for (blk in seq_len(n_blk)) {
+    i_start <- (blk - 1L) * n_cols + 1L
+    i_end   <- min(k_tr, blk * n_cols)
+    idx_vec <- i_start:i_end
+
+    # Row A of block: Model-scale step change (Delta z)
+    for (ti in idx_vec) {
+      item <- transitions[[ti]]
+      plot_stream_network(
+        item$df, "delta_sc", vmin = -lim, vmax = lim, pal = TREND_DIV_PAL,
+        main_title = sprintf("%s. %s (%s)", panel_lbl(ti), item$transition_label, det_short),
+        sub_title  = sprintf("Model-scale change (%s)", tr$short_label),
+        cbar_ticks = ticks_a, cbar_labels = labs_a,
+        cbar_title = sprintf("Change\n(%s sc)", tr$short_label),
+        show_obs = FALSE, base_lwd = 0.20, max_lwd = 1.6,
+        max_main_chars = 46, max_sub_chars = 58
+      )
+    }
+    if (length(idx_vec) < n_cols) {
+      for (pad in seq_len(n_cols - length(idx_vec))) plot.new()
+    }
+
+    # Row B of block: 5-tier Wald Z-test significance classification
+    for (ti in idx_vec) {
+      item <- transitions[[ti]]
+      d  <- item$df[order(item$df$Shreve), ]
+      xr <- range(c(d$start_X, d$end_X), na.rm = TRUE)
+      yr <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
+      dx <- diff(xr); dy <- diff(yr)
+      plot(NA, xlim = c(xr[1] - 0.03 * dx, xr[2] + 0.04 * dx),
+           ylim = c(yr[1] - 0.03 * dy, yr[2] + 0.06 * dy),
+           asp = 1, axes = FALSE, xlab = "", ylab = "")
+      rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
+      lwds <- 0.20 + (1.6 - 0.20) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+      tier_chr <- as.character(d$trend_tier)
+      cols <- unname(TREND_TIER_COLORS[tier_chr])
+      cols[is.na(cols)] <- "#cfd4da"
+      segments(d$start_X, d$start_Y, d$end_X, d$end_Y, col = cols, lwd = lwds)
+
+      tab <- table(factor(tier_chr, levels = TREND_TIER_LEVELS))
+      pct <- 100 * as.numeric(tab) / max(1L, nrow(d))
+      leg_labels <- sprintf("%s (%.1f%%)", TREND_TIER_LEVELS, pct)
+      legend("topleft", legend = leg_labels, col = unname(TREND_TIER_COLORS[TREND_TIER_LEVELS]),
+             lwd = 3.0, bg = rgb(1, 1, 1, 0.90), box.col = "#cccccc", cex = 0.68,
+             title = "Wald Z Significance", title.cex = 0.72)
+      draw_plot_header(
+        main_title = sprintf("%s. %s — Significance", panel_lbl(k_tr + ti), item$transition_label),
+        sub_title  = "Two-sided Wald Z-test (SE-weighted)",
+        max_main = 46, max_sub = 58, cex_main = 0.90, cex_sub = 0.76, adj = 0
+      )
+    }
+    if (length(idx_vec) < n_cols) {
+      for (pad in seq_len(n_cols - length(idx_vec))) plot.new()
+    }
+  }
+
+  mtext(wrap_title(sprintf("All England %s-to-%s Transitions: %s (%s) — %s",
+                           mode_cap, mode_cap, det_short, det_unit, st_tag), 180),
+        side = 3, line = 1.6, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
+  draw_top_banner(banner)
+}

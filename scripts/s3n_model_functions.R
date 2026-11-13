@@ -269,7 +269,332 @@ print_available_validation_options <- function() {
   cat("  --threshold=<val|uk>       : Raw-scale regulatory threshold (or 'uk' for built-in UK/WFD presets)\n")
   cat("  --threshold-dir=above|below: Exceedance direction (above = P(Y > T); below = P(Y < T))\n")
   cat("  --list-thresholds          : Print built-in UK / WFD regulatory threshold presets\n")
-  cat("  --design-sites=<K>         : Rank top K unmonitored reaches minimizing mean kriging variance\n")
+  cat("  --design-sites=<K>         : Rank top K unmonitored reaches minimizing mean kriging variance\n\n")
+  cat("Spatio-Temporal & Censored Kriging Flags:\n")
+  cat("  --st-borrow                : Enable dynamic precision-weighted borrowing across time (--by=...)\n")
+  cat("  --censor=em|tobit|ros|half_lod : Left-censored nondetect method (em/tobit = Spatial Tobit EM kriging)\n")
+}
+
+parse_st_borrow_arg <- function(args) {
+  any(c("--st-borrow", "--temporal-borrow") %in% args)
+}
+
+trunc_norm_below_stats <- function(mu, sd_val, upper) {
+  sd_safe <- pmax(as.numeric(sd_val), 1e-8)
+  alpha   <- (as.numeric(upper) - as.numeric(mu)) / sd_safe
+  # Numerically stable Mills ratio phi(alpha) / Phi(alpha) in log space
+  log_phi <- dnorm(alpha, log = TRUE)
+  log_Phi <- pnorm(alpha, log.p = TRUE)
+  mills   <- exp(log_phi - log_Phi)
+  mills[!is.finite(mills)] <- pmax(0, -alpha[!is.finite(mills)])
+  mean_cond <- as.numeric(mu) - sd_safe * mills
+  mean_cond <- pmin(mean_cond, as.numeric(upper))
+  var_cond  <- (sd_safe^2) * pmax(1e-6, 1.0 - alpha * mills - mills^2)
+  list(mean = mean_cond, var = var_cond)
+}
+
+run_spatial_tobit_em_kriging <- function(df_ord, n_obs, X_obs, y_vec_init, is_cens_obs, lod_sc_obs,
+                                         m_use, parent_0, tt, up_dist, nb_td,
+                                         estimate_component, kernel_req = "exponential",
+                                         max_iter = 6L, tol = 1e-3) {
+  cens_idx   <- which(is_cens_obs & is.finite(lod_sc_obs))
+  uncens_idx <- which(!is_cens_obs)
+  if (length(cens_idx) == 0L) {
+    return(list(y_em = y_vec_init, n_cens = 0L, n_iter = 0L, converged = TRUE, cond_var = numeric(0)))
+  }
+
+  y_curr <- as.numeric(y_vec_init)
+  # Ensure initial imputed values respect the censoring upper bound
+  y_curr[cens_idx] <- pmin(y_curr[cens_idx], lod_sc_obs[cens_idx] - 1e-4)
+
+  # Precompute neighbor structure from uncensored -> censored reaches for exact E-step kriging
+  nb_u2c <- NULL
+  if (length(uncens_idx) >= 5L) {
+    ord_u2c   <- c(uncens_idx, cens_idx)
+    df_u2c    <- df_ord[ord_u2c, , drop = FALSE]
+    par_u2c_i <- match(df_u2c$parent_dn, df_u2c$RivID, nomatch = 0L)
+    par_u2c   <- ifelse(df_u2c$parent_dn == 0 | par_u2c_i == 0L, -1L, par_u2c_i - 1L)
+    tt_u2c    <- .Call("C_build_tree_tin_tout", as.integer(par_u2c))
+    m_u2c     <- min(as.integer(m_use), max(2L, length(uncens_idx) - 2L))
+    nb_u2c    <- .Call("C_compute_s3n_neighbors",
+                       as.integer(length(uncens_idx)), as.integer(m_u2c), as.integer(par_u2c),
+                       as.integer(df_u2c$CatchID), as.integer(tt_u2c[[1]]), as.integer(tt_u2c[[2]]),
+                       as.double(df_u2c$Dist2Mth_km), as.double(up_dist[ord_u2c]),
+                       as.double(df_u2c$log_AFV), as.double(df_u2c$mid_X),
+                       as.double(df_u2c$mid_Y), 1L)
+  }
+
+  converged <- FALSE
+  n_iter    <- 0L
+  cond_var  <- rep(NA_real_, length(cens_idx))
+
+  for (it in seq_len(max_iter)) {
+    n_iter <- it
+    y_prev <- y_curr
+    vy_it  <- max(1e-4, var(y_curr))
+
+    # M-step: fit S3N Tail-Down NNGP on completed observations
+    fit_em <- estimate_component(X_obs, as.matrix(y_curr), nb_td$obs_neighbors, vy_it, kernel_req)
+    beta_em <- as.numeric(fit_em$Beta)
+    theta_em <- as.numeric(fit_em$Theta)
+    kid_em   <- if (!is.null(fit_em$kernel_id)) as.integer(fit_em$kernel_id) else 0L
+
+    # E-step: exact conditional mean & SD for censored reaches given uncensored neighbors
+    if (!is.null(nb_u2c)) {
+      n_u <- length(uncens_idx)
+      n_c <- length(cens_idx)
+      n_e <- n_u + n_c
+      m_u2c <- min(as.integer(m_use), max(2L, n_u - 2L))
+      p_u2c <- list(
+        nnIndx = nb_u2c$pred_neighbors$nnIndx[1:(n_e * m_u2c)],
+        nnDist = nb_u2c$pred_neighbors$nnDist[1:(n_e * m_u2c)],
+        nnWght = nb_u2c$pred_neighbors$nnWght[1:(n_e * m_u2c)]
+      )
+      pr_c <- .Call(
+        "C_s3n_predict_meas_error",
+        X_obs[uncens_idx, , drop = FALSE],
+        as.matrix(y_curr[uncens_idx]),
+        numeric(0),
+        X_obs[c(uncens_idx, cens_idx), , drop = FALSE],
+        as.double(beta_em),
+        as.double(c(theta_em, kid_em)),
+        as.integer(m_u2c),
+        p_u2c$nnIndx, p_u2c$nnDist, p_u2c$nnWght,
+        nb_u2c$obsobs_dist, nb_u2c$obsobs_wt
+      )
+      tail_idx <- (n_u + 1L):n_e
+      mu_c <- as.numeric(pr_c$prediction[tail_idx])
+      sd_c <- pmax(1e-4, as.numeric(pr_c$prediction.ci[tail_idx, 2] - pr_c$prediction[tail_idx]) / 1.959964)
+    } else {
+      mu_c <- as.numeric(X_obs[cens_idx, , drop = FALSE] %*% beta_em)
+      sd_c <- rep(sqrt(max(1e-4, theta_em[1] + theta_em[2])), length(cens_idx))
+    }
+
+    tn <- trunc_norm_below_stats(mu_c, sd_c, lod_sc_obs[cens_idx])
+    y_curr[cens_idx] <- tn$mean
+    cond_var <- tn$var
+
+    max_diff <- max(abs(y_curr[cens_idx] - y_prev[cens_idx]))
+    if (is.finite(max_diff) && max_diff < tol) {
+      converged <- TRUE
+      break
+    }
+  }
+
+  list(
+    y_em      = y_curr,
+    n_cens    = length(cens_idx),
+    n_iter    = n_iter,
+    converged = converged,
+    cond_var  = cond_var
+  )
+}
+
+apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val = NA_real_, threshold_dir = "above") {
+  valid_idx <- which(!vapply(slice_list, is.null, logical(1)))
+  t_len <- length(valid_idx)
+  if (t_len < 2L) return(list(slices = slice_list, rho_temporal = NA_real_))
+
+  # Estimate lag-1 temporal correlation from observed reaches across consecutive slices
+  cors <- numeric(0)
+  for (k in seq_len(t_len - 1L)) {
+    d1 <- slice_list[[valid_idx[k]]]$eng_pred
+    d2 <- slice_list[[valid_idx[k + 1L]]]$eng_pred
+    both <- which(d1$has_obs == 1L & d2$has_obs == 1L & is.finite(d1$obs_model_sc) & is.finite(d2$obs_model_sc))
+    if (length(both) >= 10L) {
+      r_k <- suppressWarnings(cor(d1$obs_model_sc[both], d2$obs_model_sc[both]))
+      if (is.finite(r_k)) cors <- c(cors, r_k)
+    }
+  }
+  rho_t <- if (length(cors) > 0L) min(0.85, max(0.15, mean(cors))) else 0.60
+
+  borrow_domain <- function(df_list) {
+    if (any(vapply(df_list, is.null, logical(1)))) return(df_list)
+    q <- nrow(df_list[[1]])
+    Z <- vapply(df_list, function(d) as.numeric(d$pred_model_sc), numeric(q))
+    V <- vapply(df_list, function(d) pmax(as.numeric(d$se_model_sc)^2, 1e-8), numeric(q))
+    P <- 1.0 / V
+    out_list <- df_list
+    for (t_i in seq_len(t_len)) {
+      w_vec <- rho_t^abs(seq_len(t_len) - t_i)
+      Pw <- sweep(P, 2L, w_vec, "*")
+      prec_tot <- rowSums(Pw)
+      z_new <- rowSums(Z * Pw) / prec_tot
+      se_new <- sqrt(1.0 / prec_tot)
+      d_upd <- out_list[[t_i]]
+      d_upd$pred_model_sc <- round(z_new, 5)
+      d_upd$se_model_sc   <- round(se_new, 5)
+      d_upd$pred_combined <- round(trans_obj$inv(z_new), 4)
+      if (!is.na(threshold_val) && is.finite(threshold_val)) {
+        ex <- compute_exceedance_risk(z_new, se_new, threshold_val, trans_obj, dir = threshold_dir)
+        d_upd$exceed_prob     <- round(ex$prob, 5)
+        d_upd$compliance_tier <- ex$tier
+      }
+      out_list[[t_i]] <- d_upd
+    }
+    out_list
+  }
+
+  eng_upd <- borrow_domain(lapply(valid_idx, function(i) slice_list[[i]]$eng_pred))
+  hum_upd <- borrow_domain(lapply(valid_idx, function(i) slice_list[[i]]$hum_pred))
+  tha_upd <- borrow_domain(lapply(valid_idx, function(i) slice_list[[i]]$tha_pred))
+  sev_upd <- borrow_domain(lapply(valid_idx, function(i) slice_list[[i]]$sev_pred))
+
+  for (k in seq_along(valid_idx)) {
+    idx <- valid_idx[k]
+    slice_list[[idx]]$eng_pred <- eng_upd[[k]]
+    slice_list[[idx]]$hum_pred <- hum_upd[[k]]
+    slice_list[[idx]]$tha_pred <- tha_upd[[k]]
+    slice_list[[idx]]$sev_pred <- sev_upd[[k]]
+  }
+  list(slices = slice_list, rho_temporal = rho_t)
+}
+
+compute_spatiotemporal_trends <- function(slice_list, trans_obj) {
+  valid_s <- Filter(Negate(is.null), slice_list)
+  t_len <- length(valid_s)
+  if (t_len < 2L) return(NULL)
+
+  ref <- valid_s[[1]]$eng_pred
+  q <- nrow(ref)
+  Z <- vapply(valid_s, function(s) as.numeric(s$eng_pred$pred_model_sc), numeric(q))
+  V <- vapply(valid_s, function(s) pmax(as.numeric(s$eng_pred$se_model_sc)^2, 1e-8), numeric(q))
+  W <- 1.0 / V
+  t_seq <- seq_len(t_len)
+
+  W_sum <- rowSums(W)
+  t_bar <- as.numeric(W %*% t_seq) / W_sum
+  z_bar <- rowSums(W * Z) / W_sum
+
+  dt_mat <- outer(t_bar, t_seq, function(tb, t) t - tb)
+  dz_mat <- sweep(Z, 1L, z_bar, "-")
+
+  denom  <- pmax(rowSums(W * (dt_mat^2)), 1e-12)
+  slope  <- rowSums(W * dt_mat * dz_mat) / denom
+  se_slp <- sqrt(1.0 / denom)
+  z_stat <- slope / se_slp
+  p_val  <- 2.0 * stats::pnorm(-abs(z_stat))
+
+  delta_raw <- trans_obj$inv(Z[, t_len]) - trans_obj$inv(Z[, 1L])
+
+  trend_tier <- ifelse(
+    p_val < 0.05 & slope > 0, "Significant Increase (p < 0.05)",
+    ifelse(p_val < 0.20 & slope > 0, "Moderate Increase (p < 0.20)",
+           ifelse(p_val < 0.05 & slope < 0, "Significant Decrease (p < 0.05)",
+                  ifelse(p_val < 0.20 & slope < 0, "Moderate Decrease (p < 0.20)",
+                         "Stable / No Clear Trend")))
+  )
+
+  data.frame(
+    RivID          = ref$RivID,
+    CatchID        = ref$CatchID,
+    Shreve         = ref$Shreve,
+    start_X        = ref$start_X,
+    start_Y        = ref$start_Y,
+    mid_X          = ref$mid_X,
+    mid_Y          = ref$mid_Y,
+    end_X          = ref$end_X,
+    end_Y          = ref$end_Y,
+    trend_slope_sc = round(slope, 5),
+    trend_se_sc    = round(se_slp, 5),
+    trend_z        = round(z_stat, 4),
+    trend_p        = signif(p_val, 4),
+    delta_raw      = round(delta_raw, 4),
+    trend_tier     = trend_tier,
+    stringsAsFactors = FALSE
+  )
+}
+
+compute_spatiotemporal_transitions <- function(slice_list, period_labels, trans_obj, cyclic = TRUE) {
+  valid_idx <- which(!vapply(slice_list, is.null, logical(1)))
+  t_len <- length(valid_idx)
+  if (t_len < 2L) return(NULL)
+
+  clean_lbl <- function(x) {
+    s <- sub("^Season:\\s*", "", as.character(x))
+    paste0(toupper(substr(s, 1, 1)), substr(s, 2, nchar(s)))
+  }
+
+  pairs <- lapply(seq_len(t_len - 1L), function(k) c(valid_idx[k], valid_idx[k + 1L]))
+  if (isTRUE(cyclic) && t_len >= 3L) {
+    pairs[[length(pairs) + 1L]] <- c(valid_idx[t_len], valid_idx[1L])
+  }
+
+  items <- vector("list", length(pairs))
+  csv_parts <- vector("list", length(pairs))
+
+  for (pi in seq_along(pairs)) {
+    ia <- pairs[[pi]][1]
+    ib <- pairs[[pi]][2]
+    da <- slice_list[[ia]]$eng_pred
+    db <- slice_list[[ib]]$eng_pred
+
+    za <- as.numeric(da$pred_model_sc)
+    zb <- as.numeric(db$pred_model_sc)
+    va <- pmax(as.numeric(da$se_model_sc)^2, 1e-8)
+    vb <- pmax(as.numeric(db$se_model_sc)^2, 1e-8)
+
+    dz     <- zb - za
+    se_dz  <- sqrt(va + vb)
+    z_stat <- dz / se_dz
+    p_val  <- 2.0 * stats::pnorm(-abs(z_stat))
+    d_raw  <- trans_obj$inv(zb) - trans_obj$inv(za)
+
+    tier <- ifelse(
+      p_val < 0.05 & dz > 0, "Significant Increase (p < 0.05)",
+      ifelse(p_val < 0.20 & dz > 0, "Moderate Increase (p < 0.20)",
+             ifelse(p_val < 0.05 & dz < 0, "Significant Decrease (p < 0.05)",
+                    ifelse(p_val < 0.20 & dz < 0, "Moderate Decrease (p < 0.20)",
+                           "Stable / No Clear Trend")))
+    )
+
+    lbl_a <- clean_lbl(period_labels[ia])
+    lbl_b <- clean_lbl(period_labels[ib])
+    tr_lbl <- sprintf("%s -> %s", lbl_a, lbl_b)
+
+    df_item <- data.frame(
+      RivID       = da$RivID,
+      CatchID     = da$CatchID,
+      Shreve      = da$Shreve,
+      start_X     = da$start_X,
+      start_Y     = da$start_Y,
+      mid_X       = da$mid_X,
+      mid_Y       = da$mid_Y,
+      end_X       = da$end_X,
+      end_Y       = da$end_Y,
+      delta_sc    = round(dz, 5),
+      delta_se_sc = round(se_dz, 5),
+      trend_z     = round(z_stat, 4),
+      trend_p     = signif(p_val, 4),
+      delta_raw   = round(d_raw, 4),
+      trend_tier  = tier,
+      stringsAsFactors = FALSE
+    )
+
+    items[[pi]] <- list(
+      from_label       = lbl_a,
+      to_label         = lbl_b,
+      transition_label = tr_lbl,
+      df               = df_item
+    )
+    csv_parts[[pi]] <- data.frame(
+      Transition  = tr_lbl,
+      RivID       = da$RivID,
+      CatchID     = da$CatchID,
+      delta_sc    = round(dz, 5),
+      delta_se_sc = round(se_dz, 5),
+      trend_z     = round(z_stat, 4),
+      trend_p     = signif(p_val, 4),
+      delta_raw   = round(d_raw, 4),
+      trend_tier  = tier,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  list(
+    items          = items,
+    transitions_df = do.call(rbind, csv_parts)
+  )
 }
 
 build_cv_folds <- function(df_obs, cv_mode = "random", k_folds = 5L, seed = 2026L) {
@@ -1000,7 +1325,8 @@ fit_s3n_domain <- function(df,
                            cv_mode = "random",
                            threshold = NA_real_,
                            threshold_dir = "above",
-                           design_sites = 0L) {
+                           design_sites = 0L,
+                           censor_mode = "ros") {
   obs_idx <- which(df$has_obs == 1L & !is.na(df[[obs_col]]))
   n_obs   <- length(obs_idx)
   if (n_obs < 15L) {
@@ -1100,6 +1426,29 @@ fit_s3n_domain <- function(df,
       return(res_b)
     }
     fit_nngp_cpp(X_m, as.double(y_m), obs_nb_m, vy_m, kernel_name = k_name)
+  }
+
+  em_res <- NULL
+  censor_req <- tolower(trimws(as.character(censor_mode)))
+  if (censor_req %in% c("em", "tobit") &&
+      ("is_censored" %in% names(df_ord)) && ("lod_sc" %in% names(df_ord))) {
+    is_cens_obs <- as.logical(df_ord$is_censored[1:n_obs] == 1L)
+    if (any(is_cens_obs)) {
+      lod_sc_obs <- as.numeric(df_ord$lod_sc[1:n_obs]) - trend_fit$g_perp_tr
+      em_res <- run_spatial_tobit_em_kriging(
+        df_ord = df_ord, n_obs = n_obs, X_obs = X_obs, y_vec_init = y_vec_s3n,
+        is_cens_obs = is_cens_obs, lod_sc_obs = lod_sc_obs,
+        m_use = m_use, parent_0 = parent_0, tt = tt, up_dist = up_dist,
+        nb_td = nb_td, estimate_component = estimate_component,
+        kernel_req = kernel_req
+      )
+      y_vec_s3n <- em_res$y_em
+      y_obs_s3n <- as.matrix(y_vec_s3n)
+      y_vec_obs <- y_vec_s3n + trend_fit$g_perp_tr
+      vy        <- max(1e-4, var(y_vec_s3n))
+      cat(sprintf("  [Spatial Tobit EM Kriging] Imputed %d left-censored reaches in %d EM iterations (converged=%s)\n",
+                  em_res$n_cens, em_res$n_iter, as.character(em_res$converged)))
+    }
   }
 
   t1 <- proc.time()
@@ -1466,6 +1815,9 @@ fit_s3n_domain <- function(df,
   if (cv_info$actual_mode != "random") {
     sp_method_lbl <- sprintf("%s [CV:%s]", sp_method_lbl, cv_info$actual_mode)
   }
+  if (!is.null(em_res) && em_res$n_cens > 0L) {
+    sp_method_lbl <- sprintf("%s [Tobit-EM]", sp_method_lbl)
+  }
 
   cv_summary <- data.frame(
     Domain         = domain_label,
@@ -1530,6 +1882,15 @@ fit_s3n_domain <- function(df,
                  Estimate = round(tau_micro_td, 4), CI_Lower = NA, CI_Upper = NA),
       data.frame(Domain = domain_label, Model = "Measurement Error", Parameter = "mean_meas_variance",
                  Estimate = round(v_bar, 6), CI_Lower = NA, CI_Upper = NA)
+    )
+  }
+  if (!is.null(em_res) && em_res$n_cens > 0L) {
+    param_df <- rbind(
+      param_df,
+      data.frame(Domain = domain_label, Model = "Spatial Tobit EM",
+                 Parameter = c("Tobit_EM_Censored_N", "Tobit_EM_Iterations"),
+                 Estimate  = c(em_res$n_cens, em_res$n_iter),
+                 CI_Lower  = NA_real_, CI_Upper = NA_real_)
     )
   }
 

@@ -111,6 +111,7 @@ cv_mode_cli       <- parse_cv_mode_arg(args, default = "random")
 threshold_cli     <- parse_threshold_arg(args)
 threshold_dir_cli <- parse_threshold_dir_arg(args, default = "above")
 design_sites_cli  <- parse_design_sites_arg(args, default = 0L)
+st_borrow_cli     <- parse_st_borrow_arg(args)
 
 PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
 net_meta       <- load_network_metadata(PROC_DIR)
@@ -668,7 +669,9 @@ det_samples <- det_samples[valid_k, ]
 raw_vals    <- raw_vals[valid_k]
 is_cens     <- is_cens[valid_k]
 
-if (any(is_cens) && censor_m == "ros") {
+det_samples$is_cens <- is_cens
+det_samples$raw_lod <- raw_vals
+if (any(is_cens) && tolower(censor_m) %in% c("ros", "em", "tobit")) {
   det_samples$val <- impute_censored_ros(raw_vals, is_cens)
 } else if (any(is_cens)) {
   det_samples$val <- ifelse(is_cens, 0.5 * raw_vals, raw_vals)
@@ -718,6 +721,12 @@ if (trend_cli != "linear") {
 }
 if (cv_mode_cli != "random") {
   out_folder_name <- paste0(out_folder_name, "_cv_", cv_mode_cli)
+}
+if (tolower(censor_m) %in% c("em", "tobit")) {
+  out_folder_name <- paste0(out_folder_name, "_tobit")
+}
+if (st_borrow_cli && !is.na(by_mode)) {
+  out_folder_name <- paste0(out_folder_name, "_st")
 }
 th_res <- resolve_threshold_spec(threshold_cli, threshold_dir_cli, det_code, args)
 threshold_cli     <- th_res$val
@@ -853,7 +862,8 @@ slice_ctx <- list(
   cv_mode        = cv_mode_cli,
   threshold      = threshold_cli,
   threshold_dir  = threshold_dir_cli,
-  design_sites   = design_sites_cli
+  design_sites   = design_sites_cli,
+  censor_mode    = censor_m
 )
 
 fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
@@ -876,6 +886,14 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
     val            = vapply(riv_groups, function(idx) mean(det_WithRiv$val[idx]), numeric(1)),
     y_resp         = vapply(riv_groups, function(idx) mean(det_WithRiv$y_sample[idx]), numeric(1)),
     obs_up_dist_km = vapply(riv_groups, function(idx) mean(det_WithRiv$obs_up_dist_km[idx]), numeric(1)),
+    is_censored    = vapply(riv_groups, function(idx) as.integer(all(det_WithRiv$is_cens[idx] == 1L)), integer(1)),
+    lod_sc         = vapply(riv_groups, function(idx) {
+      if (all(det_WithRiv$is_cens[idx] == 1L)) {
+        mean(ctx$trans_obj$fwd(det_WithRiv$raw_lod[idx]), na.rm = TRUE)
+      } else {
+        NA_real_
+      }
+    }, numeric(1)),
     stringsAsFactors = FALSE
   )
 
@@ -911,6 +929,10 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   df_full$obs_y[has_obs_idx] <- reach_agg$y_resp[matched_row]
   df_full$obs_up_dist_km <- df_full$up_dist_mid_km
   df_full$obs_up_dist_km[has_obs_idx] <- reach_agg$obs_up_dist_km[matched_row]
+  df_full$is_censored <- 0L
+  df_full$is_censored[has_obs_idx] <- reach_agg$is_censored[matched_row]
+  df_full$lod_sc <- NA_real_
+  df_full$lod_sc[has_obs_idx] <- reach_agg$lod_sc[matched_row]
   if ("meas_uncertainty" %in% names(reach_agg)) {
     df_full$meas_uncertainty <- NA_real_
     df_full$meas_uncertainty[has_obs_idx] <- reach_agg$meas_uncertainty[matched_row]
@@ -952,7 +974,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
       cv_mode = ctx$cv_mode,
       threshold = ctx$threshold,
       threshold_dir = ctx$threshold_dir,
-      design_sites = ctx$design_sites
+      design_sites = ctx$design_sites,
+      censor_mode = ctx$censor_mode
     )
   }
 
@@ -1249,6 +1272,21 @@ if (!is.na(by_mode)) {
   } else {
     stop(sprintf("Invalid --by='%s'. Choose from: year, season, month.", by_mode))
   }
+  rho_temporal <- NA_real_
+  if (st_borrow_cli && length(Filter(Negate(is.null), batch_res)) >= 2L) {
+    st_res       <- apply_spatiotemporal_borrowing(batch_res, trans_obj, threshold_cli, threshold_dir_cli)
+    batch_res    <- st_res$slices
+    rho_temporal <- st_res$rho_temporal
+    cat(sprintf("\n  [Spatio-Temporal Dynamic Borrowing] Precision-weighted smoothing across %d periods (rho_t = %.3f)\n",
+                length(Filter(Negate(is.null), batch_res)), rho_temporal))
+    for (sl in Filter(Negate(is.null), batch_res)) {
+      write.csv(sl$eng_pred, file.path(sl$out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
+      if (!is.null(sl$hum_pred)) write.csv(sl$hum_pred, file.path(sl$out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)
+      if (!is.null(sl$tha_pred)) write.csv(sl$tha_pred, file.path(sl$out_subdir, sprintf("predictions_thames_%s.csv", det_code)), row.names = FALSE)
+      if (!is.null(sl$sev_pred)) write.csv(sl$sev_pred, file.path(sl$out_subdir, sprintf("predictions_severn_%s.csv", det_code)), row.names = FALSE)
+    }
+  }
+
   shared_sc <- compute_batch_scales(batch_res)
   for (sl in batch_res) {
     plot_temporal_slice(sl, shared_sc$sc_val, shared_sc$sc_se_eng, shared_sc$sc_se_hum,
@@ -1270,6 +1308,37 @@ if (!is.na(by_mode)) {
                                   source_label = source_label, norm_mode = norm_cli)
   write.csv(comb_cv, file.path(slice_root, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
   write.csv(comb_pa, file.path(slice_root, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
+
+  st_trend_df <- compute_spatiotemporal_trends(batch_res, trans_obj)
+  if (!is.null(st_trend_df)) {
+    trend_csv <- file.path(slice_root, sprintf("spatiotemporal_trends_by_%s_%s.csv", by_mode, det_code))
+    write.csv(st_trend_df, trend_csv, row.names = FALSE)
+    fig6_path <- file.path(slice_root, sprintf("fig6_spatiotemporal_trends_by_%s_%s.png", by_mode, det_code))
+    p_labels  <- vapply(Filter(Negate(is.null), batch_res), function(s) s$period_tag, character(1))
+    plot_fig6_spatiotemporal_trends(
+      st_trend_df, by_mode, p_labels, det_code, det_name, det_unit, trans_obj,
+      fig6_path, borrowed = st_borrow_cli, rho_t = rho_temporal,
+      vars_label = vars_sub_grid, network_label = net_meta$short_label, source_label = source_label
+    )
+    cat(sprintf("  + Saved Spatio-Temporal Trend table & Figure 6 map: %s, %s\n",
+                basename(trend_csv), basename(fig6_path)))
+  }
+
+  p_labels_all <- vapply(batch_res, function(s) if (!is.null(s)) s$period_tag else NA_character_, character(1))
+  is_cyclic_tr <- (by_mode == "season") || (by_mode == "month" && sum(!vapply(batch_res, is.null, logical(1))) == 12L)
+  st_trans <- compute_spatiotemporal_transitions(batch_res, p_labels_all, trans_obj, cyclic = is_cyclic_tr)
+  if (!is.null(st_trans)) {
+    trans_csv <- file.path(slice_root, sprintf("spatiotemporal_transitions_by_%s_%s.csv", by_mode, det_code))
+    write.csv(st_trans$transitions_df, trans_csv, row.names = FALSE)
+    fig7_path <- file.path(slice_root, sprintf("fig7_spatiotemporal_transitions_by_%s_%s.png", by_mode, det_code))
+    plot_fig7_spatiotemporal_transitions(
+      st_trans$items, by_mode, det_code, det_name, det_unit, trans_obj,
+      fig7_path, borrowed = st_borrow_cli, rho_t = rho_temporal,
+      vars_label = vars_sub_grid, network_label = net_meta$short_label, source_label = source_label
+    )
+    cat(sprintf("  + Saved Period-to-Period Transition table & Figure 7 map: %s, %s\n",
+                basename(trans_csv), basename(fig7_path)))
+  }
 } else {
   sub_s  <- base_samples
   p_tag  <- if (length(filter_tags) == 0) "all" else paste(filter_tags, collapse = ", ")

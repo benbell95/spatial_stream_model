@@ -645,7 +645,43 @@ Rscript scripts/run_s3n_determinand.R 0117 --cv-mode=catchment --design-sites=15
 
 ---
 
-## 11. Summary Reference: Key Equations at a Glance
+## 11. Spatio-Temporal Trend Mapping, Dynamic Borrowing & Spatial Tobit EM Censored Kriging
+
+### 11.1 Spatio-Temporal Trend Mapping & Dynamic Borrowing (`--by=year|season|month`, `--st-borrow`)
+
+*(For full CLI examples, intuition, and output column details, see [`./spatiotemporal_trends_and_borrowing_guide.md`](./spatiotemporal_trends_and_borrowing_guide.md).)*
+
+When running temporal batch mode (`--by=year`, `--by=season`, or `--by=month`), each slice $t \in \{1, \dots, T\}$ produces reach-level kriging predictions $\hat{z}_{i,t}$ and kriging variances $v_{i,t} = \text{SE}_{i,t}^2$:
+
+- **Dynamic Borrowing Across Time (`--st-borrow`, alias `--temporal-borrow`)**:
+  Estimates the lag-1 temporal correlation $\hat{\rho}_t \in [0.15, 0.85]$ from overlapping monitored reaches across consecutive slices and applies precision-weighted exponential temporal smoothing:
+  $$\hat{z}_{i,t}^{\text{ST}} = \frac{\sum_{s=1}^T \hat{\rho}_t^{|t-s|} \, \hat{z}_{i,s} / v_{i,s}}{\sum_{s=1}^T \hat{\rho}_t^{|t-s|} / v_{i,s}}, \qquad \text{SE}_{i,t}^{\text{ST}} = \left(\sum_{s=1}^T \frac{\hat{\rho}_t^{|t-s|}}{v_{i,s}}\right)^{-1/2}$$
+  Reaches that are well-monitored in slice $t$ retain their own-slice estimate, while reaches left unmonitored in a sparse period borrow strength from adjacent periods—reducing $\text{SE}_{i,t}$ and updating `predictions_*.csv` (including `exceed_prob` and `compliance_tier` when `--threshold=` is active).
+
+- **Reach-Level Spatio-Temporal Trend Mapping**:
+  Automatically computed whenever `--by=` fits $\ge 2$ slices. Fits a precision-weighted least squares (WLS) regression of $\hat{z}_{i,t}$ on $t$ with weights $w_{i,t} = 1/v_{i,t}$ at every reach, computing $\hat{\beta}_{\text{time}}(i)$, $\text{SE}(\hat{\beta}_{\text{time}}(i))$, Wald $Z_i$, two-sided $p$-value, raw-scale change $\Delta \hat{Y}_i$, and a 5-tier significance classification (`Significant Decrease`, `Moderate Decrease`, `Stable / No Clear Trend`, `Moderate Increase`, `Significant Increase`). Exports `spatiotemporal_trends_by_<mode>_<det>.csv` and renders **`fig6_spatiotemporal_trends_by_<mode>_<det>.png`**.
+
+### 11.2 Spatial Tobit / Iterative EM Censored Kriging (`--censor=em|tobit`)
+
+Standard non-spatial ROS (`--censor=ros`) imputes left-censored `< LOD` samples from the marginal distribution alone, ignoring where a censored station sits on the river network. For determinands with heavy censoring (e.g., 30–80% nondetects in trace organics, pesticides, or metals), **`--censor=em`** (alias `--censor=tobit`) runs an iterative **Spatial Tobit EM** loop inside `fit_s3n_domain()`:
+
+1. **Initialisation**: Starts from ROS-imputed values bounded below $c_i = g(\text{LOD}_i)$.
+2. **M-step**: Fits the S3N Tail-Down NNGP on all $n_{\text{obs}}$ stations using the current completed response vector $y^{(t-1)}$.
+3. **E-step**: Conditions each censored reach $i$ on its $m$ nearest uncensored spatial neighbors via `C_s3n_predict_meas_error()` to obtain $(\mu_i, s_i)$, and updates $y_i^{(t)}$ to its exact truncated-normal conditional expectation:
+   $$y_i^{(t)} = \mathbb{E}[Z_i \mid Z_i \le c_i, Z_{\text{uncens}}] = \mu_i - s_i \frac{\phi(\alpha_i)}{\Phi(\alpha_i)}, \qquad \alpha_i = \frac{c_i - \mu_i}{s_i}$$
+4. **Convergence & Outputs**: Iterates until $\max_i |y_i^{(t)} - y_i^{(t-1)}| < 10^{-3}$ (up to 6 iterations), tags `Spatial_Method` with `[Tobit-EM]`, and records `Tobit_EM_Censored_N` and `Tobit_EM_Iterations` in `parameters_<det>.csv`.
+
+```bash
+# Spatio-temporal dynamic borrowing + trend map across years
+Rscript scripts/run_s3n_determinand.R 0117 --by=year --st-borrow
+
+# Spatial Tobit EM censored kriging for a heavily censored determinand
+Rscript scripts/run_s3n_determinand.R 0052 --censor=em
+```
+
+---
+
+## 12. Summary Reference: Key Equations at a Glance
 
 | Modelling Step | Mathematical Expression | Code Implementation |
 | :--- | :--- | :--- |
@@ -661,7 +697,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --cv-mode=catchment --design-sites=15
 
 ---
 
-## 12. References & Further Reading
+## 13. References & Further Reading
 
 - **Kunke, J. P., Olden, J. D., & McCormick, T. H. (2024/2026)**. *Scalable Spatial Stream Network (S3N) Models for Large River Networks*. `S3N` R Package (`https://github.com/jpierkunke/S3N`).
 - **Saha, A., & Datta, A. (2018)**. *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. Stat, 7(1), e184.
@@ -672,7 +708,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --cv-mode=catchment --design-sites=15
 
 ---
 
-## 13. Related Project Documentation
+## 14. Related Project Documentation
 
 - **End-to-End Pipeline Usage Guide**: [`./usage_guide.md`](./usage_guide.md)
 - **Regulatory Exceedance Probability & WFD Risk Mapping Guide**: [`./regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md)

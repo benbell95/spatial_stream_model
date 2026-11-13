@@ -458,4 +458,86 @@ assert_true(file.exists(tmp_ex_bas) && file.info(tmp_ex_bas)$size > 1000, "excee
 unlink(c(tmp_ex_eng, tmp_ex_bas))
 
 cat("  [PASS] Hydrological CV modes, regulatory exceedance tiers, plots, and C++ optimal monitoring design\n")
+
+# ==============================================================================
+# 8. Spatial Tobit EM Censored Kriging & Spatio-Temporal Borrowing / Trend Mapping
+# ==============================================================================
+cat("[Test 8/8] Testing Spatial Tobit EM censored kriging & Spatio-Temporal borrowing/trends...\n")
+
+assert_true(parse_st_borrow_arg("--st-borrow") == TRUE, "parse_st_borrow_arg TRUE")
+assert_true(parse_st_borrow_arg(character(0)) == FALSE, "parse_st_borrow_arg FALSE")
+
+tn_res <- trunc_norm_below_stats(mu = c(0.0, 2.0), sd_val = c(1.0, 1.0), upper = c(0.5, 0.5))
+assert_true(all(tn_res$mean <= 0.5 + 1e-9) && tn_res$mean[1] < 0.0, "trunc_norm_below_stats upper bound")
+assert_true(all(tn_res$var > 0 & tn_res$var < 1.0), "trunc_norm_below_stats variance < unconditional")
+
+# Spatial Tobit EM Censored Kriging on synthetic basin with 8 censored reaches
+df_syn_em <- df_syn
+df_syn_em$is_censored <- 0L
+df_syn_em$lod_sc <- NA_real_
+cens_rows <- which(df_syn_em$has_obs == 1L)[1:8]
+df_syn_em$is_censored[cens_rows] <- 1L
+df_syn_em$lod_sc[cens_rows] <- log(df_syn_em$obs_val[cens_rows] + 0.5)
+
+sink(tempfile())
+dom_em <- fit_s3n_domain(
+  df = df_syn_em, domain_id = "test", domain_label = "Synthetic Tobit Basin",
+  trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+  kernel = "exponential", combine_mode = "joint", afv_scheme = "length",
+  censor_mode = "em"
+)
+sink()
+assert_true(!is.null(dom_em), "fit_s3n_domain censor_mode=em succeeded")
+assert_true(grepl("\\[Tobit-EM\\]", dom_em$cv_summary$Spatial_Method[1]), "Spatial_Method tagged [Tobit-EM]")
+assert_true(any(dom_em$param_df$Model == "Spatial Tobit EM"), "Spatial Tobit EM logged in param_df")
+
+# Spatio-Temporal Dynamic Borrowing & Trend Mapping across 3 synthetic periods
+mk_slice <- function(shift, se_mult = 1.0) {
+  d <- dom_val$pred_df
+  d$pred_model_sc <- d$pred_model_sc + shift
+  d$se_model_sc   <- pmax(0.05, d$se_model_sc * se_mult)
+  d$obs_model_sc  <- ifelse(d$has_obs == 1L, d$obs_model_sc + shift, NA_real_)
+  list(eng_pred = d, hum_pred = d, tha_pred = d, sev_pred = d)
+}
+sl_list <- list(mk_slice(0.0, 1.0), mk_slice(0.3, 1.5), mk_slice(0.6, 1.0))
+st_out  <- apply_spatiotemporal_borrowing(sl_list, tr_log, threshold_val = 5.0, threshold_dir = "above")
+assert_true(is.finite(st_out$rho_temporal) && st_out$rho_temporal >= 0.15, "temporal rho_t estimated")
+assert_true(mean(st_out$slices[[2]]$eng_pred$se_model_sc) < mean(sl_list[[2]]$eng_pred$se_model_sc),
+            "dynamic borrowing reduces SE in sparser middle slice")
+
+tr_df <- compute_spatiotemporal_trends(st_out$slices, tr_log)
+assert_true(!is.null(tr_df) && nrow(tr_df) == nrow(df_syn), "compute_spatiotemporal_trends row count")
+assert_true(all(tr_df$trend_slope_sc > 0), "positive temporal trend detected across increasing slices")
+
+tmp_fig6 <- tempfile(fileext = ".png")
+plot_fig6_spatiotemporal_trends(tr_df, "year", c("Year 2021", "Year 2022", "Year 2023"),
+                                "0117", "Nitrate as N", "mg/L", tr_log, tmp_fig6,
+                                borrowed = TRUE, rho_t = st_out$rho_temporal)
+assert_true(file.exists(tmp_fig6) && file.info(tmp_fig6)$size > 1000, "Figure 6 spatio-temporal trend PNG rendered")
+unlink(tmp_fig6)
+
+# Period-to-period transitions (Figure 7) for season (cyclic) & year (non-cyclic)
+seas_list <- list(mk_slice(0.4, 1.0), mk_slice(0.1, 1.0), mk_slice(-0.3, 1.0), mk_slice(0.2, 1.0))
+seas_lbls <- c("Season: winter", "Season: spring", "Season: summer", "Season: autumn")
+seas_tr   <- compute_spatiotemporal_transitions(seas_list, seas_lbls, tr_log, cyclic = TRUE)
+assert_true(!is.null(seas_tr) && length(seas_tr$items) == 4L, "4 cyclic seasonal transitions computed")
+assert_true(seas_tr$items[[1]]$transition_label == "Winter -> Spring", "First transition is Winter -> Spring")
+assert_true(seas_tr$items[[4]]$transition_label == "Autumn -> Winter", "Fourth cyclic transition is Autumn -> Winter")
+
+yr_tr <- compute_spatiotemporal_transitions(sl_list, c("Year 2021", "Year 2022", "Year 2023"), tr_log, cyclic = FALSE)
+assert_true(!is.null(yr_tr) && length(yr_tr$items) == 2L, "2 non-cyclic yearly transitions computed")
+assert_true(yr_tr$items[[1]]$transition_label == "Year 2021 -> Year 2022", "First yearly transition")
+
+tmp_fig7_s <- tempfile(fileext = ".png")
+tmp_fig7_y <- tempfile(fileext = ".png")
+plot_fig7_spatiotemporal_transitions(seas_tr$items, "season", "0117", "Nitrate as N", "mg/L",
+                                     tr_log, tmp_fig7_s, borrowed = FALSE)
+plot_fig7_spatiotemporal_transitions(yr_tr$items, "year", "0117", "Nitrate as N", "mg/L",
+                                     tr_log, tmp_fig7_y, borrowed = TRUE, rho_t = st_out$rho_temporal)
+assert_true(file.exists(tmp_fig7_s) && file.info(tmp_fig7_s)$size > 1000, "Figure 7 seasonal transition grid PNG rendered")
+assert_true(file.exists(tmp_fig7_y) && file.info(tmp_fig7_y)$size > 1000, "Figure 7 yearly transition grid PNG rendered")
+unlink(c(tmp_fig7_s, tmp_fig7_y))
+
+cat("  [PASS] Spatial Tobit EM censored kriging, dynamic temporal borrowing & trend mapping\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")
