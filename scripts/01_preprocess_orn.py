@@ -49,11 +49,9 @@ import json
 import math
 import os
 import re
-import shutil
 import sqlite3
 import statistics
 import struct
-import subprocess
 import sys
 import time
 import zipfile
@@ -88,11 +86,11 @@ from s3n_py_utils import (
     estimate_boxcox_lambda,
     estimate_yeojohnson_lambda,
     find_col,
-    find_directory_config_file,
     fit_ros_ols,
     impute_censored_by_site,
     load_directory_config,
     load_source_registry as _shared_load_source_registry,
+    parse_datetime_iso,
     parse_gpkg_envelope,
     parse_gpkg_geometry,
     parse_gpkg_multilinestring,
@@ -118,23 +116,23 @@ GIS_DIR = RUNTIME_CFG.gis_dir
 DATA_DIR = RUNTIME_CFG.data_dir
 RSN_DIR = RUNTIME_CFG.rsn_dir
 SSN_DIR = RUNTIME_CFG.ssn_dir
-WQ_DIR = RUNTIME_CFG.wq_dir
 CONFIG_DIR = RUNTIME_CFG.config_dir
 SOURCE_CONFIG_DIR = RUNTIME_CFG.source_config_dir
 OUT_DIR = RUNTIME_CFG.processed_dir
 
 
-def load_source_registry(base_dir=BASE_DIR, runtime_cfg=None):
-    eff_data = runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR
+def load_source_registry(base_dir=BASE_DIR, runtime_cfg=None, data_dir=None):
+    eff_data = data_dir or (runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR)
     return _shared_load_source_registry(base_dir=base_dir, data_dir=eff_data)
 
 
-def resolve_source_tag(source="rsn", registry=None, runtime_cfg=None):
-    eff_data = runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR
+def resolve_source_tag(source="rsn", registry=None, runtime_cfg=None, data_dir=None):
+    eff_data = data_dir or (runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR)
     return _shared_resolve_source_tag(source=source, registry=registry, data_dir=eff_data, base_dir=BASE_DIR)
 
 
-def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=None, cli_mode="auto"):
+def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=None, cli_mode="auto", runtime_cfg=None, data_dir=None):
+    eff_data = data_dir or (runtime_cfg.data_dir if runtime_cfg is not None else DATA_DIR)
     return _shared_detect_range_mode(
         source_key=source_key,
         sources_reg=sources_reg,
@@ -142,6 +140,7 @@ def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=N
         custom_dir=custom_dir,
         cli_mode=cli_mode,
         base_dir=BASE_DIR,
+        data_dir=eff_data,
     )
 
 
@@ -171,8 +170,8 @@ def print_available_sources(base_dir=BASE_DIR, runtime_cfg=None):
 
 
 def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
-    """Builds RuntimeConfig and updates module path aliases for backward compatibility."""
-    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, WQ_DIR, OUT_DIR, DIR_CONFIG, RUNTIME_CFG
+    """Builds RuntimeConfig and refreshes active module directory paths."""
+    global GIS_DIR, DATA_DIR, RSN_DIR, SSN_DIR, OUT_DIR, DIR_CONFIG, RUNTIME_CFG
     DIR_CONFIG = load_directory_config(BASE_DIR, auto_create=False)
     RUNTIME_CFG = build_runtime_config(
         base_dir=BASE_DIR, gis_dir=gis_dir, data_dir=data_dir, out_dir=out_dir, create_out_dir=True
@@ -181,9 +180,24 @@ def configure_runtime_dirs(gis_dir=None, data_dir=None, out_dir=None):
     DATA_DIR = RUNTIME_CFG.data_dir
     RSN_DIR = RUNTIME_CFG.rsn_dir
     SSN_DIR = RUNTIME_CFG.ssn_dir
-    WQ_DIR = RUNTIME_CFG.wq_dir
     OUT_DIR = RUNTIME_CFG.processed_dir
     return RUNTIME_CFG
+
+
+def _opt_float(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_year_month(raw_dt):
+    dt_iso = parse_datetime_iso(raw_dt) if raw_dt else ""
+    if len(dt_iso) >= 7 and dt_iso[0:4].isdigit() and dt_iso[5:7].isdigit():
+        return int(dt_iso[0:4]), int(dt_iso[5:7])
+    return 2023, 6
 
 
 def load_monitoring_stations_and_records(
@@ -203,13 +217,13 @@ def load_monitoring_stations_and_records(
     and observational sample records (all_records) across RSN, SSN, registered sources,
     or custom user datasets.
     """
-    sources_reg, composites_reg = load_source_registry(base_dir=BASE_DIR)
-    source_key, constituents, source_abbr, source_label = resolve_source_tag(source, (sources_reg, composites_reg))
+    sources_reg, composites_reg = load_source_registry(base_dir=BASE_DIR, data_dir=data_dir)
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(
+        source, (sources_reg, composites_reg), data_dir=data_dir
+    )
 
-    cand_rsn = _rel_join(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
-    rsn_dir = cand_rsn if os.path.isdir(cand_rsn) else (data_dir if os.path.exists(os.path.join(data_dir, "RSN Water Quality Samples.csv")) else cand_rsn)
-    cand_ssn = _rel_join(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
-    ssn_dir = cand_ssn if os.path.isdir(cand_ssn) else (data_dir if os.path.exists(os.path.join(data_dir, "SSN Water Quality Samples.csv")) else cand_ssn)
+    rsn_dir = _rel_join(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
+    ssn_dir = _rel_join(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
 
     pts = {}
     pts_source = {}
@@ -218,12 +232,14 @@ def load_monitoring_stations_and_records(
 
     for src_item in constituents:
         src_label = src_item.upper()
-        # 1. Custom CLI override
-        if src_item in ("custom", custom_name.lower()) or custom_sites or custom_dir:
+        # 1. Custom CLI override (scoped to custom tokens, never hijacking RSN/SSN/registered sources)
+        is_cli_custom = src_item in ("custom", custom_name.lower()) or (
+            src_item not in ("rsn", "ssn") and src_item not in sources_reg and bool(custom_sites or custom_dir)
+        )
+        if is_cli_custom:
             sites_p = custom_sites or (os.path.join(custom_dir, "sites.csv") if custom_dir else None)
             samples_p = custom_samples or (os.path.join(custom_dir, "samples.csv") if custom_dir else None)
             if not sites_p or not os.path.exists(sites_p):
-                # Check data/custom/<src_item>/sites.csv
                 cand_cs = os.path.join(data_dir, "custom", src_item, "sites.csv")
                 if os.path.exists(cand_cs):
                     sites_p = cand_cs
@@ -252,12 +268,13 @@ def load_monitoring_stations_and_records(
                     except ValueError:
                         continue
 
-                    # Auto-convert lat/lon in decimal degrees to British National Grid (EPSG:27700)
                     if (abs(px) <= 180.0 and abs(py) <= 90.0) or (custom_crs == 4326):
                         px, py = wgs84_to_bng(py, px)
+                    elif custom_crs not in (27700, 4326):
+                        px, py = transform_coords_batch([(px, py)], custom_crs, 27700)[0]
 
-                    r_compat = {"wims_id": raw_id, "wims_region_code": "CUSTOM"}
-                    pts[raw_id] = (px, py, r_compat)
+                    site_meta = {"wims_id": raw_id, "wims_region_code": "CUSTOM"}
+                    pts[raw_id] = (px, py, site_meta)
                     pts_source[raw_id] = src_label
                     core_wq_sites.add(raw_id)
 
@@ -273,6 +290,8 @@ def load_monitoring_stations_and_records(
                     meth_col = find_col(s_fnames, ["meas_method", "method", "model_type", "type"])
                     det_col_cand = find_col(s_fnames, ["det_code", "determinand_code", "param_code", "cas_number", "determinand", "code", "metric_name"])
                     sign_col = find_col(s_fnames, ["meas_sign", "less_than_flag", "censored", "is_censored", "qualifier"])
+                    if not (s_id_col and val_col):
+                        raise ValueError(f"Could not find site ID and measurement value columns in {samples_p}. Found: {s_fnames}")
 
                     for r in s_reader:
                         s_nid = r.get(s_id_col, "").strip()
@@ -280,7 +299,7 @@ def load_monitoring_stations_and_records(
                             continue
                         if det_col_cand and det_code:
                             row_det = r.get(det_col_cand, "").strip()
-                            if row_det and row_det != det_code and (det_code.lower() not in row_det.lower()):
+                            if row_det and row_det.lower() != det_code.lower():
                                 continue
                         raw_val_str = r.get(val_col, "").strip()
                         if not raw_val_str:
@@ -293,18 +312,9 @@ def load_monitoring_stations_and_records(
                         if sign_col:
                             s_sign = r.get(sign_col, "").strip().lower()
                             is_cens = (s_sign in ("<", "yes", "true", "1"))
-                        dt_str = r.get(dt_col, "").strip() if dt_col else "2023-06-01"
-                        yr = int(dt_str[0:4]) if len(dt_str) >= 4 and dt_str[0:4].isdigit() else 2023
-                        mo = int(dt_str[5:7]) if len(dt_str) >= 7 and dt_str[5:7].isdigit() else 6
+                        yr, mo = _extract_year_month(r.get(dt_col, "").strip() if dt_col else "")
                         seas = MONTH_TO_SEASON.get(mo, "summer")
-                        unc_val = None
-                        if unc_col:
-                            raw_unc = r.get(unc_col, "").strip()
-                            if raw_unc:
-                                try:
-                                    unc_val = float(raw_unc)
-                                except ValueError:
-                                    unc_val = None
+                        unc_val = _opt_float(r.get(unc_col, "").strip()) if unc_col else None
                         meth_val = r.get(meth_col, "").strip().lower() if meth_col else ""
                         all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
@@ -336,6 +346,8 @@ def load_monitoring_stations_and_records(
                 id_col = id_col_c if id_col_c in fnames else find_col(fnames, ["site_id", "network_id", "station_id", "id"])
                 x_col = x_col_c if x_col_c in fnames else find_col(fnames, ["ngr_easting", "easting", "x", "lon"])
                 y_col = y_col_c if y_col_c in fnames else find_col(fnames, ["ngr_northing", "northing", "y", "lat"])
+                if not (id_col and x_col and y_col):
+                    raise ValueError(f"Could not find ID and coordinate columns in {sites_p}. Found: {fnames}")
 
                 for r in reader:
                     raw_id = r.get(id_col, "").strip()
@@ -349,9 +361,11 @@ def load_monitoring_stations_and_records(
                         continue
                     if (abs(px) <= 180.0 and abs(py) <= 90.0) or crs_s == 4326:
                         px, py = wgs84_to_bng(py, px)
+                    elif crs_s not in (27700, 4326):
+                        px, py = transform_coords_batch([(px, py)], crs_s, 27700)[0]
 
-                    r_compat = {"wims_id": raw_id, "wims_region_code": cfg_s.get("abbr", "SRC")}
-                    pts[raw_id] = (px, py, r_compat)
+                    site_meta = {"wims_id": raw_id, "wims_region_code": cfg_s.get("abbr", "SRC")}
+                    pts[raw_id] = (px, py, site_meta)
                     pts_source[raw_id] = cfg_s.get("abbr", src_label)
                     core_wq_sites.add(raw_id)
 
@@ -371,6 +385,8 @@ def load_monitoring_stations_and_records(
                     cens_flg = ds_cfg.get("cens_flag", "<").lower()
                     unc_col = ds_cfg.get("unc_col") or find_col(s_fnames, ["meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"])
                     meth_col = ds_cfg.get("meth_col") or find_col(s_fnames, ["meas_method", "method", "model_type", "type"])
+                    if not (s_id_col and val_col):
+                        raise ValueError(f"Could not find site ID and measurement value columns in {samp_p}. Found: {s_fnames}")
 
                     for r in s_reader:
                         s_nid = r.get(s_id_col, "").strip()
@@ -378,7 +394,7 @@ def load_monitoring_stations_and_records(
                             continue
                         if det_col_c and det_code:
                             row_det = r.get(det_col_c, "").strip()
-                            if row_det and row_det != det_code and (det_code.lower() not in row_det.lower()):
+                            if row_det and row_det.lower() != det_code.lower():
                                 continue
                         raw_v = r.get(val_col, "").strip()
                         if not raw_v:
@@ -391,39 +407,21 @@ def load_monitoring_stations_and_records(
                         if cens_col_c:
                             s_sign = r.get(cens_col_c, "").strip().lower()
                             is_cens = (s_sign == cens_flg or s_sign in ("<", "yes", "true", "1"))
-                        dt_str = r.get(dt_col, "").strip() if dt_col else "2023-06-01"
-                        yr = int(dt_str[0:4]) if len(dt_str) >= 4 and dt_str[0:4].isdigit() else 2023
-                        mo = int(dt_str[5:7]) if len(dt_str) >= 7 and dt_str[5:7].isdigit() else 6
+                        yr, mo = _extract_year_month(r.get(dt_col, "").strip() if dt_col else "")
                         seas = MONTH_TO_SEASON.get(mo, "summer")
-                        unc_val = None
-                        if unc_col:
-                            raw_unc = r.get(unc_col, "").strip()
-                            if raw_unc:
-                                try:
-                                    unc_val = float(raw_unc)
-                                except ValueError:
-                                    unc_val = None
+                        unc_val = _opt_float(r.get(unc_col, "").strip()) if unc_col else None
                         meth_val = r.get(meth_col, "").strip().lower() if meth_col else str(cfg_s.get("meas_method", "")).lower()
                         all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
 
         # 3. Standard RSN / SSN official datasets or auto-discovered custom folder
         if src_item not in ("rsn", "ssn"):
-            # Check typo normalization (e.g. tobitz -> tobit)
-            norm_item = src_item.replace("tobitz", "tobit")
-            if norm_item in sources_reg:
-                src_item = norm_item
             cand_cs = os.path.join(data_dir, "custom", src_item)
             if not os.path.isdir(cand_cs):
                 cand_cs = os.path.join(BASE_DIR, "data", "custom", src_item)
-            if not os.path.isdir(cand_cs) and src_item in sources_reg:
-                s_d = sources_reg[src_item].get("data_dir", "")
-                if s_d and os.path.isdir(s_d):
-                    cand_cs = s_d
             if not os.path.isdir(cand_cs):
                 valid_srcs = sorted(list(sources_reg.keys()) + ["rsn", "ssn", "rss"])
-                hint = f" Did you mean '{norm_item}'?" if norm_item in sources_reg else ""
-                raise ValueError(f"Unknown monitoring data source '{src_item}'.{hint} Available sources: {valid_srcs}")
+                raise ValueError(f"Unknown monitoring data source '{src_item}'. Available sources: {valid_srcs}")
 
         s_dir = rsn_dir if src_item == "rsn" else (ssn_dir if src_item == "ssn" else cand_cs)
         prefix = "RSN" if src_item == "rsn" else ("SSN" if src_item == "ssn" else src_item.upper())
@@ -445,8 +443,8 @@ def load_monitoring_stations_and_records(
                 for r in csv.DictReader(f):
                     nid = r["network_id"]
                     if nid not in pts and r.get("ngr_easting") and r.get("ngr_northing"):
-                        r_compat = {"wims_id": nid, "wims_region_code": ""}
-                        pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), r_compat)
+                        eco_meta = {"wims_id": nid, "wims_region_code": ""}
+                        pts[nid] = (float(r["ngr_easting"]), float(r["ngr_northing"]), eco_meta)
                         pts_source[nid] = prefix
 
         wq_samples_path = os.path.join(s_dir, f"{prefix} Water Quality Samples.csv")
@@ -455,9 +453,8 @@ def load_monitoring_stations_and_records(
                 with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
                     for r in csv.DictReader(f):
                         r_det = r.get("det_code")
-                        if r_det == det_code or r_det == "0117":
-                            core_wq_sites.add(r["network_id"])
                         if r_det == det_code:
+                            core_wq_sites.add(r["network_id"])
                             try:
                                 val = float(r["meas_result"])
                             except (ValueError, TypeError):
@@ -1157,39 +1154,17 @@ def load_network_config(network_arg, config_path=None):
 
     ensure_network_configs(BASE_DIR)
 
-    net_clean = network_arg.strip()
-    cand_json = os.path.join(CONFIG_DIR, f"{net_clean.lower()}.json")
+    net_clean = network_arg.strip().lower().replace("-", "_")
+    cand_json = os.path.join(CONFIG_DIR, f"{net_clean}.json")
     if os.path.exists(cand_json):
         with open(cand_json, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # Check common aliases
-    alias_map = {
-        "orn_v2": "orn",
-        "os_orn": "orn",
-        "thames": "euhydro_thames",
-        "euhydro-thames": "euhydro_thames",
-        "eu_hydro_thames": "euhydro_thames",
-        "tweed": "euhydro_tweed",
-        "euhydro-tweed": "euhydro_tweed",
-        "eu_hydro_tweed": "euhydro_tweed",
-        "eu_hydro": "euhydro",
-        "eu-hydro": "euhydro",
-    }
-    if net_clean.lower() in alias_map:
-        mapped = alias_map[net_clean.lower()]
-        target_path = os.path.join(CONFIG_DIR, f"{mapped}.json")
-        if os.path.exists(target_path):
-            with open(target_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        if mapped in MINIMAL_DEFAULT_NETWORKS:
-            return MINIMAL_DEFAULT_NETWORKS[mapped]
+    if net_clean in MINIMAL_DEFAULT_NETWORKS:
+        return MINIMAL_DEFAULT_NETWORKS[net_clean]
 
-    if net_clean.lower() in MINIMAL_DEFAULT_NETWORKS:
-        return MINIMAL_DEFAULT_NETWORKS[net_clean.lower()]
-
-    if net_clean.endswith(".json") and os.path.exists(net_clean):
-        with open(net_clean, "r", encoding="utf-8") as f:
+    if network_arg.strip().endswith(".json") and os.path.exists(network_arg.strip()):
+        with open(network_arg.strip(), "r", encoding="utf-8") as f:
             return json.load(f)
 
     # Direct GeoParquet or GeoPackage path fallback (or stem inside GIS_DIR): auto-inspect schema
@@ -1251,53 +1226,17 @@ def ensure_gpkg_paths(cfg):
     return resolved
 
 
-def write_outputs_to_dirs(net_abbr, files_dict, source="rsn", runtime_cfg=None):
-    """
-    Writes generated output files into `<data_dir>/processed/<net_abbr>_<source>/` (e.g. `orn_rsn`, `orn_ssn`)
-    AND copies them into `<data_dir>/processed/<net_abbr>/` and `<data_dir>/processed/` root when source is 'rsn'
-    so downstream scripts work seamlessly with or without `--network`.
-    """
-    cfg = runtime_cfg if runtime_cfg is not None else RUNTIME_CFG
-    proc_root = os.path.join(cfg.data_dir, "processed")
-    source_key, _, _, _ = resolve_source_tag(source, runtime_cfg=cfg)
-    tagged_name = f"{net_abbr}_{source_key}"
-    net_dir = os.path.join(proc_root, tagged_name)
-    os.makedirs(net_dir, exist_ok=True)
-    for fname, src_path in files_dict.items():
-        dst_net = os.path.join(net_dir, fname)
-        if os.path.abspath(src_path) != os.path.abspath(dst_net):
-            shutil.copy2(src_path, dst_net)
-
-    # For default RSN, also ensure outputs are available at bare net_abbr (orn) and proc_root fallback
-    if source_key == "rsn":
-        bare_dir = os.path.join(proc_root, net_abbr)
-        os.makedirs(bare_dir, exist_ok=True)
-        for fname, src_path in files_dict.items():
-            dst_bare = os.path.join(bare_dir, fname)
-            if os.path.abspath(src_path) != os.path.abspath(dst_bare):
-                shutil.copy2(src_path, dst_bare)
-            dst_root = os.path.join(proc_root, fname)
-            if os.path.abspath(src_path) != os.path.abspath(dst_root):
-                shutil.copy2(src_path, dst_root)
-
-
 def load_orn_spatial_reference(runtime_cfg=None):
     """
-    Loads the pre-extracted ORN England reaches (`<data_dir>/processed/orn_rsn/england_rsn_reaches.csv`)
+    Loads the pre-extracted ORN England reaches (`<processed_dir>/orn_rsn/england_rsn_reaches.csv`)
     into a fast 2 km spatial hash grid in EPSG:27700 so non-ORN networks in England
     can inherit BGS bedrock/superficial geology (`Is_Chalk_Limestone`, `Is_Sandstone`,
     `Is_Aquifer`, `Is_Peat`), `RBD_ID`, and fallback `Elevation`/`Slope` in < 0.2s.
     """
     cfg = runtime_cfg if runtime_cfg is not None else RUNTIME_CFG
-    data_dir = cfg.data_dir
-    out_dir = cfg.processed_dir
-    orn_csv = os.path.join(data_dir, "processed", "orn_rsn", "england_rsn_reaches.csv")
+    orn_csv = os.path.join(cfg.processed_dir, "orn_rsn", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
-        orn_csv = os.path.join(data_dir, "processed", "orn", "england_rsn_reaches.csv")
-    if not os.path.exists(orn_csv):
-        orn_csv = os.path.join(out_dir, "england_rsn_reaches.csv")
-    if not os.path.exists(orn_csv):
-        orn_csv = os.path.join(data_dir, "processed", "england_rsn_reaches.csv")
+        orn_csv = os.path.join(cfg.data_dir, "processed", "orn_rsn", "england_rsn_reaches.csv")
     if not os.path.exists(orn_csv):
         return None, {}
     grid = defaultdict(list)
@@ -1320,7 +1259,7 @@ def load_orn_spatial_reference(runtime_cfg=None):
             grid[(int(mx // 2000), int(my // 2000))].append(rec)
 
     rbd_names = {}
-    orn_lu = os.path.join(out_dir, "orn", "rsn_catchments_lookup.csv")
+    orn_lu = os.path.join(os.path.dirname(orn_csv), "rsn_catchments_lookup.csv")
     if os.path.exists(orn_lu):
         with open(orn_lu, "r", encoding="utf-8") as f:
             for r in csv.DictReader(f):
@@ -1521,7 +1460,7 @@ def write_reaches_and_finalize(
     source_key="rsn",
     runtime_cfg=None,
 ):
-    """Writes `england_rsn_reaches.csv`, `network_metadata.json`, and mirrors processed files to source/root dirs."""
+    """Writes `england_rsn_reaches.csv` and `network_metadata.json` directly into `out_dir`."""
     with open(out_reaches_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(reaches_header)
@@ -1530,14 +1469,6 @@ def write_reaches_and_finalize(
     meta_path = os.path.join(out_dir, "network_metadata.json")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta_obj, f, indent=2)
-
-    write_outputs_to_dirs(net_abbr, {
-        "england_rsn_reaches.csv": out_reaches_path,
-        "rsn_sites.csv": sites_csv_path,
-        "rsn_reach_periods.csv": periods_csv_path,
-        "rsn_catchments_lookup.csv": catch_lu_path,
-        "network_metadata.json": meta_path,
-    }, source=source_key, runtime_cfg=runtime_cfg)
     return meta_path
 
 
@@ -1948,9 +1879,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             topo_order.append(u)
             u_info = reaches_by_id[u]
             dn = parent_dn.get(u)
-            raw_d2m = u_info["row"].get(d2m_col) if d2m_col else None
-            if raw_d2m is not None and float(raw_d2m) > 0:
-                u_info["d2m_km"] = float(raw_d2m) * d2m_scale
+            raw_d2m = _opt_float(u_info["row"].get(d2m_col)) if d2m_col else None
+            if raw_d2m is not None and raw_d2m > 0:
+                u_info["d2m_km"] = raw_d2m * d2m_scale
             else:
                 base_d2m = reaches_by_id[dn]["d2m_km"] if dn is not None else 0.0
                 u_info["d2m_km"] = base_d2m + u_info["length_km"]
@@ -1964,16 +1895,16 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         ps = parents[u]
 
         # Shreve order
-        raw_shr = rdict.get(shreve_col) if shreve_col else None
-        if raw_shr is not None and int(float(raw_shr)) > 0:
-            u_info["shreve"] = int(float(raw_shr))
+        raw_shr = _opt_float(rdict.get(shreve_col)) if shreve_col else None
+        if raw_shr is not None and int(raw_shr) > 0:
+            u_info["shreve"] = int(raw_shr)
         else:
             u_info["shreve"] = sum(reaches_by_id[p]["shreve"] for p in ps) if ps else 1
 
         # Strahler order
-        raw_str = rdict.get(strahler_col) if strahler_col else None
-        if raw_str is not None and int(float(raw_str)) > 0:
-            u_info["strahler"] = int(float(raw_str))
+        raw_str = _opt_float(rdict.get(strahler_col)) if strahler_col else None
+        if raw_str is not None and int(raw_str) > 0:
+            u_info["strahler"] = int(raw_str)
         elif not ps:
             u_info["strahler"] = 1
         else:
@@ -1982,9 +1913,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             u_info["strahler"] = mx_s + 1 if child_s.count(mx_s) >= 2 else mx_s
 
         # US_Accum_km (AFV weight)
-        raw_afv = rdict.get(afv_col) if afv_col else None
-        if raw_afv is not None and float(raw_afv) > 0:
-            u_info["us_accum_km"] = max(1e-4, float(raw_afv) * afv_scale)
+        raw_afv = _opt_float(rdict.get(afv_col)) if afv_col else None
+        if raw_afv is not None and raw_afv > 0:
+            u_info["us_accum_km"] = max(1e-4, raw_afv * afv_scale)
         else:
             u_info["us_accum_km"] = u_info["length_km"] + sum(reaches_by_id[p]["us_accum_km"] for p in ps)
 
@@ -2030,17 +1961,15 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         orn_ref = query_orn_spatial_grid(orn_grid, mx, my)
 
         # Elevation: 1. explicit attribute, 2. 3D WKB Z mean, 3. Nodes table FNODE/TNODE, 4. ORN spatial join
-        elev = None
-        if elev_col and rdict.get(elev_col) is not None:
-            elev = float(rdict[elev_col])
-        elif zs:
+        elev = _opt_float(rdict.get(elev_col)) if elev_col else None
+        if elev is None and zs:
             elev = statistics.mean(zs)
-        elif node_lookup:
+        elif elev is None and node_lookup:
             fn_key = str(rdict.get(fnode_col))
             tn_key = str(rdict.get(tnode_col))
             fn_el = (node_lookup.get((f_idx, fn_key)) or node_lookup.get(("*", fn_key)) or (None, None))[0]
             tn_el = (node_lookup.get((f_idx, tn_key)) or node_lookup.get(("*", tn_key)) or (None, None))[0]
-            vals_el = [float(x) for x in (fn_el, tn_el) if x is not None]
+            vals_el = [x for x in (_opt_float(fn_el), _opt_float(tn_el)) if x is not None]
             if vals_el:
                 elev = statistics.mean(vals_el)
         if elev is None:
@@ -2048,25 +1977,25 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         u_info["elevation"] = elev
 
         # Slope (%): 1. explicit attribute (e.g. PENTE), 2. 3D WKB Z drop, 3. ORN spatial join
-        slope = None
-        if slope_col and rdict.get(slope_col) is not None and float(rdict[slope_col]) >= 0:
-            slope = float(rdict[slope_col])
-        elif len(zs) >= 2 and u_info["length_km"] > 0:
+        raw_slope = _opt_float(rdict.get(slope_col)) if slope_col else None
+        slope = raw_slope if (raw_slope is not None and raw_slope >= 0) else None
+        if slope is None and len(zs) >= 2 and u_info["length_km"] > 0:
             slope = max(0.0, (zs[0] - zs[-1]) / (u_info["length_km"] * 10.0))
         if slope is None:
             slope = orn_ref[4] if orn_ref else 0.5
         u_info["slope"] = slope
 
         # Geology & RBD_ID from ORN spatial reference (if in England)
+        raw_rbd = _opt_float(rdict.get(rbd_col)) if rbd_col else None
         if orn_ref is not None:
-            u_info["rbd_id"] = int(rdict[rbd_col]) if (rbd_col and rdict.get(rbd_col)) else orn_ref[2]
+            u_info["rbd_id"] = int(raw_rbd) if raw_rbd is not None else orn_ref[2]
             u_info["src_elevation"] = max(elev, orn_ref[5])
             u_info["is_chalk_lime"] = orn_ref[6]
             u_info["is_sand"] = orn_ref[7]
             u_info["is_aq"] = orn_ref[8]
             u_info["is_peat"] = orn_ref[9]
         else:
-            u_info["rbd_id"] = int(rdict[rbd_col]) if (rbd_col and rdict.get(rbd_col)) else 1
+            u_info["rbd_id"] = int(raw_rbd) if raw_rbd is not None else 1
             u_info["src_elevation"] = elev
             u_info["is_chalk_lime"] = 0
             u_info["is_sand"] = 0
@@ -2175,7 +2104,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             obs_cols = [0, "", "", round(up_mid_km, 5), "", "", "", "", "", 0]
         reaches_rows.append(base_cols + obs_cols + extra_vals)
 
-    all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m})
+    all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m and m != "exact_point"})
     active_meas_method = "gam" if any("gam" in m for m in all_meths) else (all_meths[0] if all_meths else None)
     meta_obj = {
         "name": cfg.get("name", net_abbr),
@@ -2222,14 +2151,12 @@ def main():
     )
     parser.add_argument(
         "--gis-dir",
-        "--gis",
         dest="gis_dir",
         default=None,
         help="Custom GIS directory containing water network GeoPackages (default: 'gis').",
     )
     parser.add_argument(
         "--data-dir",
-        "--data",
         dest="data_dir",
         default=None,
         help="Custom data directory containing RSN sample folders and processed outputs (default: 'data').",
@@ -2237,11 +2164,9 @@ def main():
     parser.add_argument(
         "--out-dir",
         "--output-dir",
-        "--out",
-        "--processed-dir",
         dest="out_dir",
         default=None,
-        help="Custom output directory for processed network CSVs (default: '<data-dir>/processed').",
+        help="Custom output directory for processed network CSVs (default: '<processed-dir>/<net>_<source>').",
     )
     parser.add_argument(
         "--network",
@@ -2349,7 +2274,6 @@ def main():
     )
     parser.add_argument(
         "--source",
-        "--data-source",
         default="rsn",
         help=(
             "Monitoring network data source: 'rsn' (default), 'ssn', 'rss' (combined RSN+SSN), "
@@ -2411,15 +2335,16 @@ def main():
     if (args.custom_sites or args.custom_dir) and args.source == "rsn":
         args.source = args.custom_name
 
-    sources_reg, composites_reg = load_source_registry(base_dir=BASE_DIR)
-    source_key, constituents, source_abbr, source_label = resolve_source_tag(args.source, (sources_reg, composites_reg))
+    sources_reg, composites_reg = load_source_registry(base_dir=BASE_DIR, runtime_cfg=runtime_cfg)
+    source_key, constituents, source_abbr, source_label = resolve_source_tag(args.source, (sources_reg, composites_reg), runtime_cfg=runtime_cfg)
 
     active_range_mode = detect_range_mode(
         source_key=source_key,
         sources_reg=sources_reg,
         custom_samples=args.custom_samples,
         custom_dir=args.custom_dir,
-        cli_mode=args.range_mode
+        cli_mode=args.range_mode,
+        runtime_cfg=runtime_cfg,
     )
 
     if active_range_mode:
@@ -2451,7 +2376,7 @@ def main():
 
     if not args.out_dir:
         sub_name = f"{net_abbr}_{source_key}"
-        out_dir = _rel_join(runtime_cfg.data_dir, "processed", sub_name)
+        out_dir = _rel_join(runtime_cfg.processed_dir, sub_name)
         OUT_DIR = out_dir
     else:
         out_dir = runtime_cfg.processed_dir
@@ -2629,7 +2554,7 @@ def main():
     snap_info = {}
     for nid in all_station_ids:
         d, riv_id, catch_id, along, d2m = best_snap[nid]
-        if catch_id not in monitored_catchments and nid not in core_wq_sites:
+        if catch_id is None or (catch_id not in monitored_catchments and nid not in core_wq_sites):
             continue
         inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
         snap_info[nid] = (d, riv_id, catch_id, along, d2m / 1000.0, inc)
@@ -2741,11 +2666,11 @@ def main():
             topo_order.append(u)
             ps = [p for p in parents[u] if p not in visited]
             if ps:
-                sum_us = sum(max(0.0001, reaches[p][6]) for p in ps)
+                sum_us = sum(max(0.0001, reaches[p][6] or 0.0) for p in ps)
                 for p in ps:
                     visited.add(p)
                     parent_dn[p] = u
-                    log_afv[p] = log_afv[u] + math.log(max(0.0001, reaches[p][6]) / sum_us)
+                    log_afv[p] = log_afv[u] + math.log(max(0.0001, reaches[p][6] or 0.0) / sum_us)
                     stack.append(p)
 
     for _ in range(3):
@@ -2805,7 +2730,7 @@ def main():
             obs_cols = [0, "", "", round(up_mid_km, 5), "", "", "", "", "", 0]
         reaches_rows.append(base_cols + obs_cols)
 
-    all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m})
+    all_meths = sorted({m for s_list in site_by_reach.values() for s in s_list for m in s[5] if m and m != "exact_point"})
     active_meas_method = "gam" if any("gam" in m for m in all_meths) else (all_meths[0] if all_meths else None)
     meta_obj = {
         "name": cfg.get("name", "orn"),

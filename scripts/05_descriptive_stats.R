@@ -100,6 +100,15 @@ compute_single_run_stat_tests <- function(b1) {
   fmt_med_ratio <- function(num, den) {
     if (!is.na(num) && !is.na(den) && abs(den) > 1e-9) sprintf("%.2fx", num / den) else "N/A"
   }
+  add_mw_group_test <- function(comp_lbl, category, test_name, metric, v1, v2, agg = median, fmt_interp = NULL) {
+    if (length(v1) < 5 || length(v2) < 5) return(invisible(NULL))
+    mw <- suppressWarnings(wilcox.test(v2, v1, paired = FALSE))
+    s1 <- agg(v1, na.rm = TRUE)
+    s2 <- agg(v2, na.rm = TRUE)
+    interp <- if (!is.null(fmt_interp)) fmt_interp(s1, s2, mw$p.value) else sprintf("Ratio = %s (%s)", fmt_med_ratio(s2, s1), sig_stars(mw$p.value))
+    add_stat_row(comp_lbl, category, test_name, metric, length(v1), length(v2),
+                 s1, s2, s2 - s1, "W", as.numeric(mw$statistic), mw$p.value, interp)
+  }
 
   # 2. Monitoring Representativeness: Observed Stations vs. Full Network Predictions
   obs_v <- ep$obs_value[ep$has_obs == 1 & !is.na(ep$obs_value)]
@@ -145,50 +154,33 @@ compute_single_run_stat_tests <- function(b1) {
   # 4. Kriging Uncertainty at Monitored vs. Unmonitored Reaches
   se_mon   <- ep$se_model_sc[ep$has_obs == 1]
   se_unmon <- ep$se_model_sc[ep$has_obs == 0]
-  if (length(se_mon) >= 5 && length(se_unmon) >= 5) {
-    mw_se <- suppressWarnings(wilcox.test(se_unmon, se_mon, paired = FALSE))
-    add_stat_row("Unmonitored vs. Monitored SE", "Kriging Uncertainty",
-                 "Mann-Whitney U Test (Kriging SE: Unmonitored vs Monitored Reaches)",
-                 "Mean Kriging SE", length(se_mon), length(se_unmon),
-                 mean(se_mon, na.rm = TRUE), mean(se_unmon, na.rm = TRUE),
-                 mean(se_unmon, na.rm = TRUE) - mean(se_mon, na.rm = TRUE),
-                 "W", as.numeric(mw_se$statistic), mw_se$p.value,
-                 sprintf("Unmonitored reaches have %+.4f higher mean Kriging SE than monitored reaches (%s)",
-                         mean(se_unmon, na.rm = TRUE) - mean(se_mon, na.rm = TRUE), sig_stars(mw_se$p.value)))
-  }
+  add_mw_group_test(
+    "Unmonitored vs. Monitored SE", "Kriging Uncertainty",
+    "Mann-Whitney U Test (Kriging SE: Unmonitored vs Monitored Reaches)",
+    "Mean Kriging SE", se_mon, se_unmon, agg = mean,
+    fmt_interp = function(s1, s2, pv) sprintf("Unmonitored reaches have %+.4f higher mean Kriging SE than monitored reaches (%s)", s2 - s1, sig_stars(pv))
+  )
 
   # 5. Environmental Gradient Hypothesis Tests (Topography, Hydrogeology, Stream Order)
   if ("Elevation" %in% names(ep)) {
     v_up  <- ep$pred_combined[!is.na(ep$Elevation) & ep$Elevation >= 150.0]
     v_low <- ep$pred_combined[!is.na(ep$Elevation) & ep$Elevation <  150.0]
-    if (length(v_up) >= 5 && length(v_low) >= 5) {
-      mw_topo <- suppressWarnings(wilcox.test(v_low, v_up, paired = FALSE))
-      add_stat_row("Lowland vs. Upland", "Environmental Gradient",
-                   "Mann-Whitney U Test (Lowland < 150 m vs Upland >= 150 m)",
-                   sprintf("Median (%s)", b1$det_unit), length(v_up), length(v_low),
-                   median(v_up, na.rm = TRUE), median(v_low, na.rm = TRUE),
-                   median(v_low, na.rm = TRUE) - median(v_up, na.rm = TRUE),
-                   "W", as.numeric(mw_topo$statistic), mw_topo$p.value,
-                   sprintf("Lowland/Upland median ratio = %s (%s)",
-                           fmt_med_ratio(median(v_low, na.rm = TRUE), median(v_up, na.rm = TRUE)),
-                           sig_stars(mw_topo$p.value)))
-    }
+    add_mw_group_test(
+      "Lowland vs. Upland", "Environmental Gradient",
+      "Mann-Whitney U Test (Lowland < 150 m vs Upland >= 150 m)",
+      sprintf("Median (%s)", b1$det_unit), v_up, v_low, agg = median,
+      fmt_interp = function(s1, s2, pv) sprintf("Lowland/Upland median ratio = %s (%s)", fmt_med_ratio(s2, s1), sig_stars(pv))
+    )
   }
   if ("Is_Aquifer" %in% names(ep)) {
     v_noaq <- ep$pred_combined[!is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 0]
     v_aq   <- ep$pred_combined[!is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 1]
-    if (length(v_noaq) >= 5 && length(v_aq) >= 5) {
-      mw_aq <- suppressWarnings(wilcox.test(v_aq, v_noaq, paired = FALSE))
-      add_stat_row("Aquifer vs. Non-Aquifer", "Environmental Gradient",
-                   "Mann-Whitney U Test (Chalk/Limestone Aquifer vs Non-Aquifer Bedrock)",
-                   sprintf("Median (%s)", b1$det_unit), length(v_noaq), length(v_aq),
-                   median(v_noaq, na.rm = TRUE), median(v_aq, na.rm = TRUE),
-                   median(v_aq, na.rm = TRUE) - median(v_noaq, na.rm = TRUE),
-                   "W", as.numeric(mw_aq$statistic), mw_aq$p.value,
-                   sprintf("Aquifer/Non-Aquifer median ratio = %s (%s)",
-                           fmt_med_ratio(median(v_aq, na.rm = TRUE), median(v_noaq, na.rm = TRUE)),
-                           sig_stars(mw_aq$p.value)))
-    }
+    add_mw_group_test(
+      "Aquifer vs. Non-Aquifer", "Environmental Gradient",
+      "Mann-Whitney U Test (Chalk/Limestone Aquifer vs Non-Aquifer Bedrock)",
+      sprintf("Median (%s)", b1$det_unit), v_noaq, v_aq, agg = median,
+      fmt_interp = function(s1, s2, pv) sprintf("Aquifer/Non-Aquifer median ratio = %s (%s)", fmt_med_ratio(s2, s1), sig_stars(pv))
+    )
   }
   if ("Strahler" %in% names(ep)) {
     ord_grp <- ifelse(ep$Strahler <= 2, "Headwaters", ifelse(ep$Strahler <= 4, "Mid-Order", "Mainstem"))
@@ -218,8 +210,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   ep        <- b1$eng_pred
   det_short <- shorten_det_name(b1$det_name)
   det_unit  <- b1$det_unit
-  use_log   <- b1$use_log
-  u_lbl     <- if (use_log) sprintf("log(%s)", det_unit) else det_unit
+  u_lbl     <- if (b1$trans_type == "log") sprintf("log(%s)", det_unit) else if (b1$trans_type == "none") det_unit else sprintf("%s(%s)", b1$trans_type, det_unit)
 
   # Figure 1: 4-Panel Distributions, Representativeness, Tail-Up vs Tail-Down & Uncertainty
   fig1_file <- file.path(out_dir, "fig_desc1_distributions_and_representativeness.png")
@@ -269,8 +260,8 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   )
 
   # Panel B: Empirical CDF Comparing S3N Combined, Tail-Up, Tail-Down & Observed Stations
-  tu_sc <- if ("pred_tu_sc" %in% names(ep)) ep$pred_tu_sc else if (use_log) log(pmax(1e-6, ep$pred_tu)) else ep$pred_tu
-  td_sc <- if ("pred_td_sc" %in% names(ep)) ep$pred_td_sc else if (use_log) log(pmax(1e-6, ep$pred_td)) else ep$pred_td
+  tu_sc <- ep$pred_tu_sc
+  td_sc <- ep$pred_td_sc
   xr_b  <- quantile(c(ep$pred_model_sc, obs_sc), probs = c(0.005, 0.995), na.rm = TRUE)
   xs_b  <- seq(xr_b[1], xr_b[2], length.out = 300)
   plot(NULL, xlim = xr_b, ylim = c(0, 1),
@@ -338,7 +329,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
               max(bp_tmp$stats[5, ], na.rm = TRUE) * 1.14)
   bp_d <- boxplot(se_groups, col = adjustcolor(cols_d, alpha.f = 0.65), border = "#222222",
                   outline = FALSE, las = 1, ylim = ylim_d,
-                  ylab = sprintf("Kriging Standard Error (%s)", if (use_log) "log scale" else det_unit),
+                  ylab = sprintf("Kriging Standard Error (%s)", if (b1$trans_type == "none") det_unit else sprintf("%s scale", b1$trans_type)),
                   main = wrap_title("D. Kriging Prediction Uncertainty (se_model_sc) Breakdown", 60),
                   cex.main = 1.10, cex.lab = 0.95, cex.axis = 0.84)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -486,7 +477,7 @@ write_descriptive_markdown_report <- function(b1, desc_df, rep_df, strat_df, sta
   add_line("# S3N Single-Run Descriptive Statistics & Diagnostic Report")
   add_line("")
   add_line("- **Determinand**: `%s` — **%s** (`%s`, %s scale)",
-           b1$det_code, b1$det_name, b1$det_unit, if (b1$use_log) "log" else "raw")
+           b1$det_code, b1$det_name, b1$det_unit, b1$trans_type)
   add_line("- **Data Transformation**: **%s** (`%s`%s)",
            b1$trans_label, b1$trans_type,
            if (!is.na(b1$trans_lambda)) sprintf(", λ = %.4f", b1$trans_lambda) else "")
@@ -612,7 +603,7 @@ run_descriptive_stats <- function(run_dir, label = NULL, out_dir = NULL, out_roo
     cat(sprintf("Running Single-Output Descriptive Statistics & Diagnostics:\n"))
     cat(sprintf("  Run Label:    %s (%s)\n", b1$label, b1$dir_name))
     cat(sprintf("  Determinand:  %s [%s] (%s, %s scale)\n",
-                b1$det_name, b1$det_code, b1$det_unit, if (b1$use_log) "log" else "raw"))
+                b1$det_name, b1$det_code, b1$det_unit, b1$trans_type))
     cat(sprintf("  Network:      %s (%s reaches, %d observed stations)\n",
                 b1$net_label, format(nrow(b1$eng_pred), big.mark = ","), sum(b1$eng_pred$has_obs == 1)))
     cat(sprintf("  Output Dir:   %s\n", out_dir))
@@ -671,10 +662,6 @@ if (sys.nframe() == 0L) {
   args    <- commandArgs(trailingOnly = TRUE)
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
-  # Ensure base output and descriptives directories exist on first run
-  dir.create(dir_cfg$out_dir, recursive = TRUE, showWarnings = FALSE)
-  dir.create(rel_path(dir_cfg$out_dir, "descriptives"), recursive = TRUE, showWarnings = FALSE)
-
   if (length(args) == 0 || any(args %in% c("-h", "--help"))) {
     cat("Usage:\n")
     cat("  Rscript scripts/05_descriptive_stats.R --list [--output-dir=<dir>]\n")
@@ -718,9 +705,6 @@ if (sys.nframe() == 0L) {
       rel_path(out_cli, basename(pos_dirs[d_i]))
     } else {
       out_cli
-    }
-    if (!is.null(out_i) && nzchar(out_i)) {
-      dir.create(out_i, recursive = TRUE, showWarnings = FALSE)
     }
     run_descriptive_stats(run_dir = pos_dirs[d_i], label = label_cli, out_dir = out_i, out_root = dir_cfg$out_dir)
   }

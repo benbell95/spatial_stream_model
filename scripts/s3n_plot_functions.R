@@ -63,8 +63,8 @@ draw_colorbar <- function(x0, y0, x1, y1, vmin, vmax, pal, ticks, tick_labels, t
   text(x0, y1 + (y1 - y0) * 0.08, labels = title_txt, adj = c(0, 0), cex = 0.82, font = 2, col = "#111111")
 }
 
-compute_color_scale <- function(vals_model_sc, use_log, vmin_raw = NULL, vmax_raw = NULL) {
-  tr <- as_transformer(use_log)
+compute_color_scale <- function(vals_model_sc, trans_obj, vmin_raw = NULL, vmax_raw = NULL) {
+  tr <- as_transformer(trans_obj)
   qs <- quantile(vals_model_sc, probs = c(0.01, 0.99), na.rm = TRUE)
   vmin <- as.numeric(qs[1])
   vmax <- as.numeric(qs[2])
@@ -105,8 +105,8 @@ compute_color_scale <- function(vals_model_sc, use_log, vmin_raw = NULL, vmax_ra
     if (length(raw_in) >= 3) {
       ticks <- tr$fwd(raw_in)
       labels <- formatC(raw_in, format = "fg", digits = 2)
-      if (is.null(vmin_raw) || is.na(vmin_raw)) vmin <- min(vmin, min(ticks))
-      if (is.null(vmax_raw) || is.na(vmax_raw)) vmax <- max(vmax, max(ticks))
+      if (!has_vmin) vmin <- min(vmin, min(ticks))
+      if (!has_vmax) vmax <- max(vmax, max(ticks))
     } else {
       ticks <- seq(vmin, vmax, length.out = 6)
       labels <- formatC(tr$inv(ticks), format = "fg", digits = 2)
@@ -263,8 +263,8 @@ compute_norm_color_scale <- function(vals, norm_mode = "none", vmin_raw = NULL, 
     return(list(vmin = vmin, vmax = vmax, ticks = ticks, labels = labels))
   }
   if (nm$mode == "minmax") {
-    vmin <- if (!is.null(vmin_raw) && !is.na(vmin_raw)) as.numeric(vmin_raw) else 0.0
-    vmax <- if (!is.null(vmax_raw) && !is.na(vmax_raw)) as.numeric(vmax_raw) else 1.0
+    vmin <- if (has_vmin) as.numeric(vmin_raw[1]) else 0.0
+    vmax <- if (has_vmax) as.numeric(vmax_raw[1]) else 1.0
     if (vmax <= vmin) { vmin <- 0.0; vmax <- 1.0 }
     ticks <- pretty(c(vmin, vmax), n = 5)
     ticks <- ticks[ticks >= vmin - 1e-9 & ticks <= vmax + 1e-9]
@@ -272,15 +272,15 @@ compute_norm_color_scale <- function(vals, norm_mode = "none", vmin_raw = NULL, 
     return(list(vmin = vmin, vmax = vmax, ticks = ticks, labels = sprintf("%.2f", ticks)))
   }
   if (nm$mode == "percentile") {
-    vmin <- if (!is.null(vmin_raw) && !is.na(vmin_raw)) as.numeric(vmin_raw) else 0.0
-    vmax <- if (!is.null(vmax_raw) && !is.na(vmax_raw)) as.numeric(vmax_raw) else 100.0
+    vmin <- if (has_vmin) as.numeric(vmin_raw[1]) else 0.0
+    vmax <- if (has_vmax) as.numeric(vmax_raw[1]) else 100.0
     if (vmax <= vmin) { vmin <- 0.0; vmax <- 100.0 }
     ticks <- pretty(c(vmin, vmax), n = 5)
     ticks <- ticks[ticks >= vmin - 1e-9 & ticks <= vmax + 1e-9]
     if (length(ticks) < 3) ticks <- seq(vmin, vmax, length.out = 5)
     return(list(vmin = vmin, vmax = vmax, ticks = ticks, labels = sprintf("%.0f%%", ticks)))
   }
-  compute_color_scale(vals, FALSE, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+  compute_color_scale(vals, build_transformer("none"), vmin_raw = vmin_raw, vmax_raw = vmax_raw)
 }
 
 
@@ -429,13 +429,12 @@ draw_top_banner <- function(banner, cex = 0.88, col = "#2c3e50") {
 }
 
 # Figure 1: Full England Stream Network Map
-plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_log, out_file,
+plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, trans_obj, out_file,
                                   reverse_color = FALSE, sc_val = NULL, sc_se = NULL,
                                   vars_label = NULL, network_label = NULL, source_label = NULL,
                                   norm_mode = "none") {
-  tr       <- as_transformer(use_log)
+  tr       <- as_transformer(trans_obj)
   nm       <- get_norm_meta(norm_mode)
-  eng_pred <- normalize_pred_df(eng_pred)
   if (nm$mode != "none" && !(nm$pred_col %in% names(eng_pred))) {
     eng_pred <- add_normalised_columns(eng_pred)
   }
@@ -503,16 +502,14 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
 }
 
 # Generic 2-Panel River Basin High-Resolution S3N Map (used for Figure 2 Humber & Figure 5+ Custom Basins)
-plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
+plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val, det_code, det_name, det_unit, trans_obj, out_file,
                            reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL, source_label = NULL,
                            norm_mode = "none") {
-  tr         <- as_transformer(use_log)
+  tr         <- as_transformer(trans_obj)
   nm         <- get_norm_meta(norm_mode)
-  basin_pred <- normalize_pred_df(basin_pred)
   if (nm$mode != "none" && !(nm$pred_col %in% names(basin_pred))) {
     basin_pred <- add_normalised_columns(basin_pred)
   }
-  cv_tab     <- normalize_cv_tab(cv_tab)
   pal_use    <- get_norm_pal(nm$mode, reverse_color)
   has_vars   <- !is.null(vars_label) && nzchar(vars_label)
   has_net    <- !is.null(network_label) && nzchar(network_label)
@@ -579,23 +576,21 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
 }
 
 # Figure 2: Humber River Basin High-Resolution S3N Map
-plot_fig2_humber_map <- function(hum_pred, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
+plot_fig2_humber_map <- function(hum_pred, cv_tab, sc_val, det_code, det_name, det_unit, trans_obj, out_file,
                                  reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL, source_label = NULL,
                                  norm_mode = "none") {
   plot_basin_map(hum_pred, "Humber Basin", "Humber Basin (CatchID=80)",
-                 cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
+                 cv_tab, sc_val, det_code, det_name, det_unit, trans_obj, out_file,
                  reverse_color = reverse_color, sc_se = sc_se,
                  vars_label = vars_label, network_label = network_label, source_label = source_label,
                  norm_mode = norm_mode)
 }
 
 # Figure 3: Thames & Severn River Basins S3N Maps
-plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, det_name, det_unit, use_log, out_file,
+plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, det_name, det_unit, trans_obj, out_file,
                                         reverse_color = FALSE, vars_label = NULL, network_label = NULL, source_label = NULL,
                                         norm_mode = "none") {
   nm       <- get_norm_meta(norm_mode)
-  tha_pred <- normalize_pred_df(tha_pred)
-  sev_pred <- normalize_pred_df(sev_pred)
   if (nm$mode != "none") {
     if (!(nm$pred_col %in% names(tha_pred))) tha_pred <- add_normalised_columns(tha_pred)
     if (!(nm$pred_col %in% names(sev_pred))) sev_pred <- add_normalised_columns(sev_pred)
@@ -650,14 +645,10 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
 }
 
 # Figure 4: 4-Panel Model Diagnostics, Cross-Validation & Parameter CIs
-plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, det_code, det_name, det_unit, use_log, out_file,
+plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, det_code, det_name, det_unit, trans_obj, out_file,
                                   extra_cv_list = list(), lims_a = NULL, ylim_d = NULL,
                                   vars_label = NULL, network_label = NULL, source_label = NULL) {
-  tr       <- as_transformer(use_log)
-  eng_pred <- normalize_pred_df(eng_pred)
-  eng_cv   <- normalize_cv_pts(eng_cv)
-  hum_cv   <- normalize_cv_pts(hum_cv)
-  cv_tab   <- normalize_cv_tab(cv_tab)
+  tr       <- as_transformer(trans_obj)
   banner   <- format_top_banner(network_label, vars_label, source_label)
 
   png(out_file, width = 2400, height = 1800, res = 200, type = "cairo")
@@ -725,7 +716,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   if (length(extra_cv_list) > 0) {
     for (k in seq_along(extra_cv_list)) {
       ecv <- extra_cv_list[[k]]
-      pts_k <- normalize_cv_pts(ecv$cv_pts)
+      pts_k <- ecv$cv_pts
       if (!is.null(pts_k) && nrow(pts_k) > 0) {
         pk <- extra_pchs[(k - 1) %% length(extra_pchs) + 1]
         bk <- extra_bgs[(k - 1) %% length(extra_bgs) + 1]
@@ -877,7 +868,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
 
 # Figure 5 (Temporal Multi-Panel Grid): All England S3N Comparison Across Seasons, Years, or Months
 plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_code, det_name, det_unit,
-                                            use_log, out_file, reverse_color = FALSE,
+                                            trans_obj, out_file, reverse_color = FALSE,
                                             vars_label = NULL, network_label = NULL, source_label = NULL,
                                             norm_mode = "none") {
   period_items <- Filter(Negate(is.null), period_items)
@@ -922,7 +913,7 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
 
   for (i in seq_along(period_items)) {
     item   <- period_items[[i]]
-    eng_df <- normalize_pred_df(item$eng_pred)
+    eng_df <- item$eng_pred
     if (nm$mode != "none" && !(nm$pred_col %in% names(eng_df))) {
       eng_df <- add_normalised_columns(eng_df)
     }
@@ -954,7 +945,7 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
 
     r2_str <- ""
     if (!is.null(item$cv_tab)) {
-      cvt <- normalize_cv_tab(item$cv_tab)
+      cvt <- item$cv_tab
       erow <- subset(cvt, grepl("All England", Domain) & Model == "S3N Combined (Tail-Up + Tail-Down)")
       if (nrow(erow) > 0 && !is.na(erow$R2[1])) {
         r2_str <- sprintf(" | CV R2 = %.3f", erow$R2[1])

@@ -177,48 +177,33 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
-  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
   dir_p <- resolve_run_dir_path(dir_path, out_root = out_root, base_dir = BASE_DIR)
   if (!dir.exists(dir_p)) {
     stop(sprintf("Model output directory does not exist: %s", dir_p))
   }
 
-  # Support both standard output/ layout (predictions/, tables/) and det_* layout
-  if (dir.exists(file.path(dir_p, "predictions")) && dir.exists(file.path(dir_p, "tables"))) {
-    pred_dir  <- file.path(dir_p, "predictions")
-    tab_dir   <- file.path(dir_p, "tables")
-    eng_file  <- find_first_file(pred_dir, "^england_.*predictions\\.csv$", "cv_predictions")
-    hum_file  <- find_first_file(pred_dir, "^humber_.*predictions\\.csv$", "cv_predictions")
-    tha_file  <- find_first_file(pred_dir, "^thames_.*predictions\\.csv$", "cv_predictions")
-    sev_file  <- find_first_file(pred_dir, "^severn_.*predictions\\.csv$", "cv_predictions")
-    cv_t_file <- file.path(tab_dir, "cv_model_comparison.csv")
-    par_file  <- file.path(tab_dir, "s3n_parameter_estimates.csv")
-    cv_e_file <- find_first_file(pred_dir, "^england_.*cv_predictions\\.csv$")
-    cv_h_file <- find_first_file(pred_dir, "^humber_.*cv_predictions\\.csv$")
-  } else {
-    eng_file  <- find_first_file(dir_p, "^predictions_.*\\.csv$",
-                                 "^predictions_(humber|thames|severn|river_|catchid_).*\\.csv$")
-    hum_file  <- find_first_file(dir_p, "^predictions_humber_.*\\.csv$")
-    tha_file  <- find_first_file(dir_p, "^predictions_thames_.*\\.csv$")
-    sev_file  <- find_first_file(dir_p, "^predictions_severn_.*\\.csv$")
-    cv_t_file <- find_first_file(dir_p, "^cv_comparison_.*\\.csv$")
-    par_file  <- find_first_file(dir_p, "^parameters_.*\\.csv$")
-    cv_e_file <- find_first_file(dir_p, "^cv_predictions_england_.*\\.csv$")
-    cv_h_file <- find_first_file(dir_p, "^cv_predictions_humber_.*\\.csv$")
-  }
+  eng_file  <- find_first_file(dir_p, "^predictions_.*\\.csv$",
+                               "^predictions_(humber|thames|severn|basin_|river_|catchid_).*\\.csv$")
+  hum_file  <- find_first_file(dir_p, "^predictions_humber_.*\\.csv$")
+  tha_file  <- find_first_file(dir_p, "^predictions_thames_.*\\.csv$")
+  sev_file  <- find_first_file(dir_p, "^predictions_severn_.*\\.csv$")
+  cv_t_file <- find_first_file(dir_p, "^cv_comparison_.*\\.csv$")
+  par_file  <- find_first_file(dir_p, "^parameters_.*\\.csv$")
+  cv_e_file <- find_first_file(dir_p, "^cv_predictions_england_.*\\.csv$")
+  cv_h_file <- find_first_file(dir_p, "^cv_predictions_humber_.*\\.csv$")
 
   if (is.null(eng_file) || is.null(cv_t_file) || !file.exists(cv_t_file)) {
     stop(sprintf("Directory '%s' does not contain required predictions_*.csv and cv_comparison_*.csv files.", dir_p))
   }
 
-  eng_pred  <- normalize_pred_df(read.csv(eng_file, stringsAsFactors = FALSE))
-  if (!all(c("pred_z", "pred_robust_z", "pred_minmax", "pred_pct") %in% names(eng_pred))) {
+  eng_pred  <- read.csv(eng_file, stringsAsFactors = FALSE)
+  if (!all(c("pred_zscore", "pred_robust_zscore", "pred_minmax", "pred_percentile") %in% names(eng_pred))) {
     eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred)
   }
-  cv_tab    <- normalize_cv_tab(read.csv(cv_t_file, stringsAsFactors = FALSE))
+  cv_tab    <- read.csv(cv_t_file, stringsAsFactors = FALSE)
   param_tab <- if (!is.null(par_file) && file.exists(par_file)) read.csv(par_file, stringsAsFactors = FALSE) else NULL
-  eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) normalize_cv_pts(read.csv(cv_e_file, stringsAsFactors = FALSE)) else NULL
-  hum_cv    <- if (!is.null(cv_h_file) && file.exists(cv_h_file)) normalize_cv_pts(read.csv(cv_h_file, stringsAsFactors = FALSE)) else NULL
+  eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) read.csv(cv_e_file, stringsAsFactors = FALSE) else NULL
+  hum_cv    <- if (!is.null(cv_h_file) && file.exists(cv_h_file)) read.csv(cv_h_file, stringsAsFactors = FALSE) else NULL
 
   hum_cid <- read_basin_catch_id(hum_file, 80L)
   tha_cid <- read_basin_catch_id(tha_file, 3055L)
@@ -247,8 +232,6 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   det_code <- if ("Determinand_Code" %in% names(cv_tab)) {
     c0 <- as.character(cv_tab$Determinand_Code[1])
     if (nchar(c0) < 4 && grepl("^[0-9]+$", c0)) sprintf("%04d", as.integer(c0)) else c0
-  } else if (grepl("^england_.*_predictions\\.csv$", basename(eng_file))) {
-    sub("^england_(.*)_predictions\\.csv$", "\\1", basename(eng_file))
   } else {
     sub("^predictions_(.*)\\.csv$", "\\1", basename(eng_file))
   }
@@ -265,31 +248,29 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   } else {
     "mg/L"
   }
-  use_log  <- if ("Scale" %in% names(cv_tab)) (tolower(as.character(cv_tab$Scale[1])) == "log") else {
-    obs_pos <- eng_pred$obs_value[eng_pred$has_obs == 1 & !is.na(eng_pred$obs_value) & eng_pred$obs_value > 0]
-    sc_pos  <- eng_pred$obs_model_sc[eng_pred$has_obs == 1 & !is.na(eng_pred$obs_value) & eng_pred$obs_value > 0]
-    diffs   <- if (length(obs_pos) > 0) abs(log(obs_pos) - sc_pos) else numeric(0)
-    any(!is.na(diffs)) && max(diffs, na.rm = TRUE) < 1e-2
-  }
 
   trans_type <- if ("Transform_Type" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Type[1]))) {
     as.character(cv_tab$Transform_Type[1])
-  } else if (use_log) {
-    "log"
   } else {
-    "none"
+    "log"
   }
   trans_lambda <- if ("Transform_Lambda" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Lambda[1]))) {
     as.numeric(cv_tab$Transform_Lambda[1])
   } else {
     NA_real_
   }
+  trans_scale <- if ("Transform_Scale" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Scale[1]))) {
+    as.numeric(cv_tab$Transform_Scale[1])
+  } else {
+    NA_real_
+  }
   trans_label <- if ("Transform_Label" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Label[1]))) {
     as.character(cv_tab$Transform_Label[1])
-  } else if (use_log) {
+  } else if (trans_type == "log") {
     "Natural Logarithm ln(y)"
   } else {
-    "Untransformed (raw)"
+    build_transformer(trans_type, lambda = if (is.na(trans_lambda)) NULL else trans_lambda,
+                      scale = if (is.na(trans_scale)) NULL else trans_scale)$label
   }
 
   source_abbr <- if ("Source" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source[1]))) {
@@ -360,9 +341,9 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     det_code            = det_code,
     det_name            = det_name,
     det_unit            = det_unit,
-    use_log             = use_log,
     trans_type          = trans_type,
     trans_lambda        = trans_lambda,
+    trans_scale         = trans_scale,
     trans_label         = trans_label,
     vars_label          = if (is.null(vars_sub)) "Default (All 8 standard)" else vars_sub,
     hum_cid             = hum_cid,
@@ -383,11 +364,6 @@ list_available_model_runs <- function(out_root = NULL) {
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
-  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
-  dir.create(rel_path(out_root, "results"), recursive = TRUE, showWarnings = FALSE)
-  dir.create(rel_path(out_root, "comparisons"), recursive = TRUE, showWarnings = FALSE)
-  dir.create(rel_path(out_root, "descriptives"), recursive = TRUE, showWarnings = FALSE)
-  dir.create(rel_path(out_root, "station_snapping"), recursive = TRUE, showWarnings = FALSE)
   cat("==============================================================================\n")
   cat(sprintf("Available Model Run Output Directories (under '%s'):\n", out_root))
   cat("==============================================================================\n")
@@ -399,14 +375,12 @@ list_available_model_runs <- function(out_root = NULL) {
     if (grepl("/(comparisons|descriptives|station_snapping)(/|$)", d)) next
     cv_det_files <- list.files(d, pattern = "^cv_comparison_.*\\.csv$", full.names = TRUE)
     has_det_files <- length(cv_det_files) > 0 && length(list.files(d, pattern = "^predictions_.*\\.csv$")) > 0
-    cv_std_file  <- file.path(d, "tables/cv_model_comparison.csv")
-    has_std_files <- file.exists(cv_std_file)
-    if (has_det_files || has_std_files) {
+    if (has_det_files) {
       found <- found + 1L
       rel_d <- format_rel_display_path(d, BASE_DIR)
-      cv_f  <- if (has_std_files) cv_std_file else cv_det_files[1]
+      cv_f  <- cv_det_files[1]
       info <- tryCatch({
-        cv_t <- normalize_cv_tab(read.csv(cv_f, stringsAsFactors = FALSE))
+        cv_t <- read.csv(cv_f, stringsAsFactors = FALSE)
         cv_t$Canon_Domain <- canonical_domain(cv_t$Domain)
         cv_t$Canon_Model  <- canonical_model(cv_t$Model)
         r_all <- subset(cv_t, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
@@ -464,8 +438,8 @@ compute_detailed_descriptives <- function(bundles) {
       list(grp = "Unmonitored Reach Predictions (Raw)", vec = unmon_sub$pred_combined, scale = "raw"),
       list(grp = "S3N Tail-Up Predictions (Raw)",       vec = ep$pred_tu,              scale = "raw"),
       list(grp = "S3N Tail-Down Predictions (Raw)",     vec = ep$pred_td,              scale = "raw"),
-      list(grp = "S3N Combined (Model Scale)",          vec = ep$pred_model_sc,        scale = if (b$use_log) "log" else "raw"),
-      list(grp = "Kriging Standard Error (SE)",         vec = ep$se_model_sc,          scale = if (b$use_log) "log_se" else "raw_se")
+      list(grp = "S3N Combined (Model Scale)",          vec = ep$pred_model_sc,        scale = b$trans_type),
+      list(grp = "Kriging Standard Error (SE)",         vec = ep$se_model_sc,          scale = paste0(b$trans_type, "_se"))
     )
 
     for (v_info in vars_to_sum) {
@@ -717,7 +691,7 @@ summarize_prediction_bundles <- function(bundles) {
       Determinand_Code  = b$det_code,
       Determinand_Name  = b$det_name,
       Unit              = b$det_unit,
-      Scale             = if (b$use_log) "log" else b$trans_type,
+      Scale             = b$trans_type,
       Transform_Type    = b$trans_type,
       Transform_Lambda  = ifelse(is.na(b$trans_lambda), "", as.character(round(b$trans_lambda, 4))),
       Transform_Label   = b$trans_label,

@@ -152,9 +152,12 @@ runs_share_scale <- function(bundles) {
   t_types <- unique(vapply(bundles, function(b) tolower(as.character(b$trans_type)), character(1)))
   if (length(t_types) != 1L) return(FALSE)
   lams <- vapply(bundles, function(b) if (is.null(b$trans_lambda) || is.na(b$trans_lambda)) NA_real_ else as.numeric(b$trans_lambda), numeric(1))
-  if (all(is.na(lams))) return(TRUE)
-  if (any(is.na(lams))) return(FALSE)
-  (max(lams) - min(lams)) < 1e-3
+  if (any(is.na(lams)) && !all(is.na(lams))) return(FALSE)
+  if (!all(is.na(lams)) && (max(lams) - min(lams)) >= 1e-3) return(FALSE)
+  scs <- vapply(bundles, function(b) if (is.null(b$trans_scale) || is.na(b$trans_scale)) NA_real_ else as.numeric(b$trans_scale), numeric(1))
+  if (any(is.na(scs)) && !all(is.na(scs))) return(FALSE)
+  if (!all(is.na(scs)) && (max(scs) - min(scs)) >= 1e-3) return(FALSE)
+  TRUE
 }
 
 analyze_reach_relationships <- function(bundles, pair12_pred_match) {
@@ -1096,7 +1099,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   same_scale <- runs_share_scale(bundles)
   det_short  <- if (same_det) shorten_det_name(bundles[[1]]$det_name) else sprintf("%s vs. %s", shorten_det_name(bundles[[1]]$det_name), shorten_det_name(bundles[[2]]$det_name))
   det_unit   <- bundles[[1]]$det_unit
-  use_log    <- bundles[[1]]$use_log
+  is_log_b1  <- (bundles[[1]]$trans_type == "log")
 
   png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
   on.exit(dev.off(), add = TRUE)
@@ -1114,8 +1117,8 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
       xlim_a <- quantile(pm$pred1_sc, probs = c(0.005, 0.995), na.rm = TRUE)
       ylim_a <- quantile(pm$pred2_sc, probs = c(0.005, 0.995), na.rm = TRUE)
     }
-    u1_lbl <- if (bundles[[1]]$use_log) sprintf("log(%s)", bundles[[1]]$det_unit) else sprintf("%s (%s)", bundles[[1]]$det_unit, bundles[[1]]$trans_type)
-    u2_lbl <- if (bundles[[2]]$use_log) sprintf("log(%s)", bundles[[2]]$det_unit) else sprintf("%s (%s)", bundles[[2]]$det_unit, bundles[[2]]$trans_type)
+    u1_lbl <- if (bundles[[1]]$trans_type == "log") sprintf("log(%s)", bundles[[1]]$det_unit) else if (bundles[[1]]$trans_type == "none") bundles[[1]]$det_unit else sprintf("%s(%s)", bundles[[1]]$trans_type, bundles[[1]]$det_unit)
+    u2_lbl <- if (bundles[[2]]$trans_type == "log") sprintf("log(%s)", bundles[[2]]$det_unit) else if (bundles[[2]]$trans_type == "none") bundles[[2]]$det_unit else sprintf("%s(%s)", bundles[[2]]$trans_type, bundles[[2]]$det_unit)
     plot(pm$pred1_sc[idx_pt], pm$pred2_sc[idx_pt],
          xlim = xlim_a, ylim = ylim_a, pch = 16, cex = 0.45, col = rgb(0.12, 0.47, 0.71, 0.25),
          xlab = sprintf("Run 1: %s [%s]", run_labels[1], u1_lbl),
@@ -1161,7 +1164,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   # Panel B: Kernel Density Curves of Predicted Concentrations Across Runs
   if (same_scale) {
     dens_list <- lapply(bundles, function(b) density(b$eng_pred$pred_model_sc, na.rm = TRUE, n = 512))
-    xlab_b <- if (use_log) sprintf("Predicted log(%s) [%s]", det_short, det_unit) else sprintf("Predicted %s (%s, %s)", det_short, det_unit, bundles[[1]]$trans_type)
+    xlab_b <- if (is_log_b1) sprintf("Predicted log(%s) [%s]", det_short, det_unit) else sprintf("Predicted %s (%s, %s)", det_short, det_unit, bundles[[1]]$trans_type)
     main_b <- "B. Distribution of Reach-Level Predictions Across Runs"
   } else {
     dens_list <- lapply(bundles, function(b) {
@@ -1206,7 +1209,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
               max(bp_tmp$stats[5, ], na.rm = TRUE) * 1.12)
   bp_c <- boxplot(se_list, col = adjustcolor(run_cols, alpha.f = 0.65), border = "#222222",
                   outline = FALSE, las = 1, ylim = ylim_c,
-                  ylab = if (same_det && use_log) "Kriging Standard Error (log scale)" else "Kriging Standard Error (Model Scale)",
+                  ylab = if (same_det && is_log_b1) "Kriging Standard Error (log scale)" else "Kriging Standard Error (Model Scale)",
                   main = "",
                   cex.lab = 0.95, cex.axis = 0.85)
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
@@ -1237,7 +1240,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
     yr <- range(c(pm$start_Y, pm$end_Y), na.rm = TRUE)
     pad_x <- diff(xr) * 0.16
     main_d <- if (same_scale) {
-      sprintf("D. Spatial Difference Map: Run 2 minus Run 1 (%s)", if (use_log) "log scale" else bundles[[1]]$trans_type)
+      sprintf("D. Spatial Difference Map: Run 2 minus Run 1 (%s)", if (is_log_b1) "log scale" else bundles[[1]]$trans_type)
     } else {
       "D. Standardized Spatial Divergence Map: Z(Run 2) minus Z(Run 1)"
     }
@@ -1372,7 +1375,9 @@ plot_comp4_side_by_side_maps <- function(bundles, out_file) {
   K <- length(bundles)
   same_det   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
   same_scale <- runs_share_scale(bundles)
-  b0_trans   <- build_transformer(bundles[[1]]$trans_type, lambda = if (is.na(bundles[[1]]$trans_lambda)) NULL else bundles[[1]]$trans_lambda)
+  b0_trans   <- build_transformer(bundles[[1]]$trans_type,
+                                  lambda = if (is.na(bundles[[1]]$trans_lambda)) NULL else bundles[[1]]$trans_lambda,
+                                  scale = if (is.null(bundles[[1]]$trans_scale) || is.na(bundles[[1]]$trans_scale)) NULL else bundles[[1]]$trans_scale)
   det_short  <- shorten_det_name(bundles[[1]]$det_name)
   det_unit   <- bundles[[1]]$det_unit
 
@@ -1399,7 +1404,9 @@ plot_comp4_side_by_side_maps <- function(bundles, out_file) {
     sc_i <- if (same_scale) {
       shared_sc
     } else {
-      b_tr   <- build_transformer(b$trans_type, lambda = if (is.na(b$trans_lambda)) NULL else b$trans_lambda)
+      b_tr   <- build_transformer(b$trans_type,
+                                  lambda = if (is.na(b$trans_lambda)) NULL else b$trans_lambda,
+                                  scale = if (is.null(b$trans_scale) || is.na(b$trans_scale)) NULL else b$trans_scale)
       vals_i <- c(b$eng_pred$pred_model_sc, b$eng_pred$obs_model_sc[b$eng_pred$has_obs == 1])
       compute_color_scale(vals_i, b_tr)
     }
@@ -1455,8 +1462,8 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
   idx_pt <- if (nrow(pm) > 9000) sample(nrow(pm), 9000) else seq_len(nrow(pm))
   xlim_a <- quantile(pm$pred1_sc, probs = c(0.005, 0.995), na.rm = TRUE)
   ylim_a <- quantile(pm$pred2_sc, probs = c(0.005, 0.995), na.rm = TRUE)
-  u1_lbl <- if (b1$use_log) sprintf("log(%s)", b1$det_unit) else b1$det_unit
-  u2_lbl <- if (b2$use_log) sprintf("log(%s)", b2$det_unit) else b2$det_unit
+  u1_lbl <- if (b1$trans_type == "log") sprintf("log(%s)", b1$det_unit) else if (b1$trans_type == "none") b1$det_unit else sprintf("%s(%s)", b1$trans_type, b1$det_unit)
+  u2_lbl <- if (b2$trans_type == "log") sprintf("log(%s)", b2$det_unit) else if (b2$trans_type == "none") b2$det_unit else sprintf("%s(%s)", b2$trans_type, b2$det_unit)
   pt_cols <- adjustcolor(q_cols[pm$quadrant[idx_pt]], alpha.f = 0.35)
 
   plot(pm$pred1_sc[idx_pt], pm$pred2_sc[idx_pt],
@@ -1681,7 +1688,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
     src_abbr <- if (!is.null(b$source)) b$source else "RSN"
     add_line("| **Run %d** | **%s** | %s (`%s`) | %s | `%s` (%s) | %s | %s | `%s` | %s | %s | %d | %d |",
              i, b$label, b$det_name, b$det_code, trans_str, b$det_unit,
-             if (b$use_log) "log" else b$trans_type,
+             b$trans_type,
              src_abbr, b$net_label, b$period, b$vars_label,
              format(nrow(b$eng_pred), big.mark = ","),
              length(unique(b$eng_pred$CatchID)),
@@ -1899,7 +1906,7 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
              rel_info$r_tu_sc, rel_info$r_td_sc)
     add_line("| **OLS Scaling Regression (`Pred_2 = α + β * Pred_1`)** | `β = %+.4f ± %.4f`, `α = %+.4f` | `R² = %.4f`, `p = %s` | %s |",
              rel_info$ols_beta, rel_info$ols_se, rel_info$ols_alpha, rel_info$ols_r2, fmt_pval(rel_info$ols_p),
-             if (bundles[[1]]$use_log && bundles[[2]]$use_log) sprintf("Power-law scaling exponent: Det2 scales as Det1^(%.3f)", rel_info$ols_beta) else "Linear scaling slope of Run 2 per unit Run 1")
+             if (bundles[[1]]$trans_type == "log" && bundles[[2]]$trans_type == "log") sprintf("Power-law scaling exponent: Det2 scales as Det1^(%.3f)", rel_info$ols_beta) else "Linear scaling slope of Run 2 per unit Run 1")
     if (rel_info$n_both_obs >= 5) {
       add_line("| **Co-located Monitored Stations (`n = %d` sites)** | `r_obs = %.4f` (`ρ_obs = %.4f`) | `OLS β_obs = %+.4f`, `p = %s` | Empirical station correlation vs. S3N network-wide `r = %.4f` |",
                rel_info$n_both_obs, rel_info$r_obs_sc, rel_info$rho_obs_raw, rel_info$ols_obs_beta, fmt_pval(rel_info$p_obs_sc), rel_info$r_sc)
@@ -2035,10 +2042,6 @@ if (sys.nframe() == 0L) {
   args <- commandArgs(trailingOnly = TRUE)
   dir_cfg <- parse_custom_dir_args(args, base_dir = BASE_DIR)
 
-  # Ensure base output and comparisons directories exist on first run
-  dir.create(dir_cfg$out_dir, recursive = TRUE, showWarnings = FALSE)
-  dir.create(rel_path(dir_cfg$out_dir, "comparisons"), recursive = TRUE, showWarnings = FALSE)
-
   if (length(args) == 0 || any(args %in% c("-h", "--help"))) {
     cat("Usage:\n")
     cat("  Rscript scripts/04_compare_model_runs.R --list [--output-dir=<dir>]\n")
@@ -2111,10 +2114,6 @@ if (sys.nframe() == 0L) {
         break
       }
     }
-  }
-
-  if (!is.null(out_cli) && nzchar(out_cli)) {
-    dir.create(out_cli, recursive = TRUE, showWarnings = FALSE)
   }
 
   compare_s3n_runs(run_dirs = pos_dirs, labels = labels_cli, out_dir = out_cli,

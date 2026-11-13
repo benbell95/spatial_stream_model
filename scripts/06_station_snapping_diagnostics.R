@@ -53,7 +53,7 @@ BASE_DIR <- resolve_base_dir()
 # reach at distance `snap_dist_m` from `(st_x, st_y)` in the orthogonal direction
 # of the reach polyline `(start_X, start_Y) -> (mid_X, mid_Y) -> (end_X, end_Y)`.
 # ------------------------------------------------------------------------------
-compute_snapped_reach_point <- function(st_x, st_y, sx, sy, mx, my, ex, ey, snap_dist_m, along_m = NA_real_, len_m = NA_real_) {
+compute_snapped_reach_point <- function(st_x, st_y, sx, sy, mx, my, ex, ey, snap_dist_m) {
   n <- length(st_x)
   if (n == 0L) return(list(x = numeric(0), y = numeric(0)))
 
@@ -152,8 +152,7 @@ build_station_snapping_table <- function(proc_dir, include_excluded = TRUE) {
     reach_start_X, reach_start_Y,
     reach_mid_X, reach_mid_Y,
     reach_end_X, reach_end_Y,
-    snap_dist_m = sites_df$snap_dist_m,
-    along_m = along_m, len_m = reach_len_m
+    snap_dist_m = sites_df$snap_dist_m
   )
 
   # Attach Catchment Name and RBD Name
@@ -725,12 +724,14 @@ analyze_station_snapping <- function(
   out_dir          = NULL,
   gis_dir          = NULL,
   data_dir         = NULL,
+  processed_dir    = NULL,
   output_root      = NULL,
   verbose          = TRUE
 ) {
   cfg_dirs <- load_directory_config(base_dir = BASE_DIR)
   g_dir  <- if (!is.null(gis_dir) && nzchar(gis_dir)) gis_dir else cfg_dirs$gis_dir
   d_dir  <- if (!is.null(data_dir) && nzchar(data_dir)) data_dir else cfg_dirs$data_dir
+  p_dir  <- if (!is.null(processed_dir) && nzchar(processed_dir)) processed_dir else NULL
   o_root <- if (!is.null(output_root) && nzchar(output_root)) output_root else cfg_dirs$output_dir
 
   src_tag      <- resolve_source_tag(source)
@@ -738,7 +739,7 @@ analyze_station_snapping <- function(
   source_label <- format_source_label(src_tag)
   src_ftag     <- format_source_folder_tag(src_tag)
 
-  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = d_dir, gis_dir = g_dir, source = src_tag)
+  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = d_dir, gis_dir = g_dir, source = src_tag, processed_dir = p_dir)
   net_meta <- load_network_metadata(proc_dir)
 
   if (is.null(out_dir) || !nzchar(out_dir)) {
@@ -928,10 +929,7 @@ if (sys.nframe() == 0L) {
   range_arg <- grep("^--range-mode=", args, value = TRUE)
   range_cli <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
   if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
-    src_toks <- unlist(strsplit(src_cli, "[+,]+"))
-    if (!any(grepl(paste0("_", range_cli, "$"), src_toks)) && !grepl("[+,]", src_cli)) {
-      src_cli <- paste0(src_cli, "_", range_cli)
-    }
+    src_cli <- apply_range_mode_to_source(src_cli, range_cli, base_dir = BASE_DIR)$source_tag
   }
   if ("--list-sources" %in% args) {
     print_available_sources(base_dir = BASE_DIR)
@@ -963,7 +961,7 @@ if (sys.nframe() == 0L) {
     quit(save = "no", status = 0)
   }
 
-  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = dir_cfg$data_dir, gis_dir = dir_cfg$gis_dir, source = src_cli)
+  proc_dir <- resolve_network_processed_dir(BASE_DIR, network, data_dir = dir_cfg$data_dir, gis_dir = dir_cfg$gis_dir, source = src_cli, processed_dir = dir_cfg$processed_dir)
   net_meta <- load_network_metadata(proc_dir)
 
   if (any(args %in% c("--list", "--list-catchments", "--list-basins"))) {

@@ -34,8 +34,6 @@ custom_sites_arg   <- grep("^--custom-sites=", args, value = TRUE)
 custom_sites_cli   <- if (length(custom_sites_arg) > 0) sub("^--custom-sites=", "", custom_sites_arg[1]) else NULL
 custom_dir_arg     <- grep("^--custom-dir=", args, value = TRUE)
 custom_dir_cli     <- if (length(custom_dir_arg) > 0) sub("^--custom-dir=", "", custom_dir_arg[1]) else NULL
-custom_name_arg    <- grep("^--custom-name=", args, value = TRUE)
-custom_name_cli    <- if (length(custom_name_arg) > 0) sub("^--custom-name=", "", custom_name_arg[1]) else "custom"
 
 src_cli        <- parse_source_arg(args)
 source_cli     <- resolve_source_tag(src_cli, base_dir = BASE_DIR)
@@ -49,7 +47,6 @@ src_dirs       <- resolve_data_source_dirs(DATA_DIR, source = src_cli, base_dir 
                                           custom_sites = custom_sites_cli)
 RSN_DIR        <- src_dirs$rsn_dir
 SSN_DIR        <- src_dirs$ssn_dir
-WQ_DIR         <- if (source_cli == "ssn") SSN_DIR else RSN_DIR
 n_omp_cli      <- parse_n_omp_arg(args, default = 1L)
 
 if ("--list-sources" %in% args) {
@@ -91,7 +88,7 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
   quit(save = "no", status = 0)
 }
 
-PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli)
+PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
 net_meta       <- load_network_metadata(PROC_DIR)
 REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
 SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
@@ -196,9 +193,9 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
                   cn, tab$Count[i], substr(m_info["desc"], 1, 40), m_info["unit"]))
     }
   }
-  cat("\nUsage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
-  cat("        [--source=rsn|ssn|rss] [--list-sources] [--raw|--log] [--reverse-color] [--censor=ros|half_lod]\n")
-  cat("        [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins] [--vars=<Covariates>] [--list-vars]\n")
+cat("Usage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
+  cat("        [--source=rsn|ssn|rss] [--list-sources] [--transform=<type>] [--lambda=<val>] [--scale=<val>]\n")
+  cat("        [--reverse-color] [--censor=ros|half_lod] [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins]\n")
   cat("        [--network=<name>] [--list-networks] [--gis-dir=<dir>] [--data-dir=<dir>] [--output-dir=<dir>]\n")
   cat("        [--year=YYYY] [--season=winter|spring|summer|autumn] [--month=1..12] [--by=year|season|month]\n")
   cat("Examples:\n")
@@ -255,17 +252,10 @@ scale_arg  <- grep("^--(scale|transform-scale)=", args, value = TRUE)
 scale_cli  <- if (length(scale_arg) > 0) as.numeric(sub("^--(scale|transform-scale)=", "", scale_arg[1])) else NULL
 
 if (is.na(trans_cli)) {
-  if ("--raw" %in% args) {
-    trans_cli <- "none"
-  } else if ("--log" %in% args) {
-    trans_cli <- "log"
-  } else {
-    trans_cli <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
-  }
+  trans_cli <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
 }
 
 trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
-use_log   <- trans_obj$is_log
 
 reverse_color <- any(args %in% c("--reverse-color", "--reverse-colour", "--rev-color", "--rev-colour", "--reverse-scale"))
 vmin_arg   <- grep("^--vmin=", args, value = TRUE)
@@ -300,17 +290,6 @@ var_specs <- if (length(vars_args) > 0) {
   character(0)
 }
 var_specs <- trimws(var_specs[nchar(trimws(var_specs)) > 0])
-
-cand_libs <- c(
-  Sys.getenv("R_LIBS_USER"),
-  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.6"),
-  file.path(Sys.getenv("HOME"), "R/x86_64-redhat-linux-gnu-library/4.5")
-)
-for (cl in cand_libs) {
-  if (nzchar(cl) && dir.exists(cl) && !(normalizePath(cl, mustWork = FALSE) %in% normalizePath(.libPaths(), mustWork = FALSE))) {
-    .libPaths(c(cl, .libPaths()))
-  }
-}
 
 load_s3n_backend(BASE_DIR)
 meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
@@ -402,7 +381,7 @@ if (!is.na(detected_range_mode)) {
   }
   source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
   source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
-  PROC_DIR_NEW <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli)
+  PROC_DIR_NEW <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
   if (!identical(PROC_DIR_NEW, PROC_DIR)) {
     PROC_DIR       <- PROC_DIR_NEW
     net_meta       <- load_network_metadata(PROC_DIR)
@@ -489,8 +468,8 @@ impute_censored_ros <- function(vals, is_cens) {
 }
 
 cat(sprintf("======================================================================\n"))
-cat(sprintf("  Running S3N Pipeline: dataset = '%s', variable = '%s' (log_scale = %s, censor = %s)\n",
-            ds_mode, det_code, use_log, censor_m))
+cat(sprintf("  Running S3N Pipeline: dataset = '%s', variable = '%s' (transform = %s, censor = %s)\n",
+            ds_mode, det_code, trans_obj$label, censor_m))
 cat(sprintf("======================================================================\n"))
 
 ds_info <- DATASET_FILES[[ds_mode]]
@@ -660,7 +639,7 @@ if (!"meas_method" %in% names(det_samples)) {
   det_samples$meas_method <- ifelse(is.na(det_samples$meas_method), "", as.character(det_samples$meas_method))
 }
 
-valid_k     <- !is.na(raw_vals) & nchar(trimws(det_samples$sample_datetime)) >= 7
+valid_k     <- !is.na(raw_vals) & !is.na(det_samples$sample_datetime) & nchar(trimws(det_samples$sample_datetime)) >= 7
 det_samples <- det_samples[valid_k, ]
 raw_vals    <- raw_vals[valid_k]
 is_cens     <- is_cens[valid_k]
@@ -677,11 +656,14 @@ valid_t     <- trans_obj$valid_fn(det_samples$val)
 det_samples <- det_samples[valid_t, ]
 is_cens     <- is_cens[valid_t]
 
-# Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson AFTER censoring imputation
-if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
+# Optimize profile Maximum Likelihood lambda for Box-Cox / Yeo-Johnson or scale for asin / logit AFTER censoring imputation
+if ((trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) ||
+    (is.null(scale_cli) && trans_obj$type %in% c("asin", "logit"))) {
   trans_obj <- build_transformer(trans_cli, y_obs = det_samples$val, lambda = lambda_cli, scale = scale_cli)
-  cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for %s (%s)\n",
-              trans_obj$lambda, det_name, trans_obj$label))
+  if (trans_obj$type %in% c("boxcox", "yeojohnson")) {
+    cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for %s (%s)\n",
+                trans_obj$lambda, det_name, trans_obj$label))
+  }
 }
 
 default_trans   <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
@@ -908,8 +890,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
       n_omp = ctx$n_omp,
       use_meas_error = active_meas_error,
       net_meta = ctx$net_meta,
-      obs_col = "obs_val",
-      legacy_nitrate_mode = FALSE
+      obs_col = "obs_val"
     )
   }
 
@@ -997,7 +978,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
       ef <- extra_fits[[k]]
-      pred_csv_k <- file.path(out_subdir, sprintf("predictions_%s_%s.csv", ef$info$slug, ctx$det_code))
+      pred_csv_k <- file.path(out_subdir, sprintf("predictions_basin_%s_%s.csv", ef$info$slug, ctx$det_code))
       write.csv(ef$pred_df, pred_csv_k, row.names = FALSE)
     }
   }
@@ -1193,7 +1174,7 @@ if (!is.na(by_mode)) {
     sib_se_h <- sl_one$hum_pred$se_model_sc
     if (length(sib_files) > 0) {
       for (sf in sib_files) {
-        sdf <- tryCatch(normalize_pred_df(read.csv(sf)), error = function(e) NULL)
+        sdf <- tryCatch(read.csv(sf, stringsAsFactors = FALSE), error = function(e) NULL)
         if (!is.null(sdf)) {
           if (norm_meta$mode != "none" && !(norm_meta$pred_col %in% names(sdf))) {
             sdf <- add_normalised_columns(sdf)
@@ -1203,7 +1184,7 @@ if (!is.na(by_mode)) {
         }
         hf <- file.path(dirname(sf), sprintf("predictions_humber_%s.csv", det_code))
         if (file.exists(hf)) {
-          hdf <- tryCatch(normalize_pred_df(read.csv(hf)), error = function(e) NULL)
+          hdf <- tryCatch(read.csv(hf, stringsAsFactors = FALSE), error = function(e) NULL)
           if (!is.null(hdf) && "se_model_sc" %in% names(hdf)) {
             sib_se_h <- c(sib_se_h, hdf$se_model_sc)
           }

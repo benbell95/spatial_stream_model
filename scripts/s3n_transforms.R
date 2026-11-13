@@ -49,7 +49,7 @@ estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
     z_mean <- mean(z)
     var_z  <- mean((z - z_mean)^2)
     if (var_z < 1e-12) return(-1e12)
-    jac <- sum(sign(y_val) * log(abs(y_val) + 1.0) * ifelse(pos, lam - 1.0, 1.0 - lam))
+    jac <- sum(log(abs(y_val) + 1.0) * ifelse(pos, lam - 1.0, 1.0 - lam))
     -0.5 * n * log(var_z) + jac
   }
 
@@ -78,7 +78,10 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
     logit = "logit",
     none = "none", raw = "none", identity = "none"
   )
-  ttype <- if (t_raw %in% names(alias_map)) unname(alias_map[t_raw]) else t_raw
+  if (!(t_raw %in% names(alias_map))) {
+    stop(sprintf("Unknown transformation '%s'. Run --list-transforms to see supported options.", transform_type))
+  }
+  ttype <- unname(alias_map[t_raw])
 
   if (ttype == "log") {
     return(list(
@@ -227,8 +230,9 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
         if (abs(lam_val) < 1e-4) {
           exp(z)
         } else {
-          inner <- pmax(1e-9, lam_val * z + 1.0)
-          pmax(0.0, inner^(1.0 / lam_val))
+          inner <- pmax(1e-6, lam_val * z + 1.0)
+          out <- pmax(0.0, inner^(1.0 / lam_val))
+          if (lam_val < 0) pmin(1e6, out) else out
         }
       }
     ))
@@ -273,11 +277,13 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
         y <- numeric(length(z))
         if (any(pos)) {
           zp <- z[pos]
-          y[pos] <- if (abs(lam_val) < 1e-4) exp(zp) - 1.0 else (pmax(1e-9, zp * lam_val + 1.0))^(1.0 / lam_val) - 1.0
+          yp <- if (abs(lam_val) < 1e-4) exp(zp) - 1.0 else (pmax(1e-6, zp * lam_val + 1.0))^(1.0 / lam_val) - 1.0
+          y[pos] <- if (lam_val < 0) pmin(1e6, yp) else yp
         }
         if (any(!pos)) {
           zn <- z[!pos]
-          y[!pos] <- if (abs(2.0 - lam_val) < 1e-4) 1.0 - exp(-zn) else 1.0 - (pmax(1e-9, -zn * (2.0 - lam_val) + 1.0))^(1.0 / (2.0 - lam_val))
+          yn <- if (abs(2.0 - lam_val) < 1e-4) 1.0 - exp(-zn) else 1.0 - (pmax(1e-6, -zn * (2.0 - lam_val) + 1.0))^(1.0 / (2.0 - lam_val))
+          y[!pos] <- if (lam_val > 2.0) pmax(-1e6, yn) else yn
         }
         y
       }
@@ -285,7 +291,8 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
   }
 
   if (ttype == "asin") {
-    sc_val <- if (!is.null(scale)) as.numeric(scale) else if (!is.null(y_obs) && max(y_obs, na.rm = TRUE) > 1.05) 100.0 else 1.0
+    y_fin <- if (!is.null(y_obs)) y_obs[is.finite(y_obs)] else numeric(0)
+    sc_val <- if (!is.null(scale) && is.finite(as.numeric(scale))) as.numeric(scale) else if (length(y_fin) > 0 && max(y_fin) > 1.05) 100.0 else 1.0
     return(list(
       type           = "asin",
       label          = sprintf("Arcsine-Square-Root (0..%g)", sc_val),
@@ -303,7 +310,8 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
   }
 
   if (ttype == "logit") {
-    sc_val <- if (!is.null(scale)) as.numeric(scale) else if (!is.null(y_obs) && max(y_obs, na.rm = TRUE) > 1.05) 100.0 else 1.0
+    y_fin <- if (!is.null(y_obs)) y_obs[is.finite(y_obs)] else numeric(0)
+    sc_val <- if (!is.null(scale) && is.finite(as.numeric(scale))) as.numeric(scale) else if (length(y_fin) > 0 && max(y_fin) > 1.05) 100.0 else 1.0
     return(list(
       type           = "logit",
       label          = sprintf("Logit (0..%g)", sc_val),
@@ -339,14 +347,11 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
   )
 }
 
-as_transformer <- function(obj, y_obs = NULL, lambda = NULL) {
+as_transformer <- function(obj, y_obs = NULL, lambda = NULL, scale = NULL) {
   if (is.list(obj) && !is.null(obj$fwd) && !is.null(obj$inv)) {
     return(obj)
   }
-  if (is.logical(obj)) {
-    return(if (isTRUE(obj)) build_transformer("log") else build_transformer("none"))
-  }
-  build_transformer(as.character(obj), y_obs = y_obs, lambda = lambda)
+  build_transformer(as.character(obj), y_obs = y_obs, lambda = lambda, scale = scale)
 }
 
 calc_response_meas_variance <- function(raw_val, raw_unc, trans_obj) {
@@ -376,11 +381,11 @@ calc_response_meas_variance <- function(raw_val, raw_unc, trans_obj) {
   } else if (tt %in% c("reciprocal", "inv", "inverse")) {
     v_resp <- (u_clean / (x_pos^2))^2
   } else if (tt %in% c("asin", "arcsin", "arcsine")) {
-    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 100.0
+    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 1.0
     p_cl <- pmin(1.0 - 1e-6, pmax(1e-6, x_raw / sc))
     v_resp <- (u_clean / (2.0 * sc * sqrt(p_cl * (1.0 - p_cl))))^2
   } else if (tt == "logit") {
-    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 100.0
+    sc <- if (!is.null(trans_obj$scale) && is.finite(trans_obj$scale) && trans_obj$scale > 0) trans_obj$scale else 1.0
     p_cl <- pmin(1.0 - 1e-6, pmax(1e-6, x_raw / sc))
     v_resp <- (u_clean / (sc * p_cl * (1.0 - p_cl)))^2
   } else if (tt %in% c("boxcox", "bc")) {
@@ -435,21 +440,11 @@ print_available_transforms <- function() {
 }
 
 # ==============================================================================
-# NORMALISATION & GENERIC/LEGACY SCHEMA ALIAS RESOLUTION
+# NORMALISATION (canonical schema: pred_model_sc, obs_model_sc, pred_tu_sc, pred_td_sc)
 # ==============================================================================
 
-resolve_col_alias <- function(df, candidates) {
-  if (is.null(df)) return(NULL)
-  nms <- names(df)
-  for (cn in candidates) {
-    if (cn %in% nms) return(df[[cn]])
-  }
-  NULL
-}
-
 add_normalised_columns <- function(df, ref_df = df) {
-  df     <- normalize_pred_df(df)
-  ref_df <- normalize_pred_df(ref_df)
+  if (!("pred_model_sc" %in% names(df)) || !("pred_model_sc" %in% names(ref_df))) return(df)
   ref_x  <- ref_df$pred_model_sc
   ref_x  <- ref_x[is.finite(ref_x)]
   if (length(ref_x) == 0) return(df)
@@ -496,54 +491,4 @@ add_normalised_columns <- function(df, ref_df = df) {
     df$obs_percentile    <- ifelse(has_o, round(100.0 * pct_fn(df$obs_model_sc), 2), NA_real_)
   }
   df
-}
-
-normalize_pred_df <- function(df) {
-  if (!("pred_model_sc" %in% names(df)) && ("pred_log_combined" %in% names(df))) {
-    df$pred_model_sc <- df$pred_log_combined
-  }
-  if (!("se_model_sc" %in% names(df)) && ("se_log_combined" %in% names(df))) {
-    df$se_model_sc <- df$se_log_combined
-  }
-  if (!("obs_model_sc" %in% names(df))) {
-    val <- resolve_col_alias(df, c("obs_trans_mean", "trans_obs_mean", "obs_log_nitrate"))
-    if (!is.null(val)) df$obs_model_sc <- val
-  }
-  if (!("obs_value" %in% names(df))) {
-    val <- resolve_col_alias(df, c("obs_raw", "obs_mean", "nitrate_mean"))
-    if (!is.null(val)) df$obs_value <- val
-  }
-  if (!("pred_tu_sc" %in% names(df)) && ("pred_log_tu" %in% names(df))) {
-    df$pred_tu_sc <- df$pred_log_tu
-  }
-  if (!("pred_td_sc" %in% names(df)) && ("pred_log_td" %in% names(df))) {
-    df$pred_td_sc <- df$pred_log_td
-  }
-  if (!("pred_combined" %in% names(df))) {
-    val <- resolve_col_alias(df, c("pred_raw_combined", "pred_mgL_combined"))
-    if (!is.null(val)) df$pred_combined <- val
-  }
-  df
-}
-
-normalize_cv_pts <- function(cv_df) {
-  if (is.null(cv_df)) return(NULL)
-  if (!("obs_y" %in% names(cv_df)) && ("obs_log" %in% names(cv_df))) {
-    cv_df$obs_y <- cv_df$obs_log
-  }
-  cv_df
-}
-
-normalize_cv_tab <- function(cv_tab) {
-  if (is.null(cv_tab)) return(NULL)
-  if (!("R2" %in% names(cv_tab)) && ("R2_log" %in% names(cv_tab))) {
-    cv_tab$R2 <- cv_tab$R2_log
-  }
-  if (!("RMSE" %in% names(cv_tab)) && ("RMSE_log" %in% names(cv_tab))) {
-    cv_tab$RMSE <- cv_tab$RMSE_log
-  }
-  if (!("MAE" %in% names(cv_tab)) && ("MAE_log" %in% names(cv_tab))) {
-    cv_tab$MAE <- cv_tab$MAE_log
-  }
-  cv_tab
 }

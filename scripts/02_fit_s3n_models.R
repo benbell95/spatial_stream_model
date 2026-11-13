@@ -39,20 +39,11 @@ source_tag   <- format_source_folder_tag(source_cli)
 range_arg    <- grep("^--range-mode=", args, value = TRUE)
 range_cli    <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
 if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
-  src_tokens <- unlist(strsplit(source_cli, "[+,]+"))
-  has_tok <- any(grepl(paste0("_", range_cli, "$"), src_tokens))
-  if (!has_tok) {
-    if (nzchar(source_tag) && !grepl(paste0("_", range_cli, "$"), source_tag)) {
-      source_tag <- paste0(source_tag, "_", range_cli)
-    } else if (!nzchar(source_tag)) {
-      source_tag <- range_cli
-    }
-    if (!grepl("[+,]", source_cli) && !grepl(paste0("_", range_cli, "$"), source_cli)) {
-      source_cli <- paste0(source_cli, "_", range_cli)
-    }
-  }
+  rm_res <- apply_range_mode_to_source(source_cli, range_cli, base_dir = BASE_DIR)
+  source_cli   <- rm_res$source_tag
   source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
   source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
+  source_tag   <- format_source_folder_tag(source_cli)
 }
 
 if ("--list-sources" %in% args) {
@@ -77,7 +68,7 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
 }
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
-PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli)
+PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
 net_meta    <- load_network_metadata(PROC_DIR)
 
 vars_args <- grep("^--(vars|covariates)=", args, value = TRUE)
@@ -95,18 +86,9 @@ lambda_cli <- if (length(lambda_arg) > 0) as.numeric(sub("^--(lambda|transform-l
 scale_arg  <- grep("^--(scale|transform-scale)=", args, value = TRUE)
 scale_cli  <- if (length(scale_arg) > 0) as.numeric(sub("^--(scale|transform-scale)=", "", scale_arg[1])) else NULL
 
-if (is.na(trans_cli)) {
-  if ("--raw" %in% args) {
-    trans_cli <- "none"
-  } else if ("--log" %in% args) {
-    trans_cli <- "log"
-  } else {
-    trans_cli <- "log"
-  }
-}
+if (is.na(trans_cli)) trans_cli <- "log"
 
 trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
-use_log   <- trans_obj$is_log
 
 boot_arg   <- grep("^--(boot|n-boot)=", args, value = TRUE)
 n_boot_cli <- if (length(boot_arg) > 0) as.integer(sub("^--(boot|n-boot)=", "", boot_arg[1])) else 100L
@@ -126,14 +108,20 @@ catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
   NULL
 }
 
-obs_col_name <- if ("obs_mean" %in% names(df_full)) "obs_mean" else "nitrate_mean"
+obs_col_name <- "obs_mean"
+if (!(obs_col_name %in% names(df_full))) {
+  stop(sprintf("Required column '%s' not found in processed reaches CSV under %s; re-run 01_preprocess_orn.py.", obs_col_name, PROC_DIR))
+}
 
-# Optimize profile Maximum Likelihood lambda for Box-Cox or Yeo-Johnson BEFORE computing folder tags
-if (trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) {
+# Optimize profile Maximum Likelihood lambda for Box-Cox / Yeo-Johnson or scale for asin / logit BEFORE computing folder tags
+if ((trans_obj$type %in% c("boxcox", "yeojohnson") && is.na(trans_obj$lambda)) ||
+    (is.null(scale_cli) && trans_obj$type %in% c("asin", "logit"))) {
   obs_raw <- df_full[[obs_col_name]][df_full$has_obs == 1 & !is.na(df_full[[obs_col_name]])]
   trans_obj <- build_transformer(trans_cli, y_obs = obs_raw, lambda = lambda_cli, scale = scale_cli)
-  cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for Nitrate (%s)\n",
-              trans_obj$lambda, trans_obj$label))
+  if (trans_obj$type %in% c("boxcox", "yeojohnson")) {
+    cat(sprintf("  Estimated Profile Maximum Likelihood lambda = %.4f for Nitrate (%s)\n",
+                trans_obj$lambda, trans_obj$label))
+  }
 }
 
 trans_tag <- format_transform_folder_tag(trans_obj, default_type = "log")
@@ -146,12 +134,10 @@ if (nzchar(vars_tag)) {
   sub_tag <- paste0(sub_tag, "_", vars_tag)
 }
 OUT_ROOT <- rel_path(OUT_BASE, "results", sub_tag)
-dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE)
-dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
-dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)
+dir.create(OUT_ROOT, recursive = TRUE, showWarnings = FALSE)
 
-cat(sprintf("Loaded %d stream reaches (%d with RSN Nitrate observations) across %d catchments.\n",
-            nrow(df_full), sum(df_full$has_obs == 1), length(unique(df_full$CatchID))))
+cat(sprintf("Loaded %d stream reaches (%d with %s Nitrate observations) across %d catchments.\n",
+            nrow(df_full), sum(df_full$has_obs == 1), source_abbr, length(unique(df_full$CatchID))))
 
 # Fitting/CV engine lives in scripts/s3n_model_functions.R
 analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boot = n_boot_cli, n_omp = n_omp_cli) {
@@ -166,9 +152,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     n_omp = n_omp,
     use_meas_error = isTRUE(meas_error_arg),
     net_meta = net_meta,
-    obs_col = obs_col_name,
-    legacy_nitrate_mode = TRUE,
-    out_root = OUT_ROOT
+    obs_col = obs_col_name
   )
 }
 
@@ -187,6 +171,24 @@ res_humber  <- analyze_domain(subset(df_full, CatchID == humber_info$catch_id), 
 res_thames  <- analyze_domain(subset(df_full, CatchID == thames_info$catch_id), "thames", thames_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
 res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), "severn", severn_info$domain_label, m_neighbors = 15L, n_boot = n_boot_cli)
 
+# Compute England-relative Z-scores & percentiles on all prediction tables
+eng_pred <- if (!is.null(res_england) && !is.null(res_england$pred_df)) res_england$pred_df else NULL
+if (!is.null(res_england) && !is.null(res_england$pred_df)) {
+  res_england$pred_df <- add_normalised_columns(res_england$pred_df)
+  write.csv(res_england$pred_df, file.path(OUT_ROOT, "predictions_0117.csv"), row.names = FALSE)
+}
+for (b_pair in list(list(key = "humber", res = res_humber),
+                    list(key = "thames", res = res_thames),
+                    list(key = "severn", res = res_severn))) {
+  if (!is.null(b_pair$res) && !is.null(b_pair$res$pred_df)) {
+    b_df <- add_normalised_columns(b_pair$res$pred_df, ref_df = eng_pred)
+    if (b_pair$key == "humber") res_humber$pred_df <- b_df
+    if (b_pair$key == "thames") res_thames$pred_df <- b_df
+    if (b_pair$key == "severn") res_severn$pred_df <- b_df
+    write.csv(b_df, file.path(OUT_ROOT, sprintf("predictions_%s_0117.csv", b_pair$key)), row.names = FALSE)
+  }
+}
+
 all_cv <- do.call(rbind, Filter(Negate(is.null), list(
   if (!is.null(res_england)) res_england$cv_summary else NULL,
   if (!is.null(res_humber))  res_humber$cv_summary  else NULL,
@@ -199,34 +201,45 @@ all_params <- do.call(rbind, Filter(Negate(is.null), list(
   if (!is.null(res_thames))  res_thames$param_df  else NULL,
   if (!is.null(res_severn))  res_severn$param_df  else NULL
 )))
+all_cv$Determinand_Code     <- "0117"
+all_cv$Determinand_Name     <- "Nitrate as N"
+all_cv$Unit                 <- "mg/L"
+all_cv$Period               <- "all"
+all_cv$Meas_Method          <- "exact"
 all_cv$Source               <- source_abbr
 all_cv$Source_Desc          <- source_label
 all_cv$Transform_Type       <- trans_obj$type
 all_cv$Transform_Lambda     <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
 all_cv$Transform_Label      <- trans_obj$label
-all_cv$Scale                <- if (trans_obj$is_transformed) trans_obj$short_label else "raw"
+all_cv$Transform_Scale      <- ifelse(is.null(trans_obj$scale) || is.na(trans_obj$scale), "", as.character(trans_obj$scale))
 all_cv$Network_Abbr         <- net_meta$abbr
 all_cv$Network_Label        <- net_meta$short_label
 
+all_params$Determinand_Code <- "0117"
+all_params$Determinand_Name <- "Nitrate as N"
+all_params$Unit             <- "mg/L"
+all_params$Period           <- "all"
+all_params$Meas_Method      <- "exact"
 all_params$Source           <- source_abbr
 all_params$Source_Desc      <- source_label
 all_params$Transform_Type   <- trans_obj$type
 all_params$Transform_Lambda <- ifelse(is.na(trans_obj$lambda), "", as.character(round(trans_obj$lambda, 4)))
 all_params$Transform_Label  <- trans_obj$label
+all_params$Transform_Scale  <- ifelse(is.null(trans_obj$scale) || is.na(trans_obj$scale), "", as.character(trans_obj$scale))
 all_params$Network_Abbr     <- net_meta$abbr
 all_params$Network_Label    <- net_meta$short_label
 
-write.csv(all_cv, file.path(OUT_ROOT, "tables/cv_model_comparison.csv"), row.names = FALSE)
-write.csv(all_params, file.path(OUT_ROOT, "tables/s3n_parameter_estimates.csv"), row.names = FALSE)
+write.csv(all_cv, file.path(OUT_ROOT, "cv_comparison_0117.csv"), row.names = FALSE)
+write.csv(all_params, file.path(OUT_ROOT, "parameters_0117.csv"), row.names = FALSE)
 if (!is.null(res_england) && !is.null(res_england$cv_pts)) {
-  write.csv(res_england$cv_pts, file.path(OUT_ROOT, "predictions/england_cv_predictions.csv"), row.names = FALSE)
+  write.csv(res_england$cv_pts, file.path(OUT_ROOT, "cv_predictions_england_0117.csv"), row.names = FALSE)
 }
 if (!is.null(res_humber) && !is.null(res_humber$cv_pts)) {
-  write.csv(res_humber$cv_pts, file.path(OUT_ROOT, "predictions/humber_cv_predictions.csv"), row.names = FALSE)
+  write.csv(res_humber$cv_pts, file.path(OUT_ROOT, "cv_predictions_humber_0117.csv"), row.names = FALSE)
 }
 
 saveRDS(list(england = res_england, humber = res_humber, thames = res_thames, severn = res_severn),
-        file = file.path(OUT_ROOT, "models/s3n_model_results.rds"))
+        file = file.path(OUT_ROOT, "s3n_model_results.rds"))
 
 cat(sprintf("\n======================================================================\n"))
 cat(sprintf("  All S3N models, bootstrap CIs, CV, and predictions finished in %.2f sec.\n",

@@ -14,6 +14,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 import s3n_py_utils as u  # noqa: E402
+import format_custom_data as fcd  # noqa: E402
 
 
 def _make_wkb_linestring(coords, has_z=False):
@@ -118,6 +119,19 @@ class TestMeasurementTokensAndTobit(unittest.TestCase):
 
         rt = mod.predict("right", 30.0, None)
         self.assertGreaterEqual(rt[0], 30.0)
+        self.assertIsNone(rt[3])
+
+        lf0 = mod.predict("left", 0.0, 0.0)
+        self.assertTrue(math.isfinite(lf0[0]))
+
+    def test_match_known_determinand(self):
+        d_n = fcd.match_known_determinand("Nitrate (mg/L)")
+        self.assertEqual(d_n["code"], "0117")
+        self.assertEqual(d_n["unit"], "mg/L")
+        d_p = fcd.match_known_determinand("Phosphate (mg/L)")
+        self.assertEqual(d_p["code"], "0180")
+        d_ph = fcd.match_known_determinand("pH")
+        self.assertEqual(d_ph["code"], "0061")
 
     def test_compute_alternative_range_result(self):
         tok = u.parse_raw_measurement_token("4 - 16")
@@ -204,8 +218,12 @@ class TestGeometryCensoringAndTransforms(unittest.TestCase):
         lam = u.estimate_boxcox_lambda(vals)
         self.assertTrue(-0.5 <= lam <= 0.5)
         self.assertAlmostEqual(u.apply_forward_transform(math.e, "log"), 1.0, places=5)
+        self.assertAlmostEqual(u.apply_forward_transform(100.0, "log_10"), 2.0, places=5)
+        self.assertAlmostEqual(u.apply_forward_transform(0.0, "log_1p"), 0.0, places=5)
         self.assertAlmostEqual(u.apply_forward_transform(9.0, "sqrt"), 3.0, places=5)
-        self.assertAlmostEqual(u.apply_forward_transform(0.0, "yeojohnson", lam=0.5), 0.0, places=5)
+        self.assertAlmostEqual(u.apply_forward_transform(2.0, "inverse"), -0.5, places=5)
+        self.assertAlmostEqual(u.apply_forward_transform(1.0, "box_cox", lam=0.5), 0.0, places=5)
+        self.assertAlmostEqual(u.apply_forward_transform(0.0, "yeo_johnson", lam=0.5), 0.0, places=5)
 
         with tempfile.TemporaryDirectory() as tmpd:
             cfg = u.build_runtime_config(
@@ -216,7 +234,7 @@ class TestGeometryCensoringAndTransforms(unittest.TestCase):
                 create_out_dir=True,
             )
             self.assertEqual(cfg.gis_dir, os.path.join(tmpd, "gis"))
-            self.assertTrue(os.path.isdir(cfg.output_dir))
+            self.assertTrue(os.path.isdir(cfg.processed_dir))
 
 
 if __name__ == "__main__":

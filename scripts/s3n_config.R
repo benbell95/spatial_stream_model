@@ -63,7 +63,7 @@ wrap_title <- function(text, max_len = 65) {
     return(vapply(text, function(t) wrap_title(t, max_len = max_len), character(1), USE.NAMES = FALSE))
   }
   str <- as.character(text)[1]
-  if (!nzchar(str) || is.na(str)) return("")
+  if (is.na(str) || !nzchar(str)) return("")
   if (is.null(max_len) || is.na(max_len) || max_len <= 0) return(str)
 
   lines <- strsplit(str, "\n", fixed = TRUE)[[1]]
@@ -102,15 +102,7 @@ parse_json_int_field <- function(lines, key, default = NA_integer_) {
 }
 
 find_directory_config_file <- function(base_dir = ".") {
-  cands <- c(
-    rel_path(base_dir, "configs", "directories.json"),
-    rel_path(base_dir, "configs", "paths.json"),
-    rel_path(base_dir, "config.json")
-  )
-  for (c in cands) {
-    if (file.exists(c)) return(c)
-  }
-  cands[1]
+  rel_path(base_dir, "configs", "directories.json")
 }
 
 load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
@@ -124,43 +116,30 @@ load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
                  '}'), cfg_file)
   }
 
-  raw_cfg <- list()
+  raw_cfg <- list(data_dir = "data", gis_dir = "gis", output_dir = "output", processed_dir = "")
   j_obj <- read_json_safe(cfg_file)
   if (is.list(j_obj)) {
-    pick_j <- function(keys, default = "") {
-      for (k in keys) {
-        if (!is.null(j_obj[[k]]) && nzchar(as.character(j_obj[[k]]))) return(as.character(j_obj[[k]]))
-      }
-      default
+    pick_j <- function(k, default = "") {
+      if (!is.null(j_obj[[k]]) && nzchar(as.character(j_obj[[k]]))) as.character(j_obj[[k]]) else default
     }
-    raw_cfg$data_dir      <- pick_j(c("data_dir", "data", "DATA_DIR"), "data")
-    raw_cfg$gis_dir       <- pick_j(c("gis_dir", "gis", "GIS_DIR"), "gis")
-    raw_cfg$output_dir    <- pick_j(c("output_dir", "out_dir", "output", "out", "OUTPUT_DIR"), "output")
-    raw_cfg$processed_dir <- pick_j(c("processed_dir", "processed", "PROCESSED_DIR"), "")
+    raw_cfg$data_dir      <- pick_j("data_dir", "data")
+    raw_cfg$gis_dir       <- pick_j("gis_dir", "gis")
+    raw_cfg$output_dir    <- pick_j("output_dir", "output")
+    raw_cfg$processed_dir <- pick_j("processed_dir", "")
   } else if (file.exists(cfg_file)) {
     txt <- tryCatch(paste(readLines(cfg_file, warn = FALSE, encoding = "UTF-8"), collapse = "\n"), error = function(e) "")
-    get_field <- function(keys, default = "") {
-      for (k in keys) {
-        pat <- paste0('"', k, '"\\s*:\\s*"([^"]*)"')
-        if (grepl(pat, txt)) {
-          return(sub(paste0('^.*?', pat, '.*$'), "\\1", txt))
-        }
-      }
-      default
+    get_field <- function(k, default = "") {
+      pat <- paste0('"', k, '"\\s*:\\s*"([^"]*)"')
+      if (grepl(pat, txt)) sub(paste0('^.*?', pat, '.*$'), "\\1", txt) else default
     }
-    raw_cfg$data_dir      <- get_field(c("data_dir", "data", "DATA_DIR"), "data")
-    raw_cfg$gis_dir       <- get_field(c("gis_dir", "gis", "GIS_DIR"), "gis")
-    raw_cfg$output_dir    <- get_field(c("output_dir", "out_dir", "output", "out", "OUTPUT_DIR"), "output")
-    raw_cfg$processed_dir <- get_field(c("processed_dir", "processed", "PROCESSED_DIR"), "")
-  } else {
-    raw_cfg$data_dir      <- "data"
-    raw_cfg$gis_dir       <- "gis"
-    raw_cfg$output_dir    <- "output"
-    raw_cfg$processed_dir <- ""
+    raw_cfg$data_dir      <- get_field("data_dir", "data")
+    raw_cfg$gis_dir       <- get_field("gis_dir", "gis")
+    raw_cfg$output_dir    <- get_field("output_dir", "output")
+    raw_cfg$processed_dir <- get_field("processed_dir", "")
   }
 
   resolve_p <- function(p, default) {
-    p <- if (is.null(p) || !nzchar(trimws(p))) default else trimws(p)
+    p <- if (is.null(p) || is.na(p) || !nzchar(trimws(p))) default else trimws(p)
     p <- path.expand(p)
     if (!grepl("^(/|[A-Za-z]:)", p)) {
       p <- rel_path(base_dir, p)
@@ -191,32 +170,34 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
   gis_dir  <- cfg_dirs$gis_dir
   data_dir <- cfg_dirs$data_dir
   out_dir  <- cfg_dirs$output_dir
-  proc_dir <- cfg_dirs$processed_dir
-  has_custom_out <- FALSE
+  has_custom_out  <- FALSE
+  has_custom_data <- FALSE
+  proc_cli        <- ""
 
   env_gis  <- Sys.getenv("S3N_GIS_DIR", unset = "")
   env_data <- Sys.getenv("S3N_DATA_DIR", unset = "")
   env_out  <- Sys.getenv("S3N_OUTPUT_DIR", unset = "")
+  env_proc <- Sys.getenv("S3N_PROCESSED_DIR", unset = "")
   if (nzchar(env_gis))  gis_dir  <- env_gis
-  if (nzchar(env_data)) data_dir <- env_data
-  if (nzchar(env_out)) {
-    out_dir <- env_out
-    has_custom_out <- TRUE
-  }
+  if (nzchar(env_data)) { data_dir <- env_data; has_custom_data <- TRUE }
+  if (nzchar(env_out))  { out_dir <- env_out; has_custom_out <- TRUE }
 
   for (a in args) {
-    if (grepl("^--(gis-dir|gis)=", a)) {
-      gis_dir <- sub("^--(gis-dir|gis)=", "", a)
-    } else if (grepl("^--(data-dir|data)=", a)) {
-      data_dir <- sub("^--(data-dir|data)=", "", a)
-    } else if (grepl("^--(out-dir|output-dir|out|output)=", a)) {
-      out_dir <- sub("^--(out-dir|output-dir|out|output)=", "", a)
+    if (grepl("^--gis-dir=", a)) {
+      gis_dir <- sub("^--gis-dir=", "", a)
+    } else if (grepl("^--data-dir=", a)) {
+      data_dir <- sub("^--data-dir=", "", a)
+      has_custom_data <- TRUE
+    } else if (grepl("^--processed-dir=", a)) {
+      proc_cli <- sub("^--processed-dir=", "", a)
+    } else if (grepl("^--(out-dir|output-dir)=", a)) {
+      out_dir <- sub("^--(out-dir|output-dir)=", "", a)
       has_custom_out <- TRUE
     }
   }
 
   resolve_arg <- function(p, default) {
-    p <- if (is.null(p) || !nzchar(trimws(p))) default else trimws(p)
+    p <- if (is.null(p) || is.na(p) || !nzchar(trimws(p))) default else trimws(p)
     p <- path.expand(p)
     if (!grepl("^(/|[A-Za-z]:)", p)) {
       p <- rel_path(base_dir, p)
@@ -231,22 +212,15 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   }
 
-  cand_wq <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
-  wq_dir <- if (dir.exists(cand_wq)) {
-    cand_wq
-  } else if (file.exists(rel_path(data_dir, "RSN Water Quality Samples.csv"))) {
-    data_dir
+  wq_dir <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
+  proc_root <- if (nzchar(proc_cli)) {
+    resolve_arg(proc_cli, rel_path(data_dir, "processed"))
+  } else if (nzchar(env_proc)) {
+    resolve_arg(env_proc, rel_path(data_dir, "processed"))
+  } else if (has_custom_data && data_dir != cfg_dirs$data_dir) {
+    rel_path(data_dir, "processed")
   } else {
-    cand_wq
-  }
-
-  cand_proc <- if (nzchar(proc_dir)) proc_dir else rel_path(data_dir, "processed")
-  proc_root <- if (dir.exists(cand_proc)) {
-    cand_proc
-  } else if (file.exists(rel_path(data_dir, "england_rsn_reaches.csv"))) {
-    data_dir
-  } else {
-    cand_proc
+    cfg_dirs$processed_dir
   }
 
   list(
@@ -254,6 +228,7 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
     data_dir       = data_dir,
     wq_dir         = wq_dir,
     proc_root      = proc_root,
+    processed_dir  = proc_root,
     out_dir        = out_dir,
     has_custom_out = has_custom_out,
     config_file    = cfg_dirs$config_file
@@ -495,7 +470,7 @@ load_source_registry <- function(base_dir = NULL, force_reload = FALSE) {
 }
 
 resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
-  if (is.null(source) || !nzchar(trimws(as.character(source)))) return("rsn")
+  if (is.null(source) || is.na(source) || !nzchar(trimws(as.character(source)))) return("rsn")
   if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
   raw_orig <- trimws(as.character(source))
   if (!grepl("[,+]", raw_orig) && grepl("^[^()]*\\(([A-Za-z0-9_]+)\\)[^()]*$", raw_orig)) {
@@ -510,57 +485,42 @@ resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
     }
   }
   raw_s <- tolower(raw_orig)
-  raw_s <- gsub("\\btobitz\\b", "tobit", raw_s)
-  raw_s <- gsub("_tobitz\\b", "_tobit", raw_s)
-
   tokens <- trimws(unlist(strsplit(raw_s, "[,+]+")))
   tokens <- tokens[nzchar(tokens)]
+  reg <- load_source_registry(base_dir)
+
+  norm_one <- function(tk) {
+    tk_under <- gsub("-", "_", tk)
+    cand <- if (tk %in% names(reg$sources) || tk %in% names(reg$composites) || dir.exists(file.path(base_dir, "data", "custom", tk))) {
+      tk
+    } else if (tk_under %in% names(reg$sources) || tk_under %in% names(reg$composites) || dir.exists(file.path(base_dir, "data", "custom", tk_under))) {
+      tk_under
+    } else {
+      gsub("[^a-z0-9_]+", "_", tk_under)
+    }
+    if (cand %in% names(reg$sources) && !is.null(reg$sources[[cand]]$alias_target) && nzchar(reg$sources[[cand]]$alias_target)) {
+      reg$sources[[cand]]$alias_target
+    } else if (paste0(cand, "_tobit") %in% names(reg$sources)) {
+      paste0(cand, "_tobit")
+    } else {
+      cand
+    }
+  }
+
   if (length(tokens) > 1) {
-    if (setequal(tokens, c("rsn", "ssn"))) return("rss")
-    reg <- load_source_registry(base_dir)
-    norm_tokens <- vapply(tokens, function(tk) {
-      if (tk %in% c("ssn", "small_stream", "small_streams", "small-stream", "small-streams")) return("ssn")
-      if (tk %in% c("rsn", "river_surveillance", "river-surveillance")) return("rsn")
-      if (tk == "tobitz") return("tobit")
-      if (endsWith(tk, "_tobitz") || endsWith(tk, "-tobitz")) tk <- sub("z$", "", tk)
-      tk_under <- gsub("-", "_", tk)
-      cand <- if (tk %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk))) tk
-              else if (tk_under %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk_under))) tk_under
-              else tk
-      if (cand %in% names(reg$sources) && !is.null(reg$sources[[cand]]$alias_target) && nzchar(reg$sources[[cand]]$alias_target)) {
-        reg$sources[[cand]]$alias_target
-      } else if (paste0(cand, "_tobit") %in% names(reg$sources)) {
-        paste0(cand, "_tobit")
-      } else {
-        cand
-      }
-    }, character(1))
+    norm_tokens <- unique(unlist(lapply(tokens, function(tk) {
+      cnd <- norm_one(tk)
+      if (cnd == "rss") c("rsn", "ssn")
+      else if (cnd %in% names(reg$composites)) reg$composites[[cnd]]$sources
+      else cnd
+    })))
     norm_tokens <- sort(unique(norm_tokens))
+    if (setequal(norm_tokens, c("rsn", "ssn"))) return("rss")
     return(paste(norm_tokens, collapse = "+"))
   }
 
-  s <- tokens[1]
-  if (s %in% c("ssn", "small_stream", "small_streams", "small-streams", "small-stream")) {
-    "ssn"
-  } else if (s %in% c("rss", "combined", "both", "all", "rsn_ssn", "ssn_rsn", "rsn+ssn")) {
-    "rss"
-  } else {
-    reg <- load_source_registry(base_dir)
-    if (s %in% names(reg$composites)) {
-      s
-    } else if (s %in% names(reg$sources)) {
-      s_item <- reg$sources[[s]]
-      if (!is.null(s_item$alias_target) && nzchar(s_item$alias_target)) {
-        s_item$alias_target
-      } else {
-        s
-      }
-    } else if (paste0(s, "_tobit") %in% names(reg$sources)) {
-      paste0(s, "_tobit")
-    } else {
-      gsub("[^a-z0-9_]+", "_", s)
-    }
-  }
+  s <- norm_one(tokens[1])
+  if (s %in% names(reg$composites)) s else s
 }
 
 format_source_abbr <- function(source = "rsn", base_dir = NULL) {
@@ -633,11 +593,11 @@ format_source_folder_tag <- function(source = "rsn") {
 }
 
 parse_source_arg <- function(args) {
-  src_arg <- grep("^--(source|src|data-source)=", args, value = TRUE)
+  src_arg <- grep("^--source=", args, value = TRUE)
   if (length(src_arg) > 0) {
-    return(resolve_source_tag(sub("^--(source|src|data-source)=", "", src_arg[1])))
+    return(resolve_source_tag(sub("^--source=", "", src_arg[1])))
   }
-  src_idx <- which(args %in% c("--source", "--src", "--data-source"))
+  src_idx <- which(args == "--source")
   if (length(src_idx) > 0 && src_idx[1] < length(args)) {
     return(resolve_source_tag(args[src_idx[1] + 1]))
   }
@@ -656,15 +616,8 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
   src_tag  <- resolve_source_tag(source, base_dir = base_dir)
   reg      <- load_source_registry(base_dir = base_dir)
 
-  rsn_cand <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
-  rsn_dir  <- if (dir.exists(rsn_cand)) rsn_cand else if (file.exists(rel_path(data_dir, "RSN Water Quality Samples.csv"))) data_dir else rsn_cand
-  ssn_cand <- rel_path(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
-  ssn_dir  <- if (dir.exists(ssn_cand)) ssn_cand else if (file.exists(rel_path(data_dir, "SSN Water Quality Samples.csv"))) data_dir else ssn_cand
-
-  raw_tokens <- trimws(unlist(strsplit(as.character(source), "[,+]+")))
-  raw_tokens <- raw_tokens[nzchar(raw_tokens)]
-  raw_tokens <- gsub("\\btobitz\\b", "tobit", raw_tokens)
-  raw_tokens <- gsub("_tobitz\\b", "_tobit", raw_tokens)
+  rsn_dir  <- rel_path(data_dir, "NCEA_River_Surveillance_Network_ARD_Open")
+  ssn_dir  <- rel_path(data_dir, "NCEA_Small_Streams_Network_ARD_Open")
 
   source_tokens <- if (src_tag == "rss") {
     c("rsn", "ssn")
@@ -672,47 +625,6 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
     reg$composites[[src_tag]]$sources
   } else if (grepl("[+]", src_tag)) {
     unlist(strsplit(src_tag, "[+]"))
-  } else if (length(raw_tokens) > 1) {
-    vapply(raw_tokens, function(tk) {
-      tk_under <- gsub("-", "_", tk)
-      cand <- if (tk %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk))) tk
-              else if (tk_under %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk_under))) tk_under
-              else tk
-      if (cand %in% names(reg$sources) && !is.null(reg$sources[[cand]]$alias_target) && nzchar(reg$sources[[cand]]$alias_target)) {
-        reg$sources[[cand]]$alias_target
-      } else if (paste0(cand, "_tobit") %in% names(reg$sources)) {
-        paste0(cand, "_tobit")
-      } else {
-        cand
-      }
-    }, character(1))
-  } else if (!src_tag %in% names(reg$sources) && grepl("_", src_tag)) {
-    parts <- strsplit(src_tag, "_")[[1]]
-    if (all(parts %in% names(reg$sources))) {
-      parts
-    } else {
-      reg_names <- names(reg$sources)
-      reg_names <- reg_names[order(-nchar(reg_names))]
-      matched <- character(0)
-      rem <- src_tag
-      while (nzchar(rem)) {
-        found <- FALSE
-        for (sn in reg_names) {
-          if (grepl(paste0("^", sn, "(_|$)"), rem)) {
-            target_sn <- if (!is.null(reg$sources[[sn]]$alias_target) && nzchar(reg$sources[[sn]]$alias_target)) reg$sources[[sn]]$alias_target else sn
-            matched <- c(matched, target_sn)
-            rem <- sub(paste0("^", sn, "(_|$)"), "", rem)
-            found <- TRUE
-            break
-          }
-        }
-        if (!found) {
-          matched <- c(matched, rem)
-          break
-        }
-      }
-      if (length(matched) > 1) matched else src_tag
-    }
   } else {
     src_tag
   }
@@ -753,6 +665,25 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
   )
 }
 
+apply_range_mode_to_source <- function(source_tag, range_mode = "auto", base_dir = NULL) {
+  rm <- tolower(trimws(as.character(range_mode)))
+  if (!nzchar(rm) || rm %in% c("auto", "none")) {
+    return(list(source_tag = source_tag, range_mode = rm))
+  }
+  valid_modes <- c("tobit", "geometric", "midpoint", "lower", "upper")
+  if (!(rm %in% valid_modes)) return(list(source_tag = source_tag, range_mode = rm))
+  if (grepl(paste0("_", rm, "$"), source_tag)) return(list(source_tag = source_tag, range_mode = rm))
+  if (grepl("[+]", source_tag) && any(endsWith(strsplit(source_tag, "[+]")[[1]], paste0("_", rm)))) {
+    return(list(source_tag = source_tag, range_mode = rm))
+  }
+  if (source_tag == "rsn" || source_tag == "ssn" || source_tag == "rss") {
+    return(list(source_tag = source_tag, range_mode = rm))
+  }
+  base_cand <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", source_tag)
+  eff_tag <- resolve_source_tag(paste0(base_cand, "_", rm), base_dir = base_dir)
+  list(source_tag = eff_tag, range_mode = rm)
+}
+
 print_available_sources <- function(base_dir = NULL) {
   if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
   reg <- load_source_registry(base_dir = base_dir)
@@ -785,49 +716,27 @@ print_available_sources <- function(base_dir = NULL) {
 # WATER NETWORK METADATA & DIRECTORY RESOLUTION HELPERS
 # ==============================================================================
 
-NETWORK_ALIAS_MAP <- c(
-  orn             = "orn",
-  orn_v2          = "orn",
-  os_orn          = "orn",
-  euhydro_thames  = "euhydro_thames",
-  thames          = "euhydro_thames",
-  eu_hydro_thames = "euhydro_thames",
-  euhydro_tweed   = "euhydro_tweed",
-  tweed           = "euhydro_tweed",
-  eu_hydro_tweed  = "euhydro_tweed",
-  euhydro         = "euhydro",
-  eu_hydro        = "euhydro"
-)
-
-resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir = NULL, gis_dir = NULL, source = "rsn") {
-  src_tag   <- resolve_source_tag(source)
+resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir = NULL, gis_dir = NULL, source = "rsn", processed_dir = NULL) {
+  src_tag   <- resolve_source_tag(source, base_dir = base_dir)
   src_suff  <- paste0("_", src_tag)
   cfg_dirs  <- load_directory_config(base_dir = base_dir)
   d_dir     <- if (!is.null(data_dir) && nzchar(data_dir)) data_dir else cfg_dirs$data_dir
   g_dir     <- if (!is.null(gis_dir) && nzchar(gis_dir)) gis_dir else cfg_dirs$gis_dir
-  cand_p    <- if (nzchar(cfg_dirs$processed_dir) && (is.null(data_dir) || data_dir == cfg_dirs$data_dir)) {
+  proc_root <- if (!is.null(processed_dir) && nzchar(processed_dir)) {
+    processed_dir
+  } else if (nzchar(cfg_dirs$processed_dir) && (is.null(data_dir) || data_dir == cfg_dirs$data_dir)) {
     cfg_dirs$processed_dir
   } else {
     rel_path(d_dir, "processed")
   }
-  proc_root <- if (dir.exists(cand_p)) cand_p else if (file.exists(rel_path(d_dir, "england_rsn_reaches.csv"))) d_dir else cand_p
 
   if (is.null(network_arg) || !nzchar(trimws(network_arg))) {
-    meta_p <- rel_path(proc_root, "network_metadata.json")
-    default_abbr <- "orn"
-    if (file.exists(meta_p)) {
-      lines <- readLines(meta_p, warn = FALSE)
-      default_abbr <- parse_json_string_field(lines, "abbr", "orn")
-    }
-    abbr <- default_abbr
-    net_cli_arg <- abbr
+    abbr <- "orn"
+    net_cli_arg <- "orn"
   } else {
     raw_net_orig <- trimws(network_arg)
-    raw_net <- tolower(raw_net_orig)
-    if (raw_net %in% names(NETWORK_ALIAS_MAP)) {
-      abbr <- unname(NETWORK_ALIAS_MAP[raw_net])
-      net_cli_arg <- abbr
-    } else if (grepl("\\.(gpkg|parquet|geoparquet|pq|json)$", raw_net)) {
+    raw_net <- gsub("-", "_", tolower(raw_net_orig))
+    if (grepl("\\.(gpkg|parquet|geoparquet|pq|json)$", raw_net)) {
       stem <- sub("\\.(gpkg|parquet|geoparquet|pq|json)$", "", basename(raw_net))
       stem <- sub("\\.geo$", "", stem)
       abbr <- tolower(stem)
@@ -839,24 +748,6 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
   }
 
   sub_d <- rel_path(proc_root, paste0(abbr, src_suff))
-  if (src_tag == "rsn" && (!dir.exists(sub_d) || !file.exists(rel_path(sub_d, "england_rsn_reaches.csv")))) {
-    cand_bare <- rel_path(proc_root, abbr)
-    if (dir.exists(cand_bare) && file.exists(rel_path(cand_bare, "england_rsn_reaches.csv"))) {
-      sub_d <- cand_bare
-    } else if (file.exists(rel_path(proc_root, "england_rsn_reaches.csv"))) {
-      return(proc_root)
-    }
-  }
-
-  if (!dir.exists(sub_d) || !file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
-    for (rm in c("tobit", "geometric", "midpoint", "lower", "upper")) {
-      cand_d <- paste0(sub_d, "_", rm)
-      if (dir.exists(cand_d) && file.exists(rel_path(cand_d, "england_rsn_reaches.csv"))) {
-        sub_d <- cand_d
-        break
-      }
-    }
-  }
 
   if (!file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
     dirs_info <- resolve_data_source_dirs(d_dir, source = source, base_dir = base_dir)
@@ -866,7 +757,7 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
       src_tag
     }
     cat(sprintf("Preprocessing water network '%s' (source='%s') via scripts/01_preprocess_orn.py...\n", net_cli_arg, py_src))
-    extra_py_args <- ""
+    extra_py_args <- paste0(" --out-dir=", shQuote(sub_d))
     if (!is.null(g_dir) && nzchar(g_dir)) {
       extra_py_args <- paste0(extra_py_args, " --gis-dir=", shQuote(g_dir))
     }
@@ -882,12 +773,6 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
     if (status != 0L) {
       stop(sprintf("Failed to preprocess water network '%s' with source '%s'. Run `python3 scripts/01_preprocess_orn.py --list-networks`.", net_cli_arg, src_tag))
     }
-  }
-  if (file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
-    return(sub_d)
-  }
-  if (src_tag == "rsn" && file.exists(rel_path(proc_root, "england_rsn_reaches.csv"))) {
-    return(proc_root)
   }
   sub_d
 }

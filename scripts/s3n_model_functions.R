@@ -50,32 +50,24 @@ fit_s3n_domain <- function(df,
                            n_omp = 1L,
                            use_meas_error = FALSE,
                            net_meta = NULL,
-                           obs_col = "obs_val",
-                           legacy_nitrate_mode = FALSE,
-                           out_root = NULL) {
-  obs_idx <- which(df$has_obs == 1L)
+                           obs_col = "obs_val") {
+  obs_idx <- which(df$has_obs == 1L & !is.na(df[[obs_col]]))
   n_obs   <- length(obs_idx)
   if (n_obs < 15L) {
     cat(sprintf("  Skipping separate fit for %s (only %d observed reaches).\n", domain_label, n_obs))
     return(NULL)
   }
 
-  if (isTRUE(legacy_nitrate_mode)) {
-    cat(sprintf("\n----------------------------------------------------------------------\n"))
-    cat(sprintf("  Domain: %s (%d reaches, %d observed)\n", domain_label, nrow(df), n_obs))
-    cat(sprintf("----------------------------------------------------------------------\n"))
-  } else {
-    cat(sprintf("\n--- Fitting %s (%d reaches, %d observed) ---\n", domain_label, nrow(df), n_obs))
-  }
+  cat(sprintf("\n--- Fitting %s (%d reaches, %d observed) ---\n", domain_label, nrow(df), n_obs))
 
   obs_idx  <- obs_idx[order(df$CatchID[obs_idx], df$obs_up_dist_km[obs_idx])]
-  pred_idx <- which(df$has_obs == 0L)
+  pred_idx <- setdiff(seq_len(nrow(df)), obs_idx)
   df_ord   <- df[c(obs_idx, pred_idx), ]
   q_tot    <- nrow(df_ord)
   m_use    <- min(as.integer(m_neighbors), max(2L, n_obs - 2L))
 
   raw_obs_vals <- df_ord[[obs_col]][1:n_obs]
-  y_vec_obs <- if ("obs_y" %in% names(df_ord) && !isTRUE(legacy_nitrate_mode)) {
+  y_vec_obs <- if ("obs_y" %in% names(df_ord) && all(is.finite(df_ord$obs_y[1:n_obs]))) {
     as.numeric(df_ord$obs_y[1:n_obs])
   } else {
     as.numeric(trans_obj$fwd(raw_obs_vals))
@@ -186,87 +178,50 @@ fit_s3n_domain <- function(df,
   pred_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
   se_comb   <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
 
-  if (isTRUE(legacy_nitrate_mode)) {
-    pred_df <- data.frame(
-      RivID              = df_ord$RivID,
-      CatchID            = df_ord$CatchID,
-      parent_dn          = df_ord$parent_dn,
-      Shreve             = df_ord$Shreve,
-      Strahler           = df_ord$Strahler,
-      Dist2Mth_km        = df_ord$Dist2Mth_km,
-      US_Accum_km        = df_ord$US_Accum_km,
-      start_X            = df_ord$start_X,
-      start_Y            = df_ord$start_Y,
-      mid_X              = df_ord$mid_X,
-      mid_Y              = df_ord$mid_Y,
-      end_X              = df_ord$end_X,
-      end_Y              = df_ord$end_Y,
-      Elevation          = df_ord$Elevation,
-      Is_Aquifer         = df_ord$Is_Aquifer,
-      has_obs            = df_ord$has_obs,
-      obs_nitrate_mgL    = df_ord[[obs_col]],
-      obs_value          = ifelse(df_ord$has_obs == 1, df_ord[[obs_col]], NA_real_),
-      obs_model_sc       = c(round(y_vec_obs, 5), rep(NA_real_, q_tot - n_obs)),
-      pred_tu_sc         = round(pr_tu$prediction, 5),
-      se_tu_sc           = round(se_tu, 5),
-      pred_td_sc         = round(pr_td$prediction, 5),
-      se_td_sc           = round(se_td, 5),
-      pred_model_sc      = round(pred_comb, 5),
-      se_model_sc        = round(se_comb, 5),
-      pred_tu            = round(trans_obj$inv(pr_tu$prediction), 4),
-      pred_td            = round(trans_obj$inv(pr_td$prediction), 4),
-      pred_combined      = round(trans_obj$inv(pred_comb), 4),
-      obs_log_nitrate    = c(round(y_vec_obs, 5), rep(NA_real_, q_tot - n_obs)),
-      pred_log_tu        = round(pr_tu$prediction, 5),
-      se_log_tu          = round(se_tu, 5),
-      pred_mgL_tu        = round(trans_obj$inv(pr_tu$prediction), 4),
-      pred_log_td        = round(pr_td$prediction, 5),
-      se_log_td          = round(se_td, 5),
-      pred_mgL_td        = round(trans_obj$inv(pr_td$prediction), 4),
-      pred_log_combined  = round(pred_comb, 5),
-      se_log_combined    = round(se_comb, 5),
-      pred_mgL_combined  = round(trans_obj$inv(pred_comb), 4)
-    )
-  } else {
-    pred_df <- data.frame(
-      RivID         = df_ord$RivID,
-      CatchID       = df_ord$CatchID,
-      Shreve        = df_ord$Shreve,
-      Strahler      = df_ord$Strahler,
-      start_X       = df_ord$start_X,
-      start_Y       = df_ord$start_Y,
-      mid_X         = df_ord$mid_X,
-      mid_Y         = df_ord$mid_Y,
-      end_X         = df_ord$end_X,
-      end_Y         = df_ord$end_Y,
-      Elevation     = df_ord$Elevation,
-      Is_Aquifer    = df_ord$Is_Aquifer,
-      has_obs       = df_ord$has_obs,
-      obs_value     = df_ord[[obs_col]],
-      obs_model_sc  = df_ord$obs_y,
-      pred_tu_sc    = pr_tu$prediction,
-      pred_td_sc    = pr_td$prediction,
-      pred_model_sc = pred_comb,
-      se_model_sc   = se_comb,
-      pred_tu       = trans_obj$inv(pr_tu$prediction),
-      pred_td       = trans_obj$inv(pr_td$prediction),
-      pred_combined = trans_obj$inv(pred_comb)
-    )
-  }
+  obs_sc_full <- rep(NA_real_, q_tot)
+  obs_sc_full[1:n_obs] <- round(y_vec_obs, 5)
+  obs_val_full <- rep(NA_real_, q_tot)
+  obs_val_full[1:n_obs] <- raw_obs_vals
+
+  pred_df <- data.frame(
+    RivID         = df_ord$RivID,
+    CatchID       = df_ord$CatchID,
+    parent_dn     = df_ord$parent_dn,
+    Shreve        = df_ord$Shreve,
+    Strahler      = df_ord$Strahler,
+    Dist2Mth_km   = df_ord$Dist2Mth_km,
+    US_Accum_km   = df_ord$US_Accum_km,
+    start_X       = df_ord$start_X,
+    start_Y       = df_ord$start_Y,
+    mid_X         = df_ord$mid_X,
+    mid_Y         = df_ord$mid_Y,
+    end_X         = df_ord$end_X,
+    end_Y         = df_ord$end_Y,
+    Elevation     = df_ord$Elevation,
+    Is_Aquifer    = df_ord$Is_Aquifer,
+    has_obs       = df_ord$has_obs,
+    obs_value     = obs_val_full,
+    obs_model_sc  = obs_sc_full,
+    pred_tu_sc    = round(pr_tu$prediction, 5),
+    se_tu_sc      = round(se_tu, 5),
+    pred_td_sc    = round(pr_td$prediction, 5),
+    se_td_sc      = round(se_td, 5),
+    pred_model_sc = round(pred_comb, 5),
+    se_model_sc   = round(se_comb, 5),
+    pred_tu       = round(trans_obj$inv(pr_tu$prediction), 4),
+    pred_td       = round(trans_obj$inv(pr_td$prediction), 4),
+    pred_combined = round(trans_obj$inv(pred_comb), 4)
+  )
   if ("meas_uncertainty" %in% names(df_ord)) pred_df$meas_uncertainty <- df_ord$meas_uncertainty
   if ("meas_method" %in% names(df_ord))      pred_df$meas_method      <- df_ord$meas_method
-  if (isTRUE(legacy_nitrate_mode) && !is.null(out_root) && nzchar(out_root)) {
-    pred_df <- add_normalised_columns(pred_df)
-    write.csv(pred_df, file.path(out_root, sprintf("predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
-  }
 
   # 5-Fold Cross-Validation (using topology vectors directly without copying df_ord)
   set.seed(2026)
   folds   <- sample(rep(1:5, length.out = n_obs))
-  cv_ols  <- numeric(n_obs)
-  cv_tu   <- numeric(n_obs)
-  cv_td   <- numeric(n_obs)
-  cv_comb <- numeric(n_obs)
+  cv_ols  <- rep(NA_real_, n_obs)
+  cv_tu   <- rep(NA_real_, n_obs)
+  cv_td   <- rep(NA_real_, n_obs)
+  cv_comb <- rep(NA_real_, n_obs)
   y_vec   <- y_vec_obs
 
   riv_vec   <- df_ord$RivID
@@ -361,12 +316,14 @@ fit_s3n_domain <- function(df,
     cv_comb[te] <- (res_tu_cv$inf * cv_tu[te] + res_td_cv$inf * cv_td[te]) / (res_tu_cv$inf + res_td_cv$inf)
   }
 
-  rmse <- function(a, b) sqrt(mean((a - b)^2))
-  mae  <- function(a, b) mean(abs(a - b))
+  rmse <- function(a, b) { ok <- is.finite(a) & is.finite(b); if (!any(ok)) NA_real_ else sqrt(mean((a[ok] - b[ok])^2)) }
+  mae  <- function(a, b) { ok <- is.finite(a) & is.finite(b); if (!any(ok)) NA_real_ else mean(abs(a[ok] - b[ok])) }
   r2   <- function(a, b) {
-    ss_tot <- sum((a - mean(a))^2)
+    ok <- is.finite(a) & is.finite(b)
+    if (sum(ok) < 2L) return(NA_real_)
+    ss_tot <- sum((a[ok] - mean(a[ok]))^2)
     if (!is.finite(ss_tot) || ss_tot < 1e-12) return(0.0)
-    1 - sum((a - b)^2) / ss_tot
+    1 - sum((a[ok] - b[ok])^2) / ss_tot
   }
 
   cv_summary <- data.frame(
@@ -374,20 +331,11 @@ fit_s3n_domain <- function(df,
     n_obs          = n_obs,
     n_reaches      = q_tot,
     Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
-    Spatial_Method = if (has_me) "Measurement Error Kriging" else "Standard S3N"
+    Spatial_Method = if (has_me) "Measurement Error Kriging" else "Standard S3N",
+    RMSE           = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
+    MAE            = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
+    R2             = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
   )
-  rmse_vals <- round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4)
-  mae_vals  <- round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4)
-  r2_vals   <- round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
-  if (isTRUE(legacy_nitrate_mode)) {
-    cv_summary$RMSE_log <- rmse_vals
-    cv_summary$MAE_log  <- mae_vals
-    cv_summary$R2_log   <- r2_vals
-  } else {
-    cv_summary$RMSE <- rmse_vals
-    cv_summary$MAE  <- mae_vals
-    cv_summary$R2   <- r2_vals
-  }
   print(cv_summary, row.names = FALSE)
 
   param_names <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
@@ -415,13 +363,13 @@ fit_s3n_domain <- function(df,
 
   cv_pts <- data.frame(
     RivID   = df_ord$RivID[1:n_obs],
-    CatchID = df_ord$CatchID[1:n_obs]
+    CatchID = df_ord$CatchID[1:n_obs],
+    obs_y   = y_vec,
+    cv_ols  = cv_ols,
+    cv_tu   = cv_tu,
+    cv_td   = cv_td,
+    cv_comb = cv_comb
   )
-  if (isTRUE(legacy_nitrate_mode)) cv_pts$obs_log <- y_vec else cv_pts$obs_y <- y_vec
-  cv_pts$cv_ols  <- cv_ols
-  cv_pts$cv_tu   <- cv_tu
-  cv_pts$cv_td   <- cv_td
-  cv_pts$cv_comb <- cv_comb
 
   list(
     pred_df    = pred_df,

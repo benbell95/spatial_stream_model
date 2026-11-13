@@ -50,7 +50,6 @@ Zero External Dependencies:
 
 import argparse
 import csv
-import datetime
 import json
 import math
 import os
@@ -65,12 +64,11 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from s3n_py_utils import (
-    load_directory_config as _shared_load_directory_config,
+    load_directory_config,
+    load_determinand_catalog,
     wgs84_to_bng,
     normalize_name,
     find_matching_column,
-    normal_cdf,
-    normal_pdf,
     parse_raw_measurement_token,
     IntervalTobitModel,
     compute_alternative_range_result,
@@ -79,24 +77,59 @@ from s3n_py_utils import (
 )
 
 
-def load_directory_config(base_dir=BASE_DIR):
-    """Loads directory configuration from configs/directories.json, paths.json, or config.json."""
-    cfg = _shared_load_directory_config(base_dir=base_dir, auto_create=False)
-    return {"data_dir": cfg["data_dir"], "output_dir": cfg["output_dir"], "config_file": cfg["config_file"]}
-
-
 # ==============================================================================
 # 1. Chemical Parameter Dictionary & Unit Matching
 # ==============================================================================
 
+_DET_STEM_TO_CODE = (
+    ("orthophosphate", "0180"),
+    ("phosphate", "0180"),
+    ("nitrate", "0117"),
+    ("nitrite", "0118"),
+    ("ammon", "0111"),
+    ("oxidised", "0116"),
+    ("organic_carbon", "0301"),
+    ("conductiv", "0077"),
+    ("alkalin", "0162"),
+    ("dissolved_oxygen", "9924"),
+    ("water_temp", "0076"),
+    ("temperature", "0076"),
+)
+_DET_CATALOG_CACHE = None
+
 
 def match_known_determinand(col_name):
-    """Matches a column name against known water quality parameters."""
+    """Matches a column name against known water quality parameters in configs/determinands.json."""
+    global _DET_CATALOG_CACHE
+    if _DET_CATALOG_CACHE is None:
+        _DET_CATALOG_CACHE = load_determinand_catalog(BASE_DIR)
+
     c_norm = normalize_name(col_name)
-    for key, info in KNOWN_DETERMINANDS.items():
-        if key in c_norm:
-            unit = extract_unit_from_string(col_name) or info["unit"]
-            return {"code": info["code"], "name": info["name"], "unit": unit}
+    matched_code = None
+    for stem, code in _DET_STEM_TO_CODE:
+        if stem in c_norm:
+            matched_code = code
+            break
+    if matched_code is None:
+        for code, info in _DET_CATALOG_CACHE.items():
+            short_norm = normalize_name(info.get("short", ""))
+            name_norm = normalize_name(info.get("name", ""))
+            if c_norm == code:
+                matched_code = code
+                break
+            if short_norm and len(short_norm) >= 4 and short_norm in c_norm:
+                matched_code = code
+                break
+            if name_norm and len(name_norm) >= 4 and name_norm in c_norm:
+                matched_code = code
+                break
+    if matched_code is None and re.search(r"(?:^|_)ph(?:$|_)", c_norm):
+        matched_code = "0061"
+
+    if matched_code and matched_code in _DET_CATALOG_CACHE:
+        info = _DET_CATALOG_CACHE[matched_code]
+        unit = extract_unit_from_string(col_name) or info.get("unit", "mg/L")
+        return {"code": matched_code, "name": info.get("name", matched_code), "unit": unit}
 
     clean_name = re.sub(r"\s*[\(\[].*?[\)\]]", "", str(col_name)).strip()
     code = re.sub(r"[^a-zA-Z0-9_]", "_", clean_name.lower())[:16]
@@ -130,7 +163,6 @@ def format_custom_dataset(
     default_det_name="Nitrate as N",
     default_unit="mg/L",
     # Range conversion options
-    ranges_to_midpoint=True,
     range_mode="tobit",  # "tobit" is the default gold-standard approach!
     # Coordinate transformation
     convert_to_bng=True,
@@ -292,7 +324,7 @@ def format_custom_dataset(
         except ValueError:
             print(f"Warning: Invalid bbox '{bbox}'. Expected 'min_x,min_y,max_x,max_y'. Ignoring.")
 
-    effective_mode = range_mode if ranges_to_midpoint else "skip"
+    effective_mode = range_mode
 
     if verbose:
         print("=" * 76)
@@ -326,6 +358,7 @@ def format_custom_dataset(
     total_rows = 0
     filtered_rows = 0
     auto_site_counter = 0
+    saw_wgs84 = False
     prefix = site_id_prefix or (source_name.upper()[:4] + "_")
 
     with open(csv_file, "r", encoding="utf-8-sig") as f:
@@ -363,6 +396,8 @@ def format_custom_dataset(
                     continue
 
             is_wgs84 = (abs(px) <= 180.0 and abs(py) <= 90.0) or (input_crs == 4326)
+            if is_wgs84:
+                saw_wgs84 = True
             if is_wgs84 and convert_to_bng:
                 east, north = wgs84_to_bng(py, px)
             else:
@@ -448,15 +483,19 @@ def format_custom_dataset(
 
                 # Explicit sign override from dataset column if available
                 if mapped_sign and row.get(mapped_sign):
-                    ex_sign = row.get(mapped_sign).strip()
+                    raw_sign = str(row.get(mapped_sign)).strip().lower()
+                    ex_sign = "<" if raw_sign in ("<", "yes", "true", "1", "y", "lt") else (">" if raw_sign in (">", "gt") else raw_sign)
                     if ex_sign in ("<", ">"):
                         token["sign"] = ex_sign
+                        bound_val = token.get("val") if token.get("val") is not None else (token.get("b") if ex_sign == "<" else token.get("a"))
                         if ex_sign == "<":
                             token["type"] = "left"
-                            token["b"] = token.get("val") or token.get("b")
+                            token["a"] = 0.0
+                            token["b"] = bound_val
                         else:
                             token["type"] = "right"
-                            token["a"] = token.get("val") or token.get("a")
+                            token["a"] = bound_val
+                            token["b"] = None
 
                 token_key = (token["type"], token.get("a"), token.get("b"))
                 det_token_counts[d_code][token_key] += 1
@@ -520,12 +559,12 @@ def format_custom_dataset(
             "sample_datetime": rec["sample_datetime"],
             "det_code": d_code,
             "det_name": d_info["name"],
-            "meas_result": f"{meas_res:.5g}" if isinstance(meas_res, float) else str(meas_res),
+            "meas_result": f"{meas_res:.5g}" if isinstance(meas_res, float) else ("" if meas_res is None else str(meas_res)),
             "meas_sign": meas_sign,
             "unit_short_desc": d_info["unit"],
-            "meas_lower": f"{meas_low:.5g}" if isinstance(meas_low, float) else str(meas_low),
-            "meas_upper": f"{meas_upp:.5g}" if isinstance(meas_upp, float) else str(meas_upp),
-            "meas_uncertainty": f"{meas_unc:.4f}" if isinstance(meas_unc, float) else str(meas_unc),
+            "meas_lower": f"{meas_low:.5g}" if isinstance(meas_low, float) else ("" if meas_low is None else str(meas_low)),
+            "meas_upper": f"{meas_upp:.5g}" if isinstance(meas_upp, float) else ("" if meas_upp is None else str(meas_upp)),
+            "meas_uncertainty": f"{meas_unc:.4f}" if isinstance(meas_unc, float) else ("" if meas_unc is None else str(meas_unc)),
             "meas_method": meas_meth,
         })
 
@@ -583,7 +622,7 @@ def format_custom_dataset(
             "id_col": "site_id",
             "easting_col": "easting",
             "northing_col": "northing",
-            "crs_epsg": 27700 if convert_to_bng else (4326 if is_wgs84 else 27700),
+            "crs_epsg": 27700 if (saw_wgs84 and convert_to_bng) else (4326 if saw_wgs84 else (input_crs or 27700)),
             "datasets": {
                 "wq": {
                     "file": "samples.csv",
@@ -594,45 +633,14 @@ def format_custom_dataset(
                     "val_col": "meas_result",
                     "cens_col": "meas_sign",
                     "cens_flag": "<",
-                    "unit_col": "unit_short_desc"
+                    "unit_col": "unit_short_desc",
+                    "unc_col": "meas_uncertainty",
+                    "meth_col": "meas_method"
                 }
             }
         }
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg_obj, f, indent=2)
-
-        # Write alias config if tagged_source_name differs from base source_name
-        if tagged_source_name != source_name:
-            base_cfg_path = os.path.join(cfg_dir, f"{source_name}.json")
-            base_cfg_obj = {
-                "name": source_name,
-                "abbr": source_name.upper()[:6],
-                "label": raw_source_label,
-                "range_mode": effective_mode,
-                "alias_target": tagged_source_name,
-                "description": f"Custom monitoring dataset {source_name} (defaulting to {tagged_source_name})",
-                "data_dir": os.path.relpath(output_dir, BASE_DIR),
-                "sites_file": "sites.csv",
-                "id_col": "site_id",
-                "easting_col": "easting",
-                "northing_col": "northing",
-                "crs_epsg": 27700 if convert_to_bng else (4326 if is_wgs84 else 27700),
-                "datasets": {
-                    "wq": {
-                        "file": "samples.csv",
-                        "id_col": "site_id",
-                        "datetime_col": "sample_datetime",
-                        "det_col": "det_code",
-                        "det_desc_col": "det_name",
-                        "val_col": "meas_result",
-                        "cens_col": "meas_sign",
-                        "cens_flag": "<",
-                        "unit_col": "unit_short_desc"
-                    }
-                }
-            }
-            with open(base_cfg_path, "w", encoding="utf-8") as f:
-                json.dump(base_cfg_obj, f, indent=2)
 
     # 9. Print Execution Summary
     if verbose:
@@ -729,20 +737,20 @@ Examples:
     parser.add_argument("--input", "-i", dest="input_flag", help="Alternative flag for input CSV file or folder")
     parser.add_argument("--source-name", "-s", default=None, help="Identifier name for this source (e.g. waterblitz, riverfly)")
     parser.add_argument("--source-label", default=None, help="Human-readable label for this source")
-    parser.add_argument("--out-dir", "--out", "-o", default=None, help="Output directory (defaults to data/custom/<source-name>/)")
+    parser.add_argument("--out-dir", "-o", default=None, help="Output directory (defaults to data/custom/<source-name>/)")
 
     # Column Mapping Overrides
-    parser.add_argument("--id-col", "--site-id-col", default=None, help="Column name for station/site identifier")
-    parser.add_argument("--name-col", "--site-name-col", default=None, help="Column name for human-readable site name")
-    parser.add_argument("--x-col", "--easting-col", "--lon-col", default=None, help="Column name for Easting (m) or Longitude (deg)")
-    parser.add_argument("--y-col", "--northing-col", "--lat-col", default=None, help="Column name for Northing (m) or Latitude (deg)")
-    parser.add_argument("--date-col", "--datetime-col", default=None, help="Column name for sample date or datetime")
+    parser.add_argument("--id-col", default=None, help="Column name for station/site identifier")
+    parser.add_argument("--name-col", default=None, help="Column name for human-readable site name")
+    parser.add_argument("--x-col", "--lon-col", default=None, help="Column name for Easting (m) or Longitude (deg)")
+    parser.add_argument("--y-col", "--lat-col", default=None, help="Column name for Northing (m) or Latitude (deg)")
+    parser.add_argument("--date-col", default=None, help="Column name for sample date or datetime")
     parser.add_argument("--time-col", default=None, help="Column name for sample time (if separate from date)")
-    parser.add_argument("--val-col", "--value-col", "--result-col", default=None, help="Measurement column(s) (comma-separated for wide format)")
-    parser.add_argument("--det-col", "--det-code-col", default=None, help="Column name for determinand code (if long format)")
+    parser.add_argument("--val-col", default=None, help="Measurement column(s) (comma-separated for wide format)")
+    parser.add_argument("--det-col", default=None, help="Column name for determinand code (if long format)")
     parser.add_argument("--det-name-col", default=None, help="Column name for determinand name/description")
     parser.add_argument("--unit-col", default=None, help="Column name for measurement units")
-    parser.add_argument("--sign-col", "--cens-col", default=None, help="Column name for censoring flag/sign (<, =, >)")
+    parser.add_argument("--sign-col", default=None, help="Column name for censoring flag/sign (<, =, >)")
 
     # Determinand Constants
     parser.add_argument("--det-code", default="0117", help="Default determinand code (default: 0117 for Nitrate)")
@@ -756,12 +764,10 @@ Examples:
         default="tobit",
         help="Range handling strategy: 'tobit' (default, Gold Standard interval-censored MLE), 'geometric' (log-midpoint sqrt(a*b)), 'midpoint' (arithmetic (a+b)/2), 'lower', 'upper', or 'skip'"
     )
-    parser.add_argument("--ranges-to-midpoint", action="store_true", default=True, help="Enable range conversion (default: True)")
-    parser.add_argument("--no-ranges-to-midpoint", action="store_false", dest="ranges_to_midpoint", help="Do not convert ranges (skip interval records)")
 
     # Coordinate Projection
     parser.add_argument("--convert-to-bng", action="store_true", default=True, help="Convert WGS84 lat/lon to British National Grid meters (default: True)")
-    parser.add_argument("--keep-coords", "--no-convert-bng", action="store_false", dest="convert_to_bng", help="Keep coordinates as raw values without projection")
+    parser.add_argument("--no-convert-bng", action="store_false", dest="convert_to_bng", help="Keep coordinates as raw values without projection")
     parser.add_argument("--crs", type=int, default=None, help="Explicit input CRS (e.g. 4326 for WGS84, 27700 for BNG)")
 
     # Grouping & Filtering
@@ -798,7 +804,6 @@ Examples:
         default_det_code=args.det_code,
         default_det_name=args.det_name,
         default_unit=args.unit,
-        ranges_to_midpoint=args.ranges_to_midpoint,
         range_mode=args.range_mode,
         convert_to_bng=args.convert_to_bng,
         input_crs=args.crs,

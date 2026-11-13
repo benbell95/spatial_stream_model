@@ -58,27 +58,64 @@ for (tt in c("asin", "logit")) {
   assert_true(all(is.finite(v_sc) & v_sc >= 0), paste("delta variance finite/non-neg for", tt))
 }
 
-# Aliases + normalisation columns
-df_legacy <- data.frame(
-  RivID = 1:5,
-  has_obs = c(1L, 0L, 1L, 0L, 1L),
-  pred_log_combined = c(1.0, 1.5, 2.0, 2.5, 3.0),
-  obs_log_nitrate = c(1.1, NA_real_, 2.1, NA_real_, 2.9),
-  nitrate_mean = c(3.0, NA_real_, 8.0, NA_real_, 18.0)
+# Canonical prediction schema + normalisation columns
+df_canon <- data.frame(
+  RivID         = 1:5,
+  has_obs       = c(1L, 0L, 1L, 0L, 1L),
+  pred_model_sc = c(1.0, 1.5, 2.0, 2.5, 3.0),
+  obs_model_sc  = c(1.1, NA_real_, 2.1, NA_real_, 2.9),
+  obs_value     = c(3.0, NA_real_, 8.0, NA_real_, 18.0)
 )
-df_norm <- normalize_pred_df(df_legacy)
-assert_true("pred_model_sc" %in% names(df_norm), "normalize_pred_df aliases pred_log_combined -> pred_model_sc")
-assert_true("obs_model_sc" %in% names(df_norm), "normalize_pred_df aliases obs_log_nitrate -> obs_model_sc")
-assert_true("obs_value" %in% names(df_norm), "normalize_pred_df aliases nitrate_mean -> obs_value")
-
-df_norm <- add_normalised_columns(df_norm, ref_df = df_norm)
+df_norm <- add_normalised_columns(df_canon, ref_df = df_canon)
 assert_near(mean(df_norm$pred_zscore), 0.0, tol = 1e-4, msg = "z-score mean ~ 0")
 assert_near(sd(df_norm$pred_zscore), 1.0, tol = 1e-3, msg = "z-score sd ~ 1")
 assert_near(range(df_norm$pred_minmax), c(0.0, 1.0), tol = 1e-4, msg = "minmax range [0, 1]")
 assert_true(!any(is.na(df_norm$obs_zscore[c(1L, 3L, 5L)])), "obs_zscore computed for observed reaches")
 assert_true(all(is.na(df_norm$obs_zscore[c(2L, 4L)])), "obs_zscore NA for unobserved reaches")
 
-cat("  [PASS] All 12 transforms, delta-method variances, aliases, and normalisation\n")
+# Yeo-Johnson with negative values (tests Jacobian sign), asin percentage scale=100, and unknown transform guard
+y_neg <- c(-5.0, -1.0, 0.0, 1.5, 6.0)
+tr_yj <- build_transformer("yeojohnson", y_obs = y_neg)
+assert_true(is.finite(tr_yj$lambda), "YJ profile ML lambda finite with negative values")
+assert_near(tr_yj$inv(tr_yj$fwd(y_neg)), y_neg, tol = 1e-4, msg = "YJ negative-value roundtrip")
+v_yj <- calc_response_meas_variance(y_neg, rep(0.25, length(y_neg)), tr_yj)
+assert_true(all(is.finite(v_yj) & v_yj >= 0), "YJ delta variance finite/non-neg")
+
+y_pct <- c(5.0, 25.0, 50.0, 75.0, 95.0)
+tr_asin_pct <- build_transformer("asin", y_obs = y_pct)
+assert_near(tr_asin_pct$scale, 100.0, tol = 1e-6, msg = "asin auto-detects scale = 100 for percentages")
+assert_near(tr_asin_pct$inv(tr_asin_pct$fwd(y_pct)), y_pct, tol = 1e-4, msg = "asin percentage roundtrip")
+v_asin_pct <- calc_response_meas_variance(y_pct, rep(4.0, length(y_pct)), tr_asin_pct)
+assert_true(all(is.finite(v_asin_pct) & v_asin_pct >= 0), "asin percentage delta variance finite/non-neg")
+
+bad_err <- tryCatch({ build_transformer("definitely_invalid_transform"); FALSE }, error = function(e) TRUE)
+assert_true(bad_err, "build_transformer rejects unknown transform names")
+
+cat("  [PASS] All 12 transforms, delta-method variances, canonical schemas, and normalisation\n")
+
+cat("=== 2b. Testing Covariate Specs & Design Matrix Imputation ===\n")
+cov_aq <- apply_covariate_specs("+aquifer", c("Elevation_z", "Slope_z", "Is_Chalk_Limestone", "Is_Sandstone"))
+assert_true("Is_Aquifer" %in% cov_aq && !("Is_Chalk_Limestone" %in% cov_aq) && !("Is_Sandstone" %in% cov_aq),
+            "+aquifer substitutes Is_Chalk_Limestone/Is_Sandstone with Is_Aquifer")
+cov_mixed <- apply_covariate_specs(c("elevation", "chalk_limestone", "+aquifer"), c("Slope_z"))
+assert_true(identical(cov_mixed, c("Elevation_z", "Is_Aquifer")),
+            "mixed explicit + modifier spec resolves cleanly")
+df_cov <- data.frame(
+  Elevation          = c(50, NA_real_, 150, 200),
+  Slope              = c(1.0, 2.0, 3.0, 4.0),
+  US_Accum_km        = c(5.0, 10.0, 20.0, 40.0),
+  Is_Chalk_Limestone = c(1L, 0L, 1L, 0L),
+  Is_Sandstone       = c(0L, 1L, 0L, 0L),
+  Is_Peat            = c(0L, 0L, 1L, 0L),
+  Is_Aquifer         = c(1L, 0L, 1L, 0L),
+  mid_X              = c(400000, 410000, 420000, 430000),
+  mid_Y              = c(300000, 310000, 320000, 330000),
+  has_obs            = c(1L, 0L, 1L, 1L)
+)
+dm <- build_design_matrix(df_cov, include_peat = TRUE, var_specs = c("Elevation_z", "Slope_z"))
+assert_true("Elevation_z" %in% colnames(dm) && all(is.finite(dm)),
+            "build_design_matrix imputes isolated NA without dropping covariate")
+cat("  [PASS] Covariate spec resolution and design matrix NA imputation\n")
 
 cat("=== 3. Testing Stats Helpers & Snapping Geometry ===\n")
 mdw <- new_md_writer(2L)

@@ -31,7 +31,9 @@ target_dir    <- dir_cfg$out_dir
 det_code_cli  <- NULL
 det_name_cli  <- NULL
 det_unit_cli  <- NULL
-use_log_cli   <- NULL
+trans_cli     <- NULL
+lambda_cli    <- NULL
+scale_cli     <- NULL
 reverse_color <- FALSE
 vmin_raw      <- NULL
 vmax_raw      <- NULL
@@ -59,10 +61,12 @@ for (a in args) {
     det_name_cli <- sub("^--name=", "", a)
   } else if (grepl("^--unit=", a)) {
     det_unit_cli <- sub("^--unit=", "", a)
-  } else if (a == "--no-log") {
-    use_log_cli <- FALSE
-  } else if (a == "--log") {
-    use_log_cli <- TRUE
+  } else if (grepl("^--(transform|trans|transformation)=", a)) {
+    trans_cli <- tolower(sub("^--(transform|trans|transformation)=", "", a))
+  } else if (grepl("^--(lambda|transform-lambda)=", a)) {
+    lambda_cli <- suppressWarnings(as.numeric(sub("^--(lambda|transform-lambda)=", "", a)))
+  } else if (grepl("^--(scale|transform-scale)=", a)) {
+    scale_cli <- suppressWarnings(as.numeric(sub("^--(scale|transform-scale)=", "", a)))
   } else if (a %in% c("--reverse-color", "--reverse-colour", "--rev-color", "--rev-colour", "--reverse-scale")) {
     reverse_color <- TRUE
   } else if (a %in% c("--normal-color", "--no-reverse-color")) {
@@ -93,71 +97,30 @@ find_first_csv <- function(dir_path, pattern, exclude_pattern = NULL, required =
 # Determinand metadata resolved dynamically via get_determinand_meta() in configs/determinands.json
 
 load_plot_bundle <- function(dir_p) {
-  if (dir.exists(file.path(dir_p, "predictions"))) {
-    PRED_DIR <- file.path(dir_p, "predictions")
-    TAB_DIR  <- file.path(dir_p, "tables")
-    FIG_DIR  <- file.path(dir_p, "figures")
-    dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
+  FIG_DIR <- dir_p
+  eng_pred_file <- find_first_csv(dir_p, "^predictions_.*\\.csv$",
+                                  "^predictions_(humber|thames|severn|basin_|river_|catchid_).*\\.csv$")
+  hum_pred_file <- find_first_csv(dir_p, "^predictions_humber_.*\\.csv$", required = FALSE)
+  tha_pred_file <- find_first_csv(dir_p, "^predictions_thames_.*\\.csv$", required = FALSE)
+  sev_pred_file <- find_first_csv(dir_p, "^predictions_severn_.*\\.csv$", required = FALSE)
 
-    eng_pred_file <- find_first_csv(PRED_DIR, "^england_.*_predictions\\.csv$", "_cv_predictions\\.csv$")
-    hum_pred_file <- find_first_csv(PRED_DIR, "^humber_.*_predictions\\.csv$",  "_cv_predictions\\.csv$", required = FALSE)
-    tha_pred_file <- find_first_csv(PRED_DIR, "^thames_.*_predictions\\.csv$",  "_cv_predictions\\.csv$", required = FALSE)
-    sev_pred_file <- find_first_csv(PRED_DIR, "^severn_.*_predictions\\.csv$",  "_cv_predictions\\.csv$", required = FALSE)
+  cv_tab_file   <- find_first_csv(dir_p, "^cv_comparison_.*\\.csv$")
+  param_file    <- find_first_csv(dir_p, "^parameters_.*\\.csv$")
+  eng_cv_file   <- find_first_csv(dir_p, "^cv_predictions_england_.*\\.csv$", required = FALSE)
+  hum_cv_file   <- find_first_csv(dir_p, "^cv_predictions_humber_.*\\.csv$",  required = FALSE)
 
-    eng_cv_file   <- find_first_csv(PRED_DIR, "^england_.*cv_predictions\\.csv$")
-    hum_cv_file   <- find_first_csv(PRED_DIR, "^humber_.*cv_predictions\\.csv$", required = FALSE)
+  eng_pred  <- read.csv(eng_pred_file, stringsAsFactors = FALSE)
+  hum_cid   <- resolve_core_basin(eng_pred, target = "humber")$catch_id
+  tha_cid   <- resolve_core_basin(eng_pred, target = "thames")$catch_id
+  sev_cid   <- resolve_core_basin(eng_pred, target = "severn")$catch_id
+  hum_pred  <- if (!is.null(hum_pred_file)) read.csv(hum_pred_file, stringsAsFactors = FALSE) else subset(eng_pred, CatchID == hum_cid)
+  tha_pred  <- if (!is.null(tha_pred_file)) read.csv(tha_pred_file, stringsAsFactors = FALSE) else subset(eng_pred, CatchID == tha_cid)
+  sev_pred  <- if (!is.null(sev_pred_file)) read.csv(sev_pred_file, stringsAsFactors = FALSE) else subset(eng_pred, CatchID == sev_cid)
 
-    eng_pred  <- normalize_pred_df(read.csv(eng_pred_file))
-    hum_cid   <- resolve_core_basin(eng_pred, target = "humber")$catch_id
-    tha_cid   <- resolve_core_basin(eng_pred, target = "thames")$catch_id
-    sev_cid   <- resolve_core_basin(eng_pred, target = "severn")$catch_id
-    hum_pred  <- if (!is.null(hum_pred_file)) normalize_pred_df(read.csv(hum_pred_file)) else subset(eng_pred, CatchID == hum_cid)
-    tha_pred  <- if (!is.null(tha_pred_file)) normalize_pred_df(read.csv(tha_pred_file)) else subset(eng_pred, CatchID == tha_cid)
-    sev_pred  <- if (!is.null(sev_pred_file)) normalize_pred_df(read.csv(sev_pred_file)) else subset(eng_pred, CatchID == sev_cid)
-
-    cv_tab    <- normalize_cv_tab(read.csv(file.path(TAB_DIR, "cv_model_comparison.csv")))
-    param_tab <- read.csv(file.path(TAB_DIR, "s3n_parameter_estimates.csv"))
-    eng_cv    <- normalize_cv_pts(read.csv(eng_cv_file))
-    hum_cv    <- if (!is.null(hum_cv_file)) normalize_cv_pts(read.csv(hum_cv_file)) else NULL
-    is_default_out <- TRUE
-  } else {
-    FIG_DIR <- dir_p
-    eng_pred_file <- find_first_csv(dir_p, "^predictions_.*\\.csv$",
-                                    "^predictions_(humber|thames|severn|river_|catchid_).*\\.csv$")
-    hum_pred_file <- find_first_csv(dir_p, "^predictions_humber_.*\\.csv$", required = FALSE)
-    tha_pred_file <- find_first_csv(dir_p, "^predictions_thames_.*\\.csv$", required = FALSE)
-    sev_pred_file <- find_first_csv(dir_p, "^predictions_severn_.*\\.csv$", required = FALSE)
-
-    cv_tab_file   <- find_first_csv(dir_p, "^cv_comparison_.*\\.csv$")
-    param_file    <- find_first_csv(dir_p, "^parameters_.*\\.csv$")
-    eng_cv_file   <- find_first_csv(dir_p, "^cv_predictions_england_.*\\.csv$", required = FALSE)
-    hum_cv_file   <- find_first_csv(dir_p, "^cv_predictions_humber_.*\\.csv$",  required = FALSE)
-
-    eng_pred  <- normalize_pred_df(read.csv(eng_pred_file))
-    hum_cid   <- resolve_core_basin(eng_pred, target = "humber")$catch_id
-    tha_cid   <- resolve_core_basin(eng_pred, target = "thames")$catch_id
-    sev_cid   <- resolve_core_basin(eng_pred, target = "severn")$catch_id
-    hum_pred  <- if (!is.null(hum_pred_file)) normalize_pred_df(read.csv(hum_pred_file)) else subset(eng_pred, CatchID == hum_cid)
-    tha_pred  <- if (!is.null(tha_pred_file)) normalize_pred_df(read.csv(tha_pred_file)) else subset(eng_pred, CatchID == tha_cid)
-    sev_pred  <- if (!is.null(sev_pred_file)) normalize_pred_df(read.csv(sev_pred_file)) else subset(eng_pred, CatchID == sev_cid)
-
-    cv_tab    <- normalize_cv_tab(read.csv(cv_tab_file))
-    param_tab <- read.csv(param_file)
-
-    if (!is.null(eng_cv_file)) {
-      eng_cv <- normalize_cv_pts(read.csv(eng_cv_file))
-    } else {
-      obs_e  <- subset(eng_pred, has_obs == 1)
-      eng_cv <- data.frame(RivID = obs_e$RivID, obs_y = obs_e$obs_model_sc, cv_comb = obs_e$pred_model_sc)
-    }
-    if (!is.null(hum_cv_file)) {
-      hum_cv <- normalize_cv_pts(read.csv(hum_cv_file))
-    } else {
-      obs_h  <- subset(hum_pred, has_obs == 1)
-      hum_cv <- if (nrow(obs_h) > 0) data.frame(RivID = obs_h$RivID, obs_y = obs_h$obs_model_sc, cv_comb = obs_h$pred_model_sc) else NULL
-    }
-    is_default_out <- FALSE
-  }
+  cv_tab    <- read.csv(cv_tab_file, stringsAsFactors = FALSE)
+  param_tab <- read.csv(param_file, stringsAsFactors = FALSE)
+  eng_cv    <- if (!is.null(eng_cv_file)) read.csv(eng_cv_file, stringsAsFactors = FALSE) else NULL
+  hum_cv    <- if (!is.null(hum_cv_file)) read.csv(hum_cv_file, stringsAsFactors = FALSE) else NULL
 
   det_code <- det_code_cli
   if (is.null(det_code)) {
@@ -166,8 +129,6 @@ load_plot_bundle <- function(dir_p) {
       if (nchar(det_code) < 4 && grepl("^[0-9]+$", det_code)) {
         det_code <- sprintf("%04d", as.integer(det_code))
       }
-    } else if (is_default_out) {
-      det_code <- sub("^england_(.*)_predictions\\.csv$", "\\1", basename(eng_pred_file))
     } else {
       det_code <- sub("^predictions_(.*)\\.csv$", "\\1", basename(eng_pred_file))
     }
@@ -193,26 +154,19 @@ load_plot_bundle <- function(dir_p) {
     }
   }
 
-  trans_obj <- NULL
-  use_log <- use_log_cli
-  if (!is.null(use_log)) {
-    trans_obj <- build_transformer(if (isTRUE(use_log)) "log" else "none")
+  if (!is.null(trans_cli) && nzchar(trans_cli)) {
+    trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
   } else {
-    t_type <- if ("Transform_Type" %in% names(cv_tab)) tolower(trimws(as.character(cv_tab$Transform_Type[1]))) else NA_character_
-    t_lam  <- if ("Transform_Lambda" %in% names(cv_tab)) suppressWarnings(as.numeric(as.character(cv_tab$Transform_Lambda[1]))) else NA_real_
-    if (!is.na(t_type) && nzchar(t_type)) {
-      trans_obj <- build_transformer(t_type, lambda = if (is.finite(t_lam)) t_lam else NULL)
-    } else if ("Scale" %in% names(cv_tab) && as.character(cv_tab$Scale[1]) %in% c("log", "none", "raw")) {
-      sc_str <- tolower(as.character(cv_tab$Scale[1]))
-      trans_obj <- build_transformer(if (sc_str == "log") "log" else "none")
+    t_type  <- if ("Transform_Type" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Type[1]))) {
+      tolower(trimws(as.character(cv_tab$Transform_Type[1])))
     } else {
-      diffs <- abs(exp(eng_pred$pred_model_sc[1:min(20, nrow(eng_pred))]) -
-                     eng_pred$pred_combined[1:min(20, nrow(eng_pred))])
-      is_log_guess <- ("pred_log_combined" %in% names(eng_pred)) ||
-        (any(!is.na(diffs)) && all(diffs < 1e-4, na.rm = TRUE))
-      trans_obj <- build_transformer(if (is_log_guess) "log" else "none")
+      "log"
     }
-    use_log <- trans_obj$is_log
+    t_lam   <- if ("Transform_Lambda" %in% names(cv_tab)) suppressWarnings(as.numeric(as.character(cv_tab$Transform_Lambda[1]))) else NA_real_
+    t_scale <- if ("Transform_Scale"  %in% names(cv_tab)) suppressWarnings(as.numeric(as.character(cv_tab$Transform_Scale[1])))  else NA_real_
+    eff_lam   <- if (!is.null(lambda_cli) && is.finite(lambda_cli)) lambda_cli else if (is.finite(t_lam)) t_lam else NULL
+    eff_scale <- if (!is.null(scale_cli)  && is.finite(scale_cli))  scale_cli  else if (is.finite(t_scale)) t_scale else NULL
+    trans_obj <- build_transformer(t_type, lambda = eff_lam, scale = eff_scale)
   }
 
   source_lbl <- if ("Source_Desc" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source_Desc[1]))) {
@@ -234,11 +188,9 @@ load_plot_bundle <- function(dir_p) {
     bundle_dir     = dir_p,
     eng_pred_file  = eng_pred_file,
     FIG_DIR        = FIG_DIR,
-    is_default_out = is_default_out,
     det_code       = det_code,
     det_name       = det_name,
     det_unit       = det_unit,
-    use_log        = use_log,
     trans_obj      = trans_obj,
     source_label   = source_lbl,
     eng_pred       = eng_pred,
@@ -253,10 +205,9 @@ load_plot_bundle <- function(dir_p) {
 }
 
 # Discover whether target_dir has temporal subdirectories (year_*, season_*, month_*)
-sub_dirs <- list.dirs(target_dir, recursive = FALSE, full.names = TRUE)
+sub_dirs <- list.dirs(target_dir, recursive = TRUE, full.names = TRUE)
 period_dirs <- sub_dirs[grepl("^(year_|season_|month_)", basename(sub_dirs))]
-has_root_preds <- dir.exists(file.path(target_dir, "predictions")) ||
-                  length(list.files(target_dir, pattern = "^predictions_.*\\.csv$")) > 0
+has_root_preds <- length(list.files(target_dir, pattern = "^predictions_.*\\.csv$")) > 0
 
 dirs_to_plot <- character(0)
 if (has_root_preds) dirs_to_plot <- c(dirs_to_plot, target_dir)
@@ -269,7 +220,7 @@ if (length(dirs_to_plot) == 0) {
 cat(sprintf("Loading S3N predictions across %d directory(s) under %s...\n", length(dirs_to_plot), target_dir))
 bundles <- lapply(dirs_to_plot, load_plot_bundle)
 
-# Also check if target_dir is a single period subfolder (e.g. output/det_0117/season_summer)
+# Also check if target_dir is a single period subfolder
 # and pool scale ranges with any sibling period folders in dirname(target_dir)
 scale_vals <- unlist(lapply(bundles, function(b) b$eng_pred[[norm_meta$pred_col]]))
 scale_se_e <- unlist(lapply(bundles, function(b) b$eng_pred$se_model_sc))
@@ -279,11 +230,11 @@ if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir
   parent_d <- dirname(target_dir)
   self_eng_p <- normalizePath(bundles[[1]]$eng_pred_file, mustWork = FALSE)
   sib_csvs <- list.files(parent_d, pattern = "^predictions_.*\\.csv$", recursive = TRUE, full.names = TRUE)
-  sib_csvs <- sib_csvs[!grepl("^predictions_(humber|thames|severn|river_|catchid_)", basename(sib_csvs))]
+  sib_csvs <- sib_csvs[!grepl("^predictions_(humber|thames|severn|basin_|river_|catchid_)", basename(sib_csvs))]
   sib_csvs <- sib_csvs[normalizePath(sib_csvs, mustWork = FALSE) != self_eng_p]
   if (length(sib_csvs) > 0) {
     for (sc in sib_csvs) {
-      sdf <- tryCatch(normalize_pred_df(read.csv(sc)), error = function(e) NULL)
+      sdf <- tryCatch(read.csv(sc, stringsAsFactors = FALSE), error = function(e) NULL)
       if (!is.null(sdf)) {
         if (norm_meta$mode != "none" && !(norm_meta$pred_col %in% names(sdf))) {
           sdf <- add_normalised_columns(sdf)
@@ -293,7 +244,7 @@ if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir
       }
       hf <- file.path(dirname(sc), paste0("predictions_humber_", bundles[[1]]$det_code, ".csv"))
       if (file.exists(hf)) {
-        hdf <- tryCatch(normalize_pred_df(read.csv(hf)), error = function(e) NULL)
+        hdf <- tryCatch(read.csv(hf, stringsAsFactors = FALSE), error = function(e) NULL)
         if (!is.null(hdf) && "se_model_sc" %in% names(hdf)) {
           scale_se_h <- c(scale_se_h, hdf$se_model_sc)
         }
@@ -322,18 +273,24 @@ ylim_d_shared <- if (length(bundles) > 1) c(max(0, yr_d[1] - 0.05 * diff(yr_d)),
 
 catch_lu_plot <- NULL
 if (length(custom_basins) > 0) {
-  cands_lu <- list.files(rel_path(dir_cfg$data_dir, "processed"), pattern = "^rsn_catchments_lookup\\.csv$", recursive = TRUE, full.names = TRUE)
+  b1_net <- if ("Network_Abbr" %in% names(bundles[[1]]$cv_tab)) tolower(as.character(bundles[[1]]$cv_tab$Network_Abbr[1])) else "orn"
+  proc_roots <- unique(c(dir_cfg$processed_dir, rel_path(dir_cfg$data_dir, "processed")))
+  cands_lu <- unlist(lapply(proc_roots[dir.exists(proc_roots)], function(pr) {
+    list.files(pr, pattern = "_catchments_lookup\\.csv$", recursive = TRUE, full.names = TRUE)
+  }))
   if (length(cands_lu) > 0) {
-    catch_lu_plot <- tryCatch(read.csv(cands_lu[1], stringsAsFactors = FALSE), error = function(e) NULL)
+    net_hits <- cands_lu[grepl(b1_net, cands_lu, fixed = TRUE)]
+    lu_path <- if (length(net_hits) > 0) net_hits[1] else cands_lu[1]
+    catch_lu_plot <- tryCatch(read.csv(lu_path, stringsAsFactors = FALSE), error = function(e) NULL)
   }
 }
 
 for (b in bundles) {
   ftag    <- norm_meta$file_tag
-  f1_name <- if (b$is_default_out) sprintf("fig1_england_stream_nitrate_map%s.png", ftag) else sprintf("fig1_england_stream_%s_map%s.png", b$det_code, ftag)
-  f2_name <- if (b$is_default_out) sprintf("fig2_humber_basin_s3n_map%s.png", ftag)       else sprintf("fig2_humber_basin_%s_map%s.png", b$det_code, ftag)
-  f3_name <- if (b$is_default_out) sprintf("fig3_thames_severn_s3n_maps%s.png", ftag)     else sprintf("fig3_thames_severn_%s_maps%s.png", b$det_code, ftag)
-  f4_name <- if (b$is_default_out) "fig4_cv_and_diagnostics.png"         else sprintf("fig4_cv_and_diagnostics_%s.png", b$det_code)
+  f1_name <- sprintf("fig1_england_stream_%s_map%s.png", b$det_code, ftag)
+  f2_name <- sprintf("fig2_humber_basin_%s_map%s.png", b$det_code, ftag)
+  f3_name <- sprintf("fig3_thames_severn_%s_maps%s.png", b$det_code, ftag)
+  f4_name <- sprintf("fig4_cv_and_diagnostics_%s.png", b$det_code)
 
   sc_lo_disp <- if (norm_meta$mode == "none") b$trans_obj$inv(shared_sc_val$vmin) else shared_sc_val$vmin
   sc_hi_disp <- if (norm_meta$mode == "none") b$trans_obj$inv(shared_sc_val$vmax) else shared_sc_val$vmax

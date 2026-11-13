@@ -8,7 +8,7 @@
 
 COVARIATE_CATALOG <- list(
   Elevation_z = list(
-    aliases = c("elevation", "elev", "elevation_z", "os_t50_ele"),
+    aliases = c("elevation", "elev", "elevation_z"),
     col     = "Elevation",
     desc    = "Mean channel elevation (m AOD, z-score standardized)",
     default = "All domains",
@@ -146,6 +146,40 @@ match_covariate_token <- function(tok) {
                tok, paste(valid_aliases, collapse = ", ")))
 }
 
+apply_covariate_specs <- function(specs, base_terms) {
+  is_mod <- grepl("^[+-]", specs)
+  if (all(is_mod)) {
+    terms <- base_terms
+  } else {
+    terms <- character(0)
+    for (sp in specs[!is_mod]) {
+      if (tolower(sp) %in% c("intercept", "none")) next
+      nm <- match_covariate_token(sp)
+      if (!(nm %in% terms)) terms <- c(terms, nm)
+    }
+    specs <- specs[is_mod]
+  }
+  for (sp in specs) {
+    op <- substr(sp, 1, 1)
+    nm <- match_covariate_token(substr(sp, 2, nchar(sp)))
+    if (op == "+") {
+      if (nm == "Is_Aquifer") {
+        terms <- setdiff(terms, c("Is_Chalk_Limestone", "Is_Sandstone"))
+      } else if (nm %in% c("Is_Chalk_Limestone", "Is_Sandstone")) {
+        terms <- setdiff(terms, "Is_Aquifer")
+      }
+      if (!(nm %in% terms)) terms <- c(terms, nm)
+    } else {
+      if (nm == "Is_Aquifer") {
+        terms <- setdiff(terms, c("Is_Aquifer", "Is_Chalk_Limestone", "Is_Sandstone"))
+      } else {
+        terms <- setdiff(terms, nm)
+      }
+    }
+  }
+  terms
+}
+
 resolve_covariate_terms <- function(df, include_peat = TRUE, var_specs = NULL) {
   sd_peat <- if ("Is_Peat" %in% colnames(df)) suppressWarnings(sd(df$Is_Peat[df$has_obs == 1], na.rm = TRUE)) else NA_real_
   sd_sand <- if ("Is_Sandstone" %in% colnames(df)) suppressWarnings(sd(df$Is_Sandstone[df$has_obs == 1], na.rm = TRUE)) else NA_real_
@@ -179,33 +213,7 @@ resolve_covariate_terms <- function(df, include_peat = TRUE, var_specs = NULL) {
     return(all_t[sapply(all_t, function(nm) COVARIATE_CATALOG[[nm]]$col %in% colnames(df))])
   }
 
-  is_mod <- grepl("^[+-]", specs)
-  if (all(is_mod)) {
-    terms <- default_terms
-    for (sp in specs) {
-      op  <- substr(sp, 1, 1)
-      nm  <- match_covariate_token(substr(sp, 2, nchar(sp)))
-      if (op == "+") {
-        if (!(nm %in% terms)) terms <- c(terms, nm)
-      } else {
-        if (nm == "Is_Aquifer") {
-          terms <- setdiff(terms, c("Is_Aquifer", "Is_Chalk_Limestone", "Is_Sandstone"))
-        } else {
-          terms <- setdiff(terms, nm)
-        }
-      }
-    }
-    return(terms)
-  }
-
-  terms <- character(0)
-  for (sp in specs) {
-    sp_clean <- sub("^\\+", "", sp)
-    if (tolower(sp_clean) %in% c("intercept", "none")) next
-    nm <- match_covariate_token(sp_clean)
-    if (!(nm %in% terms)) terms <- c(terms, nm)
-  }
-  terms
+  apply_covariate_specs(specs, default_terms)
 }
 
 build_design_matrix <- function(df, include_peat = TRUE, var_specs = NULL) {
@@ -222,8 +230,13 @@ build_design_matrix <- function(df, include_peat = TRUE, var_specs = NULL) {
       next
     }
     vec <- info$eval_fn(df)
+    if (any(!is.finite(vec))) {
+      fin <- vec[is.finite(vec)]
+      fill_v <- if (length(fin) > 0) mean(fin) else 0.0
+      vec[!is.finite(vec)] <- fill_v
+    }
     sd_obs <- suppressWarnings(sd(vec[df$has_obs == 1], na.rm = TRUE))
-    if (all(!is.na(vec)) && is.finite(sd_obs) && sd_obs > 0) {
+    if (is.finite(sd_obs) && sd_obs > 0) {
       col_list[[nm]] <- vec
     }
   }
@@ -310,8 +323,13 @@ format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
                   !(length(var_specs) == 1 && tolower(trimws(var_specs[1])) == "default")
 
   if (!is.null(param_tab) && nrow(param_tab) > 0) {
+    ref_dom <- if (any(grepl("All England", param_tab$Domain))) {
+      param_tab$Domain[grepl("All England", param_tab$Domain)][1]
+    } else {
+      param_tab$Domain[1]
+    }
     eng_p <- unique(as.character(param_tab$Parameter[
-      grepl("All England", param_tab$Domain) &
+      param_tab$Domain == ref_dom &
       !(param_tab$Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance"))
     ]))
     if (!has_cli_vars && (identical(eng_p, default_eng) || identical(eng_p, default_bas))) {
@@ -332,31 +350,7 @@ format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
   if (length(specs) == 1 && tolower(specs[1]) == "all") {
     return(paste(COVARIATE_SHORT_LABEL[names(COVARIATE_CATALOG) != "Is_Aquifer"], collapse = ", "))
   }
-  is_mod <- grepl("^[+-]", specs)
-  terms <- default_eng
-  if (all(is_mod)) {
-    for (sp in specs) {
-      op <- substr(sp, 1, 1)
-      nm <- match_covariate_token(substr(sp, 2, nchar(sp)))
-      if (op == "+") {
-        if (!(nm %in% terms)) terms <- c(terms, nm)
-      } else {
-        if (nm == "Is_Aquifer") {
-          terms <- setdiff(terms, c("Is_Aquifer", "Is_Chalk_Limestone", "Is_Sandstone"))
-        } else {
-          terms <- setdiff(terms, nm)
-        }
-      }
-    }
-  } else {
-    terms <- character(0)
-    for (sp in specs) {
-      sp_clean <- sub("^\\+", "", sp)
-      if (tolower(sp_clean) %in% c("intercept", "none")) next
-      nm <- match_covariate_token(sp_clean)
-      if (!(nm %in% terms)) terms <- c(terms, nm)
-    }
-  }
+  terms <- apply_covariate_specs(specs, default_eng)
   if (length(terms) == 0) return("None (Intercept-only spatial model)")
   paste(unname(COVARIATE_SHORT_LABEL[terms]), collapse = ", ")
 }

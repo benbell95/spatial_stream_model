@@ -20,7 +20,7 @@ import re
 import statistics
 import struct
 import subprocess
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 try:
     from pyproj import Transformer as _PyprojTransformer
@@ -104,10 +104,10 @@ MINIMAL_DEFAULT_SOURCES = {
             "lcms": {"file": "RSN LCMS GCMS Samples.csv", "id_col": "network_id",
                      "datetime_col": "sample_datetime", "det_col": "cas_number", "det_desc_col": "compound_name",
                      "val_col": "meas_result", "cens_col": "less_than_flag", "cens_flag": "yes", "unit_col": "unit_short_desc"},
-            "inverts": {"file": "RSN Macroinvertebrates.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
-            "diatoms": {"file": "RSN Diatoms.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
-            "macrophytes": {"file": "RSN Macrophytes.csv", "id_col": "network_id", "datetime_col": "survey_date"},
-            "rhs": {"file": "RSN RHS.csv", "id_col": "network_id", "datetime_col": "survey_date"},
+            "inverts": {"file": "RSN Macroinvertebrate Samples.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
+            "diatoms": {"file": "RSN Diatom Samples.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
+            "macrophytes": {"file": "RSN Macrophyte Samples.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
+            "rhs": {"file": "RSN River Habitat Surveys.csv", "id_col": "network_id", "datetime_col": "survey_date"},
         },
     },
     "ssn": {
@@ -121,9 +121,9 @@ MINIMAL_DEFAULT_SOURCES = {
             "wq": {"file": "SSN Water Quality Samples.csv", "id_col": "network_id",
                    "datetime_col": "sample_datetime", "det_col": "det_code", "det_desc_col": "det_desc",
                    "val_col": "meas_result", "cens_col": "meas_sign", "cens_flag": "<", "unit_col": "unit_short_desc"},
-            "inverts": {"file": "SSN Macroinvertebrates.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
-            "diatoms": {"file": "SSN Diatoms.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
-            "macrophytes": {"file": "SSN Macrophytes.csv", "id_col": "network_id", "datetime_col": "survey_date"},
+            "inverts": {"file": "SSN Macroinvertebrate Samples.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
+            "diatoms": {"file": "SSN Diatom Samples.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
+            "macrophytes": {"file": "SSN Macrophyte Samples.csv", "id_col": "network_id", "datetime_col": "sample_datetime"},
         },
     },
     "composites": {
@@ -149,20 +149,12 @@ def _rel_join(base, *parts):
 
 
 def find_directory_config_file(base_dir=DEFAULT_BASE_DIR):
-    """Finds existing directory configuration file in configs/ or root, or returns canonical path."""
-    candidates = [
-        _rel_join(base_dir, "configs", "directories.json"),
-        _rel_join(base_dir, "configs", "paths.json"),
-        _rel_join(base_dir, "config.json"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return candidates[0]
+    """Returns canonical path to configs/directories.json."""
+    return _rel_join(base_dir, "configs", "directories.json")
 
 
 def ensure_directory_config(base_dir=DEFAULT_BASE_DIR, default_data="data", default_gis="gis", default_out="output"):
-    """Creates configs/directories.json if no directory config exists yet. Returns (cfg_file_path, was_created)."""
+    """Creates configs/directories.json if it does not exist yet. Returns (cfg_file_path, was_created)."""
     cfg_file = find_directory_config_file(base_dir)
     created = False
     if not os.path.exists(cfg_file):
@@ -181,7 +173,7 @@ def ensure_directory_config(base_dir=DEFAULT_BASE_DIR, default_data="data", defa
 
 
 def load_directory_config(base_dir=DEFAULT_BASE_DIR, auto_create=False):
-    """Loads directory paths from configs/directories.json (or paths.json / config.json)."""
+    """Loads directory paths from configs/directories.json."""
     cfg_file = find_directory_config_file(base_dir)
     if not os.path.exists(cfg_file) and auto_create:
         ensure_directory_config(base_dir)
@@ -201,13 +193,10 @@ def load_directory_config(base_dir=DEFAULT_BASE_DIR, auto_create=False):
             p = _rel_join(base_dir, p)
         return p
 
-    data_dir = _resolve(raw_cfg.get("data_dir") or raw_cfg.get("data") or raw_cfg.get("DATA_DIR"), "data")
-    gis_dir = _resolve(raw_cfg.get("gis_dir") or raw_cfg.get("gis") or raw_cfg.get("GIS_DIR"), "gis")
-    output_dir = _resolve(
-        raw_cfg.get("output_dir") or raw_cfg.get("out_dir") or raw_cfg.get("output") or raw_cfg.get("out") or raw_cfg.get("OUTPUT_DIR"),
-        "output",
-    )
-    proc_val = raw_cfg.get("processed_dir") or raw_cfg.get("processed") or raw_cfg.get("PROCESSED_DIR")
+    data_dir = _resolve(raw_cfg.get("data_dir"), "data")
+    gis_dir = _resolve(raw_cfg.get("gis_dir"), "gis")
+    output_dir = _resolve(raw_cfg.get("output_dir"), "output")
+    proc_val = raw_cfg.get("processed_dir")
     processed_dir = _resolve(proc_val, _rel_join(data_dir, "processed")) if proc_val else _rel_join(data_dir, "processed")
 
     return {
@@ -217,6 +206,20 @@ def load_directory_config(base_dir=DEFAULT_BASE_DIR, auto_create=False):
         "output_dir": output_dir,
         "processed_dir": processed_dir,
     }
+
+
+def load_determinand_catalog(base_dir=DEFAULT_BASE_DIR):
+    """Loads known determinands metadata from configs/determinands.json."""
+    cat_path = _rel_join(base_dir, "configs", "determinands.json")
+    if not os.path.isfile(cat_path):
+        return {}
+    try:
+        with open(cat_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return {str(k).lower(): v for k, v in raw.items() if isinstance(v, dict)}
+    except Exception as e:
+        print(f"   [Warning] Could not parse determinands catalog {cat_path}: {e}")
+        return {}
 
 
 @dataclass
@@ -229,7 +232,6 @@ class RuntimeConfig:
     output_dir: str
     rsn_dir: str
     ssn_dir: str
-    wq_dir: str
     config_dir: str
     source_config_dir: str
 
@@ -240,14 +242,8 @@ def build_runtime_config(base_dir=DEFAULT_BASE_DIR, gis_dir=None, data_dir=None,
     eff_gis = gis_dir or os.environ.get("S3N_GIS_DIR") or dir_cfg["gis_dir"]
     eff_data = data_dir or os.environ.get("S3N_DATA_DIR") or dir_cfg["data_dir"]
 
-    cand_rsn = _rel_join(eff_data, "NCEA_River_Surveillance_Network_ARD_Open")
-    rsn_dir = cand_rsn if os.path.isdir(cand_rsn) else (
-        eff_data if os.path.exists(os.path.join(eff_data, "RSN Water Quality Samples.csv")) else cand_rsn
-    )
-    cand_ssn = _rel_join(eff_data, "NCEA_Small_Streams_Network_ARD_Open")
-    ssn_dir = cand_ssn if os.path.isdir(cand_ssn) else (
-        eff_data if os.path.exists(os.path.join(eff_data, "SSN Water Quality Samples.csv")) else cand_ssn
-    )
+    rsn_dir = _rel_join(eff_data, "NCEA_River_Surveillance_Network_ARD_Open")
+    ssn_dir = _rel_join(eff_data, "NCEA_Small_Streams_Network_ARD_Open")
     eff_proc = out_dir or os.environ.get("S3N_PROCESSED_DIR") or dir_cfg["processed_dir"]
     if create_out_dir:
         os.makedirs(eff_proc, exist_ok=True)
@@ -260,7 +256,6 @@ def build_runtime_config(base_dir=DEFAULT_BASE_DIR, gis_dir=None, data_dir=None,
         output_dir=dir_cfg["output_dir"],
         rsn_dir=rsn_dir,
         ssn_dir=ssn_dir,
-        wq_dir=rsn_dir,
         config_dir=_rel_join(base_dir, "configs", "networks"),
         source_config_dir=_rel_join(base_dir, "configs", "sources"),
     )
@@ -595,36 +590,19 @@ def resolve_source_tag(source="rsn", registry=None, data_dir=None, base_dir=DEFA
     eff_data_dir = data_dir or os.path.join(base_dir, "data")
 
     raw_s = str(source).lower().strip()
-    raw_s = re.sub(r"\btobitz\b", "tobit", raw_s)
-    raw_s = re.sub(r"[_-]tobitz\b", "_tobit", raw_s)
     tokens = [t.strip().lower() for t in re.split(r"[,+ ]+", raw_s) if t.strip()]
     if not tokens:
         tokens = ["rsn"]
 
-    norm_tokens = []
-    for tk in tokens:
-        if tk.endswith("_tobitz") or tk.endswith("-tobitz"):
-            tk = tk[:-1]
-        elif tk == "tobitz":
-            tk = "tobit"
-        norm_tokens.append(tk)
-    tokens = norm_tokens
-
     def _canon_token(tk):
-        if tk in ("ssn", "small_stream", "small_streams", "small-stream", "small-streams"):
-            return "ssn"
-        if tk in ("rsn", "river_surveillance", "river-surveillance"):
-            return "rsn"
         tk_under = tk.replace("-", "_")
         if tk in composites_reg or tk in sources_reg or os.path.isdir(os.path.join(eff_data_dir, "custom", tk)):
             return tk
         if tk_under in composites_reg or tk_under in sources_reg or os.path.isdir(os.path.join(eff_data_dir, "custom", tk_under)):
             return tk_under
-        return tk
+        return tk_under
 
     if len(tokens) > 1:
-        if set(tokens) == {"rsn", "ssn"}:
-            return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
         expanded = []
         for tk in tokens:
             cand = _canon_token(tk)
@@ -645,8 +623,6 @@ def resolve_source_tag(source="rsn", registry=None, data_dir=None, base_dir=DEFA
         return combo_key, unique_tokens, combo_abbr, combo_label
 
     s = _canon_token(tokens[0])
-    if s in ("rss", "combined", "both", "all", "rsn_ssn", "ssn_rsn", "rsn+ssn"):
-        return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
     if s in composites_reg:
         c_info = composites_reg[s]
         c_srcs = c_info.get("sources", ["rsn", "ssn"])
@@ -676,36 +652,11 @@ def resolve_source_tag(source="rsn", registry=None, data_dir=None, base_dir=DEFA
                 b_abbr = f"{b_info.get('abbr', base_s.upper())}_{rm.upper()[:3]}"
                 return s, [s], b_abbr, b_label
 
-    if "_" in s and s not in sources_reg and s not in ("rsn", "ssn", "rss"):
-        reg_names = sorted(list(sources_reg.keys()) + ["rsn", "ssn"], key=len, reverse=True)
-        matched = []
-        rem = s
-        while rem:
-            found = False
-            for sn in reg_names:
-                if rem == sn or rem.startswith(f"{sn}_"):
-                    matched.append(sn)
-                    rem = rem[len(sn):].lstrip("_")
-                    found = True
-                    break
-            if not found:
-                break
-        if matched and not rem and len(matched) > 1:
-            unique_tokens = []
-            for t in matched:
-                if t in sources_reg and sources_reg[t].get("alias_target"):
-                    t = sources_reg[t]["alias_target"]
-                if t not in unique_tokens:
-                    unique_tokens.append(t)
-            combo_key = "+".join(unique_tokens)
-            combo_abbr = "+".join(sources_reg[t].get("abbr", t.upper()) if t in sources_reg else t.upper() for t in unique_tokens)
-            return combo_key, unique_tokens, combo_abbr, f"Combined Monitoring Sources ({combo_abbr})"
-
     clean_tag = re.sub(r"[^a-z0-9_]+", "_", s)
     return clean_tag, [clean_tag], clean_tag.upper(), f"Custom Source: {clean_tag}"
 
 
-def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=None, cli_mode="auto", base_dir=DEFAULT_BASE_DIR):
+def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=None, cli_mode="auto", base_dir=DEFAULT_BASE_DIR, data_dir=None):
     """Detects active range-handling mode from CLI override, source metadata, or samples CSV."""
     if cli_mode:
         cm = cli_mode.lower().strip()
@@ -713,7 +664,7 @@ def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=N
             return None
         if cm != "auto":
             return cm
-    _, constituents, _, _ = resolve_source_tag(source_key, base_dir=base_dir)
+    _, constituents, _, _ = resolve_source_tag(source_key, registry=(sources_reg, {}), data_dir=data_dir, base_dir=base_dir)
     found_modes = []
     for tk in constituents:
         tk_mode = None
@@ -937,13 +888,15 @@ class IntervalTobitModel:
             return res
         m, s = self.mu, self.sigma
         if rec_type == "left":
-            beta = (math.log(b) - m) / s
+            b_pos = max(1e-6, b) if b is not None else 1e-6
+            beta = (math.log(b_pos) - m) / s
             exp_log_y = m - s * (normal_pdf(beta) / max(1e-12, normal_cdf(beta)))
             res = (round(math.exp(exp_log_y), 5), "<", 0.0, b, round(s / math.sqrt(12.0), 4), "tobit_interval")
         elif rec_type == "right":
-            alpha = (math.log(a) - m) / s
+            a_pos = max(1e-6, a) if a is not None else 1e-6
+            alpha = (math.log(a_pos) - m) / s
             exp_log_y = m + s * (normal_pdf(alpha) / max(1e-12, 1.0 - normal_cdf(alpha)))
-            res = (round(math.exp(exp_log_y), 5), ">", a, "", round(s / math.sqrt(12.0), 4), "tobit_interval")
+            res = (round(math.exp(exp_log_y), 5), ">", a, None, round(s / math.sqrt(12.0), 4), "tobit_interval")
         elif rec_type == "interval":
             a_pos = max(1e-6, a) if a is not None else 1e-6
             b_pos = max(a_pos + 1e-9, b) if b is not None else a_pos + 1e-6
@@ -968,9 +921,9 @@ def compute_alternative_range_result(token, range_mode="geometric"):
     if rec_type == "point":
         return val, "=", val, val, 0.0, "exact_point"
     if rec_type == "left":
-        return b, "<", 0.0, b, round(0.5 * b / math.sqrt(12.0), 4), f"{range_mode}_left"
+        return b, "<", 0.0, b, round(0.5 * max(0.0, b) / math.sqrt(12.0), 4), f"{range_mode}_left"
     if rec_type == "right":
-        return a, ">", a, "", round(0.5 * a / math.sqrt(12.0), 4), f"{range_mode}_right"
+        return a, ">", a, None, round(0.5 * max(0.0, a) / math.sqrt(12.0), 4), f"{range_mode}_right"
     if rec_type == "interval":
         if range_mode == "geometric":
             a_pos = max(1e-6, a) if a is not None else 1e-6
@@ -1062,9 +1015,9 @@ def apply_forward_transform(val, ttype="log", lam=None, scale=1.0):
     t = (ttype or "log").lower().strip()
     if t in ("log", "ln"):
         return math.log(max(1e-9, val)) if val > 0 else None
-    if t == "log10":
+    if t in ("log10", "log_10"):
         return math.log10(max(1e-9, val)) if val > 0 else None
-    if t == "log1p":
+    if t in ("log1p", "log_1p"):
         return math.log1p(max(0.0, val)) if val >= 0 else None
     if t in ("sqrt", "square_root"):
         return math.sqrt(max(0.0, val)) if val >= 0 else None
@@ -1072,14 +1025,14 @@ def apply_forward_transform(val, ttype="log", lam=None, scale=1.0):
         return math.copysign(math.pow(abs(val), 1.0 / 3.0), val)
     if t in ("fourthrt", "qtrt"):
         return math.pow(max(0.0, val), 0.25) if val >= 0 else None
-    if t in ("reciprocal", "inv"):
+    if t in ("reciprocal", "inv", "inverse"):
         return -1.0 / max(1e-6, val) if val > 0 else None
-    if t in ("boxcox", "bc"):
+    if t in ("boxcox", "box_cox", "bc"):
         if val <= 0:
             return None
         lv = lam if lam is not None else 0.5
         return math.log(val) if abs(lv) < 1e-4 else (math.pow(val, lv) - 1.0) / lv
-    if t in ("yeojohnson", "yj"):
+    if t in ("yeojohnson", "yeo_johnson", "yj"):
         lv = lam if lam is not None else 0.5
         if val >= 0:
             return math.log(val + 1.0) if abs(lv) < 1e-4 else (math.pow(val + 1.0, lv) - 1.0) / lv
