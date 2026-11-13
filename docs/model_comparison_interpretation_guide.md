@@ -8,8 +8,8 @@ The **S3N Model Run Comparison & Statistical Evaluation** script ([`../scripts/0
 
 | Comparison Mode | Typical Example | Primary Analytical Goal |
 | :--- | :--- | :--- |
-| **1. Cross-Network Comparison** | `ORN v2` (`output/det_0117`) vs. `EU-Hydro Thames` (`output/det_0117_euhydro_thames`) | Determine which digital river network topology produces higher out-of-sample cross-validation accuracy (`CV R²`, `CV RMSE`), lower kriging uncertainty (`Kriging SE`), and whether reach predictions are consistent across co-located segments (`≤ 250 m`). |
-| **2. Covariate Specification Comparison** | Default 8 covariates vs. reduced model (`--vars=elevation,slope,aquifer`) | Test whether adding or removing catchment land-cover/geology predictors significantly improves station cross-validation accuracy (via paired Diebold–Mariano / `t`-tests and Wilcoxon tests) or alters spatial variance components (`σ²`, `τ²`, `φ`). |
+| **1. Cross-Network Comparison** | `ORN v2` (`output/results/det_0117_orn_rsn`) vs. custom network (e.g., user-configured `output/results/det_0117_euhydro_thames_rsn`) | Determine which digital river network topology produces higher out-of-sample cross-validation accuracy (`CV R²`, `CV RMSE`), lower kriging uncertainty (`Kriging SE`), and whether reach predictions are consistent across co-located segments (`≤ 250 m`). |
+| **2. Covariate / Transform Comparison** | Default 6 covariates (`--vars=default`) vs. reduced/extended model (`--vars=elev,slope,aquifer`), or `log` vs. `sqrt` transform | Test whether changing catchment/topological predictors (`--vars=`) or response transformation (`--transform=`) significantly improves station cross-validation accuracy (via paired Diebold–Mariano / `t`-tests and Wilcoxon tests) or alters spatial variance components (`σ²`, `τ²`, `φ`). Scale-dependent CV metrics (`RMSE`, `MAE`) are checked via `runs_share_scale()` so cross-transform runs are only directly compared on natural units or `CV R²`. |
 | **3. Temporal Slice Comparison** | Seasonal (`--by=season`: Winter, Spring, Summer, Autumn), Annual (`--by=year`), or Monthly (`--by=month`) | Quantify seasonal flushing vs. summer point-source concentration regimes, multi-year water quality trends, and how spatial autocorrelation range (`φ`) changes across flow regimes. |
 | **4. Cross-Determinand Comparison** | `Nitrate (0117)` vs. `Orthophosphate (0180)`, or `Nitrate (0117)` vs. `RHS Habitat Quality (hqa_score)` | Analyze reach-by-reach co-occurrence (`4-Quadrant Concordance`), multi-pollutant hotspot overlap (`Jaccard > P75 / > P90`), power-law scaling (`β`), **freshwater nutrient stoichiometry (`N:P` mass & molar ratios and Redfield nutrient limitation regimes)**, or multi-stressor `ΔZ` divergence. |
 
@@ -20,25 +20,30 @@ The **S3N Model Run Comparison & Statistical Evaluation** script ([`../scripts/0
 ### 2.1 Running the Script
 
 ```bash
-# 1. Compare two or more specific output folders directly
-Rscript scripts/04_compare_model_runs.R output/det_0117 output/det_0117_euhydro_thames
+# 1. List all available completed model runs in output/results/
+Rscript scripts/04_compare_model_runs.R --list
 
-# 2. Cross-determinand comparison (e.g., Nitrate vs. Orthophosphate on ORN v2)
+# 2. Compare two or more specific output folders directly
+#    (full paths, --dirs=..., or folder names under output/results/)
 Rscript scripts/04_compare_model_runs.R \
-  output/det_0117 output/det_0180 \
+  output/results/det_0117_orn_rsn \
+  output/results/det_0117_orn_rsn_vars_elev_slope_aquifer
+
+# 3. Cross-determinand comparison (e.g., Nitrate vs. Orthophosphate on ORN v2)
+Rscript scripts/04_compare_model_runs.R \
+  output/results/det_0117_orn_rsn output/results/det_0180_orn_rsn \
   --labels="Nitrate (0117),Orthophosphate (0180)" \
   --out=output/comparisons/det_0117_vs_det_0180_orn
 
-# 3. Auto-fit and compare temporal slices (season, year, or month)
-Rscript scripts/04_compare_model_runs.R --det=0117 --by=season
-Rscript scripts/04_compare_model_runs.R --det=0117 --by=year --slices=2021,2022,2023,2024
-
-# 4. List all available completed model runs in output/
-Rscript scripts/04_compare_model_runs.R --list
+# 4. Compare existing temporal slices (season, year, or month) inside a parent run folder
+#    (after fitting slices with scripts/run_s3n_determinand.R --by=season / --by=year / --by=month)
+Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn --by=season
+Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn --by=year
 
 # 5. Specify custom workspace directories
-Rscript scripts/04_compare_model_runs.R output/det_0117 output/det_0180 \
-  --gis-dir=gis --data-dir=data --output-dir=output
+Rscript scripts/04_compare_model_runs.R \
+  output/results/det_0117_orn_rsn output/results/det_0180_orn_rsn \
+  --gis-dir=gis --data-dir=data --processed-dir=data/processed --output-dir=output
 ```
 
 ### 2.2 Output Files Written to `output/comparisons/<comparison_slug>/`
@@ -46,17 +51,18 @@ Rscript scripts/04_compare_model_runs.R output/det_0117 output/det_0180 \
 | Output File | Format | Description |
 | :--- | :--- | :--- |
 | `comparison_report.md` | Markdown | Standalone narrative report containing executive winner determination, all comparison tables, statistical test interpretations, reach relationship synthesis, and embedded figure links. |
-| `cv_metrics_comparison.csv` | CSV | 5-fold cross-validation metrics (`CV R²`, `CV RMSE`, `CV MAE`, `OLS` baselines, `ΔR² vs OLS`, `% RMSE Reduction`) across all runs and spatial domains. |
+| `cv_metrics_comparison.csv` | CSV | 5-fold cross-validation metrics (`Transform_Type`, `Transform_Lambda`, `Transform_Label`, `CV R²`, `CV RMSE`, `CV MAE`, `OLS` baselines, `ΔR² vs OLS`, `% RMSE Reduction`) across all runs and spatial domains. |
+| `prediction_distribution_summary.csv` | CSV | Side-by-side summary of network prediction quantiles, means, SDs, and Kriging `SE` across runs. |
 | `statistical_tests_summary.csv` | CSV | Up to 12 formal parametric and non-parametric hypothesis tests comparing CV errors, reach distributions, kriging uncertainty, co-located bias, and 4-quadrant co-occurrence. |
-| `descriptive_stats_summary.csv` | CSV | Full 18-column distributional summary across all 7 variable groups for every compared run (generated via [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R)). |
+| `descriptive_stats_summary.csv` | CSV | Full 18-column distributional summary across all 7 variable groups for every compared run (shared engine with [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R)). |
 | `stratified_results_summary.csv` | CSV | Multi-run stratified environmental, topological, and basin statistics across all 5 stratification dimensions. |
 | `reach_relationship_summary.csv` | CSV | Pairwise reach-level relationship metrics: correlations (`r`, `ρ`), OLS scaling slope, 4-quadrant co-occurrence, Odds Ratio, Jaccard hotspot overlap (`> P75`, `> P90`), and `N:P` stoichiometry or `ΔZ` divergence. |
 | `parameter_comparison.csv` | CSV | Side-by-side fixed-effect (`β`) and spatial covariance (`sigma.sq`, `tau.sq`, `phi`) bootstrap estimates with Two-Sample Wald `Z`-test `p`-values. |
-| `fig_comp1_cv_performance.png` | PNG (2400×1700) | 4-panel cross-validation comparison (`CV R²`, `CV RMSE`, `CV MAE` vs. `OLS`, and `% RMSE Reduction`). |
-| `fig_comp2_reach_distributions.png` | PNG (2400×1700) | 4-panel distributional comparison (kernel densities, ECDFs, Kriging `SE` boxplots, and co-located reach scatter or `Q25/Med/Q75` quantile profiles). |
-| `fig_comp3_parameter_comparison.png` | PNG (2400×1600) | 2-panel bootstrap parameter comparison (fixed-effect `β` forest plot with 95% CIs and spatial covariance parameters `σ²`, `τ²`, `φ`). |
-| `fig_comp4_spatial_difference_map.png` | PNG (2400×1400) | 3-panel BNG spatial map (Run 1 predictions, Run 2 predictions, and co-located reach difference `Run 2 - Run 1` or standardized `ΔZ = Z₂ - Z₁`). |
-| `fig_comp5_determinand_relationships.png` | PNG (2400×1800) | 4-panel reach relationship figure (4-quadrant co-occurrence scatter, stratified median comparison, Strahler longitudinal profiles, and `N:P` molar stoichiometry or `ΔZ` histogram). |
+| `fig_comp1_cv_performance.png` | PNG (2400×1700) | 4-panel cross-validation comparison (`CV R²`, `CV RMSE`, empirical CDF of station CV errors, and `% RMSE Reduction` / gain over `OLS`). |
+| `fig_comp2_predictions_and_uncertainty.png` | PNG (2400×1700) | 4-panel prediction & uncertainty comparison (kernel densities, ECDFs, Kriging `SE` boxplots, and spatial difference / `ΔZ` divergence map). |
+| `fig_comp3_parameter_forest.png` | PNG (2400×1600) | 2-panel bootstrap parameter comparison (fixed-effect `β` forest plot with 95% CIs and spatial covariance parameters `σ²`, `τ²`, `φ`). |
+| `fig_comp4_side_by_side_maps.png` | PNG (2400×1400) | Side-by-side spatial stream network prediction maps on BNG (`EPSG:27700`) across the compared runs. |
+| `fig_comp5_reach_relationships.png` | PNG (2400×1800) | 4-panel reach relationship figure (4-quadrant co-occurrence scatter, stratified median comparison, 4-quadrant co-occurrence map, and `N:P` stoichiometry or `ΔZ` boxplots across basins/regimes). |
 
 ---
 
@@ -209,7 +215,7 @@ For all non-`N:P` pairs (such as cross-network comparisons, seasonal comparisons
 
 ### 3.5 Section 7: Fixed-Effect (`β`) & Spatial Covariance Parameter Comparison (`parameter_comparison.csv`)
 
-Section 7 compares the fitted regression coefficients and spatial autocovariance parameters from `parameter_estimates_*.csv` across runs using **Two-Sample Wald `Z`-Tests** derived from the 95% parametric bootstrap confidence intervals:
+Section 7 compares the fitted regression coefficients and spatial autocovariance parameters from `parameters_*.csv` across runs using **Two-Sample Wald `Z`-Tests** derived from the 95% parametric bootstrap confidence intervals:
 
 - **Bootstrap Standard Error Recovery**: For each parameter `θ` with 95% bootstrap interval `[CI_Lower, CI_Upper]`, the asymptotic standard error is `SE(θ) = (CI_Upper - CI_Lower) / (2 × 1.96)`.
 - **Two-Sample Wald `Z`-Statistic**:
@@ -219,7 +225,7 @@ Section 7 compares the fitted regression coefficients and spatial autocovariance
 
 | Parameter Group | Parameter Names | What a Significant Wald `Z`-Test (`p < 0.05`) Means |
 | :--- | :--- | :--- |
-| **Fixed Effects (`β`)** | `Intercept`, `elevation`, `slope`, `arable`, `improved_grass`, `urban`, `woodland`, `aquifer`, `stw_log` | <ul><li>**Across Networks (`ORN` vs. `EU-Hydro`)**: If `p ≥ 0.05` (`ns`) for most slopes (e.g., `elevation`, `slope`, `arable`, `woodland`, `stw_log`), the physical environmental relationships are **structurally invariant** to network choice. A significant shift in `aquifer` or `Intercept` usually reflects regional subsetting (e.g., Thames Chalk vs. national aquifer mix).</li><li>**Across Determinands (`Nitrate` vs. `Orthophosphate`)**: Highlights divergent physical drivers—for instance, `aquifer` has a much stronger positive slope for `Nitrate` (`+0.391` vs. `+0.172`, `p < 1e-16`), whereas `stw_log` (`STW` sewage load) has a stronger slope for `Orthophosphate` (`+0.072` vs. `+0.044`, `p < 1e-16`).</li></ul> |
+| **Fixed Effects (`β`)** | `(Intercept)`, default ORN covariates (`Elevation_z`, `Slope_z`, `log10_US_Accum_z`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Peat`), plus any `--vars=` additions (`Is_Aquifer`, `Easting_z`, `Northing_z`, `Sinuosity_z`, `SrcElevation_z`, `Dist2Mth_z`, `Length_z`, `log10_Shreve_z`, `Strahler_z`) | <ul><li>**Across Networks (`ORN` vs. custom network)**: If `p ≥ 0.05` (`ns`) for topographic and hydrological slopes (e.g., `Elevation_z`, `Slope_z`, `log10_US_Accum_z`), the physical environmental relationships are **structurally invariant** to network choice. A shift in geology flags (`Is_Chalk_Limestone`, `Is_Sandstone`) or `(Intercept)` usually reflects regional subsetting (e.g., Thames Chalk vs. national geology mix).</li><li>**Across Determinands (`Nitrate` vs. `Orthophosphate`)**: Highlights divergent physical drivers—for instance, Chalk/Limestone geology (`Is_Chalk_Limestone`) and elevation gradients exert strong control on `Nitrate` (groundwater baseflow storage vs. upland dilution), whereas stream accumulation (`log10_US_Accum_z`) and local `Tail-Down` / nugget dynamics highlight downstream enrichment and point-source variability for `Orthophosphate`.</li></ul> |
 | **Partial Sill (`σ²`)** | `Tail-Up: sigma.sq`, `Tail-Down: sigma.sq` | Magnitude of spatially structured variance along the river network. Higher `sigma.sq` indicates stronger spatial autocorrelation among neighboring reaches. |
 | **Nugget Effect (`τ²`)** | `Tail-Up: tau.sq`, `Tail-Down: tau.sq` | Micro-scale variability + measurement noise at zero distance (`h = 0`). If `tau.sq << sigma.sq` (high **Structured Variance Ratio** `σ² / (σ² + τ²)`), river-network kriging adds substantial predictive precision over `OLS`. |
 | **Spatial Range (`φ`)** | `Tail-Up: phi`, `Tail-Down: phi` | Exponential decay rate (`exp(-φ × d)` in `km⁻¹`, where effective correlation range is `3 / φ km`) or spherical range parameter. Smaller `φ` in `exp(-φ × d)` means spatial correlation persists over longer river distances. |
@@ -230,40 +236,37 @@ Section 7 compares the fitted regression coefficients and spatial autocovariance
 
 ### 4.1 Figure 1: `fig_comp1_cv_performance.png`
 - **Panel A (`CV R²`)**: Grouped bar chart comparing `S3N Combined` vs. `OLS`, `Tail-Up`, and `Tail-Down` across runs. Look at the height of the primary bar (`S3N Combined`) and the gap above the `OLS` bar (`ΔR²`).
-- **Panel B (`CV RMSE`)**: Grouped bar chart of Root Mean Squared Error (annotated with `LOWER IS BETTER` when runs share the same determinand).
-- **Panel C (`CV MAE`)**: Grouped bar chart of Mean Absolute Error (`S3N` vs. `OLS`).
-- **Panel D (`% RMSE Reduction vs. OLS`)**: Horizontal bar chart showing the exact percentage of prediction error eliminated by adding spatial stream network covariance (`100 × (RMSE_OLS - RMSE_S3N) / RMSE_OLS`).
+- **Panel B (`CV RMSE`)**: Grouped bar chart of Root Mean Squared Error (annotated with `LOWER IS BETTER` when `runs_share_scale()` confirms identical determinand and transform scale).
+- **Panel C (`Empirical CDF of Station CV Errors`)**: Overlaid CDFs of absolute out-of-sample station CV errors across runs (when comparable on the same model scale).
+- **Panel D (`Spatial Gain over Non-Spatial OLS`)**: Shows the incremental `ΔR²` and `% RMSE Reduction` achieved by adding river-network spatial covariance (`100 × (RMSE_OLS - RMSE_S3N) / RMSE_OLS`).
 
-### 4.2 Figure 2: `fig_comp2_reach_distributions.png`
-- **Panel A (`Kernel Density Comparison`)**: Overlaid density curves of reach predictions (`log10` scale for skewed nutrients, linear scale for ecological scores), annotated with the Two-Sample KS `D`-statistic.
+### 4.2 Figure 2: `fig_comp2_predictions_and_uncertainty.png`
+- **Panel A (`Kernel Density Comparison`)**: Overlaid density curves of reach predictions (`pred_combined`), annotated with the Two-Sample KS `D`-statistic.
 - **Panel B (`Empirical CDFs`)**: Overlaid cumulative distribution curves `F(x)` from `0` to `1`. Horizontal distance between solid lines (`Predictions`) and dashed lines (`Observed Stations`) shows monitoring bias within each run.
 - **Panel C (`Kriging SE Distribution`)**: Boxplots of `se_model_sc` across runs, annotated with Mann–Whitney `p`-values. Lower boxes indicate higher spatial prediction certainty.
-- **Panel D (`Co-located Reach Scatter` or `Multi-Run Quantile Profile`)**: For 2 runs, plots matched reach predictions (`Run 2` vs. `Run 1`) with the `1:1` identity line and Pearson `r` / Spearman `ρ`. For `K ≥ 3` runs (e.g., 4 seasons), plots the trajectory of `Median`, `Q25`, and `Q75` across runs.
+- **Panel D (`Spatial Difference / ΔZ Divergence Map`)**: Spatial BNG (`EPSG:27700`) reach difference map showing **`Δ = Run 2 - Run 1`** (same determinand) or standardized Z-score divergence **`ΔZ = Z₂ - Z₁`** (cross-determinand) using a diverging **Blue–Grey–Red** palette.
 
-### 4.3 Figure 3: `fig_comp3_parameter_comparison.png`
+### 4.3 Figure 3: `fig_comp3_parameter_forest.png`
 - **Panel A (`Fixed-Effect Regression Coefficients β`)**: Forest plot of all covariate slopes (`β`) with horizontal `95%` bootstrap confidence interval bars and a vertical dashed zero line (`β = 0`). Non-overlapping error bars between runs correspond to statistically significant Wald `Z`-test differences (`p < 0.05`).
 - **Panel B (`Spatial Covariance Parameters`)**: Grouped bar chart with `95%` bootstrap error bars for `Tail-Up` and `Tail-Down` variance components (`sigma.sq`, `tau.sq`, `phi`).
 
-### 4.4 Figure 4: `fig_comp4_spatial_difference_map.png`
-- **Panels 1 & 2 (`Run 1` and `Run 2` Spatial Maps)**: BNG (`EPSG:27700`) reach maps colored by predicted value across the shared geographic bounding box.
-- **Panel 3 (`Co-located Reach Difference Map`)**:
-  - When comparing the **same determinand** (e.g., `ORN` vs. `EU-Hydro`), maps raw difference **`Δ = Run 2 - Run 1`** using a diverging **Blue–Grey–Red** palette (`Blue` = Run 2 lower, `Grey` = near-zero difference, `Red` = Run 2 higher).
-  - When comparing **different determinands** (e.g., `Nitrate` vs. `Orthophosphate`), maps standardized Z-score divergence **`ΔZ = Z₂ - Z₁`** so you can immediately see which sub-catchments are disproportionately enriched in Determinand 2 (`Red`) vs. Determinand 1 (`Blue`).
+### 4.4 Figure 4: `fig_comp4_side_by_side_maps.png`
+- **`Run 1`, `Run 2`, ... Side-by-Side Network Maps**: BNG (`EPSG:27700`) reach maps colored by predicted value across each run's spatial extent so spatial gradients and hotspot clusters can be inspected side by side.
 
-### 4.5 Figure 5: `fig_comp5_determinand_relationships.png`
+### 4.5 Figure 5: `fig_comp5_reach_relationships.png`
 - **Panel A (`4-Quadrant Co-Occurrence Scatter`)**: Plots paired reaches colored by quadrant (`Red = Q1 High/High`, `Blue = Q2 Low/Low`, `Orange = Q3 High R1/Low R2`, `Purple = Q4 Low R1/High R2`), overlaid with median crosshairs, OLS regression line, Pearson `r`, Spearman `ρ`, and `% Concordance`.
 - **Panel B (`Stratified Median Comparison`)**: Grouped bar chart comparing `Upland`, `Lowland Non-Aquifer`, `Lowland Aquifer`, `Headwaters (Ord 1–2)`, `Medium (Ord 3–4)`, and `Mainstem (Ord 5+)`. Dual `Y`-axes are automatically used when comparing determinands with different measurement scales.
-- **Panel C (`Longitudinal Strahler Stream Order Profile`)**: Plots median reach predictions from `Order 1` to `Order 6+` for both runs, revealing whether both variables accumulate at the same rate downstream.
-- **Panel D (`Molar N:P Stoichiometry` OR `ΔZ Divergence Histogram`)**:
-  - For **Nitrogen vs. Phosphorus**, plots the histogram of `log10(Molar N:P)` across all reaches with shaded limitation zones (`Blue < 10:1 N-Limited`, `Green 10:1–20:1 Co-Limited / Redfield 16:1`, `Red/Orange > 20:1 P-Limited`).
-  - For **all other comparisons**, plots the distribution of standardized differences `ΔZ = Z₂ - Z₁` with `±1 SD` thresholds.
+- **Panel C (`4-Quadrant Co-Occurrence Map`)**: Spatial BNG map showing where paired reaches fall in `Q1 (High/High)`, `Q2 (Low/Low)`, `Q3`, and `Q4`.
+- **Panel D (`Molar N:P Stoichiometry` OR `ΔZ Divergence Boxplots`)**:
+  - For **Nitrogen vs. Phosphorus**, plots `Molar N:P` limitation zones (`< 10:1 N-Limited`, `10:1–20:1 Co-Limited / Redfield 16:1`, `> 20:1 P-Limited`) across basins/regimes.
+  - For **all other comparisons**, plots standardized divergence `ΔZ = Z₂ - Z₁` across river basins and landscape regimes.
 
 ---
 
-## 5. Worked Empirical Summaries
+## 5. Worked Empirical Summaries *(Illustrative Reference Examples)*
 
-### 5.1 Worked Example 1: Cross-Network Comparison — Nitrate (`0117`) on `ORN v2` vs. `EU-Hydro (Thames)`
-*(Source report: `output/comparisons/det_0117_vs_det_0117_euhydro_thames/comparison_report.md`)*
+### 5.1 Worked Example 1: Cross-Network Comparison — Nitrate (`0117`) on `ORN v2` vs. Custom `EU-Hydro (Thames)`
+*(Illustrative comparison pattern; e.g. comparing `output/results/det_0117_orn_rsn` against a user-configured custom network run such as `output/results/det_0117_euhydro_thames_rsn`)*
 
 1. **Out-of-Sample Cross-Validation & Head-to-Head Matched Evaluation (Sections 2 & 3)**:
    - Across all of England (`8,401` stations), **`ORN v2`** achieves **`Global CV R² = 0.5658`** (`RMSE = 0.5067`, `MAE = 0.3519`), whereas **`EU-Hydro (Thames)`** (`996` stations) achieves **`Global CV R² = 0.4533`** (`RMSE = 0.4730`, `MAE = 0.3125`).
@@ -275,18 +278,18 @@ Section 7 compares the fitted regression coefficients and spatial autocovariance
    - Co-located reaches (`median separation = 41.5 m`) exhibit **very strong spatial correlation (`Pearson r = 0.8758`, `Spearman ρ = 0.8705`, `p < 1e-16`)** and a near-unity scaling slope (`EU-Hydro = 0.308 + 0.961 × ORN`).
    - **4-Quadrant Concordance is `88.7%`** (`Odds Ratio = 62.6`, `χ² = 3,189`, `p < 1e-16`), and **Upper-Quartile Hotspot Overlap (`Jaccard > P75`) is `77.1%`** (`P(EU-Hydro > P75 | ORN > P75) = 87.1%`).
 3. **Parameter Stability Across Networks (Section 7)**:
-   - Two-Sample Wald `Z`-tests show that key physical covariate slopes—including **`elevation` (`p = 0.654 ns`)**, **`slope` (`p = 0.552 ns`)**, **`arable` (`p = 0.720 ns`)**, **`woodland` (`p = 0.391 ns`)**, and **`stw_log` (`p = 0.460 ns`)**—are **statistically invariant** between the national `ORN v2` network and the `EU-Hydro` Thames network.
+   - Two-Sample Wald `Z`-tests check whether shared physical covariate slopes (`Elevation_z`, `Slope_z`, `log10_US_Accum_z`, and geology indicators) remain **statistically invariant** (`p ≥ 0.05 ns`) when transferring a model from a national network (`ORN v2`) to a regional custom network (`BYOWN`).
 
 ---
 
 ### 5.2 Worked Example 2: Cross-Determinand Comparison — Nitrate (`0117`) vs. Orthophosphate (`0180`) on `ORN v2`
-*(Source report: `output/comparisons/det_0117_vs_det_0180_orn/comparison_report.md`)*
+*(Illustrative comparison pattern for `output/results/det_0117_orn_rsn` vs. `output/results/det_0180_orn_rsn`)*
 
 1. **Predictive Skill & Spatial Covariance Structure (Sections 2, 3 & 7)**:
    - **`Nitrate (0117)`** (`8,401` stations) achieves **`CV R² = 0.5658`** (`OLS R² = 0.4252`, **`ΔR² = +0.1406`**, `-13.1%` RMSE reduction from network kriging).
    - **`Orthophosphate (0180)`** (`8,358` stations) achieves **`CV R² = 0.4878`** (`OLS R² = 0.3401`, **`ΔR² = +0.1477`**, `-11.9%` RMSE reduction from network kriging).
-   - **Why is `OLS R²` higher for Nitrate (`0.425`) than Orthophosphate (`0.340`), while `ΔR²` from spatial kriging is slightly larger for Orthophosphate (`+0.148`)?**
-     Diffuse catchment land cover (`arable`, `improved_grass`) and bedrock hydrogeology (`aquifer` slope `+0.391` for Nitrate vs. `+0.172` for Orthophosphate, Wald `Z = 6.95`, `p < 1e-16`) explain a large share of Nitrate variance via `OLS`. Conversely, Orthophosphate is more heavily driven by point-source wastewater discharges (`stw_log` slope `+0.072` vs. `+0.044`, Wald `Z = -8.78`, `p < 1e-16`) and localized sediment interactions (`tau.sq = 0.251` vs. `0.155`), making longitudinal river-network kriging especially critical for capturing downstream sewage plumes.
+   - **Why can `OLS R²` be higher for Nitrate (`0.425`) than Orthophosphate (`0.340`), while `ΔR²` from spatial kriging is slightly larger for Orthophosphate (`+0.148`)?**
+     Broad elevation/slope gradients (`Elevation_z`, `Slope_z`) and bedrock hydrogeology (`Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Peat`) explain a large share of diffuse Nitrate variance via `OLS`. Conversely, Orthophosphate is heavily driven by localized point-source wastewater inputs not directly parameterized in the base ORN v2 fixed effects, leaving stronger residual spatial autocorrelation (`sigma.sq`, `Tail-Down`) and micro-scale nugget variance (`tau.sq`), so longitudinal river-network kriging captures substantial downstream signal beyond `OLS`.
 2. **Distributional & Environmental Gradient Contrasts (Section 5)**:
    - Across all `37,396` ORN reaches, predicted **Nitrate** has a median of **`2.344 mg/L` (`IQR = 2.671 mg/L`, `CV = 73.2%`)**, whereas **Orthophosphate** is an order of magnitude lower in mass concentration (`Median = 0.058 mg/L`, `IQR = 0.068 mg/L`) but exhibits higher relative dispersion (**`CV = 95.8%`**, `Skewness = 3.04`, `Kurtosis = 19.65`) due to acute point-source spikes downstream of major `STWs`.
    - Along the **Strahler Stream Order gradient**, both nutrients enrich downstream from `Headwaters (Ord 1–2)` to `Mainstem Rivers (Ord 5+)`, with Nitrate increasing **`1.69x`** (`2.129` to `3.591 mg/L`) and Orthophosphate increasing **`1.77x`** (`0.052` to `0.092 mg/L`).

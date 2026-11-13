@@ -51,14 +51,16 @@ flowchart TD
 
 ## 2. Ingestion Methods: How to Provide Your Data
 
-The pipeline supports three flexible ways to ingest custom or additional data sources:
+The pipeline supports four flexible ways to ingest custom or additional data sources:
 
 | Method | Primary Use Case | Configuration Required | Command-Line Example |
 | :--- | :--- | :---: | :--- |
 | **Method 1: Drop-In Directory** | Quickest way to add a custom project folder | None (auto-discovered) | `--source=my_project` |
 | **Method 2: Ad-Hoc CLI Flags** | One-off runs on arbitrary CSV paths anywhere on disk | None | `--custom-sites=path/to/sites.csv --custom-samples=path/to/samples.csv` |
-| **Method 3: Declarative JSON Profile** | Permanent registration of recurring external datasets | `configs/sources/<name>.json` | `--source=river_guardians` or `--source=riverfly` |
-| **Method 4: Delimiter Combinations** | Merging custom datasets with official EA networks | None (on-the-fly syntax) | `--source=rsn+my_project` or `--source=rsn,ssn,riverfly` |
+| **Method 3: Declarative JSON Profile** | Permanent registration of recurring external datasets | `configs/sources/<name>.json` | `--source=my_survey` (e.g. `configs/sources/rsn.json`) |
+| **Method 4: Delimiter Combinations** | Merging custom datasets with official EA networks | None (on-the-fly syntax) | `--source=rsn+my_project` or `--source=rsn,ssn,my_project` |
+
+Built-in profiles in `configs/sources/` include `rsn.json`, `ssn.json`, and `composites.json` (`rss`, `all`). Multi-source tokens joined with `,` or `+` are normalized internally with `+` (preserving hyphens inside custom source names such as `waterblitz-tobit`).
 
 ---
 
@@ -180,7 +182,7 @@ python3 scripts/format_custom_data.py path/to/my_sensor_export.csv \
   --det-code=0117 \
   --det-name="Nitrate as N" \
   --unit="mg/L" \
-  --ranges-to-midpoint \
+  --range-mode=midpoint \
   --generate-config
 ```
 
@@ -193,25 +195,31 @@ python3 scripts/format_custom_data.py path/to/my_sensor_export.csv \
 | `--out-dir <dir>` | `data/custom/<name>/` | Output directory where `sites.csv` and `samples.csv` are written |
 | `--id-col <name>` | *(Auto-detected)* | Column for unique station/site identifier |
 | `--name-col <name>` | *(Auto-detected)* | Column for human-readable site name or river reach |
-| `--x-col <name>` | *(Auto-detected)* | Column for Easting (m) or decimal Longitude (deg) |
-| `--y-col <name>` | *(Auto-detected)* | Column for Northing (m) or decimal Latitude (deg) |
+| `--x-col` / `--lon-col` | *(Auto-detected)* | Column for Easting (m) or decimal Longitude (deg) |
+| `--y-col` / `--lat-col` | *(Auto-detected)* | Column for Northing (m) or decimal Latitude (deg) |
 | `--date-col <name>` | *(Auto-detected)* | Column for sample date or ISO datetime |
 | `--time-col <name>` | *(None)* | Separate column for sample time (e.g. `14:30`) |
 | `--val-col <cols>` | *(Auto-detected)* | Measurement column(s) (comma-separated for wide tables) |
-| `--det-code <code >` | `0117` | Determinand code (e.g. `0117` Nitrate, `0180` Orthophosphate) |
+| `--det-col <name>` | *(Auto-detected)* | Column identifying determinand code in long-format CSVs |
+| `--det-name-col <name>` | *(Auto-detected)* | Column identifying determinand description in long-format CSVs |
+| `--unit-col <name>` | *(Auto-detected)* | Column identifying measurement units |
+| `--sign-col <name>` | *(Auto-detected)* | Column identifying censoring flags (`<` / `>`) |
+| `--det-code <code>` | `0117` | Determinand code (e.g. `0117` Nitrate, `0180` Orthophosphate) |
 | `--det-name <name>` | `Nitrate as N` | Determinand descriptive name |
 | `--unit <unit>` | `mg/L` | Measurement unit |
-| `--ranges-to-midpoint` | `True` | Enable interval conversion (set `--no-ranges-to-midpoint` to skip intervals) |
 | `--range-mode <mode>` | `tobit` | Strategy: `tobit` (Gold Standard MLE), `geometric` ($\sqrt{ab}$), `midpoint` ($\frac{a+b}{2}$), `lower`, `upper`, `skip` |
-| `--convert-to-bng` | `True` | Convert WGS84 lat/lon coordinates to British National Grid meters |
+| `--convert-to-bng` | `True` | Convert WGS84 lat/lon coordinates to BNG meters (disable with `--no-convert-to-bng`) |
+| `--crs <epsg>` | *(Auto-detected)* | Override input coordinate CRS EPSG code (`4326` or `27700`) |
 | `--filter <expr>` | *(None)* | Row filter expression (e.g. `Country=England`) |
+| `--bbox <bounds>` | *(None)* | Spatial bounding box filter `min_x,min_y,max_x,max_y` |
+| `--limit <N>` | *(None)* | Limit number of raw input rows read (useful for testing) |
 | `--group-sites-by <mode>`| `auto` | Site grouping: `auto`, `id`, `name`, `coords`, `name_and_coords` |
 | `--site-id-prefix <pre>` | `<SRC>_` | Prefix for generated site IDs (e.g. `WB_`) |
-| `--generate-config` | `False` | Write declarative JSON config to `configs/sources/<name>_<mode>.json` |
+| `--generate-config` | `False` | Write declarative JSON config to `configs/sources/<name>_<mode>.json` (with `"unc_col"` & `"meth_col"`) |
 
 #### Systematic Output Folder Tagging with Range Modes
 
-Whenever range intervals are present and converted (via default `tobit` or any alternative mode), all scripts across the S3N pipeline systematically tag their output directory names with the active range mode (e.g. `_tobit`, `_geometric`, `_midpoint`):
+Whenever range intervals are present and converted (via default `tobit` or any alternative mode), scripts across the S3N pipeline systematically tag their output directory names with the active range mode (e.g. `_tobit`, `_geometric`, `_midpoint`):
 
 ```text
 Pipeline Stage                          Output Folder Pattern & Examples
@@ -224,15 +232,15 @@ Pipeline Stage                          Output Folder Pattern & Examples
                                         data/processed/orn_waterblitz_tobit/
                                         data/processed/orn_waterblitz_midpoint/
 
-3. run_s3n_determinand.R          ->    output/det_<code >_<net>_<source>_<range_mode>/
-                                        output/det_0117_orn_waterblitz_tobit/
-                                        output/det_0117_orn_waterblitz_midpoint/
+3. run_s3n_determinand.R          ->    output/results/det_<code>_<net>_<source>_<range_mode>/
+                                        output/results/det_0117_orn_waterblitz_tobit/
+                                        output/results/det_0117_orn_waterblitz_midpoint/
 
-4. 06_station_snapping_...        ->    output/station_snapping_<net>_<source>_<range_mode>/
-                                        output/station_snapping_ORN_waterblitz_tobit/
+4. 06_station_snapping_...        ->    output/station_snapping/<net>_<source>_<range_mode>/
+                                        output/station_snapping/orn_waterblitz_tobit/
 ```
 
-Even when executing with default commands like `python3 scripts/01_preprocess_orn.py --source=waterblitz` or `Rscript scripts/run_s3n_determinand.R 0117 --source=waterblitz`, the pipeline detects the underlying range mode and guarantees that all intermediate reach caches and model output folders are explicitly tagged with `_tobit`!
+Even when executing with default commands like `python3 scripts/01_preprocess_orn.py --source=waterblitz` or `Rscript scripts/run_s3n_determinand.R 0117 --source=waterblitz`, the pipeline detects the underlying range mode and guarantees that all intermediate reach caches and model output folders are explicitly tagged with `_tobit`. Note that `--range-mode=<mode>` on `01_preprocess_orn.py` and the R scripts also accepts `auto` (use configured/metadata default) or `none` (disable automatic range-mode suffixing).
 
 ---
 
@@ -388,7 +396,7 @@ The preprocessor subsets the national water network to **only the catchments con
 ### 5.3 Sampling Frequency Imbalance & Aggregation
 If your custom data consists of high-frequency telemetry sondes (e.g. 15-minute readings: ~35,000 samples/station/year) while national RSN data is monthly grab sampling (~12 samples/station/year):
 - **Why this matters**: In unweighted maximum likelihood estimation, a station with 35,000 observations would overwhelm the likelihood function relative to stations with 12 observations.
-- **How S3N handles this**: In [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), observations are aggregated to **reach-level means or medians** (`reach_mean_value`) for the active modeling period (`all`, `year`, `season`, `month`) before conditioning the NNGP likelihood. This ensures each stream reach carries an appropriately balanced weight in spatial estimation.
+- **How S3N handles this**: In [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), observations are aggregated to **reach-level means or medians** (`obs_mean` / `obs_median`) for the active modeling period (`all`, `year`, `season`, `month`) before conditioning the NNGP likelihood. This ensures each stream reach carries an appropriately balanced weight in spatial estimation.
 
 ### 5.4 Left-Censored Values & Detection Limits (`< LOD`)
 If your custom dataset contains values reported below the Limit of Detection (e.g. `< 0.05 mg/L`):
@@ -439,9 +447,7 @@ RSN002,2023-06-01,4.120,0.1850,gam,mg/L
 ```
 - **Automatic Activation**: Whenever `meas_method = "gam"` is detected (or via `--meas-error` / `--gam` flag), Approach A is automatically activated.
 - **Reporting**: Cross-validation tables tag `Spatial_Method = "Measurement Error Kriging"` and parameter tables report the decomposed `tau.sq (microscale)` and `mean_meas_variance`.
-- **Pre-packaged Examples**:
-  - `data/custom/rsn_gam_mean/`: 1,382 station mean GAM predictions across England.
-  - `data/custom/rsn_gam/`: 94,778 weekly GAM concentration estimates.
+- **Example Two-Stage Workflow** (after placing GAM predictions & SEs into e.g. `data/custom/rsn_gam_mean/`):
 
 ```bash
 # Preprocess reaches with GAM estimates and uncertainty
@@ -488,7 +494,7 @@ AVON_03,2023-07-15T10:15:00,0117,Nitrate as N,7.5,=,mg/L
 ```bash
 python3 scripts/01_preprocess_orn.py --source=rsn+hampshire_avon_study
 ```
-*Output*: Generates model-ready reaches and snapping coordinates in `data/processed/orn_rsn_hampshire_avon_study/`.
+*Output*: Generates model-ready reaches and snapping coordinates in `data/processed/orn_rsn+hampshire_avon_study/`.
 
 ### Step 3: Run Station Snapping Diagnostics
 ```bash
@@ -496,7 +502,7 @@ Rscript scripts/06_station_snapping_diagnostics.R \
   --source=rsn+hampshire_avon_study \
   --catchment=Avon
 ```
-*Output*: Generates metre-scale vector maps in `output/station_snapping_orn_rsn_hampshire_avon_study/` verifying that all custom stations snapped cleanly to the correct channel reaches.
+*Output*: Generates metre-scale vector maps in `output/station_snapping/orn_rsn+hampshire_avon_study/` verifying that all custom stations snapped cleanly to the correct channel reaches.
 
 ### Step 4: Fit S3N Model & Predict Across All Reaches
 ```bash
@@ -505,14 +511,14 @@ Rscript scripts/run_s3n_determinand.R 0117 \
   --transform=sqrt \
   --basin=Avon
 ```
-*Output*: Generates reach predictions (`pred_combined`), kriging standard errors (`se_combined`), parameter estimates, cross-validation tables, and Figures 1–5 in `output/det_0117_orn_rsn_hampshire_avon_study_sqrt/`.
+*Output*: Generates reach predictions (`pred_combined`, `pred_model_sc`, plus normalised columns `pred_zscore`, `pred_robust_zscore`, `pred_minmax`, `pred_percentile`), kriging standard errors (`se_model_sc`), parameter estimates, cross-validation tables, and Figures 1–5 in `output/results/det_0117_orn_rsn+hampshire_avon_study_trans_sqrt/`.
 
 ### Step 5: Direct Statistical Comparison Against Baseline RSN
 To quantify the impact of adding your custom data to the model:
 ```bash
 Rscript scripts/04_compare_model_runs.R \
-  output/det_0117_orn_rsn \
-  output/det_0117_orn_rsn_hampshire_avon_study_sqrt \
+  output/results/det_0117_orn_rsn \
+  output/results/det_0117_orn_rsn+hampshire_avon_study_trans_sqrt \
   --out=output/comparisons/nitrate_rsn_vs_with_avon_study
 ```
 *Output*: Evaluates cross-validation accuracy improvement ($\Delta R^2$, $\Delta\text{RMSE}$), paired Wilcoxon tests, parameter stability, and produces Figure Comp 4 (side-by-side national maps) and Figure Comp 5 (scatter plots and spatial difference maps).

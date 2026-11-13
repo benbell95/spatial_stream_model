@@ -65,7 +65,7 @@ flowchart TD
     end
 
     subgraph Stage4["Stage 4: Outputs, Maps & Statistical Post-Processing"]
-        F1["Model Outputs (output/det_<code>/)\nreach_predictions_*.csv, parameter_estimates_*.csv,\ncv_summary_*.csv, fig1..fig5_*.png"]
+        F1["Model Outputs (output/results/det_<code>_<net>_<src>/)\npredictions_*.csv, parameters_*.csv,\ncv_comparison_*.csv, fig1..fig5_*.png"]
         F2["Single-Output Descriptive & Stratified Analysis\n(scripts/05_descriptive_stats.R)"]
         F3["Multi-Run & Cross-Determinand Comparison\n(scripts/04_compare_model_runs.R)"]
         E2 --> F1
@@ -79,10 +79,10 @@ flowchart TD
 ### 2.1 Multi-Network Monitoring Data Sources & Domain Naming Conventions
 
 The S3N modeling framework supports official statutory networks, custom field campaigns, and arbitrary multi-network combinations via `--source=<name>`:
-1. **`rsn` (*default*)**: Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 stations across mainstems and major tributaries (1,210 snapped reaches on ORN v2; 90,876 reaches in 141 monitored catchments). Output directory: `output/det_<code>_<net>_rsn/`.
-2. **`ssn`**: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations with catchment areas < 20 km² (177 snapped reaches on ORN v2; 76,242 reaches in 58 monitored catchments). Output directory: `output/det_<code>_<net>_ssn/`.
-3. **`rss`**: **Combined Surveillance + Small Streams Network** integrating both RSN and SSN (1,695 unique stations; 1,384 snapped reaches on ORN v2; 91,118 reaches in 150 monitored catchments). Output directory: `output/det_<code>_<net>_rss/`.
-4. **Custom Sources & Combinations**: User-supplied or registered custom datasets (e.g. `--source=my_study`, `--source=riverfly`, or on-the-fly combination syntax `--source=rsn+my_study`). Output directory: `output/det_<code>_<net>_<source>/`.
+1. **`rsn` (*default*)**: Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 stations across mainstems and major tributaries (1,210 snapped reaches on ORN v2; 90,876 reaches in 141 monitored catchments). Output directory: `output/results/det_<code>_<net>_rsn/`.
+2. **`ssn`**: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations with catchment areas < 20 km² (177 snapped reaches on ORN v2; 76,242 reaches in 58 monitored catchments). Output directory: `output/results/det_<code>_<net>_ssn/`.
+3. **`rss`**: **Combined Surveillance + Small Streams Network** integrating both RSN and SSN (1,695 unique stations; 1,384 snapped reaches on ORN v2; 91,118 reaches in 150 monitored catchments). Output directory: `output/results/det_<code>_<net>_rss/`.
+4. **Custom Sources & Combinations**: User-supplied or registered custom datasets (e.g. `--source=my_study`, or on-the-fly combination syntax `--source=rsn+my_study`). Output directory: `output/results/det_<code>_<net>_<source>/`.
 
 > **Bring Your Own Monitoring Dataset Guide**: For comprehensive instructions on importing external field datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
 
@@ -121,7 +121,7 @@ Both [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and [`
    - Each censored measurement `i ∈ C_j` is then imputed at its expected lognormal order statistic, capped strictly at its physical detection limit `LOD_i`:
      `ŷ_i = min(LOD_i, exp(α̂_ROS + β̂_ROS × Φ⁻¹(pp_i)))`
 5. **Station & Reach Aggregation and Universal Response Transformation**:
-   - After imputation (and any optional `--year`, `--season`, or `--month` filter), all samples at a station are averaged to form the station arithmetic mean `obs_val`.
+   - After imputation (and any optional `--year`, `--season`, or `--month` filter), all samples at a station are averaged to form the station arithmetic mean `obs_value` (or `obs_mean` in raw preprocessing summaries).
    - **Universal Transformation Engine**: Because S3N Gaussian process estimation and kriging assume normally distributed residuals, the pipeline provides a mathematical transformation engine (`--transform=<type>`, defaulting to `log` for water chemistry and LCMS, and `none` for ecological indices):
      - **Natural Logarithm (`log`)**: \(z = \ln(y)\), back-transform \(\hat{y} = \exp(\hat{z})\). Ideal for multiplicative concentrations spanning orders of magnitude (`0180` Orthophosphate, `0301` DOC, `0077` Conductivity).
      - **Square Root (`sqrt`)**: \(z = \sqrt{y}\), back-transform \(\hat{y} = \hat{z}^2\). **Recommended for moderately skewed concentrations** (e.g. UK Nitrate `0117`, reducing skewness from \(+1.00\) to \(+0.09\)) and macroinvertebrate taxa richness (`whpt_ntaxa`). Unlike \(\ln y\), square root avoids over-stretching low clean headwater concentrations toward \(-\infty\).
@@ -132,10 +132,10 @@ Both [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and [`
      - **Box-Cox (`boxcox`)**: \(z = (y^\lambda - 1)/\lambda\) (or \(\ln y\) when \(\lambda = 0\)). Maximizes Gaussian profile likelihood \(L(\lambda) = -0.5 n \ln(\hat{\sigma}^2(\lambda)) + (\lambda - 1) \sum \ln(y_i)\) over \(\lambda \in [-2, 2]\) via Golden Section search if `--lambda` is omitted.
      - **Yeo-Johnson (`yeojohnson`)**: Continuous extension of Box-Cox supporting zero and negative observations, optimized via Profile MLE.
      - **Reciprocal (`reciprocal`)**: \(z = -1/y\), back-transform \(\hat{y} = -1/\hat{z}\). Preserves positive spatial gradient direction for rate-dilution modeling.
-     - **Arcsine Square Root (`asin`)**: \(z = \arcsin(\sqrt{y / \text{scale}})\). Angular transformation for bounded \([0, 1]\) or \([0, 100]\%\) proportions (e.g. sediment silt cover, diatom valences).
-     - **Logit (`logit`)**: \(z = \ln(p / (1 - p))\). S-shaped logistic stretching for bounded proportions.
+     - **Arcsine Square Root (`asin`)**: \(z = \arcsin(\sqrt{y / \text{scale}})\). Angular transformation for bounded \([0, 1]\) or \([0, 100]\%\) proportions (e.g. sediment silt cover, diatom valences; upper bound controlled via `--scale`).
+     - **Logit (`logit`)**: \(z = \ln(p / (1 - p))\) with \(p = y / \text{scale}\). S-shaped logistic stretching for bounded proportions.
      - **Identity / Raw (`none` / `raw`)**: \(z = y\). Standard for multimetric ecological indices that are already approximately interval/normal (`WHPT ASPT`, `LIFE`, `PSI`, `RMNI`, `RHS HQA`).
-   - Multiple stations on the same reach are aggregated into a single reach observation `obs_y = mean(z_k)`. Predictions at unmonitored reaches are mapped back to natural units via \(\hat{y} = f^{-1}(\hat{z})\).
+   - Multiple stations on the same reach are aggregated into a single reach observation `obs_y = mean(z_k)` (with arithmetic reach mean `obs_mean` also preserved). Predictions at unmonitored reaches are mapped back to natural units via \(\hat{y} = f^{-1}(\hat{z})\), and `add_normalised_columns()` in [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R) additionally exports Z-scores, robust MAD Z-scores, min-max `[0, 1]`, and empirical percentiles `[0, 100]`.
 
 ---
 
@@ -189,20 +189,22 @@ This is achieved via an **Additive Function Value (`AFV`)** constructed recursiv
 ---
 
 ### 3.5 Step 1.5: Environmental Design Matrix Construction (`build_design_matrix()`)
-At each reach `s_i`, the deterministic catchment trend is modeled via a fixed-effect design matrix `X` (`q_tot × p`). By default (`build_design_matrix()` in [`../scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R)), `X` includes an `Intercept` plus up to **8 standardized/scaled physical covariates**:
+At each reach `s_i`, the deterministic catchment trend is modeled via a fixed-effect design matrix `X` (`q_tot × p`) assembled by `build_design_matrix()` in [`../scripts/s3n_covariates.R`](../scripts/s3n_covariates.R). By default, `X` includes an `Intercept` plus **8 standardized/binary physical covariates for All England** (`6` for single-basin fits where `Is_Aquifer` replaces the 3 detailed geology classes; and any custom subset/additions can be selected via `--vars=`):
 
-| Covariate Name | Formula / Transformation | Physical Process Represented |
-| :--- | :--- | :--- |
-| **`Intercept`** | `1.0` | Baseline mean response at reference covariate levels. |
-| **`Elevation_100m`** (`elevation`) | `Elevation / 100.0` (in `100 m AOD` units) | Altitudinal climate, temperature, runoff dilution, and upland-to-lowland transition. |
-| **`log_Slope`** (`slope`) | `log1p(max(0, Slope))` | Channel hydraulic gradient, flow velocity, reaeration, and sediment transport capacity. |
-| **`Arable_prop`** (`arable`) | `Subcatch_Arable_pct / 100.0` (`[0, 1]`) | Diffuse agricultural fertilizer leaching and tillage runoff. |
-| **`ImproGrass_prop`** (`improved_grass`) | `Subcatch_ImprovedGrass_pct / 100.0` (`[0, 1]`) | Livestock grazing, slurry application, and pastoral nutrient loading. |
-| **`Urban_prop`** (`urban`) | `Subcatch_Urban_pct / 100.0` (`[0, 1]`) | Impervious surface runoff, road drainage, and urban Diffuse pollution. |
-| **`Woodland_prop`** (`woodland`) | `Subcatch_Woodland_pct / 100.0` (`[0, 1]`) | Natural riparian/catchment nutrient uptake and vegetative buffering. |
-| **`Is_Aquifer`** (`aquifer`) | Binary `{0, 1}` (`Chalk / Limestone / Sandstone`) | Baseflow groundwater residence time and legacy aquifer solute storage. |
-| **`log_STW_Load`** (`stw_log`) | `log1p(max(0, Upstream_STW_Load_FlowWeighted))` | Point-source municipal wastewater treatment works (`STW`) effluent loading diluted by upstream network length. |
-| **`Is_Peat`** *(National model)* | Binary `{0, 1}` | Blanket bog / peatland organic soil influence across upland England. |
+| Covariate Name | Formula / Transformation | Default Inclusion | Physical Process Represented |
+| :--- | :--- | :--- | :--- |
+| **`Intercept`** | `1.0` | Always | Baseline mean response at reference covariate levels. |
+| **`Elevation_z`** (`elevation`) | `scale(Elevation)` (m AOD, z-score) | All domains | Altitudinal climate, temperature, runoff dilution, and upland-to-lowland transition. |
+| **`Slope_z`** (`slope`) | `scale(Slope)` (%, z-score) | All domains | Channel hydraulic gradient, flow velocity, reaeration, and sediment transport capacity. |
+| **`log10_US_Accum_z`** (`us_accum`) | `scale(log10(pmax(1e-4, US_Accum_km)))` | All domains | Cumulative drainage network length proxy for catchment area and river discharge. |
+| **`Is_Chalk_Limestone`** (`chalk`) | Binary `{0, 1}` | All England | BGS Chalk / Limestone / Dolostone bedrock (carbonate groundwater baseflow enrichment). |
+| **`Is_Sandstone`** (`sandstone`) | Binary `{0, 1}` | All England | BGS Sandstone aquifer bedrock (excluding mudstone/siltstone). |
+| **`Is_Peat`** (`peat`) | Binary `{0, 1}` | All England | BGS Peat superficial deposits (upland blanket bog / organic soil influence). |
+| **`Is_Aquifer`** (`aquifer`) | Binary `{0, 1}` (`Chalk/Limestone` OR `Sandstone`) | Single-basin fits | Composite aquifer baseflow indicator used on single-basin models where individual rock classes may lack variance. |
+| **`Easting_z`** (`easting`) | `scale(mid_X)` (BNG m, z-score) | All domains | West-to-east climatic, rain-shadow, and agricultural intensity gradient. |
+| **`Northing_z`** (`northing`) | `scale(mid_Y)` (BNG m, z-score) | All domains | South-to-north climatic, temperature, and topographic gradient. |
+
+Optional hydromorphological covariates (`Sinuosity_z`, `SrcElevation_z`, `Dist2Mth_z`, `Length_z`, `log10_Shreve_z`, `Strahler_z`) can also be included via `--vars=+sinuosity,+strahler` etc. See [`./orn_variables_reference.md`](./orn_variables_reference.md) for the complete catalog.
 
 ---
 
@@ -381,7 +383,7 @@ Because maximum likelihood estimators of spatial variance components (`σ², τ�
    - Scale by the conditional standard deviations: `u*^(b)_i = √d̂_i × z*^(b)_i`.
    - Solve the sparse unit lower-triangular system `(I - Â) w*^(b) = u*^(b)` by fast forward-substitution (`w*^(b)_i = u*^(b)_i + â_i w*^(b)_{N(i)}`) in `O(n m)` time!
    - Form the synthetic spatial stream response vector `y*^(b) = X β̂ + w*^(b)` and re-run `BRISC_estimation_stream` to obtain bootstrap estimates `(β̂*^(b), Θ̂*^(b))`.
-3. The empirical `2.5%` and `97.5%` quantiles across the `B` bootstrap replicates yield the `95%` confidence intervals `[CI_Lower, CI_Upper]` saved in `parameter_estimates_*.csv`.
+3. The empirical `2.5%` and `97.5%` quantiles across the `B` bootstrap replicates yield the `95%` confidence intervals `[CI_Lower, CI_Upper]` saved in `parameters_<code>.csv`.
 
 ---
 
@@ -403,8 +405,8 @@ Universal Kriging decomposes the prediction `ŷ(s₀)` into two additive parts:
 Let us examine each term in this equation step by step:
 
 #### Step 1: The Deterministic Catchment Trend (`μ̂(s₀) = x(s₀)ᵀ β̂`)
-First, the reach's local and upstream catchment characteristics (`Elevation`, `Slope`, `Arable`, `ImprovedGrass`, `Urban`, `Woodland`, `Aquifer`, `STW_Load`) are multiplied by the GLS fixed-effect slopes `β̂`:
-`μ̂(s₀) = β̂_0 + β̂_1 Elevation(s₀) + β̂_2 log_Slope(s₀) + ... + β̂_p log_STW(s₀)`
+First, the reach's local and upstream catchment characteristics (`Elevation_z`, `Slope_z`, `log10_US_Accum_z`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Peat`, `Easting_z`, `Northing_z`) are multiplied by the GLS fixed-effect slopes `β̂`:
+`μ̂(s₀) = β̂_0 + β̂_1 Elevation_z(s₀) + β̂_2 Slope_z(s₀) + ... + β̂_p Northing_z(s₀)`
 Meanwhile, at each of the `m = 15` neighboring monitoring stations `s_{j_k} ∈ N(s₀)`, we compute the **observed station residual** (the difference between what was actually measured at station `s_{j_k}` and what its catchment covariates alone predicted):
 `r(s_{j_k}) = y(s_{j_k}) - x(s_{j_k})ᵀ β̂`
 - If `r(s_{j_k}) > 0`, station `s_{j_k}` has **higher concentrations than expected** from its land cover/geology (e.g., an unrecorded point source, local septic/agricultural hotspot, or elevated sub-catchment background).
@@ -445,7 +447,7 @@ With `λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)` in hand, `BRISC_prediction_stream()` 
 3. **95% Prediction Interval (`pr$prediction.ci`)**:
    `[ ŷ(s₀) - 1.959964 × SE(s₀),  ŷ(s₀) + 1.959964 × SE(s₀) ]`
 
-In R ([`../scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) L169–170 and [`../scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) L497–498), we recover the exact Kriging standard error for each reach directly from `$prediction.ci`:
+In R ([`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R)), we recover the exact Kriging standard error for each reach directly from `$prediction.ci`:
 ```r
 se_tu <- (pr_tu$prediction.ci[, 2] - pr_tu$prediction) / 1.959964
 se_td <- (pr_td$prediction.ci[, 2] - pr_td$prediction) / 1.959964
@@ -467,7 +469,7 @@ Examining the variance equation `SE(s₀)² = (σ̂² + τ̂²) - c(s₀)ᵀ λ(
 
 ### 7.3 Variance-Weighted Spatial Information Combination (`S3N Combined`)
 
-A major strength of our modelling pipeline ([`../scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) L171–175 and [`../scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) L499–503) is how it combines the **Tail-Up (`pr_tu`)** and **Tail-Down (`pr_td`)** universal kriging predictions at every individual reach `s₀` using **Local Spatial Information-Gain Weighting**:
+A major strength of our modelling pipeline ([`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R)) is how it combines the **Tail-Up (`pr_tu`)** and **Tail-Down (`pr_td`)** universal kriging predictions at every individual reach `s₀` using **Local Spatial Information-Gain Weighting**:
 
 1. **Total Prior Residual Variance (`Sill`)**:
    For each fitted model (`fit_tu` and `fit_td`), `Theta[1] = σ̂²` (partial sill) and `Theta[2] = τ̂²` (nugget), so `sum(fit$Theta[1:2]) = σ̂² + τ̂²` is the unconditional variance of a reach before conditioning on any neighboring stations.
@@ -485,9 +487,10 @@ A major strength of our modelling pipeline ([`../scripts/02_fit_s3n_models.R`](.
 - Under **Spatial Information-Gain Weighting**, at that unmonitored headwater reach, `Tail-Down` automatically receives `0.45 / (0.45 + 0.0001) = 99.98%` of the weight!
 - Conversely, along a **monitored mainstem river** where flow-connected stations sit directly upstream and downstream, both `info_tu(s₀)` and `info_td(s₀)` are large (`~0.50–0.70`), so `S3N Combined` blends both flow-connected mass-conserving kriging (`Tail-Up`) and hydrologic-distance kriging (`Tail-Down`), consistently outperforming both individual models in out-of-sample 5-fold cross-validation (`p < 0.001`).
 
-### 7.4 Back-Transformation to the Physical Scale (`pred_tu`, `pred_td`, `pred_combined`)
-- When a determinand is modeled on the natural scale (`use_log == FALSE`, e.g., `WHPT ASPT`, `RHS HQA`, `pH`), `pred_combined = pred_model_sc`.
-- When a determinand is modeled on the logarithmic scale (`use_log == TRUE`, e.g., `Nitrate 0117`, `Orthophosphate 0180`), `pred_model_sc` represents `E[log(Y(s₀)) | Data]`, and the back-transformed prediction `pred_combined = exp(pred_model_sc)` gives the **conditional geometric mean / median concentration (`mg/L`)** at reach `s₀` (which is invariant to monotonic transformations and avoids variance-inflation artifacts in high-SE unmonitored reaches).
+### 7.4 Back-Transformation to the Physical Scale & Normalised Outputs
+- When a determinand is modeled on its raw/identity scale (`trans_obj$type == "none"`, e.g., `WHPT ASPT`, `RHS HQA`, `pH`), `pred_combined = pred_model_sc`.
+- When a determinand is modeled with any nonlinear transformation (`log`, `sqrt`, `cbrt`, `boxcox`, etc.), `pred_model_sc` represents `E[f(Y(s₀)) | Data]`, and the back-transformed prediction `pred_combined = trans_obj$inv(pred_model_sc)` (e.g., `exp(pred_model_sc)` for `log`) maps the prediction back to natural physical units at reach `s₀` (`pred_tu` and `pred_td` are back-transformed identically alongside `pred_tu_sc` and `pred_td_sc`).
+- Every prediction CSV also includes **normalised columns** computed across England-wide reference statistics via `add_normalised_columns()` in [`../scripts/s3n_transforms.R`](../scripts/s3n_transforms.R): `pred_zscore`, `pred_robust_zscore`, `pred_minmax`, and `pred_percentile` (plus `_tu_`, `_td_`, and `obs_` variants).
 
 ---
 
@@ -514,12 +517,12 @@ To rigorously evaluate predictive skill at unmonitored locations, [`../scripts/0
 
 ## 9. Worked Numerical Walkthrough: Universal Kriging of a Single River Reach
 
-To make the mathematics concrete, let us trace how the pipeline computes the final prediction for a single reach `s₀` in the **All England Nitrate (`0117`) model on ORN v2** (where fitted parameters are `σ̂²_TU = 0.2580, τ̂²_TU = 0.1449, φ̂_TU = 0.0256 km⁻¹` and `σ̂²_TD = 0.2465, τ̂²_TD = 0.1552, φ̂_TD = 0.0568 km⁻¹`):
+To make the mathematics concrete, let us trace how the pipeline computes the final prediction for a single reach `s₀` in the **All England Nitrate (`0117`) model on ORN v2** (using illustrative fitted parameters `σ̂²_TU = 0.2580, τ̂²_TU = 0.1449, φ̂_TU = 0.0256 km⁻¹` and `σ̂²_TD = 0.2465, τ̂²_TD = 0.1552, φ̂_TD = 0.0568 km⁻¹` on the `log` scale):
 
 1. **Step 1 — Fixed-Effect Covariate Trend (`x(s₀)ᵀ β̂`)**:
-   Suppose target reach `s₀` is a lowland Chalk stream reach (`Elevation = 65 m`, `Slope = 1.8 m/km`, `Arable = 48%`, `ImprovedGrass = 22%`, `Urban = 6%`, `Woodland = 8%`, `Is_Aquifer = 1`, `log_STW_Load = 2.1`, `Is_Peat = 0`).
+   Suppose target reach `s₀` is a lowland Chalk stream reach (`Elevation = 65 m`, `Slope = 0.18 %`, `US_Accum_km = 42 km`, `Is_Chalk_Limestone = 1`, `Is_Sandstone = 0`, `Is_Peat = 0`, standardized coordinates `Easting_z`, `Northing_z`).
    Multiplying `x(s₀)ᵀ` by the fitted GLS regression slopes `β̂` yields a baseline catchment log-nitrate expectation of:
-   - `μ̂_TU(s₀) = x(s₀)ᵀ β̂_TU = 1.180` (`exp(1.180) = 3.25 mg/L` expected from land use and Chalk geology alone).
+   - `μ̂_TU(s₀) = x(s₀)ᵀ β̂_TU = 1.180` (`exp(1.180) = 3.25 mg/L` expected from elevation, slope, drainage size, coordinates, and Chalk geology alone).
    - `μ̂_TD(s₀) = x(s₀)ᵀ β̂_TD = 1.165` (`exp(1.165) = 3.21 mg/L`).
 
 2. **Step 2 — Conditioning on the `m = 15` Nearest Stream Monitoring Stations**:
@@ -564,8 +567,8 @@ To make the mathematics concrete, let us trace how the pipeline computes the fin
 | **5. Universal Stream Kriging Weights (`λ(s₀)`)** | `λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)` (`m × m` system with `m = 15` nearest observed stations) | `S3N::BRISC_prediction_stream()` |
 | **6. Universal Stream Kriging Prediction (`ŷ(s₀)`)** | `ŷ(s₀) = x(s₀)ᵀ β̂ + λ(s₀)ᵀ (y_{N(s₀)} - X_{N(s₀)} β̂)` | `S3N::BRISC_prediction_stream()` |
 | **7. Universal Stream Kriging Variance (`SE(s₀)²`)** | `SE(s₀)² = (σ̂² + τ̂²) - c(s₀)ᵀ C_{N(s₀)}⁻¹ c(s₀)` | `S3N::BRISC_prediction_stream()` |
-| **8. Spatial Information-Gain Weight (`info(s₀)`)** | `info(s₀) = max(10⁻⁴, 1 - SE(s₀)² / (σ̂² + τ̂²))` | [`../scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) |
-| **9. Combined `Tail-Up + Tail-Down` Estimator** | `ŷ_comb = (info_TU × ŷ_TU + info_TD × ŷ_TD) / (info_TU + info_TD)` | [`../scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) |
+| **8. Spatial Information-Gain Weight (`info(s₀)`)** | `info(s₀) = max(10⁻⁴, 1 - SE(s₀)² / (σ̂² + τ̂²))` | [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) |
+| **9. Combined `Tail-Up + Tail-Down` Estimator** | `ŷ_comb = (info_TU × ŷ_TU + info_TD × ŷ_TD) / (info_TU + info_TD)` | [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) |
 
 ---
 

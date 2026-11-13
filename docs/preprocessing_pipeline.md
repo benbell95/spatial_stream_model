@@ -15,11 +15,11 @@ This document provides complete technical documentation for the three-stage **Sc
 
 ### 1. Multi-Network Monitoring Data Ingestion (`--source=<name>`)
 The preprocessor supports official statutory networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
-- `rsn` (*default*): Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 baseline stations across England's mainstems and major tributaries.
-- `ssn`: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations (< 20 km² catchment area).
-- `rss`: **Combined River Surveillance + Small Streams Network** integrating both datasets (1,695 unique monitoring stations) for complete headwater-to-mouth stream network coverage.
+- `rsn` (*default*, `configs/sources/rsn.json`): Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 baseline stations across England's mainstems and major tributaries.
+- `ssn` (`configs/sources/ssn.json`): Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations (< 20 km² catchment area).
+- `rss` (`configs/sources/composites.json`): **Combined River Surveillance + Small Streams Network** integrating both datasets (1,695 unique monitoring stations) for complete headwater-to-mouth stream network coverage (`all` also resolves to `rsn+ssn` by default and includes any user-registered sources in `configs/sources/`).
 - `<custom>`: Any custom monitoring dataset registered in `configs/sources/<name>.json`, placed in `data/custom/<name>/`, or supplied ad-hoc via `--custom-sites` and `--custom-samples`.
-- `<A>+<B>`: On-the-fly combination merging multiple sources (e.g. `--source=rsn+my_study` or `--source=rsn,ssn,custom`).
+- `<A>+<B>`: On-the-fly combination merging multiple sources (e.g. `--source=rsn+my_study` or `--source=rsn,ssn,custom`, normalised internally with `+` so hyphens inside source names such as `waterblitz-tobit` are preserved).
 
 > **Complete Custom Data Guide**: For complete instructions on bringing your own point observation datasets, creating `sites.csv` and `samples.csv`, registering profiles in `configs/sources/`, and handling lat/lon coordinates, see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md).
 
@@ -28,27 +28,29 @@ The preprocessor supports official statutory networks, custom field campaigns, a
 python3 scripts/01_preprocess_orn.py --list-sources
 
 # Run preprocessing for RSN (default), SSN, combined RSS, or custom sources
-python3 scripts/01_preprocess_orn.py                       # data/processed/orn/ (default)
+python3 scripts/01_preprocess_orn.py                       # data/processed/orn_rsn/ (default)
 python3 scripts/01_preprocess_orn.py --source=ssn          # data/processed/orn_ssn/
 python3 scripts/01_preprocess_orn.py --source=rss          # data/processed/orn_rss/
-python3 scripts/01_preprocess_orn.py --source=rsn+my_study # data/processed/orn_rsn_my_study/
+python3 scripts/01_preprocess_orn.py --source=rsn+my_study # data/processed/orn_rsn+my_study/
 python3 scripts/01_preprocess_orn.py --custom-sites=path/to/sites.csv --custom-samples=path/to/samples.csv
 ```
 
-- **Station Lookup (`load_monitoring_stations_and_records`)**: Reads `*Water Quality Sample Points.csv` from the active source directories and maps each `network_id` to its British National Grid (`EPSG:27700`) coordinates `(ngr_easting, ngr_northing)` in meters, tracking the origin network (`source = RSN` or `source = SSN`).
-- **Determinand & Temporal Filtering (`--det-code`, `--year`, `--season`, `--month`)**:
+Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `configs/directories.json`, environment variables (`S3N_DATA_DIR`, `S3N_GIS_DIR`, `S3N_OUTPUT_DIR`, `S3N_PROCESSED_DIR`), or `--data-dir` / `--gis-dir` / `--out-dir`.
+
+- **Station Lookup (`load_monitoring_stations_and_records`)**: Reads `*Water Quality Sample Points.csv` (or custom `sites.csv`) and `*Water Quality Samples.csv` (or custom `samples.csv`) from active source directories, mapping each `network_id` to British National Grid (`EPSG:27700`) coordinates in meters, tracking origin network (`source`), and preserving interval/uncertainty metadata (`meas_uncertainty`, `meas_method`) when available (`--range-mode {auto,tobit,geometric,midpoint,lower,upper,none}`).
+- **Determinand, Transformation & Temporal Filtering (`--det-code`, `--transform`, `--transform-lambda`, `--year`, `--season`, `--month`)**:
   - Parses ISO-8601 `sample_datetime` (`YYYY-MM-DDTHH:MM:SS`) into calendar `year` (`2021`–`2024`), `month` (`1..12`), and meteorological `season` (`winter` = Dec–Feb, `spring` = Mar–May, `summer` = Jun–Aug, `autumn` = Sep–Nov).
-  - Supports running on all data (default), by `--year`, by `--season`, or by `--month`, and exports `rsn_reach_periods.csv` with reach-level aggregations for all periods (`all`, `year`, `season`, `month`, `year_season`).
+  - Supports running on all data (default), by `--year`, by `--season`, or by `--month`, applies the requested data transformation (`log` by default for WQ, configurable via `--list-transforms`) to compute `trans_obs_mean` and `mean_trans_obs`, and exports `rsn_reach_periods.csv` with reach-level aggregations for all periods (`all`, `year`, `season`, `month`, `year_season`) plus `network_metadata.json` for downstream scripts.
 - **Configurable Left-Censored (`<`) Handling (`--censor-method {ros,ros_site,half_lod}`)**:
   - `ros` (default): Pooled **Robust Lognormal Regression on Order Statistics** (Hirsch & Stedinger 1987; Helsel & Cohn 1988) across multiple detection limits (`compute_ros_plotting_positions` and `fit_ros_ols`).
   - `ros_site`: Station-level Robust Lognormal ROS within each station (when ≥ 3 uncensored detections exist and < 80% censoring), with automatic fallback to the global ROS regression parameters.
   - `half_lod`: Standard 0.5 × LOD substitution (`0.5 * meas_result`).
 
-### 2. Zero-Dependency GeoPackage WKB Geometry Decoding (`parse_gpkg_multilinestring()` L35–L59)
-- Unpacks the OGC GeoPackage Binary (`GPB`) header (`flags = blob[3]`, `env_ind = (flags >> 1) & 0x07`) to read the 32-byte bounding box `[minx, maxx, miny, maxy]` at byte offset `8` (`struct.unpack_from("<4d", blob, 8)`) in 1 microsecond without decoding vertex arrays unless a monitoring station is nearby.
+### 2. Zero-Dependency GeoPackage WKB Geometry Decoding (`parse_gpkg_multilinestring()`)
+- Unpacks the OGC GeoPackage Binary (`GPB`) header (`flags = blob[3]`, `env_ind = (flags >> 1) & 0x07`) to read the 32-byte bounding box `[minx, maxx, miny, maxy]` at byte offset `8` (`struct.unpack_from("<4d", blob, 8)`) in ~1 microsecond without decoding vertex arrays unless a monitoring station is nearby.
 - Decodes little-endian `LineString` (`wkb_type = 2`) and `MultiLineString` (`wkb_type = 5`) double-precision vertex arrays directly via `struct.unpack_from`.
 
-### 3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()` L62–L84, `main()` L106–L180)
+### 3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()`)
 - **2 km Spatial Hash Grid (`site_grid`)**: Buckets all candidate stations (1,382 for RSN; 313 for SSN; 1,695 for combined RSS) into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`.
 - **Orthogonal Segment Projection**: Projects candidate stations onto each segment `p_i -> p_{i+1}` (digitized upstream-to-downstream from `Fnode` to `Tnode`), computing Euclidean snapping distance `d` and cumulative distance `along` from the upstream `Fnode`.
 - **Exact Station Distance to River Mouth (`obs_up_dist_km`)**: Subtracting `along` from `Dist2Mth` yields the exact hydrologic distance from the snapped station to the sea/estuary mouth: `max(0.0, (Dist2Mth - along) / 1000.0)`.
@@ -56,17 +58,18 @@ python3 scripts/01_preprocess_orn.py --custom-sites=path/to/sites.csv --custom-s
   - **RSN** (*default*): 1,349 of 1,382 stations snapped (median distance 8.0 m), spanning 1,210 unique observed reaches across 141 catchments (90,876 reaches total).
   - **SSN**: 197 of 313 stations snapped (median distance 10.2 m), spanning 177 unique reaches across 58 catchments (76,242 reaches total).
   - **Combined RSS**: 1,546 of 1,695 stations snapped (median distance 8.2 m), spanning 1,384 unique reaches across 150 catchments (91,118 reaches total).
-  - Threshold can be relaxed (e.g. `--max-snap-dist 500`) for coarse networks or edge-case meander stations, or tightened (e.g. `--max-snap-dist 100`) for dense parallel ditch systems. Detailed snapping coordinates and diagnostic maps can be generated via `scripts/06_station_snapping_diagnostics.R`.
+  - Threshold can be relaxed (e.g. `--max-snap-dist 500`) for coarse networks or edge-case meander stations, or tightened (e.g. `--max-snap-dist 100`) for dense parallel ditch systems. Detailed snapping coordinates, catchment summaries, and diagnostic maps can be generated via `scripts/06_station_snapping_diagnostics.R` (saved under `output/station_snapping/<net>_<source>/`).
 
-### 4. Subsetting to Monitored Catchments & Aggregating 100 m Covariates (`main()` L181–L236)
+### 4. Subsetting to Monitored Catchments & Aggregating 100 m Covariates
 - Aggregates the 5.98M-row `ORN_Sampled_100m` table via SQL `GROUP BY PolylineID` across monitored catchments (141 catchments / 90,876 reaches for RSN; 58 catchments / 76,242 reaches for SSN; 150 catchments / 91,118 reaches for RSS) to extract mean channel elevation (`Elevation`), gradient (`Slope`), sinuosity (`Sinuosity`), source elevation (`SrcElevation`), and BGS bedrock/superficial geology indicators (`Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`).
 - Walks halfway (`0.5 * reach_len`) along each reach polyline to interpolate the exact geometric midpoint `(mid_X, mid_Y)`.
 
-### 5. Directed River Tree Construction & Additive Function Values (`main()` L238–L281)
+### 5. Directed River Tree Construction & Additive Function Values
 - Links each reach's downstream node `(CatchID, Tnode)` to the upstream node `(CatchID, Fnode)` of its immediate downstream reach (`parent_dn`).
 - Traverses each catchment tree from river mouth (`log_AFV = 0.0`) to headwaters via depth-first search (`topo_order`), accumulating log confluence weights proportional to upstream accumulated channel length (`US_Accum`):
   `log_afv[p] = log_afv[u] + log(US_Accum[p] / sum(US_Accum[q] for q in parents[u]))`
 - Runs 3 forward/backward tree-neighbor imputation passes to copy covariates for short reaches (`< 100 m`) that lacked a 100 m sample point, leaving 0 missing values.
+- Writes canonical outputs into `data/processed/<net>_<source>/`: `england_rsn_reaches.csv` (using canonical `obs_mean`, `obs_median`, `trans_obs_mean`, `meas_uncertainty`, `meas_method`), `rsn_sites.csv` (also includes `obs_sd` and `mean_trans_obs`), `rsn_reach_periods.csv`, `rsn_catchments_lookup.csv`, and `network_metadata.json`.
 
 ---
 
@@ -127,8 +130,9 @@ The entire S3N pipeline was deliberately engineered to minimize external softwar
   | :--- | :--- | :--- | :--- |
   | **`S3N`** | `1.0.5` (`remotes::install_github("jpierkunke/S3N")`) | Standard R Library (`.libPaths()`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging prediction (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`) (Kunke et al., 2024; `https://github.com/jpierkunke/S3N`). |
   | `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr` | CRAN | Standard R Library (`.libPaths()`) | Package dependencies required by the upstream `jpierkunke/S3N` package namespace. |
+  | `jsonlite` *(optional/recommended)* | CRAN | Standard R Library (`.libPaths()`) | Rich JSON parsing for `configs/*.json` and `network_metadata.json` (with built-in base-R fallback in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Bundled with R | All linear algebra (`qr.solve`), statistical functions, and publication-quality base-R PNG graphics (`png(..., type = "cairo")`, `segments`, `points`, `barplot`, `boxplot`). |
-- **No `ggplot2` / `sf` / `SSN2` Required**: All maps and diagnostic plots use pure base R graphics, and all stream-tree neighbor calculations use the compiled C++ OpenMP engine ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)).
+- **No `ggplot2` / `sf` / `SSN2` Required**: All maps and diagnostic plots use pure base R graphics, and all stream-tree neighbor calculations use the compiled C++ OpenMP engine ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)). Shared R modules live in [`scripts/s3n_config.R`](../scripts/s3n_config.R), [`scripts/s3n_covariates.R`](../scripts/s3n_covariates.R), [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R), [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R), and [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R).
 
 ---
 

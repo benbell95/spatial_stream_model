@@ -79,7 +79,7 @@ where:
 Because the first-stage GAM estimates uncertainty on the natural concentration scale ($u_i = \text{SE}(\hat{x}_i)$) while spatial modeling occurs on a transformed scale $y = g(x)$, we apply the first-order Taylor expansion (the **Delta Method**):
 $$\text{Var}(g(X)) \approx \left[ g'(E[X]) \right]^2 \text{Var}(X)$$
 
-The pipeline implements transformation-specific formulas in [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R):
+The pipeline implements transformation-specific formulas via `calc_response_meas_variance()` in [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R):
 
 | Transformation Type | Formula $y = g(x)$ | First Derivative $g'(x)$ | Response Error Variance $v_i = \text{Var}(y_i)$ |
 | :--- | :---: | :---: | :---: |
@@ -182,7 +182,7 @@ RSN003,2023-06-01,1.0540,0.4520,gam,mg/L
 ```
 
 ### 4.3 Multi-Temporal Aggregation
-If your custom data contains weekly, monthly, or daily GAM estimates (e.g. `data/custom/rsn_gam/` with 94,778 samples across 1,382 sites), the preprocessor and pipeline runner automatically aggregate multiple samples per reach:
+If your custom dataset contains weekly, monthly, or daily GAM estimates (e.g. a custom folder `data/custom/rsn_gam/` containing repeated station time series), the preprocessor and pipeline runner automatically aggregate multiple samples per reach:
 - Reach-level concentration is the mean: $\bar{X} = \frac{1}{K}\sum_{k=1}^K x_k$.
 - Reach-level standard error is the Root-Mean-Square (RMS) pooled error:
 $$\text{SE}(\bar{X}) = \frac{\sqrt{\sum_{k=1}^K u_k^2}}{K}$$
@@ -192,15 +192,15 @@ $$\text{SE}(\bar{X}) = \frac{\sqrt{\sum_{k=1}^K u_k^2}}{K}$$
 ## 5. End-to-End Workflow & Command Reference
 
 ### Step 1: Preprocess River Network & Snap Stations
-Run [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) specifying the GAM source:
+Once your GAM `sites.csv` and `samples.csv` are placed in `data/custom/<source_name>/` (for example `rsn_gam_mean` or `rsn_gam`), run [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py):
 ```bash
 # For station-mean GAM predictions
 python3 scripts/01_preprocess_orn.py --source=rsn_gam_mean
 
-# For weekly GAM predictions
+# For multi-period GAM predictions
 python3 scripts/01_preprocess_orn.py --source=rsn_gam
 ```
-*Output*: Generates reach topology and snapping coordinates in `data/processed/orn_rsn_gam_mean/`, extracting 1,220 active monitoring stations snapped to the river network within 250 m.
+*Output*: Generates reach topology and snapping coordinates in `data/processed/orn_<source_name>/` (e.g., `data/processed/orn_rsn_gam_mean/`).
 
 ---
 
@@ -215,16 +215,16 @@ Rscript scripts/run_s3n_determinand.R 0117 \
 ```
 
 #### What Happens Internally:
-1. Detects `meas_method = "gam"` and logs:
+1. Detects `meas_method = "gam"` (or `--meas-error` / `--gam`) and logs:
    ```text
    --- Fitting All England RSN_GAM_MEAN Network (91077 reaches, 1220 observed) ---
      [Approach A: Measurement Error Kriging] Active: accounting for GAM estimation uncertainty
-       Mean measurement SE: 0.0835 (log scale), Mean error variance: 0.008009
+       Mean measurement SE: 0.0835 (model scale), Mean error variance: 0.008009
        Tail-Up Decomposition: Total Nugget = 0.1850 -> Microscale = 0.1770 + Meas Error = 0.0080
        Tail-Down Decomposition: Total Nugget = 0.1919 -> Microscale = 0.1839 + Meas Error = 0.0080
    ```
 2. Runs 5-fold cross-validation where validation stations are denoised using measurement error weighting.
-3. Produces reach-level predictions, parameter decomposition tables, cross-validation summaries, and publication-quality maps (Figures 1–5).
+3. Produces reach-level predictions (including normalised outputs), parameter decomposition tables, cross-validation summaries, and publication-quality maps (Figures 1–5).
 
 ---
 
@@ -238,17 +238,17 @@ Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 
 ## 6. Output Tables & Interpretation
 
-All results are saved in `output/det_<code >_<net>_<source>/` (e.g. [`output/det_0117_orn_rsn_gam_mean/`](../output/det_0117_orn_rsn_gam_mean/)):
+All results are saved under `output/results/det_<code>_<net>_<source>/` (e.g. `output/results/det_0117_orn_rsn_gam_mean/`), or `output/results/<net>_<source>/` for `02_fit_s3n_models.R`:
 
 ### 6.1 Parameter Estimates Table (`parameters_0117.csv`)
-Under Approach A, the parameter table reports both the standard covariance parameters and the decoupled microscale variance:
+Under Approach A, the parameter table reports both the standard covariance parameters and the decoupled microscale variance (illustrative values below):
 
 | Domain | Model | Parameter | Estimate | CI_Lower | CI_Upper | Spatial_Method | Meas_Method |
 | :--- | :--- | :--- | ---: | ---: | ---: | :---: | :---: |
-| All England | S3N Tail-Up | `sigma.sq` | 0.1501 | 0.0000 | 0.1248 | Measurement Error Kriging | gam |
-| All England | S3N Tail-Up | `tau.sq` | 0.1850 | 0.2354 | 0.3700 | Measurement Error Kriging | gam |
-| All England | S3N Tail-Up | `phi` | 7.7143 | 8.3506 | 14.9194 | Measurement Error Kriging | gam |
-| **All England** | **S3N Tail-Up** | **`tau.sq (microscale)`** | **0.1770** | **NA** | **NA** | **Measurement Error Kriging** | **gam** |
+| All England | S3N Tail-Up (FC + AFV) | `sigma.sq` | 0.1501 | 0.0842 | 0.2148 | Measurement Error Kriging | gam |
+| All England | S3N Tail-Up (FC + AFV) | `tau.sq` | 0.1850 | 0.1254 | 0.2700 | Measurement Error Kriging | gam |
+| All England | S3N Tail-Up (FC + AFV) | `phi` | 7.7143 | 4.3506 | 14.9194 | Measurement Error Kriging | gam |
+| **All England** | **S3N Tail-Up (FC + AFV)** | **`tau.sq (microscale)`** | **0.1770** | **NA** | **NA** | **Measurement Error Kriging** | **gam** |
 | **All England** | **Measurement Error**| **`mean_meas_variance`** | **0.0080** | **NA** | **NA** | **Measurement Error Kriging** | **gam** |
 
 - **`tau.sq`**: Total empirical non-spatial variance ($0.1850$).
@@ -288,13 +288,13 @@ Station B (High Precision, e.g. SE = 0.02 mg/L, v_i = 0.0004):
 ## 8. Troubleshooting & FAQ
 
 ### Q1: What if my first-stage model outputs standard errors on the log-scale already?
-If your GAM was fit directly on $\log(\text{concentration})$ and produced $\text{SE}(\log X)$, those are already response-scale standard errors! You can set $v_i = [\text{SE}(\log X)]^2$ directly by running with `--transform=raw` or passing `meas_uncertainty = se_log` with an unscaled response.
+If your GAM was fit directly on $\log(\text{concentration})$ and produced $\text{SE}(\log X)$, those are already response-scale standard errors! You can set $v_i = [\text{SE}(\log X)]^2$ directly by running with `--transform=none` and supplying `meas_uncertainty = se_log` on an unscaled response.
 
 ### Q2: What if some stations have missing uncertainty (`NA` or `0`)?
 If `meas_uncertainty` is missing or $0$ for a particular site, the C++ solver sets $v_i = 0$ for that station. That station will behave as a standard exact observation, while stations with $v_j > 0$ will be appropriately smoothed.
 
 ### Q3: Does this affect regular non-GAM runs (e.g. `--source=rsn`)?
-**No.** If `meas_method` is blank or anything other than `"gam"`, and `--meas-error` is not passed, the pipeline runs 100% standard homoskedastic S3N kriging. Backward compatibility is strictly preserved.
+**No.** If `meas_method` is blank or anything other than `"gam"`, and `--meas-error` / `--gam` is not passed, the pipeline runs standard homoskedastic S3N kriging.
 
 ### Q4: Can I use this for sensor telemetry with calibration drift uncertainty?
 **Yes!** If you have optical nitrate sondes where sensor manufacturer calibration error increases with turbidity or biofouling, you can encode that time-varying sensor error into `meas_uncertainty`, set `meas_method = "gam"`, and S3N will automatically downweight degraded sensors.

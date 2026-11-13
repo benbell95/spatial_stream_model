@@ -19,22 +19,23 @@ While standard model-fitting output focuses on parameter estimates and station c
 ### 2.1 Running the Script
 
 ```bash
-# Analyze a single output directory directly
-Rscript scripts/05_descriptive_stats.R output/det_0117
+# List available completed model runs in output/results/
+Rscript scripts/05_descriptive_stats.R --list
 
-# Lookup by determinand code (resolves output/det_0117)
-Rscript scripts/05_descriptive_stats.R --det=0117
+# Analyze a single output directory directly (full path or folder name under output/results/)
+Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn
 
 # Analyze multiple outputs sequentially (each receives its own report in <run_dir>/descriptives/)
-Rscript scripts/05_descriptive_stats.R output/det_0117 output/det_0180 output/det_whpt_aspt
-
-# Analyze all completed model runs in output/
-Rscript scripts/05_descriptive_stats.R --all
+Rscript scripts/05_descriptive_stats.R \
+  output/results/det_0117_orn_rsn \
+  output/results/det_0180_orn_rsn \
+  output/results/det_whpt_aspt_orn_rsn
 
 # Custom workspace directories and custom output subfolder
-Rscript scripts/05_descriptive_stats.R output/det_0117 \
-  --gis-dir=gis --data-dir=data --output-dir=output \
-  --out=output/det_0117/descriptives
+Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn \
+  --label="Nitrate (ORN + RSN)" \
+  --gis-dir=gis --data-dir=data --processed-dir=data/processed --output-dir=output \
+  --out=output/results/det_0117_orn_rsn/descriptives
 ```
 
 ### 2.2 Output Files Written to `<run_dir>/descriptives/`
@@ -59,14 +60,14 @@ Section 1 summarizes seven distinct subsets/components of the model output so yo
 
 #### A. The 7 Variable Groups Explained
 
-| Variable Group | Source Column in `reach_predictions_*.csv` | Filter / Subset | What It Represents & Why It Matters |
+| Variable Group | Source Column in `predictions_*.csv` | Filter / Subset | What It Represents & Why It Matters |
 | :--- | :--- | :--- | :--- |
-| **`Observed Stations (Raw)`** | `obs_val` | `has_obs == 1` | True empirical values measured at monitoring stations on the natural physical scale (e.g., `mg/L` or ecological score). Serves as the empirical ground-truth benchmark. |
-| **`S3N Combined Predictions (Raw)`** | `pred_combined` | All reaches (`N` total) | The primary variance-weighted `S3N` prediction across every reach in the network, back-transformed (with Duan's smearing adjustment if log-transformed) to the natural scale. |
+| **`Observed Stations (Raw)`** | `obs_value` | `has_obs == 1` | True empirical values measured at monitoring stations on the natural physical scale (e.g., `mg/L` or ecological score). Serves as the empirical ground-truth benchmark. |
+| **`S3N Combined Predictions (Raw)`** | `pred_combined` | All reaches (`N` total) | The primary variance-weighted `S3N` prediction across every reach in the network, back-transformed (with Taylor / Duan smearing adjustment according to `--transform`) to the natural scale. |
 | **`Unmonitored Reach Predictions (Raw)`** | `pred_combined` | `has_obs == 0` | Predictions restricted strictly to reaches **without** a monitoring station. Comparing this against `Observed Stations (Raw)` reveals how unmonitored reaches (mostly headwaters) differ from monitored reaches. |
-| **`S3N Tail-Up Predictions (Raw)`** | `pred_tu` | All reaches | Predictions generated solely by the **flow-connected (`Tail-Up`)** moving-average spatial model, where spatial autocorrelation only propagates along flow-connected pathways and splits at confluences using stream-order weights (`√n`). |
+| **`S3N Tail-Up Predictions (Raw)`** | `pred_tu` | All reaches | Predictions generated solely by the **flow-connected (`Tail-Up`)** moving-average spatial model, where spatial autocorrelation only propagates along flow-connected pathways and splits at confluences using stream-order / AFV weights. |
 | **`S3N Tail-Down Predictions (Raw)`** | `pred_td` | All reaches | Predictions generated solely by the **hydrologic-distance (`Tail-Down`)** spatial model, which allows spatial covariance between both flow-connected and flow-unconnected reaches sharing a common downstream junction. |
-| **`S3N Combined (Model Scale)`** | `pred_model_sc` | All reaches | Predictions on the internal regression scale (`log(Y + offset)` when `Log_Transform == TRUE`, or raw scale when `FALSE`). Useful for checking Gaussianity before exponential back-transformation. |
+| **`S3N Combined (Model Scale)`** | `pred_model_sc` | All reaches | Predictions on the internal regression scale (set by `--transform=...`, e.g., `log(Y + offset)` or untransformed when `--transform=none`). Useful for checking Gaussianity before back-transformation. |
 | **`Kriging Standard Error (SE)`** | `se_model_sc` | All reaches | Reach-level universal kriging standard error on the model scale (`√Var(ŷ(s₀) - y(s₀))`). Lower values indicate higher local confidence (near observed stations); higher values indicate extrapolation into unmonitored sub-catchments. |
 
 #### B. How to Interpret Each Distributional Metric
@@ -161,7 +162,7 @@ Section 4 conducts up to **10 formal statistical hypothesis tests** across four 
 
 ---
 
-### 3.5 Section 5: Cross-Validation Performance Summary (`cv_summary_*.csv`)
+### 3.5 Section 5: Cross-Validation Performance Summary (`cv_comparison_*.csv`)
 
 Section 5 tabulates the 5-fold out-of-sample cross-validation metrics across each spatial domain (`All England`, `Humber`, `Thames`, `Severn`):
 - **`CV R²`**: Out-of-sample coefficient of determination (`1 - SSE / SST`) on the model scale. Values `> 0.50` indicate strong predictive skill; comparing `S3N Combined` vs. `OLS` shows the exact fraction of variance explained by river-network spatial autocorrelation (`ΔR² = R²_S3N - R²_OLS`).
@@ -182,8 +183,8 @@ This 4-panel figure (`2×2` grid) diagnoses distributional shape, monitoring bia
    - Plots `F(x)` from `0.0` to `1.0` for `S3N Combined`, `S3N Tail-Up`, `S3N Tail-Down`, and `Observed Stations`, annotated with the **Two-Sample KS `D`-statistic** and **`Pred / Obs Median Ratio`**.
    - *What to look for*: Horizontal separation between the blue (`S3N Combined`) and red (`Observed`) curves at `F(x) = 0.50` directly visualizes the median monitoring bias. Separation between `Tail-Up` (green) and `Tail-Down` (purple) shows whether flow-connected vs. tail-down covariance alters the overall network distribution.
 3. **Panel C — Tail-Up vs. Tail-Down Component Agreement**:
-   - Bivariate scatterplot of `pred_td` vs. `pred_tu` across up to `8,000` randomly subsampled reaches, with the `1:1` identity line (dashed red) and fitted OLS regression line (solid blue), annotated with Pearson `r` and Spearman `ρ`.
-   - *What to look for*: Tight clustering along the `1:1` line indicates high robustness to spatial covariance specification. Scatter away from the `1:1` line occurs primarily in unmonitored tributaries joining large mainstems (where `Tail-Dn` borrows strength from the mainstem, whereas `Tail-Up` isolates the unmonitored tributary).
+   - Bivariate scatterplot of `pred_td_sc` vs. `pred_tu_sc` (or `pred_td` vs. `pred_tu`) across up to `8,500` randomly subsampled reaches, with the `1:1` identity line (dashed red) and fitted OLS regression line (solid black), annotated with Pearson `r` and Spearman `ρ`.
+   - *What to look for*: Tight clustering along the `1:1` line indicates high robustness to spatial covariance specification. Scatter away from the `1:1` line occurs primarily in unmonitored tributaries joining large mainstems (where `Tail-Down` borrows strength from the mainstem, whereas `Tail-Up` isolates the unmonitored tributary).
 4. **Panel D — Kriging Standard Error (`SE`) by Monitoring Status & Strahler Order**:
    - Horizontal boxplots comparing `se_model_sc` across `Monitored`, `Unmonitored`, and Strahler Orders `Ord 1` through `Ord 6+`.
    - *What to look for*: A systematic downward staircase in `Kriging SE` from `Ord 1` (highest uncertainty) down to `Ord 5–6+` (lowest uncertainty), demonstrating how higher monitoring density on mainstem rivers constrains kriging variance.
@@ -207,7 +208,7 @@ This 4-panel figure (`2×2` grid) visualizes how physical geography and river to
 
 ---
 
-## 5. Worked Empirical Summary: Nitrate (`0117`) on ORN v2 (`output/det_0117/descriptives/`)
+## 5. Worked Empirical Summary: Nitrate (`0117`) on ORN v2 (`output/results/det_0117_orn_rsn/descriptives/`)
 
 Below is a concise reference summary illustrating how to synthesize the outputs of [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) for a real model run (**Nitrate as N, `0117`, across `37,396` reaches and `8,401` observed stations on ORN v2**):
 

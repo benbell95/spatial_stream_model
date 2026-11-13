@@ -11,9 +11,9 @@ The `S3N` R package models spatial autocorrelation along river networks using tw
 - **Tail-Down (TD)**: Flow-connected and flow-unconnected covariance that requires the **hydrologic distance to the catchment outlet (`Dist2Mth_km`)** for every reach.
 
 To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS Open Rivers Network `ORN_v2.gpkg` or Copernicus `EU-Hydro`), the pipeline uses:
-1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native GeoPackage (`.gpkg`) or GeoParquet (`.parquet` / `.geoparquet`) file paths, layer names, CRS, topology columns, and attribute names to the standardized `S3N` schema.
-2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage or GeoParquet file(s), repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA River Surveillance Network (RSN) monitoring stations, and writes standardized CSV tables to `data/processed/<abbr>/`.
-3. **Network-Aware Modelling & Plotting (`scripts/run_s3n_determinand.R`, `scripts/02_fit_s3n_models.R`, `scripts/03_generate_plots.R`)**: Reads `data/processed/<abbr>/`, tags output folders with `<abbr>` (e.g. `output/det_0117_euhydro_thames/`), and stamps all figures (`fig1`–`fig5`) with the network's human-readable label.
+1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native GeoPackage (`.gpkg`) or GeoParquet (`.parquet` / `.geoparquet`) file paths, layer names, CRS, topology columns, and attribute names to the standardized `S3N` schema (`configs/networks/orn.json` is included out of the box; custom profiles can be added alongside it).
+2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage or GeoParquet file(s), repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA monitoring stations (or custom sources), and writes standardized CSV tables to `data/processed/<abbr>_<source>/`.
+3. **Network-Aware Modelling & Plotting (`scripts/run_s3n_determinand.R`, `scripts/02_fit_s3n_models.R`, `scripts/03_generate_plots.R`)**: Reads `data/processed/<abbr>_<source>/`, writes run outputs to `output/results/<run_tag>/` (e.g. `output/results/det_0117_my_net_rsn/`), and stamps all figures with the network's human-readable label.
 
 ---
 
@@ -78,19 +78,19 @@ You do **not** need pre-computed Strahler orders, Shreve orders, distances to mo
 
 | Standardized Output Column | Used By | Strictly Required in GIS? | Native Column Mapping (`attributes`) | Fallback / Automatic Computation if `null` or Missing |
 | :--- | :--- | :---: | :--- | :--- |
-| **`RivID`** (`1..N`) | S3N graph & joins | No | `topology.id_col` (stored as `OrigID`) | Assigned sequential integer IDs `1..N` (`OrigID` preserves original string/int ID) |
-| **`NextDownID`** | S3N adjacency & tree | **Yes** (via `nodes`, `pointer`, or `geometry`) | `from_node_col`/`to_node_col` or `next_down_col` | Built from node matching, pointer lookup, or endpoint coordinate snapping |
+| **`RivID`** (`1..N`) | S3N graph & joins | No | `topology.id_col` | Assigned sequential integer IDs `1..N` |
+| **`parent_dn`** | S3N adjacency & tree | **Yes** (via `nodes`, `pointer`, or `geometry`) | `from_node_col`/`to_node_col` or `next_down_col` | Built from node matching, pointer lookup, or endpoint coordinate snapping |
 | **`CatchID`** | Catchment grouping | No | `topology.catch_id_col` | Weakly connected tree components are automatically assigned integer `CatchID`s |
-| **`Length_m`** | Routing & `US_Accum_km` | No | Computed from WKB polyline | Exact 2D/3D polyline arc length in meters |
+| **`length_km`** | Routing & `US_Accum_km` | No | Computed from WKB polyline | Exact 2D/3D polyline arc length converted to km |
 | **`Dist2Mth_km`** | **Tail-Down** distances | No | `attributes.dist_to_mouth_col` | Computed via root-to-leaf tree traversal: `Dist2Mth(u) = Dist2Mth(down(u)) + Length(u)` |
-| **`US_Accum_km`** | **Tail-Up** `afv` & OLS | No | `attributes.afv_weight_col` | Computed via leaf-to-root tree traversal: `US_Accum(u) = Length(u) + sum(US_Accum(p) for p in up(u))` |
-| **`Shreve`** | Alt `afv` weight | No | `attributes.shreve_col` | Computed via leaf-to-root tree traversal (`1` at headwaters, `sum(Shreve(p) for p in up(u))` downstream) |
-| **`Strahler`** | OLS covariate & map width | No | `attributes.strahler_col` | Computed via leaf-to-root Strahler stream ordering rules |
-| **`afv`** | **Tail-Up** weight (πᵢ) | No | Derived from `US_Accum_km` | Multiplicative root-to-leaf proportion: `afv(u) = afv(down(u)) * (w(u) / sum(w(s) for s in up(down(u))))` |
-| **`Sinuosity`** | OLS covariate | No | Computed from WKB polyline | `Length_m / max(StraightLineDist_m, 1.0) >= 1.0` |
-| **`Elevation`** | OLS covariate | No | `attributes.elevation_col` or `nodes_table` | Extracted from 3D WKB vertex `Z` coordinates, or spatially interpolated from nearest ORN reach |
-| **`Slope`** | OLS covariate | No | `attributes.slope_col` | Extracted from 3D WKB vertex `dZ / Length_m * 100`, or spatially interpolated |
-| **`Pct_Chalk` .. `Pct_Peat`** | OLS geology covariates | No | `covariates.mode` | Transferred via fast spatial-hash nearest-reach lookup (`2 km` grid) from BGS catchment geology |
+| **`US_Accum_km`** | **Tail-Up** `log_AFV` & OLS | No | `attributes.afv_weight_col` | Computed via leaf-to-root tree traversal: `US_Accum(u) = Length(u) + sum(US_Accum(p) for p in up(u))` |
+| **`Shreve`** | Alt `AFV` weight & width | No | `attributes.shreve_col` | Computed via leaf-to-root tree traversal (`1` at headwaters, `sum(Shreve(p) for p in up(u))` downstream) |
+| **`Strahler`** | Optional OLS covariate & map width | No | `attributes.strahler_col` | Computed via leaf-to-root Strahler stream ordering rules |
+| **`log_AFV`** | **Tail-Up** weight ($\log \pi_i$) | No | Derived from `US_Accum_km` | Accumulated root-to-leaf log proportion: `log_AFV(u) = log_AFV(down(u)) + log(w(u) / sum(w(s) for s in up(down(u))))` |
+| **`Sinuosity`** | Optional OLS covariate | No | Computed from WKB polyline | `Length_m / max(StraightLineDist_m, 1.0) >= 1.0` |
+| **`Elevation`** | OLS covariate | No | `attributes.elevation_col` or `nodes_table` | Extracted from 3D WKB vertex `Z` coordinates, or spatially transferred from nearest ORN reach |
+| **`Slope`** | OLS covariate | No | `attributes.slope_col` | Extracted from 3D WKB vertex `dZ / Length_m * 100`, or spatially transferred |
+| **`Is_Chalk_Limestone` .. `Is_Peat`** | OLS geology covariates | No | `covariates.mode` | Transferred via fast spatial-hash nearest-reach lookup (`2 km` grid) from BGS catchment geology |
 
 ---
 
@@ -178,9 +178,9 @@ Create a new JSON configuration file in [`configs/networks/`](../configs/network
 ```
 
 #### Field Reference for `configs/networks/<abbr>.json`
-- **`name` / `abbr`**: Short lowercase identifier (e.g. `"euhydro_thames"`). Used in CLI `--network=<abbr>`, cache folder `data/processed/<abbr>/`, and output directory `output/det_0117_<abbr>/`.
-- **`label` / `short_label`**: Human-readable network name displayed on Figures 1–5 (`Water Network: <short_label>`) and stored in `Network_Label` inside CSV tables.
-- **`parquet_paths` / `gpkg_paths` / `network_paths`**: List of one or more relative `.parquet` / `.geoparquet` or `.gpkg` paths under `gis/` (or the project root). Multiple files (such as `euhydro_thames` + `euhydro_tweed` in [`configs/networks/euhydro.json`](../configs/networks/euhydro.json), or separate GeoParquet layer files) are automatically merged.
+- **`name` / `abbr`**: Short lowercase identifier (e.g. `"my_net"` or `"euhydro_thames"`). Used in CLI `--network=<abbr>`, processed directory `data/processed/<abbr>_<source>/`, and output directory `output/results/det_0117_<abbr>_<source>/`.
+- **`label` / `short_label`**: Human-readable network name displayed on figures (`Water Network: <short_label>`) and saved in `network_metadata.json`.
+- **`parquet_paths` / `gpkg_paths` / `network_paths`**: List of one or more relative `.parquet` / `.geoparquet` or `.gpkg` paths under `gis/` (or the project root). Multiple files (for example, merging regional sub-basin files or separate GeoParquet layer files) are automatically combined.
 - **`zip_fallbacks`**: Optional `.zip` archive paths; if a file in `parquet_paths` / `gpkg_paths` does not exist yet, the preprocessor automatically extracts it from the corresponding `.zip`.
 - **`layers`**: List of feature table names to load from each GeoPackage (ignored for single-layer `.parquet` files).
 - **`geom_col`**: Name of the WKB geometry column (typically `"Shape"`, `"geometry"`, or `"geom"`; auto-detected from the GeoParquet `"geo"` metadata footer if omitted).
@@ -192,7 +192,7 @@ Create a new JSON configuration file in [`configs/networks/`](../configs/network
   - Set any attribute column that exists in your GIS layer, or set to `null` to have the preprocessor compute it automatically from the network tree and 3D geometry.
   - `dist_to_mouth_unit` / `afv_weight_unit`: `"m"` (automatically converted to `"km"` in `Dist2Mth_km` and `US_Accum_km`) or `"km"`.
 - **`nodes_table`**: Optional lookup table containing node elevations (`elev_col`) or distances to mouth (`dist_to_mouth_col`). Can be either a table inside a `.gpkg` (`{"table": "Nodes", ...}`) or a standalone `.parquet` / `.csv` file (`{"path": "gis/my_nodes.parquet", "id_col": "OBJECT_ID", "elev_col": "ELEV", "dist_to_mouth_col": "LEN_TOM"}`). Set to `null` if not applicable.
-- **`core_basins`**: Optional integer `CatchID` overrides for the Humber, Thames, and Severn basins used in Figures 2 and 3. If set to `null`, the R scripts automatically identify the Humber, Thames, and Severn catchments from `catchment_lookup.csv` by river name (`Main_River`) or river basin district.
+- **`core_basins`**: Optional integer `CatchID` overrides for the Humber, Thames, and Severn basins used in Figures 2 and 3. If set to `null`, the R scripts automatically identify the Humber, Thames, and Severn catchments from `rsn_catchments_lookup.csv` by river name (`Main_River`) or river basin district.
 - **`max_snap_dist_m`**: Maximum distance in meters (default `250.0`) for snapping EA RSN water quality and biological monitoring stations to their nearest river reach.
 
 ---
@@ -210,13 +210,14 @@ python3 scripts/01_preprocess_orn.py --network=my_net
 ```
 
 #### What `scripts/01_preprocess_orn.py --network=my_net` Produces
-All processed files are saved to `data/processed/my_net/` (and mirrored to `data/processed/`):
-1. **`england_rsn_reaches.csv`**: All reaches in monitored catchments with standardized topology (`RivID`, `NextDownID`, `CatchID`, `afv`), coordinates (`start_X/Y`, `mid_X/Y`, `end_X/Y` in `EPSG:27700`), physical/geological covariates, and baseline nitrate observations (`has_obs`, `nitrate_mean`, `log_nitrate`).
-2. **`england_rsn_edges.csv`**: Directed parent-to-child edge list (`from_RivID`, `to_RivID`, `CatchID`) for building the `S3N` adjacency matrix.
-3. **`humber_reaches.csv` & `humber_edges.csv`**: Re-indexed `1..N_h` subset for the Humber basin.
-4. **`rsn_site_reach_mapping.csv`**: Lookup mapping every snapped EA RSN monitoring site (`Monitoring_Point`, `Eastings`, `Northings`, `snap_dist_m`) to its `RivID` and `CatchID` on your network, used by `scripts/run_s3n_determinand.R` to aggregate any chemical or ecological determinand dynamically.
-5. **`catchment_lookup.csv`**: Summary table of every monitored catchment (`CatchID`, `Main_River`, `n_reaches`, `n_obs_reaches`, `max_order`, `outlet_X`, `outlet_Y`).
-6. **`network_metadata.json`**: Metadata record storing the network's `abbr`, `label`, `short_label`, reach/station counts, and resolved `core_basins` (`humber`, `thames`, `severn`).
+All processed files are saved to `data/processed/my_net_rsn/` (or `data/processed/<abbr>_<source>/` for any monitoring source):
+1. **`england_rsn_reaches.csv`**: All reaches in monitored catchments with standardized topology (`RivID`, `CatchID`, `parent_dn`, `Dist2Mth_km`, `up_dist_mid_km`, `US_Accum_km`, `log_AFV`, `Shreve`, `Strahler`), coordinates (`start_X/Y`, `mid_X/Y`, `end_X/Y` in `EPSG:27700`), physical/geological covariates (`Elevation`, `Slope`, `Sinuosity`, `SrcElevation`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`), and canonical baseline observation columns (`has_obs`, `site_id`, `snap_dist_m`, `obs_up_dist_km`, `obs_mean`, `obs_median`, `trans_obs_mean`, `meas_uncertainty`, `meas_method`, `n_samples`).
+2. **`rsn_sites.csv`**: Station-level snapping coordinates and observation summaries (`site_id`, `easting`, `northing`, `snap_dist_m`, `RivID`, `CatchID`, `obs_up_dist_km`, `n_samples`, `obs_mean`, `obs_median`, `obs_sd`, `trans_obs_mean`, `mean_trans_obs`, `meas_uncertainty`, `meas_method`, `included_250m`, `source`), used by `scripts/run_s3n_determinand.R` and `scripts/06_station_snapping_diagnostics.R`.
+3. **`rsn_reach_periods.csv`**: Reach-level observations aggregated across temporal slices (`all`, `year`, `season`, `month`, `year_season`).
+4. **`rsn_catchments_lookup.csv`**: Summary table of every monitored catchment (`CatchID`, `Main_River`, `RBD_ID`, `RBD_Name`, `n_reaches`, `n_obs_reaches`).
+5. **`network_metadata.json`**: Metadata record storing the network's `abbr`, `label`, `short_label`, `source`, reach/station counts, transform metadata, and resolved `core_basins` (`humber`, `thames`, `severn`).
+
+*(The C++ neighbor engine `src/s3n_fast_neighbors.cpp` builds the directed tree directly in memory from `parent_dn` without separate edge-list CSVs.)*
 
 ---
 
@@ -229,33 +230,33 @@ Pass `--network=my_net` to [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_
 Rscript scripts/run_s3n_determinand.R 0117 --network=my_net
 
 # Fit S3N models for Orthophosphate (0180) on your network with custom covariates
-Rscript scripts/run_s3n_determinand.R 0180 --network=my_net --vars=Elevation,US_Accum_km,Strahler
+Rscript scripts/run_s3n_determinand.R 0180 --network=my_net --vars=elevation,us_accum,strahler
 
-# Fit seasonal S3N models on your network (includes Figure 5 All-England seasonal comparison grid)
-Rscript scripts/run_s3n_determinand.R 0117 --network=my_net --by-season
+# Fit seasonal S3N models on your network (includes All-England seasonal comparison grid)
+Rscript scripts/run_s3n_determinand.R 0117 --network=my_net --by=season
 
 # Include an additional custom 2-panel basin map (e.g. Thames or a specific CatchID)
 Rscript scripts/run_s3n_determinand.R 0117 --network=my_net --basin=Thames
 ```
 
-> **Automatic Preprocessing Trigger**: If `data/processed/my_net/` does not exist yet when you run `Rscript scripts/run_s3n_determinand.R 0117 --network=my_net`, the R script automatically calls `python3 scripts/01_preprocess_orn.py --network=my_net` first.
+> **Automatic Preprocessing Trigger**: If `data/processed/my_net_rsn/` does not exist yet when you run `Rscript scripts/run_s3n_determinand.R 0117 --network=my_net`, the R script automatically calls `python3 scripts/01_preprocess_orn.py --network=my_net` first.
 
 ---
 
 ### Step 5: Re-Generate or Customize Plots
 
-All output files are saved in a network-specific folder so they never overwrite runs from other networks:
-- Standard covariates: `output/det_0117_<abbr>/` (e.g., [`output/det_0117_euhydro_thames/`](../output/det_0117_euhydro_thames))
-- Custom covariates: `output/det_0117_<abbr>_vars_<tag>/` (e.g., `output/det_0117_euhydro_thames_vars_3vars_elev_usac_stra/`)
+All output files are saved in a network- and source-specific folder under `output/results/` so runs never overwrite other configurations:
+- Standard covariates: `output/results/det_0117_<abbr>_<source>/` (e.g. `output/results/det_0117_my_net_rsn/`)
+- Custom covariates: `output/results/det_0117_<abbr>_<source>_vars_<tag>/` (e.g. `output/results/det_0117_my_net_rsn_vars_elev_accum_strahler/`)
 
-You can re-render Figures 1–5 from any saved output directory using [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R):
+You can re-render Figures 1–4 (and custom `--basin` or `--norm` maps) from any saved output directory using [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R):
 
 ```bash
 # Re-render Figures 1-4 from saved predictions
-Rscript scripts/03_generate_plots.R --dir=output/det_0117_my_net
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_my_net_rsn
 
-# Also render a dedicated 2-panel map (Figure 5) for the Thames basin or any CatchID
-Rscript scripts/03_generate_plots.R --dir=output/det_0117_my_net --basin=Thames
+# Also render a dedicated 2-panel map for the Thames basin or any CatchID
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_my_net_rsn --basin=Thames
 ```
 
 ---
