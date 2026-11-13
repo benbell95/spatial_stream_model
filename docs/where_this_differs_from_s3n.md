@@ -48,7 +48,7 @@ In this repository, `S3N` is used for standard univariate exponential model fitt
 | **Multivariate Targets** | Not supported (univariate only). | Dedicated **Factor-LMC Joint NNGP Co-Kriging** (`scripts/run_s3n_cokriging.R`) for $P \ge 2$ heterotopic variables. |
 | **Uncertainty & Censoring** | Assumes uncensored, homoskedastic responses. | Multi-threshold Lognormal **ROS**, **Spatial Tobit EM** kriging, and **Two-Stage GAM Measurement-Error Kriging**. |
 | **Mean Trend (`Xβ`)** | Parametric linear fixed effects. | Linear GLS plus orthogonalized **GCV Splines**, **REML GAMs**, **OOB Random Forests**, and **OOF Gradient Boosted Trees**. |
-| **Decision Support** | Raw point predictions & prediction intervals. | Temporal batching + dynamic borrowing (`--by=`, `--st-borrow`), WFD exceedance probabilities (`--threshold=uk`), and C++ optimal station design (`--design-sites=`). |
+| **Decision Support** | Raw point predictions & prediction intervals. | Temporal batching + dynamic borrowing (`--by=`, `--st-borrow`), threshold exceedance probabilities (`--threshold=uk`), and C++ optimal station design (`--design-sites=`). |
 
 ---
 
@@ -111,7 +111,7 @@ Alongside the core `S3N` workflow, this codebase provides the following modellin
    Handles `<LOD` nondetects via multi-threshold Robust Lognormal ROS or iterative **Spatial Tobit EM Kriging** (truncated-normal E-steps conditioned on stream neighbors), plus custom interval-range modes (`tobit`, `geometric`, `midpoint`, `ros_site`, etc.).
 7. **Spatio-Temporal Batching, Dynamic Borrowing & Trend Mapping (`--by=year|season|month`, `--st-borrow`)**:
    Fits ordered time slices, borrows precision-weighted spatial strength across sparsely monitored periods using estimated lag-1 temporal correlation $\hat{\rho}_t$, and computes reach-level WLS temporal trend significance maps (`fig6` / `fig7`).
-8. **Regulatory Exceedance & WFD Risk Mapping (`--threshold=uk|<val>`)**:
+8. **Regulatory Exceedance & Threshold Risk Mapping (`--threshold=uk|<val>`)**:
    Evaluates exact reach-level Gaussian exceedance probabilities (`exceed_prob`) on the model scale and assigns 5-tier management compliance classifications (`Confidently Compliant` through `Confidently Exceeding`) with dedicated risk maps.
 9. **Optimal Monitoring Network Design (`--design-sites=K`)**:
    Runs an OpenMP greedy Schur-complement variance-reduction solver (`C_s3n_optimal_design()`) to rank the unmonitored reaches where new monitoring stations most reduce network-wide prediction uncertainty.

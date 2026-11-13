@@ -774,7 +774,7 @@ Rscript scripts/run_s3n_determinand.R 0052 --censor=em
 
 - **End-to-End Pipeline Usage Guide**: [`./usage_guide.md`](./usage_guide.md)
 - **Multivariate Stream Co-Kriging (Factor-LMC) Guide**: [`./multivariate_cokriging_guide.md`](./multivariate_cokriging_guide.md)
-- **Regulatory Exceedance Probability & WFD Risk Mapping Guide**: [`./regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md)
+- **Regulatory Exceedance Probability & Threshold Risk Mapping Guide**: [`./regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md)
 - **Two-Stage GAM Modeling & Measurement Error Kriging Guide**: [`./two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md)
 - **Custom Monitoring Data & External Sources Guide**: [`./custom_data_sources_guide.md`](./custom_data_sources_guide.md)
 - **Single-Output Descriptive Statistics Interpretation Guide**: [`./descriptive_stats_interpretation_guide.md`](./descriptive_stats_interpretation_guide.md)

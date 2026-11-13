@@ -1,13 +1,15 @@
-# Regulatory Exceedance Probability & WFD Risk Mapping Guide
+# Regulatory Exceedance Probability & Threshold Risk Mapping Guide
 
-Instead of classifying river reaches solely from a point estimate $\hat{y}(s_0)$, S3N universal stream kriging produces a predictive mean $\hat{z}(s_0)$ and kriging standard error $\text{SE}(s_0)$ on the transformed model scale $z = g(y)$. Using the Gaussian predictive distribution $\mathcal{N}(\hat{z}(s_0), \text{SE}(s_0)^2)$ and a raw-scale regulatory threshold $T$, [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) compute exact reach-level exceedance probabilities and Water Framework Directive (WFD) management risk tiers.
+Instead of classifying river reaches solely from a point estimate $\hat{y}(s_0)$, S3N universal stream kriging produces a predictive mean $\hat{z}(s_0)$ and kriging standard error $\text{SE}(s_0)$ on the transformed model scale $z = g(y)$. Using the Gaussian predictive distribution $\mathcal{N}(\hat{z}(s_0), \text{SE}(s_0)^2)$ and a raw-scale threshold $T$, [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) compute reach-level exceedance probabilities and 5-tier management compliance classifications.
+
+> **Important Distinction**: The 5 tiers below represent **statistical confidence bands** around a single threshold $T$ (`<5%`, `5–20%`, `20–80%`, `80–95%`, `>95%`), **not** statutory ecological status classes (*High / Good / Moderate / Poor / Bad*).
 
 ---
 
 ## Table of Contents
 
 - [1. CLI Flags](#1-cli-flags)
-- [2. Built-In UK & WFD Regulatory Thresholds (`--threshold=uk`)](#2-built-in-uk--wfd-regulatory-thresholds---thresholduk)
+- [2. Built-In UK Indicative Regulatory Thresholds (`--threshold=uk`)](#2-built-in-uk-indicative-regulatory-thresholds---thresholduk)
   - [Official UK Regulatory References](#official-uk-regulatory-references)
 - [3. Mathematical Formulation](#3-mathematical-formulation)
 - [4. Five-Tier Management Classification](#4-five-tier-management-classification)
@@ -20,36 +22,36 @@ Instead of classifying river reaches solely from a point estimate $\hat{y}(s_0)$
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--threshold=<val\|uk>` | *(Off)* | Raw-scale regulatory threshold $T$ in the determinand's physical units, **or `uk` (aliases `wfd`, `default`, `ea`)** to automatically load the built-in UK regulatory / WFD Good-Moderate boundary for supported determinands. |
-| `--threshold-dir=<dir>` | `above` *(or preset default)* | Direction of regulatory failure:<br>• `above` *(aliases `gt`, `high`, `exceed`)*: $P(Y(s_0) > T)$ — use for pollutants where high values breach standards.<br>• `below` *(aliases `lt`, `low`, `deficit`)*: $P(Y(s_0) < T)$ — use for dissolved oxygen or ecological indices where low values indicate failure. |
-| `--list-thresholds` | — | Prints all built-in UK / WFD regulatory threshold presets (`S3N_UK_THRESHOLDS`). |
+| `--threshold=<val\|uk>` | *(Off)* | Raw-scale threshold $T$ in the determinand's physical units, **or `uk` (aliases `default`, `ea`)** to automatically load a built-in indicative UK threshold for supported determinands. |
+| `--threshold-dir=<dir>` | `above` *(or preset default)* | Direction of threshold failure:<br>• `above` *(aliases `gt`, `high`, `exceed`)*: $P(Y(s_0) > T)$ — use for pollutants where high values breach standards.<br>• `below` *(aliases `lt`, `low`, `deficit`)*: $P(Y(s_0) < T)$ — use for dissolved oxygen or ecological indices where low values indicate failure. |
+| `--list-thresholds` | — | Prints all built-in UK indicative threshold presets (`S3N_UK_THRESHOLDS`). |
 | `--list-validation` | — | Prints available validation, threshold, and network design flags. |
 
 ---
 
-## 2. Built-In UK & WFD Regulatory Thresholds (`--threshold=uk`)
+## 2. Built-In UK Indicative Regulatory Thresholds (`--threshold=uk`)
 
-Passing `--threshold=uk` automatically sets both the threshold value and direction (`above` or `below`) from the following UK statutory and indicative Water Framework Directive (WFD) standards:
+Passing `--threshold=uk` automatically sets both the threshold value and direction (`above` or `below`) from the following indicative UK regulatory standards and guidelines:
 
-| Code | Determinand | Default Threshold | Direction | Regulatory Basis & Notes |
+| Code | Determinand | Default Threshold | Direction | Reference Basis & Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | `0117` | Nitrate as N | `11.3 mg/L` | `above` | UK Drinking Water Inspectorate (DWI) / Nitrates Directive ($11.3\text{ mg/L as N} \equiv 50\text{ mg/L as NO}_3$) |
 | `0116` | Nitrogen, Total Oxidised as N | `11.3 mg/L` | `above` | UK Nitrates Directive proxy ($11.3\text{ mg/L as N}$) |
-| `0180` | Orthophosphate, reactive as P | `0.069 mg/L` | `above` | UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate SRP boundary) |
-| `0111` | Ammoniacal Nitrogen as N | `0.60 mg/L` | `above` | UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate 90-percentile $\text{NH}_4\text{-N}$) |
-| `0119` | Ammonia un-ionised as N | `0.021 mg/L` | `above` | UK WFD / Freshwater Fish EQS (annual mean un-ionised $\text{NH}_3\text{-N}$) |
-| `0085` | BOD : 5 Day ATU | `5.0 mg/L` | `above` | UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate 90-percentile BOD) |
-| `9924` | Oxygen, Dissolved as O2 | `6.0 mg/L` | `below` | UK WFD 2015 Directions (indicative salmonid Good oxygenation threshold) |
-| `0061` | pH : In Situ | `6.0 pH` | `below` | UK WFD 2015 Directions (minimum Good pH boundary; use `--threshold=9.0 --threshold-dir=above` for upper bound) |
-| `0076` | Temperature of Water | `25.0 °C` | `above` | UK WFD 2015 Directions (cyprinid Good/Moderate 98-percentile temperature) |
-| `0052` | Lead, Dissolved | `1.2 µg/L` | `above` | UK WFD Environmental Quality Standard (bioavailable annual average) |
-| `0106` | Cadmium, Dissolved | `0.08 µg/L` | `above` | UK WFD Environmental Quality Standard (annual average, low-hardness baseline) |
-| `whpt_aspt` | WHPT ASPT (`--dataset=inverts`) | `5.0 ASPT` | `below` | UK WFD / UKTAG (indicative Good/Moderate macroinvertebrate ASPT boundary) |
+| `0180` | Orthophosphate, reactive as P | `0.069 mg/L` | `above` | UK 2015 Standards Directions (indicative lowland high-alkalinity Good/Moderate SRP boundary) |
+| `0111` | Ammoniacal Nitrogen as N | `0.60 mg/L` | `above` | UK 2015 Standards Directions (indicative lowland high-alkalinity Good/Moderate 90-percentile $\text{NH}_4\text{-N}$) |
+| `0119` | Ammonia un-ionised as N | `0.021 mg/L` | `above` | UK Freshwater Fish EQS (annual mean un-ionised $\text{NH}_3\text{-N}$) |
+| `0085` | BOD : 5 Day ATU | `5.0 mg/L` | `above` | UK 2015 Standards Directions (indicative lowland high-alkalinity Good/Moderate 90-percentile BOD) |
+| `9924` | Oxygen, Dissolved as O2 | `6.0 mg/L` | `below` | UK 2015 Standards Directions (indicative salmonid Good oxygenation threshold) |
+| `0061` | pH : In Situ | `6.0 pH` | `below` | UK 2015 Standards Directions (minimum Good pH boundary; use `--threshold=9.0 --threshold-dir=above` for upper bound) |
+| `0076` | Temperature of Water | `25.0 °C` | `above` | UK 2015 Standards Directions (cyprinid Good/Moderate 98-percentile temperature) |
+| `0052` | Lead, Dissolved | `1.2 µg/L` | `above` | UK Environmental Quality Standard (bioavailable annual average) |
+| `0106` | Cadmium, Dissolved | `0.08 µg/L` | `above` | UK Environmental Quality Standard (annual average, low-hardness baseline) |
+| `whpt_aspt` | WHPT ASPT (`--dataset=inverts`) | `5.0 ASPT` | `below` | UKTAG / EA (indicative Good/Moderate macroinvertebrate ASPT boundary) |
 
-> **Important Note on River Typology**: Under *The Water Framework Directive (Standards and Classification) Directions (England and Wales) 2015*, statutory WFD boundaries for Reactive Phosphorus, Total Ammonia, and Dissolved Oxygen vary continuously with site altitude and alkalinity (e.g., upland low-alkalinity streams have stricter phosphorus limits than lowland chalk rivers). The `--threshold=uk` presets provide practical indicative lowland/high-alkalinity defaults; you can override any threshold for a specific catchment using `--threshold=<val>`.
+> **Important Note on River Typology**: Under *The Standards and Classification Directions (England and Wales) 2015*, statutory UK boundaries for Reactive Phosphorus, Total Ammonia, Dissolved Oxygen, and WHPT ecological metrics vary continuously with site altitude, alkalinity, and reference conditions. The `--threshold=uk` presets provide practical indicative single-number defaults for exceedance probability mapping; you can override any threshold for a specific catchment using `--threshold=<val>`.
 
 ### Official UK Regulatory References
-- **WFD (Standards and Classification) Directions (England and Wales) 2015** (`legislation.gov.uk`): [https://www.legislation.gov.uk/](https://www.legislation.gov.uk/) (search *"Water Framework Directive (Standards and Classification) Directions (England and Wales) 2015"*)
+- **Standards and Classification Directions (England and Wales) 2015** (`legislation.gov.uk`): [https://www.legislation.gov.uk/](https://www.legislation.gov.uk/)
 - **UK Technical Advisory Group (UKTAG) — River & Lake Environmental Standards**: [https://www.wfduk.org/](https://www.wfduk.org/)
 - **Drinking Water Inspectorate (DWI) — Nitrate & Drinking Water Standards**: [https://www.dwi.gov.uk/](https://www.dwi.gov.uk/)
 
@@ -119,10 +121,10 @@ When `--threshold=<val>` is supplied:
 # Use built-in UK DWI / Nitrates Directive standard (automatically 11.3 mg/L N, above)
 Rscript scripts/run_s3n_determinand.R 0117 --threshold=uk
 
-# Use built-in UK WFD Dissolved Oxygen threshold (automatically 6.0 mg/L, below)
+# Use built-in indicative UK Dissolved Oxygen threshold (automatically 6.0 mg/L, below)
 Rscript scripts/run_s3n_determinand.R 9924 --transform=none --threshold=uk
 
-# List all built-in UK / WFD threshold presets
+# List all built-in UK indicative threshold presets
 Rscript scripts/run_s3n_determinand.R --list-thresholds
 
 # Override with a custom site-specific threshold (e.g. upland SRP 0.036 mg/L)

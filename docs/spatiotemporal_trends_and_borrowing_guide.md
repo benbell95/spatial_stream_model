@@ -76,7 +76,7 @@ Rscript scripts/run_s3n_determinand.R 0052 --by=year --st-borrow --censor=em
 
 ### 3.1 Why Borrow Strength Across Time?
 In real monitoring networks, station coverage is rarely identical every year:
-- A tributary might be sampled in 2021 and 2023, but **skipped in 2022** due to drought, access issues, or rotating WFD surveillance schedules.
+- A tributary might be sampled in 2021 and 2023, but **skipped in 2022** due to drought, access issues, or rotating monitoring schedules.
 - If 2022 is fitted completely independently, that unmonitored tributary falls back toward the fixed-effect regression mean with a **large kriging standard error (`se_model_sc`)**.
 - Yet we know from 2021 and 2023 what that tributary's spatial residual looks like.
 

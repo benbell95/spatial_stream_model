@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spatial Stream Network Modelling Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Sticky Top Navigation Chrome -->
+  <header class="top-chrome">
+    <div class="header-bar">
+      <div class="brand-wrap">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#06131f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 20c4-4 6-7 8-12 1.5-3.5 4-4 8-4"/>
+            <path d="M5 10c3 1 4.5 2.5 5 5"/>
+            <path d="M12 8c2 1 3 2.5 3.5 5"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">Spatial Stream Network Modelling Dashboard</h1>
+          <p class="brand-sub">90,876 ORN v2 Reaches &middot; Zero-Server Offline Case-Study Atlas &middot; Click any figure to zoom</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div class="search-box">
+          <input id="featureSearch" class="search-input" type="search" placeholder="Find feature, flag, or case study..." autocomplete="off" />
+          <div id="searchDropdown" class="search-dropdown"></div>
+        </div>
+        <button id="themeToggleBtn" class="btn" type="button" title="Toggle Dark / Light Theme">☀️ Light Mode</button>
+      </div>
+    </div>
+
+    <nav class="tab-strip" role="tablist" aria-label="Dashboard Sections">
+      <button class="tab-btn active" data-tab="overview" role="tab">1. Overview &amp; Engine</button>
+      <button class="tab-btn" data-tab="cs1" role="tab">2. CS1: Nitrate &amp; GAM</button>
+      <button class="tab-btn" data-tab="cs2" role="tab">3. CS2: Ecology, Risk &amp; Transforms</button>
+      <button class="tab-btn" data-tab="cs3" role="tab">4. CS3: Temporal Trends</button>
+      <button class="tab-btn" data-tab="cs4" role="tab">5. CS4: Co-Kriging &amp; Multi-Source</button>
+      <button class="tab-btn" data-tab="cs5" role="tab">6. CS5: Audits &amp; N:P</button>
+      <button class="tab-btn" data-tab="cs6" role="tab">7. CS6: WaterBlitz Fusion</button>
+      <button class="tab-btn" data-tab="workbench" role="tab">8. CLI Workbench</button>
+    </nav>
+  </header>
+
+  <main class="main-wrap">
+
+    <!-- ===================================================================
+         TAB 1: OVERVIEW & PLATFORM ARCHITECTURE
+         =================================================================== -->
+    <section id="tab-overview" class="tab-panel active">
+      <div class="hero-card">
+        <span class="hero-eyebrow">High-Speed Dendritic River Geostatistics</span>
+        <h2>National &amp; Basin Stream Water Quality &amp; Ecological Modelling</h2>
+        <p>
+          An offline, reproducible showcase of real pipeline executions across England's Ordnance Survey Open Rivers Network (<code>ORN v2</code>). Built with a pure-stdlib Python GIS/WKB preprocessor, an OpenMP C++ Euler-tour Nearest-Neighbor Gaussian Process (<code>NNGP</code>) engine, and pure Base-R cartographic &amp; diagnostic visualisations—inspired by the <code>S3N</code> (Kunke et al., 2025) and <code>BRISC</code> (Saha &amp; Datta, 2018) frameworks.
+        </p>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">ORN v2 Network Scale</div>
+          <div class="kpi-val">90,876 reaches</div>
+          <div class="kpi-note">141 monitored catchments (`RSN`) · 91,118 reaches (`RSN+SSN`)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Univariate Nitrate CV R²</div>
+          <div class="kpi-val pos">0.6784</div>
+          <div class="kpi-note">Up from 0.4658 OLS (+0.2126 gain via Joint TU+TD+Euc)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Co-Kriging Aux-Aided R²</div>
+          <div class="kpi-val pos">0.7012</div>
+          <div class="kpi-note">Nitrate+Orthophosphate LMC (−22.3% RMSE at gapped reaches)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Ecological WHPT ASPT R²</div>
+          <div class="kpi-val pos">0.6402</div>
+          <div class="kpi-note">1,160 macroinvertebrate reaches (vs 0.4932 non-spatial OLS)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Monitoring Bias Ratio</div>
+          <div class="kpi-val">0.615&times;</div>
+          <div class="kpi-note">Full network median (2.06) vs monitored stations (3.35 mg/L)</div>
+        </div>
+      </div>
+
+      <!-- Interactive 3-Stage Architecture Diagram -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Interactive End-to-End Architecture Diagram (Click Any Stage)</h3>
+          <span class="pill pill-blue">Pure Inline Vector SVG</span>
+        </div>
+        <div class="svg-panel">
+          <svg class="pipeline-svg" viewBox="0 0 1120 210" width="100%" style="min-width:760px;">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+              </marker>
+            </defs>
+            <!-- Stage 1 -->
+            <g class="pipe-node" data-jump="cs5" style="cursor:pointer">
+              <rect x="12" y="25" width="235" height="150" rx="12" fill="#1a2333" stroke="#38bdf8" stroke-width="1.8"/>
+              <text x="28" y="54" fill="#38bdf8" font-size="11" font-weight="700">STAGE 1 · PYTHON STDLIB</text>
+              <text x="28" y="77" fill="#e6edf7" font-size="14" font-weight="700">GIS, ROS &amp; Snapping</text>
+              <text x="28" y="102" fill="#9fb0c9" font-size="11">• Pure SQLite + WKB GeoPackage</text>
+              <text x="28" y="120" fill="#9fb0c9" font-size="11">• Lognormal ROS &amp; Tobit ranges</text>
+              <text x="28" y="138" fill="#9fb0c9" font-size="11">• BYOWN &amp; custom CSV ingest</text>
+              <text x="28" y="158" fill="#34d399" font-size="11" font-weight="600">01_preprocess_orn.py (~8–15s)</text>
+            </g>
+            <line x1="252" y1="100" x2="288" y2="100" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+            <!-- Stage 2 -->
+            <g class="pipe-node" data-jump="cs1" style="cursor:pointer">
+              <rect x="294" y="25" width="255" height="150" rx="12" fill="#1a2333" stroke="#34d399" stroke-width="1.8"/>
+              <text x="310" y="54" fill="#34d399" font-size="11" font-weight="700">STAGE 2 · C++ / OPENMP ENGINE</text>
+              <text x="310" y="77" fill="#e6edf7" font-size="14" font-weight="700">Euler-Tour Stream NNGP</text>
+              <text x="310" y="102" fill="#9fb0c9" font-size="11">• O(n) Tail-Up + Tail-Down + Euc</text>
+              <text x="310" y="120" fill="#9fb0c9" font-size="11">• 5 kernels + 3 AFV schemes</text>
+              <text x="310" y="138" fill="#9fb0c9" font-size="11">• Linear / GAM / RF / GBM trends</text>
+              <text x="310" y="158" fill="#38bdf8" font-size="11" font-weight="600">src/s3n_fast_neighbors.cpp (&lt;1s)</text>
+            </g>
+            <line x1="554" y1="100" x2="590" y2="100" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+            <!-- Stage 3 -->
+            <g class="pipe-node" data-jump="cs4" style="cursor:pointer">
+              <rect x="596" y="25" width="248" height="150" rx="12" fill="#1a2333" stroke="#a78bfa" stroke-width="1.8"/>
+              <text x="612" y="54" fill="#a78bfa" font-size="11" font-weight="700">STAGE 3 · FUSION &amp; TEMPORAL</text>
+              <text x="612" y="77" fill="#e6edf7" font-size="14" font-weight="700">Co-Kriging &amp; Borrowing</text>
+              <text x="612" y="102" fill="#9fb0c9" font-size="11">• Factor-LMC &amp; Colocated NNGP</text>
+              <text x="612" y="120" fill="#9fb0c9" font-size="11">• Prefer-Source / Weight / SE</text>
+              <text x="612" y="138" fill="#9fb0c9" font-size="11">• Year/Season/Month --st-borrow</text>
+              <text x="612" y="158" fill="#34d399" font-size="11" font-weight="600">run_s3n_cokriging.R / --by=</text>
+            </g>
+            <line x1="849" y1="100" x2="885" y2="100" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+            <!-- Stage 4 -->
+            <g class="pipe-node" data-jump="cs2" style="cursor:pointer">
+              <rect x="891" y="25" width="217" height="150" rx="12" fill="#1a2333" stroke="#fbbf24" stroke-width="1.8"/>
+              <text x="907" y="54" fill="#fbbf24" font-size="11" font-weight="700">STAGE 4 · RISK &amp; AUDITS</text>
+              <text x="907" y="77" fill="#e6edf7" font-size="14" font-weight="700">Risk Maps, CV &amp; N:P</text>
+              <text x="907" y="102" fill="#9fb0c9" font-size="11">• 5-tier threshold exceedance</text>
+              <text x="907" y="120" fill="#9fb0c9" font-size="11">• Representativeness bias tests</text>
+              <text x="907" y="138" fill="#9fb0c9" font-size="11">• Multi-run stoichiometry diffs</text>
+              <text x="907" y="158" fill="#38bdf8" font-size="11" font-weight="600">03 / 04 / 05 / 06 Post-Scripts</text>
+            </g>
+          </svg>
+        </div>
+        <div class="interp-box">
+          <h4>Suggested Interpretation</h4>
+          <ul>
+            <li>The dashboard merges **high-DPI PNG maps (`--dpi=300`)** for dense 90k-reach networks with **vector-minified SVGs** for statistical diagnostics, keeping offline browsing instant while preserving zoom clarity.</li>
+            <li>Click any figure throughout the tabs to open the pan/zoom inspection modal with its paired interpretation notes.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Complete Feature Inventory -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Complete Feature Coverage Catalog (Major &amp; Minor Capabilities)</h3>
+          <div class="feature-filter-row" id="featureFilterBtns">
+            <button class="fig-toggle-btn active" data-fcat="all">All Features</button>
+            <button class="fig-toggle-btn" data-fcat="major">Major Workflows</button>
+            <button class="fig-toggle-btn" data-fcat="minor">Minor &amp; Power Flags</button>
+          </div>
+        </div>
+        <div id="featureCatalogGrid" class="feature-grid"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Scientific Foundations &amp; Citations</h3></div>
+          <p style="font-size:0.86rem; color:var(--text-secondary); margin-top:0;">
+            This platform builds upon and extends the linear-scaling NNGP river-network framework:
+          </p>
+          <ul style="font-size:0.84rem; color:var(--text-primary); padding-left:18px;">
+            <li><strong>S3N R Package:</strong> Kunke, J. P., Olden, J. D., &amp; McCormick, T. H. (2025). <em>Scalable Spatial Stream Network (S3N) Models</em>. <code>arXiv:2512.12398</code>.</li>
+            <li><strong>BRISC R Package:</strong> Saha, A., &amp; Datta, A. (2018). <em>BRISC: Bootstrap for Rapid Inference on Spatial Covariances</em>. <em>Stat</em>, 7(1), e184.</li>
+            <li><strong>Custom C++/R/Python Extensions:</strong> OpenMP Euler-tour LCA NNGP, joint <code>TU+TD+Euc</code> solver, Factor-LMC Co-Kriging, <code>GAM/RF/GBM</code> trends, Tobit EM censoring, and source-weighted multi-network fusion.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">AI Disclosure &amp; Licensing</h3></div>
+          <ul style="font-size:0.84rem; color:var(--text-primary); padding-left:18px; margin-top:0;">
+            <li><strong>Coding Assistant:</strong> Google DeepMind Antigravity</li>
+            <li><strong>Models Used:</strong> Gemini 4 Argon, Gemini 4 Hydrogen</li>
+            <li><strong>Human Oversight:</strong> All code, statistical derivations, tests, and documentation reviewed and verified by a human maintainer.</li>
+            <li><strong>License:</strong> GNU General Public License v3.0 (<code>GPL-3.0</code>).</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 2: CASE STUDY 1 - ENGLAND NITRATE (0117) & NON-LINEAR GAM
+         =================================================================== -->
+    <section id="tab-cs1" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 1 · National Univariate Regression Kriging</span>
+        <h2>Nitrate as N (<code>0117</code>): Linear S3N vs. Non-Linear <code>GAM + S3N</code></h2>
+        <p>
+          Demonstrates full national (`90,876` reaches) and regional basin (`Humber`, `Thames`, `Severn`) modelling on EA River Surveillance Network (`RSN`) Nitrate samples (`18,462` samples across `1,210` observed reaches), comparing standard linear fixed effects against REML-penalized cubic regression splines (<code>--trend=gam</code>).
+        </p>
+      </div>
+
+      <div id="cs1-kpis" class="kpi-grid"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Case-Study Command Examples</h3>
+            <span class="pill pill-blue">Univariate + Non-Linear Trends</span>
+          </div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Standard Joint S3N &amp; Non-Linear GAM / RF Variants</span><button class="copy-btn" data-copy-target="code-cs1">Copy</button></div>
+            <pre id="code-cs1"># 1. Standard Linear Joint (TU + TD + Euclidean) Nitrate at 300 DPI
+Rscript scripts/run_s3n_determinand.R 0117 --dpi=300 --omp=4
+
+# 2. Non-Linear REML Spline Trend (GAM + S3N) or Tree Ensembles (--trend=rf|gbm)
+Rscript scripts/run_s3n_determinand.R 0117 --trend=gam --dpi=300 --omp=4
+Rscript scripts/run_s3n_determinand.R 0117 --trend=rf --trees=150 --omp=4
+
+# 3. Robust Z-Score Anomaly Surface + Minor Power Options
+Rscript scripts/run_s3n_determinand.R 0117 --norm=robust_zscore --dpi=300 --omp=4
+Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --design-sites=50 --vars=-Slope_z</pre>
+          </div>
+          <div id="cs1-r2-svg" class="svg-panel"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">National Nitrate Map, Basin Zoom &amp; Robust Z-Score</h3>
+            <div class="fig-toggle-bar" data-group="cs1-map">
+              <button class="fig-toggle-btn active" data-fig="no3_england">England Linear (300 DPI)</button>
+              <button class="fig-toggle-btn" data-fig="no3_gam_england">England GAM+S3N</button>
+              <button class="fig-toggle-btn" data-fig="no3_z_england">England Robust Z-Score</button>
+              <button class="fig-toggle-btn" data-fig="no3_z_humber">Humber Robust Z-Score</button>
+              <button class="fig-toggle-btn" data-fig="no3_z_thames_severn">Thames &amp; Severn Z-Score</button>
+              <button class="fig-toggle-btn" data-fig="no3_humber">Humber Basin</button>
+              <button class="fig-toggle-btn" data-fig="no3_thames_severn">Thames &amp; Severn</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs1-map"></div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>East–West Gradient:</strong> Arable Chalk/Limestone catchments in eastern &amp; southern England consistently exceed 5–9 mg/L N, while upland Wales &amp; Pennine headwaters remain low (&lt; 0.5 mg/L).</li>
+              <li><strong>Robust Z-Score View (<code>--norm=robust_zscore</code>):</strong> Standardizes predictions as <code>(x − median) / (1.4826 × MAD)</code> in model space, stripping concentration units so anomalous arable sub-catchments (red, &gt; +1.5 SD) and pristine upland headwaters (blue, &lt; −1.5 SD) stand out cleanly on one symmetric scale.</li>
+              <li><strong>Panel B Kriging SE:</strong> Uncertainty collapses cleanly along monitored tributaries and flows smoothly downstream via Shreve/AFV confluence weights.</li>
+              <li><strong>GAM vs Linear:</strong> Notice 5-fold CV $R^2$ is nearly identical (<code>0.6784</code> vs <code>0.6743</code>), showing spatial residuals already absorb mild fixed-effect curvature—so keep linear when interpretability of covariate slopes matters.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">4-Panel Diagnostics &amp; Cross-Validation</h3>
+            <div class="fig-toggle-bar" data-group="cs1-diag">
+              <button class="fig-toggle-btn active" data-fig="no3_diag">Linear S3N (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="no3_gam_diag">GAM+S3N (SVG)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs1-diag"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">5-Fold CV &amp; Covariate Effects (All England)</h3></div>
+          <div id="cs1-cv-table" class="table-scroll"></div>
+          <div id="cs1-param-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 3: CASE STUDY 2 - ECOLOGY, EXCEEDANCE RISK & TRANSFORMS
+         =================================================================== -->
+    <section id="tab-cs2" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 2 · Regulatory Compliance, Ecology &amp; Uncertainty</span>
+        <h2>Ecological Health (<code>whpt_aspt</code>), Threshold Exceedance &amp; Transformations</h2>
+        <p>
+          Showcases ecological modelling with <code>--reverse-color</code> on macroinvertebrate <code>WHPT ASPT</code> (`1,160` observed reaches), 5-tier probabilistic threshold exceedance mapping (<code>--threshold=uk</code>) for both Nitrate &amp; Orthophosphate, and raw vs. <code>robust_zscore</code> normalisation comparisons.
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Macroinvertebrate Health (`whpt_aspt --reverse-color`)</h3>
+            <div class="fig-toggle-bar" data-group="cs2-ecol">
+              <button class="fig-toggle-btn active" data-fig="whpt_england">England Map (300 DPI)</button>
+              <button class="fig-toggle-btn" data-fig="whpt_thames_severn">Thames &amp; Severn</button>
+              <button class="fig-toggle-btn" data-fig="whpt_diag">CV &amp; Params (SVG)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs2-ecol"></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Ecological Quality &amp; Uncertainty Options</span><button class="copy-btn" data-copy-target="code-cs2">Copy</button></div>
+            <pre id="code-cs2"># Macroinvertebrate biological health (inverted red-low / blue-high palette)
+Rscript scripts/run_s3n_determinand.R whpt_aspt --dataset=inverts --reverse-color --dpi=300 --omp=4
+
+# Regulatory threshold exceedance risk &amp; Robust Z-Score anomaly surfacing
+Rscript scripts/run_s3n_determinand.R 0180 --threshold=uk --transform=boxcox --norm=robust_zscore --dpi=300
+
+# Two-Stage GAM Measurement-Error Kriging &amp; Spatial Tobit EM Censoring
+Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --censor=em</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Threshold Exceedance Risk &amp; Raw vs. Z-Score Anomaly</h3>
+            <div class="fig-toggle-bar" data-group="cs2-risk">
+              <button class="fig-toggle-btn active" data-fig="no3_exceed_england">Nitrate Threshold Risk (11.3)</button>
+              <button class="fig-toggle-btn" data-fig="po4_exceed_england">Phosphate Threshold Risk (0.069)</button>
+              <button class="fig-toggle-btn" data-fig="no3_z_england">Nitrate Robust Z-Score</button>
+              <button class="fig-toggle-btn" data-fig="no3_z_humber">Humber Robust Z-Score</button>
+              <button class="fig-toggle-btn" data-fig="no3_exceed_basins">Basins Exceedance Risk</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs2-risk"></div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>Why <code>WHPT ASPT</code> Improves with S3N (`0.493 &rarr; 0.640 R²`):</strong> Macroinvertebrates integrate water chemistry, flow permanence, and riparian habitat over months, creating strong downstream &amp; neighborhood continuity.</li>
+              <li><strong>5-Tier Probability Compliance Bands:</strong> Yellow (<em>Uncertain / Priority Monitoring</em>) marks reaches whose Gaussian exceedance probability lies between <code>0.20</code> and <code>0.80</code> around a single indicative threshold (<code>47.5%</code> of England reaches for Orthophosphate <code>0.069 mg/L</code>)—prime candidates for follow-up sampling (separate from site-typed ecological status).</li>
+              <li><strong>Robust Z-Score View:</strong> Highlights localized anomalous sub-catchment spikes relative to national median/MAD across heterogenous rivers.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">National 5-Tier Exceedance Breakdown (Inline SVG + Table)</h3></div>
+          <div id="cs2-exceed-svg" class="svg-panel"></div>
+          <div id="cs2-exceed-table" class="table-scroll"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">WHPT ASPT &amp; Orthophosphate CV Benchmarks</h3></div>
+          <div id="cs2-cv-table" class="table-scroll"></div>
+          <div class="caveat-box">
+            <strong>12 Built-In Transforms &amp; 4 Normalisations:</strong> <code>log</code>, <code>log10</code>, <code>log1p</code>, <code>sqrt</code>, <code>cbrt</code>, <code>fourthrt</code>, <code>reciprocal</code>, <code>boxcox</code> (Profile MLE &lambda;), <code>yeojohnson</code>, <code>asin</code>, <code>logit</code>, <code>none</code> + Taylor/Duan back-transformation, plus <code>zscore</code>, <code>robust_zscore</code>, <code>minmax</code>, <code>percentile</code>.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 4: CASE STUDY 3 - SPATIO-TEMPORAL NITRATE DYNAMICS
+         =================================================================== -->
+    <section id="tab-cs3" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 3 · Multi-Period Batching &amp; Dynamic Borrowing</span>
+        <h2>Spatio-Temporal Nitrate Trends (<code>2021–2024</code> &amp; Seasonal Cycles)</h2>
+        <p>
+          Demonstrates temporal slicing via <code>--by=year</code> and <code>--by=season</code> paired with precision-weighted Dynamic Temporal Borrowing (<code>--st-borrow</code>), reach-level Weighted Least Squares trend tests (<code>fig6</code>), and consecutive-season shift surfaces (<code>fig7</code>).
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">4-Panel England Temporal Grids (<code>fig5</code>)</h3>
+            <div class="fig-toggle-bar" data-group="cs3-grid">
+              <button class="fig-toggle-btn active" data-fig="st_season_grid">By Season (W/Sp/Su/Au)</button>
+              <button class="fig-toggle-btn" data-fig="st_year_grid">By Year (2021–2024)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs3-grid"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Reach Trend Significance (`fig6`) &amp; Transitions (`fig7`)</h3>
+            <div class="fig-toggle-bar" data-group="cs3-trend">
+              <button class="fig-toggle-btn active" data-fig="st_year_trends">Annual Trends (fig6)</button>
+              <button class="fig-toggle-btn" data-fig="st_season_trends">Seasonal Trends (fig6)</button>
+              <button class="fig-toggle-btn" data-fig="st_season_trans">Season Transitions (fig7)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs3-trend"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">CLI Examples &amp; Suggested Interpretation</h3></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Temporal Batching &amp; Dynamic Borrowing</span><button class="copy-btn" data-copy-target="code-cs3">Copy</button></div>
+            <pre id="code-cs3"># 4 Meteorological seasons + Precision-Weighted Dynamic Borrowing + fig6/fig7
+Rscript scripts/run_s3n_determinand.R 0117 --by=season --st-borrow --dpi=300 --omp=4
+
+# Multi-year trajectory (2021-2024) or single-period slice (--year / --season / --month)
+Rscript scripts/run_s3n_determinand.R 0117 --by=year --st-borrow --dpi=300 --omp=4
+Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter --omp=4</pre>
+          </div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>Winter Peak Hydrology:</strong> Notice Winter Nitrate achieves higher national CV $R^2$ (`0.7164`) than Summer because sustained winter runoff connects agricultural soils cleanly along flow paths.</li>
+              <li><strong>Why <code>--st-borrow</code> Matters:</strong> When a tributary gauge is missed during one summer campaign, Dynamic Borrowing shrinks the single-period kriging variance toward neighboring periods weighted by $1/\mathrm{SE}^2$, avoiding false jump artefacts in <code>fig6</code>.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Annual &amp; Seasonal Cross-Validation Summary</h3></div>
+          <div id="cs3-cv-table" class="table-scroll"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 5: CASE STUDY 4 - CO-KRIGING & MULTI-SOURCE FUSION
+         =================================================================== -->
+    <section id="tab-cs4" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 4 · Heterotopic Coregionalization &amp; Network Fusion</span>
+        <h2>Factor-LMC Co-Kriging (<code>0117 + 0180</code>) &amp; Multi-Source Fusion (<code>RSN + SSN</code>)</h2>
+        <p>
+          Jointly models coupled nutrients via OpenMP Factor-LMC NNGP (`8 of 8` Strong Benefit across England &amp; basins; median Aux-Aided $\Delta R^2 = +0.2062$, $-16.6\%$ RMSE) and showcases explicit network priority &amp; reliability weighting across statutory `RSN` + headwater `SSN` + citizen-science campaigns.
+        </p>
+      </div>
+
+      <div id="cs4-kpis" class="kpi-grid"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Cross-Correlation &amp; Co-Kriged National Surfaces</h3>
+            <div class="fig-toggle-bar" data-group="cs4-ck">
+              <button class="fig-toggle-btn active" data-fig="cokrig_xcorr">TU/TD/Nugget Heatmap (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="cokrig_0117">Co-Kriged Nitrate (300 DPI)</button>
+              <button class="fig-toggle-btn" data-fig="cokrig_0180">Co-Kriged Phosphate (300 DPI)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs4-ck"></div>
+          <div id="cs4-cv-svg" class="svg-panel" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Multi-Source Fusion (`RSN + SSN`, `--prefer-source`, `--source-weight`)</h3>
+            <div class="fig-toggle-bar" data-group="cs4-ms">
+              <button class="fig-toggle-btn active" data-fig="rss_england">RSN+SSN Nitrate Map (300 DPI)</button>
+              <button class="fig-toggle-btn" data-fig="rss_diag">RSN+SSN Diagnostics (SVG)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs4-ms"></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Co-Kriging &amp; Citizen-Science Network Weighting</span><button class="copy-btn" data-copy-target="code-cs4">Copy</button></div>
+            <pre id="code-cs4"># 1. Factor-LMC Co-Kriging with Threshold Exceedance Risk (Nitrate + Orthophosphate)
+Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 --threshold=uk --dpi=300 --omp=4
+
+# 2. Live RSN + SSN Fusion with Hard Co-Located Priority + Soft Reliability Weighting
+Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn --prefer-source=rsn --source-weight=rsn:1,ssn:0.75 --omp=4
+
+# 3. Supplementing RSN with Citizen Science WaterBlitz (Tobit Ranges + Explicit SE)
+python3 scripts/format_custom_data.py data/waterblitz.csv --source-name=waterblitz --range-mode=tobit --generate-config
+Rscript scripts/run_s3n_cokriging.R --targets=0117,0180,wb_no3,wb_po4 --source=rsn+waterblitz \
+  --method=lmc --source-weight=rsn:1,waterblitz:0.35 --source-se=rsn:0.05,waterblitz:0.40 --omp=4</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Dual CV Benchmark (`Univariate` vs `All-Holdout` vs `Aux-Aided`)</h3></div>
+          <div id="cs4-cv-table" class="table-scroll"></div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>Look at Severn Nitrate:</strong> Univariate $R^2 = 0.270$ jumps to `0.371` (`All-Holdout`) and `0.552` (`Aux-Aided`, $-21.7\%$ RMSE) once coupled with Orthophosphate.</li>
+              <li><strong>Why Co-Kriging Beats Naive Pooling for Citizen Science:</strong> Keeping volunteer kits (`wb_no3`) as separate co-kriged variables absorbs kit offsets/noise into target-specific parameters while <code>--source-weight</code> adds analytical variance $(1/w - 1)\tau^2$ onto noisy sensors.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Analytical Reliability Penalty $V_{\text{wt}} = (1/w - 1)\tau^2$ &amp; Cross-Covariance</h3></div>
+          <div id="cs4-weight-svg" class="svg-panel"></div>
+          <div id="cs4-cov-table" class="table-scroll"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 6: CASE STUDY 5 - BASIN AUDITS, DESCRIPTIVES & N:P STOICHIOMETRY
+         =================================================================== -->
+    <section id="tab-cs5" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 5 · Environmental Gradients, Bias &amp; Cross-Run Audits</span>
+        <h2>Monitoring Representativeness, <code>N:P</code> Stoichiometry &amp; Snapping Audits</h2>
+        <p>
+          Inspects monitoring bias between sampled vs. unmonitored upland reaches (`05_descriptive_stats.R`), compares Nitrate vs. Orthophosphate landscapes with Fisher $z$ and Wald $Z$-tests (`04_compare_model_runs.R`), and audits station-to-reach snapping across Thames &amp; Humber (`06_station_snapping_diagnostics.R`).
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Descriptive Stats &amp; `N:P` Comparison Visuals</h3>
+            <div class="fig-toggle-bar" data-group="cs5-audits">
+              <button class="fig-toggle-btn active" data-fig="desc_grad">Stratified Gradients (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="desc_dist">Distributions &amp; Bias (300 DPI)</button>
+              <button class="fig-toggle-btn" data-fig="comp_cv">N vs P CV Performance (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="comp_forest">Covariate Forest Plot (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="comp_maps">Side-by-Side N vs P Maps</button>
+              <button class="fig-toggle-btn" data-fig="comp_rel">N:P Stoichiometry &amp; Quadrant</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs5-audits"></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Diagnostic &amp; Multi-Run Comparison Commands</span><button class="copy-btn" data-copy-target="code-cs5">Copy</button></div>
+            <pre id="code-cs5">Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn --fig-format=svg
+Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/results/det_0180_orn_rsn --dpi=300
+Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames,Humber --dpi=300</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Station-to-Reach Snapping Geometry &amp; Catchment Insets</h3>
+            <div class="fig-toggle-bar" data-group="cs5-snap">
+              <button class="fig-toggle-btn active" data-fig="snap_overview">England Overview (300 DPI)</button>
+              <button class="fig-toggle-btn" data-fig="snap_thames">Thames Catchment &amp; Insets</button>
+              <button class="fig-toggle-btn" data-fig="snap_humber">Humber Catchment &amp; Insets</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs5-snap"></div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>Statistically Significant Lowland Bias:</strong> Monitored `RSN` median Nitrate (`3.35 mg/L`) significantly exceeds the full-network predicted median (`2.06 mg/L`, Mann-Whitney $p = 5.1 \times 10^{-45}$)—proving naive sample averages overstate national nitrate pollution.</li>
+              <li><strong>Tight Geographic Snapping:</strong> `88.6%` of Humber and `83.6%` of Thames stations snap within `10 m` of an `ORN v2` reach (`2.3–3.1 m` median). Always inspect outliers above `150 m` before running local campaigns.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Representativeness Bias &amp; `N:P` Statistical Tests</h3></div>
+          <div id="cs5-bias-table" class="table-scroll"></div>
+          <div id="cs5-tests-table" class="table-scroll" style="margin-top:12px;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Top Catchments Station Snapping Summary</h3></div>
+          <div id="cs5-snap-table" class="table-scroll"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 7: CASE STUDY 6 - WATERBLITZ CITIZEN SCIENCE CO-KRIGING FUSION
+         =================================================================== -->
+    <section id="tab-cs6" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 6 · Citizen Science Fusion (RSN + SSN + Earthwatch WaterBlitz)</span>
+        <h2>Equal-Source vs. Statutory-Favoured Co-Kriging (Nitrate &amp; Orthophosphate)</h2>
+        <p>
+          Ingests <code>44,982</code> England rows from <code>data/Waterblitz/</code> (<code>36,956</code> citizen sites, Tobit interval-censored via <code>format_custom_data.py</code>) and snaps them onto ORN v2 alongside statutory <code>RSN</code> + <code>SSN</code> monitors (<code>33,013</code> snapped stations across <code>8,346</code> active reaches and <code>268</code> catchments). We compare <strong>Equal Sources</strong> against <strong>Favoured RSN+SSN</strong> (<code>--prefer-source=rsn,ssn --source-weight=rsn:1,ssn:1,waterblitz:0.25</code>) for bivariate <code>0117</code> + <code>0180</code> Co-Kriging.
+        </p>
+      </div>
+
+      <div id="cs6-kpis" class="kpi-row"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Spatial Predictions &amp; Equal vs. Favoured Difference Maps</h3>
+            <div class="fig-toggle-bar" data-group="cs6-maps">
+              <button class="fig-toggle-btn active" data-fig="wb_diff_0117">Nitrate Difference Map</button>
+              <button class="fig-toggle-btn" data-fig="wb_diff_0180">Phosphate Difference Map</button>
+              <button class="fig-toggle-btn" data-fig="wb_eq_0117">Equal 0117 Map</button>
+              <button class="fig-toggle-btn" data-fig="wb_wt_0117">Favoured 0117 Map</button>
+              <button class="fig-toggle-btn" data-fig="wb_eq_0180">Equal 0180 Map</button>
+              <button class="fig-toggle-btn" data-fig="wb_wt_0180">Favoured 0180 Map</button>
+              <button class="fig-toggle-btn" data-fig="wb_snap_overview">RSN+SSN+WB Snapping</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs6-maps"></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · WaterBlitz Formatting, ORN Snapping &amp; Dual Co-Kriging Runs</span><button class="copy-btn" data-copy-target="code-cs6">Copy</button></div>
+            <pre id="code-cs6"># 1. Format England WaterBlitz CSV with Tobit interval estimation
+python3 scripts/format_custom_data.py data/Waterblitz \
+  --source-name=waterblitz --source-label="Earthwatch Waterblitz" \
+  --filter="Country=England" --val-col="Nitrate (mg/L),Phosphate (mg/L)" \
+  --group-sites-by=coords --site-id-prefix="WB_" --generate-config
+
+# 2. Merge &amp; snap RSN + SSN + WaterBlitz onto ORN v2
+python3 scripts/01_preprocess_orn.py --source=rsn+ssn+waterblitz_tobit --max-snap-dist=350
+
+# 3. Co-Kriging Run 1: Equal Sources
+Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 \
+  --source=rsn+ssn+waterblitz_tobit --threshold=uk --dpi=300 --omp=4 --out-dir=output/cs6_equal
+
+# 4. Co-Kriging Run 2: Statutory Priority &amp; 4x Variance Inflation on WaterBlitz
+Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 \
+  --source=rsn+ssn+waterblitz_tobit --prefer-source=rsn,ssn \
+  --source-weight=rsn:1,ssn:1,waterblitz:0.25 --threshold=uk --dpi=300 --omp=4 \
+  --out-dir=output/cs6_weighted
+
+# 5. Quantitative &amp; spatial comparison across reach strata
+Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Multi-Stratum Diagnostics &amp; Cross-Covariance (SVG)</h3>
+            <div class="fig-toggle-bar" data-group="cs6-charts">
+              <button class="fig-toggle-btn active" data-fig="wb_comp_svg">Equal vs. Favoured Summary (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="wb_eq_xcorr">Equal Cross-Correlation (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="wb_wt_xcorr">Favoured Cross-Correlation (SVG)</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs6-charts"></div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>Co-Located Statutory Dilution Corrected:</strong> Under Equal Sources, lower citizen-science medians (<code>1.415 mg/L</code> NO3-N, <code>0.0319 mg/L</code> PO4-P) pulled down the <code>384</code> co-located statutory reaches (<code>0117</code> median <code>2.6232 &rarr; 3.4333 mg/L</code> under Favoured, mean shift <code>0.6252 mg/L</code>; <code>0180</code> median <code>0.0578 &rarr; 0.0645 mg/L</code>). Dropping <code>2,903</code> (<code>0117</code>) and <code>2,672</code> (<code>0180</code>) lower-priority citizen samples on shared reaches lets regulatory lab measurements anchor those locations.</li>
+              <li><strong>Targeted Precision Where Each Source Fits Best:</strong> Weighting WaterBlitz at <code>0.25</code> injects analytical variance penalty <code>V_wt = (1/0.25 - 1)&tau;&sup2; = 3&tau;&sup2;</code>, inflating Mean SE by <code>+253.58%</code> on WaterBlitz-only citizen reaches (<code>0.1746 &rarr; 0.6174</code> for <code>0117</code>; <code>+119.33%</code> for <code>0180</code>) while tightening co-located statutory SE by <code>-46.70%</code> (<code>0117</code>) and <code>-49.93%</code> (<code>0180</code>). Across all <code>95,773</code> England reaches, mean Kriging SE drops <code>-14.53%</code> (<code>0117</code>: <code>0.9306 &rarr; 0.7954</code>) and <code>-23.43%</code> (<code>0180</code>: <code>1.1020 &rarr; 0.8438</code>).</li>
+              <li><strong>Cross-Covariance &amp; Threshold Priority Mapping:</strong> Because WaterBlitz kit noise is de-weighted, England latent total cross-correlation strengthens from <code>+0.2989</code> (Equal) to <code>+0.4310</code> (Favoured), and Uncertain Phosphate reaches (<code>0.20 &le; P &le; 0.80</code> at <code>0.069 mg/L</code>) drop from <code>48,802 (51.0%)</code> to <code>39,969 (41.7%)</code>. On statutory-only reaches (<code>1,343</code>), predictions agree closely (<code>r = 0.9953</code> NO3-N, <code>r = 0.9929</code> PO4-P), whereas WaterBlitz-only reaches diverge sharply on Phosphate compliance tiering (<code>30.84%</code> tier match) where kit quantification noise meets the strict <code>0.069 mg/L</code> threshold.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Stratified Prediction, Kriging SE &amp; Tier Agreement (95,773 Reaches)</h3></div>
+          <div id="cs6-reach-table" class="table-scroll"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Dual Cross-Validation &amp; Latent Cross-Correlation Shifts</h3></div>
+          <div id="cs6-cv-table" class="table-scroll"></div>
+          <div id="cs6-cov-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 8: INTERACTIVE CLI WORKBENCH
+         =================================================================== -->
+    <section id="tab-workbench" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">100% Client-Side Command Generator</span>
+        <h2>Interactive Pipeline CLI Workbench</h2>
+        <p>
+          Configure a study interactively—or load a curated preset—to assemble ready-to-run shell commands across preprocessing, single-determinand modelling, multivariate co-kriging, and post-run diagnostics.
+        </p>
+      </div>
+
+      <div class="workbench-grid">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Configure Analysis</h3>
+            <div class="fig-toggle-bar" id="wbPresetBtns">
+              <button class="fig-toggle-btn" data-preset="nitrate">Nitrate Threshold</button>
+              <button class="fig-toggle-btn" data-preset="ecology">WHPT Ecology</button>
+              <button class="fig-toggle-btn" data-preset="seasonal">Seasonal Borrow</button>
+              <button class="fig-toggle-btn" data-preset="waterblitz">WaterBlitz Co-Kriging</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="wbMode">Workflow Script</label>
+              <select id="wbMode">
+                <option value="det">Single-Determinand (run_s3n_determinand.R)</option>
+                <option value="cokrig">Multivariate Co-Kriging (run_s3n_cokriging.R)</option>
+                <option value="prep">Preprocessing (01_preprocess_orn.py)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbTarget">Target / Determinand(s)</label>
+              <input id="wbTarget" type="text" value="0117" />
+            </div>
+            <div class="field">
+              <label for="wbDataset">Dataset (`--dataset`)</label>
+              <select id="wbDataset">
+                <option value="auto">Auto-detect</option>
+                <option value="wq">wq (Water Quality)</option>
+                <option value="inverts">inverts (Macroinvertebrates)</option>
+                <option value="diatoms">diatoms</option>
+                <option value="macrophytes">macrophytes</option>
+                <option value="rhs">rhs (River Habitat)</option>
+                <option value="lcms">lcms (Organics)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbSource">Source (`--source`)</label>
+              <input id="wbSource" type="text" value="rsn" />
+            </div>
+            <div class="field">
+              <label for="wbTrend">Trend / Co-Krig Method</label>
+              <select id="wbTrend">
+                <option value="linear">linear (OLS/GLS fixed effects)</option>
+                <option value="gam">gam (REML cubic splines)</option>
+                <option value="spline">spline (GCV natural splines)</option>
+                <option value="rf">rf (Random Forest OOB)</option>
+                <option value="gbm">gbm (Gradient Boosted CV)</option>
+                <option value="lmc">lmc (Co-Kriging Factor-LMC)</option>
+                <option value="colocated">colocated (Strict Primary Anchor)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbKernel">Stream Kernel (`--kernel`)</label>
+              <select id="wbKernel">
+                <option value="exponential">exponential (default)</option>
+                <option value="auto">auto (Profile MLE best)</option>
+                <option value="spherical">spherical</option>
+                <option value="mariah">mariah</option>
+                <option value="linear">linear</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbTransform">Transform (`--transform`)</label>
+              <select id="wbTransform">
+                <option value="default">Default (log for WQ, none for Ecol)</option>
+                <option value="log">log</option>
+                <option value="boxcox">boxcox (MLE &lambda;)</option>
+                <option value="yeojohnson">yeojohnson</option>
+                <option value="sqrt">sqrt</option>
+                <option value="none">none (raw)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbThreshold">Exceedance Threshold (<code>--threshold</code>)</label>
+              <select id="wbThreshold">
+                <option value="none">None</option>
+                <option value="uk">uk (Auto Statutory Lookup)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbTemporal">Temporal (`--by` / Period)</label>
+              <select id="wbTemporal">
+                <option value="all">all (Combined Period)</option>
+                <option value="by_season">--by=season --st-borrow</option>
+                <option value="by_year">--by=year --st-borrow</option>
+                <option value="winter">Single Period: --season=winter</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbPreferSource">Priority / Weight (`--prefer-source`)</label>
+              <input id="wbPreferSource" type="text" placeholder="e.g. rsn" value="" />
+            </div>
+            <div class="field">
+              <label for="wbSourceWeight">Source Weight (`--source-weight`)</label>
+              <input id="wbSourceWeight" type="text" placeholder="e.g. rsn:1,waterblitz:0.35" value="" />
+            </div>
+            <div class="field">
+              <label for="wbSourceSe">Source SE (`--source-se`)</label>
+              <input id="wbSourceSe" type="text" placeholder="e.g. rsn:0.05,waterblitz:0.4" value="" />
+            </div>
+            <div class="field">
+              <label for="wbFormat">Figure Format / DPI</label>
+              <select id="wbFormat">
+                <option value="png_300">PNG @ 300 DPI (Best for Maps)</option>
+                <option value="svg">SVG (Best for Diagnostic Charts)</option>
+                <option value="pdf">PDF (Publication Print)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbOmp">OpenMP Threads (`--omp`)</label>
+              <select id="wbOmp">
+                <option value="4">4 threads</option>
+                <option value="8">8 threads</option>
+                <option value="1">1 thread</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Generated Pipeline Command</h3>
+            <span class="pill pill-green">Verified CLI Syntax</span>
+          </div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Ready to Execute</span><button class="copy-btn" data-copy-target="wbOutputCmd">Copy</button></div>
+            <pre id="wbOutputCmd"></pre>
+          </div>
+          <div id="wbNotes" class="interp-box">
+            <h4>Suggested Workflow Notes</h4>
+            <ul id="wbNotesList"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Lightbox Modal for High-DPI Maps & SVGs -->
+  <div id="figModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-top">
+        <div>
+          <strong id="modalTitle">Figure Preview</strong>
+          <span id="modalMeta" class="pill pill-blue" style="margin-left:8px;"></span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button id="modalZoomBtn" class="btn" type="button">🔍 Toggle 170% Zoom</button>
+          <button id="modalCloseBtn" class="btn" type="button">✕ Close</button>
+        </div>
+      </div>
+      <div class="modal-stage">
+        <button id="modalPrevBtn" class="modal-nav modal-nav-prev" type="button" aria-label="Previous figure" title="Previous figure (Left Arrow)">&#8249;</button>
+        <div class="modal-body">
+          <img id="modalImg" src="" alt="Expanded Figure" />
+        </div>
+        <button id="modalNextBtn" class="modal-nav modal-nav-next" type="button" aria-label="Next figure" title="Next figure (Right Arrow)">&#8250;</button>
+      </div>
+      <div id="modalFooter" class="modal-footer"></div>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

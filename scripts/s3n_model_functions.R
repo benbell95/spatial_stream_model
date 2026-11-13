@@ -186,16 +186,16 @@ parse_cv_mode_arg <- function(args, default = "random") {
 S3N_UK_THRESHOLDS <- list(
   "0117"      = list(val = 11.3,  dir = "above", unit = "mg/L",  ref = "UK DWI / Nitrates Directive (11.3 mg/L as N = 50 mg/L NO3)"),
   "0116"      = list(val = 11.3,  dir = "above", unit = "mg/L",  ref = "UK Nitrates Directive proxy (11.3 mg/L TON as N)"),
-  "0180"      = list(val = 0.069, dir = "above", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate SRP)"),
-  "0111"      = list(val = 0.60,  dir = "above", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate 90%ile NH4-N)"),
-  "0119"      = list(val = 0.021, dir = "above", unit = "mg/L",  ref = "UK WFD / Freshwater Fish EQS (annual mean un-ionised NH3-N)"),
-  "0085"      = list(val = 5.0,   dir = "above", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate 90%ile BOD)"),
-  "9924"      = list(val = 6.0,   dir = "below", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative salmonid Good oxygenation threshold)"),
-  "0061"      = list(val = 6.0,   dir = "below", unit = "pH",    ref = "UK WFD 2015 Directions (minimum Good pH boundary; use --threshold=9.0 --threshold-dir=above for upper bound)"),
-  "0076"      = list(val = 25.0,  dir = "above", unit = "CEL",   ref = "UK WFD 2015 Directions (cyprinid Good/Moderate 98%ile temperature)"),
-  "0052"      = list(val = 1.2,   dir = "above", unit = "ug/L",  ref = "UK WFD EQS (bioavailable Dissolved Lead annual average)"),
-  "0106"      = list(val = 0.08,  dir = "above", unit = "ug/L",  ref = "UK WFD EQS (Dissolved Cadmium annual average, low-hardness baseline)"),
-  "whpt_aspt" = list(val = 5.0,   dir = "below", unit = "ASPT",  ref = "UK WFD / UKTAG (indicative Good/Moderate WHPT ASPT boundary)")
+  "0180"      = list(val = 0.069, dir = "above", unit = "mg/L",  ref = "UK 2015 Standards Directions (indicative lowland high-alkalinity Good/Moderate SRP)"),
+  "0111"      = list(val = 0.60,  dir = "above", unit = "mg/L",  ref = "UK 2015 Standards Directions (indicative lowland high-alkalinity Good/Moderate 90%ile NH4-N)"),
+  "0119"      = list(val = 0.021, dir = "above", unit = "mg/L",  ref = "UK Freshwater Fish EQS (annual mean un-ionised NH3-N)"),
+  "0085"      = list(val = 5.0,   dir = "above", unit = "mg/L",  ref = "UK 2015 Standards Directions (indicative lowland high-alkalinity Good/Moderate 90%ile BOD)"),
+  "9924"      = list(val = 6.0,   dir = "below", unit = "mg/L",  ref = "UK 2015 Standards Directions (indicative salmonid Good oxygenation threshold)"),
+  "0061"      = list(val = 6.0,   dir = "below", unit = "pH",    ref = "UK 2015 Standards Directions (minimum Good pH boundary; use --threshold=9.0 --threshold-dir=above for upper bound)"),
+  "0076"      = list(val = 25.0,  dir = "above", unit = "CEL",   ref = "UK 2015 Standards Directions (cyprinid Good/Moderate 98%ile temperature)"),
+  "0052"      = list(val = 1.2,   dir = "above", unit = "ug/L",  ref = "UK EQS (bioavailable Dissolved Lead annual average)"),
+  "0106"      = list(val = 0.08,  dir = "above", unit = "ug/L",  ref = "UK EQS (Dissolved Cadmium annual average, low-hardness baseline)"),
+  "whpt_aspt" = list(val = 5.0,   dir = "below", unit = "ASPT",  ref = "UKTAG / EA (indicative Good/Moderate WHPT ASPT threshold)")
 )
 
 parse_threshold_arg <- function(args, default = NA_real_) {
@@ -216,14 +216,14 @@ resolve_threshold_spec <- function(threshold_arg, threshold_dir_arg, det_code, a
     key <- tolower(trimws(as.character(det_code)))
     if (!(key %in% names(S3N_UK_THRESHOLDS))) {
       stop(sprintf(
-        "No built-in UK/WFD default threshold is registered for '%s'. Run --list-thresholds to see supported codes or pass a numeric --threshold=<val>.",
+        "No built-in UK threshold preset is registered for '%s'. Run --list-thresholds to see supported codes or pass a numeric --threshold=<val>.",
         det_code
       ))
     }
     spec <- S3N_UK_THRESHOLDS[[key]]
     explicit_dir <- any(grepl("^--threshold-dir=", args))
     dir_use <- if (explicit_dir) threshold_dir_arg else spec$dir
-    cat(sprintf("  [UK/WFD Threshold Preset] %s -> %.4g %s (%s) [%s]\n",
+    cat(sprintf("  [UK Threshold Preset] %s -> %.4g %s (%s) [%s]\n",
                 det_code, spec$val, spec$unit, dir_use, spec$ref))
     return(list(val = spec$val, dir = dir_use, ref = spec$ref))
   }
@@ -231,14 +231,14 @@ resolve_threshold_spec <- function(threshold_arg, threshold_dir_arg, det_code, a
 }
 
 print_available_thresholds <- function() {
-  cat("Built-in UK / WFD Regulatory Threshold Presets (--threshold=uk):\n")
+  cat("Built-in Indicative UK Regulatory Threshold Presets (--threshold=uk):\n")
   for (k in names(S3N_UK_THRESHOLDS)) {
     s <- S3N_UK_THRESHOLDS[[k]]
     cat(sprintf("  %-10s : %6.4g %-5s (%-5s) — %s\n", k, s$val, s$unit, s$dir, s$ref))
   }
-  cat("\nNote: WFD phosphorus, ammonia, and DO boundaries are site-type dependent (alkalinity & altitude)\n")
-  cat("under the WFD (Standards and Classification) Directions (England & Wales) 2015.\n")
-  cat("Values above are indicative lowland/high-alkalinity defaults; override any time with --threshold=<val>.\n")
+  cat("\nNote: Statutory UK phosphorus, ammonia, and DO boundaries are site-type dependent (alkalinity & altitude).\n")
+  cat("Values above are indicative lowland/high-alkalinity defaults for single-threshold exceedance probability mapping;\n")
+  cat("they do not replace site-typed multi-class status assessment. Override any time with --threshold=<val>.\n")
 }
 
 parse_threshold_dir_arg <- function(args, default = "above") {
@@ -266,9 +266,9 @@ print_available_validation_options <- function() {
   cat("  strahler      : Train on mainstems (Strahler >= 3), test on headwaters (Strahler <= 2)\n")
   cat("  spatial_block : 5-fold spatial block CV via k-means clustering on (mid_X, mid_Y)\n\n")
   cat("Regulatory Exceedance & Optimal Monitoring Design Flags:\n")
-  cat("  --threshold=<val|uk>       : Raw-scale regulatory threshold (or 'uk' for built-in UK/WFD presets)\n")
+  cat("  --threshold=<val|uk>       : Raw-scale threshold (or 'uk' for built-in indicative UK presets)\n")
   cat("  --threshold-dir=above|below: Exceedance direction (above = P(Y > T); below = P(Y < T))\n")
-  cat("  --list-thresholds          : Print built-in UK / WFD regulatory threshold presets\n")
+  cat("  --list-thresholds          : Print built-in indicative UK threshold presets\n")
   cat("  --design-sites=<K>         : Rank top K unmonitored reaches minimizing mean kriging variance\n\n")
   cat("Spatio-Temporal & Censored Kriging Flags:\n")
   cat("  --st-borrow                : Enable dynamic precision-weighted borrowing across time (--by=...)\n")
@@ -1362,6 +1362,11 @@ fit_s3n_domain <- function(df,
   if ("meas_uncertainty" %in% names(df_ord)) {
     u_raw <- df_ord$meas_uncertainty[1:n_obs]
     if (any(!is.na(u_raw) & u_raw > 0)) {
+      if ("meas_method" %in% names(df_ord)) {
+        is_log_sd <- tolower(trimws(as.character(df_ord$meas_method[1:n_obs]))) %in% c("tobit_interval", "geometric_midpoint")
+        ok_ls <- !is.na(u_raw) & u_raw > 0 & is_log_sd
+        if (any(ok_ls)) u_raw[ok_ls] <- u_raw[ok_ls] * pmax(1e-6, raw_obs_vals[ok_ls])
+      }
       v_phys <- calc_response_meas_variance(raw_obs_vals, u_raw, trans_obj)
       has_gam <- ("meas_method" %in% names(df_ord)) && isTRUE(any(tolower(df_ord$meas_method[1:n_obs]) == "gam", na.rm = TRUE))
       has_meta_gam <- !is.null(net_meta) && !is.null(net_meta$meas_method) && identical(tolower(net_meta$meas_method), "gam")

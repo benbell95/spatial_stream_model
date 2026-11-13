@@ -46,7 +46,7 @@ The Factor-LMC NNGP learns three distinct residual correlation pathways across y
 Even though catchment covariates explain part of both Nitrate and Orthophosphate variation, substantial **unmeasured residuals** remain:
 - **Unmapped point and diffuse sources**: A leaky slurry store, agricultural field drain, septic tank cluster, or small Sewage Treatment Works (STW) rarely appears directly in national GIS covariates. Modelling Nitrate and Orthophosphate together lets an observed nutrient spike in one solute inform the spatial surface of the other across connected and neighboring reaches.
 - **Uneven ("heterotopic") monitoring coverage**: When combining networks (`--source=rss` or `--custom-samples`), slicing by season/year, or dealing with censored/missed lab runs, some reaches have Nitrate but lack Orthophosphate (or vice versa). Co-kriging natively masks `NA`s row-by-row rather than dropping incomplete stations.
-- **Lower uncertainty & clearer WFD tiering**: Borrowing strength across correlated determinands shrinks `se_model_sc`, moving borderline reaches out of the `"Uncertain / Priority Monitoring"` tier when combined with `--threshold=uk`.
+- **Lower uncertainty & clearer tiering**: Borrowing strength across correlated determinands shrinks `se_model_sc`, moving borderline reaches out of the `"Uncertain / Priority Monitoring"` tier when combined with `--threshold=uk`.
 
 > [!NOTE]
 > **When Co-Kriging Adds Little Over Univariate S3N:** If off-diagonal residual correlations are near zero once covariates are subtracted (`|Corr_TU|`, `|Corr_TD|`, `|Corr_Nugget|` all $< 0.15$), or if every variable was measured at the exact same set of reaches (*isotopic* design), Co-Kriging gives roughly the same $R^2$ as Univariate S3N. Every run automatically generates **`cokriging_evaluation_report.md`** and **`cv_univariate_vs_cokriging.csv`** so you can verify immediately whether joint modelling helped.
@@ -118,7 +118,7 @@ Rscript scripts/run_s3n_cokriging.R --targets=<t1>,<t2>[,<t3>,...] [OPTIONS]
 | `--kernel=<name>` | `exponential` | Spatial stream correlation kernel (`exponential`, `spherical`, `mariah`, `linear`). |
 | `--vars=<v1,v2,...>` | `default` | Shared catchment fixed-effect predictors across $X$ (run `--list-vars`). |
 | `--cv-mode=<mode>` | `random` | Out-of-sample CV splitting scheme (`random`, `catchment`, `strahler`, `spatial_block`; run `--list-cv`). |
-| `--threshold=uk\|<vals>` | *(None)* | Regulatory exceedance evaluation: pass `uk` for automatic UK DWI/WFD thresholds per target (where defined), or comma-separated raw thresholds aligned with `--targets`. Combine with `--threshold-dir=above\|below,...`. |
+| `--threshold=uk\|<vals>` | *(None)* | Threshold exceedance evaluation: pass `uk` for indicative UK thresholds per target (where defined), or comma-separated raw thresholds aligned with `--targets`. Combine with `--threshold-dir=above\|below,...`. |
 | `--basin=<spec>` | *(None)* | Custom river basin(s) or CatchID(s) to fit alongside England, Humber, Thames, and Severn. |
 | `--source=<src>` | `rsn` | Monitoring source (`rsn`, `ssn`, `rss`, or custom profiles). |
 | `--prefer-source=<s..>` | None | Reach-level priority order (e.g. `rsn` or `rsn,ssn,campaign`); excludes lower-priority sources only on co-located reaches. |
@@ -138,7 +138,7 @@ Rscript scripts/run_s3n_cokriging.R --targets=<t1>,<t2>[,<t3>,...] [OPTIONS]
 ```bash
 Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 --threshold=uk --omp=4
 ```
-Fits a full-rank 2-variable Tail-Up + Tail-Down LMC across England + Humber, Thames, and Severn, outputs cross-correlations (`Corr_TU`, `Corr_TD`, `Corr_Nugget`), and checks exceedance against UK Nitrate (`11.3 mg/L`) and WFD Phosphate benchmarks.
+Fits a full-rank 2-variable Tail-Up + Tail-Down LMC across England + Humber, Thames, and Severn, outputs cross-correlations (`Corr_TU`, `Corr_TD`, `Corr_Nugget`), and checks exceedance against indicative UK Nitrate (`11.3 mg/L`) and Orthophosphate (`0.069 mg/L`) thresholds.
 
 ### Example 2: Cross-Dataset Water Quality & Ecology Co-Kriging ($P = 4$)
 ```bash
@@ -178,7 +178,7 @@ Every run evaluates **three comparable out-of-sample CV accuracy benchmarks** in
 
 | File | Description |
 | :--- | :--- |
-| `cokriging_evaluation_report.md` | **Automated Value-Add Report**: Explicitly tells you whether Co-Kriging was worth doing (`Strong Benefit`, `Moderate Benefit`, `Marginal/Parity`, or `No Gain`), **where** it helped (best targets, river basins, heterotopic gap-fill counts, and WFD tier clarity), and **how** (`Tail-Up` vs `Tail-Down` vs `Nugget` cross-correlations). |
+| `cokriging_evaluation_report.md` | **Automated Value-Add Report**: Explicitly tells you whether Co-Kriging was worth doing (`Strong Benefit`, `Moderate Benefit`, `Marginal/Parity`, or `No Gain`), **where** it helped (best targets, river basins, heterotopic gap-fill counts, and threshold tier clarity), and **how** (`Tail-Up` vs `Tail-Down` vs `Nugget` cross-correlations). |
 | `cv_univariate_vs_cokriging.csv` | Paired RMSE, MAE, and $R^2$ comparing `Univariate S3N`, `Co-Kriging (All-Holdout)`, and `Co-Kriging (Aux-Aided)` across every domain and target. |
 | `cokriging_cross_covariance.csv` | Decomposed Tail-Up (`Cov_TU`, `Corr_TU`), Tail-Down (`Cov_TD`, `Corr_TD`), Co-Located Nugget (`Cov_Nugget`, `Corr_Nugget`), and Total cross-covariances/correlations on each variable's model scale. |
 | `predictions_<domain>_<code>.csv` | Standard reach-level prediction table (`RivID`, `pred_combined`, `pred_model_sc`, `se_model_sc`, optional `exceed_prob` & `compliance_tier`) for each target and domain. |
@@ -221,4 +221,4 @@ Each target determinand produces a national two-panel Figure 1 (`fig_cokrig_engl
 - [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md) — Supplementing statutory `RSN` with citizen science or local campaigns (`--prefer-source`, `--source-weight`, `--source-se`), workflow & pitfalls.
 - [`docs/s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md) — Univariate S3N NNGP theory, multi-kernel options, CV modes, and optimal design.
 - [`docs/usage_guide.md`](./usage_guide.md) — Full CLI flag reference for single-determinand modeling.
-- [`docs/regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md) — UK/WFD exceedance threshold presets and 5-tier management mapping.
+- [`docs/regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md) — Indicative UK exceedance threshold presets and 5-tier management mapping.

@@ -976,6 +976,7 @@ aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = num
     se_ov <- lookup_source_numeric(df$data_source, src_se, default_val = NA_real_)
     has_ov <- !is.na(se_ov) & is.finite(se_ov) & se_ov >= 0
     df$meas_uncertainty[has_ov] <- se_ov[has_ov]
+    df$meas_method[has_ov] <- "source_se"
   }
 
   has_sw <- (length(src_weights) > 0L)

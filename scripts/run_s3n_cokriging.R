@@ -504,7 +504,12 @@ for (p in seq_len(P)) {
   v_sc_p <- rep(0.0, nrow(agg_p))
   ok_u_p <- !is.na(agg_p$meas_uncertainty) & is.finite(agg_p$meas_uncertainty) & agg_p$meas_uncertainty >= 0
   if (any(ok_u_p)) {
-    v_sc_p[ok_u_p] <- calc_response_meas_variance(agg_p$val[ok_u_p], agg_p$meas_uncertainty[ok_u_p], res_p$trans)
+    u_raw_p <- agg_p$meas_uncertainty[ok_u_p]
+    if ("meas_method" %in% names(agg_p)) {
+      is_log_sd <- tolower(trimws(as.character(agg_p$meas_method[ok_u_p]))) %in% c("tobit_interval", "geometric_midpoint")
+      u_raw_p[is_log_sd] <- u_raw_p[is_log_sd] * pmax(1e-6, agg_p$val[ok_u_p][is_log_sd])
+    }
+    v_sc_p[ok_u_p] <- calc_response_meas_variance(agg_p$val[ok_u_p], u_raw_p, res_p$trans)
   }
   reach_tables[[p]] <- data.frame(
     RivID          = agg_p$RivID,
@@ -700,6 +705,7 @@ for (dom in domains) {
       method_label  = method_lbl
     )
   }
+  rm(res_dom); gc(FALSE)
 }
 
 cv_all  <- if (length(all_cv_list) > 0L) do.call(rbind, all_cv_list) else NULL

@@ -2721,6 +2721,11 @@ def main():
                         reach_100m[u] = reach_100m[p]
                         break
 
+    def _classify_bedrock(b_desc):
+        is_cl = 1 if ("CHALK" in b_desc or "LIMESTONE" in b_desc or "DOLOSTONE" in b_desc) else 0
+        is_sd = 1 if ("SANDSTONE" in b_desc and "MUDSTONE" not in b_desc and "SILTSTONE" not in b_desc) else 0
+        return is_cl, is_sd, (1 if (is_cl or is_sd) else 0)
+
     # Compute log_AFV using selected physical confluence weighting scheme (--afv-scheme)
     afv_scheme = cfg.get("afv_scheme", "length")
     for u in topo_order:
@@ -2730,7 +2735,8 @@ def main():
             for p in ps:
                 r100 = reach_100m.get(p)
                 elev_p = (r100[0] or 0.0) if r100 else 0.0
-                aq_p = (r100[6] or 0) if r100 else 0
+                b_desc_p = bedrock_lu.get(r100[3], "") if (r100 and len(r100) > 3) else ""
+                _, _, aq_p = _classify_bedrock(b_desc_p)
                 p_weights[p] = compute_afv_reach_weight(
                     afv_scheme,
                     reaches[p][6] or 0.0,
@@ -2762,9 +2768,7 @@ def main():
         rc = reach_100m.get(riv_id, (50.0, 0.5, 1.05, 0, 0, 100.0))
         b_desc = bedrock_lu.get(rc[3], "")
         s_desc = superficial_lu.get(rc[4], "")
-        is_chalk_lime = 1 if ("CHALK" in b_desc or "LIMESTONE" in b_desc or "DOLOSTONE" in b_desc) else 0
-        is_sand = 1 if ("SANDSTONE" in b_desc and "MUDSTONE" not in b_desc and "SILTSTONE" not in b_desc) else 0
-        is_aq = 1 if (is_chalk_lime or is_sand) else 0
+        is_chalk_lime, is_sand, is_aq = _classify_bedrock(b_desc)
         is_peat = 1 if "PEAT" in s_desc else 0
 
         d2m_km = r[5] / 1000.0

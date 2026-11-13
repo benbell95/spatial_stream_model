@@ -1120,7 +1120,7 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
 }
 
 # ==============================================================================
-# Regulatory Exceedance Probability & 5-Tier WFD Management Classification Plots
+# Regulatory Exceedance Probability & 5-Tier Management Classification Plots
 # ==============================================================================
 
 COMPLIANCE_TIER_LEVELS <- c(
