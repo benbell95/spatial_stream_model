@@ -7,10 +7,11 @@ Use this index to find the right guide for your task.
 ## Table of Contents
 
 - [1. Getting Started & CLI Reference](#1-getting-started--cli-reference)
-- [2. Specialised Modelling Workflows](#2-specialised-modelling-workflows)
-- [3. Customising Data, Networks & Covariates](#3-customising-data-networks--covariates)
-- [4. Diagnostics & Output Interpretation](#4-diagnostics--output-interpretation)
-- [5. Methodology & Statistical Theory](#5-methodology--statistical-theory)
+- [2. Multivariate & Multi-Source Co-Kriging](#2-multivariate--multi-source-co-kriging)
+- [3. Specialised Modelling Workflows](#3-specialised-modelling-workflows)
+- [4. Customising Data, Networks & Covariates](#4-customising-data-networks--covariates)
+- [5. Diagnostics & Output Interpretation](#5-diagnostics--output-interpretation)
+- [6. Methodology & Statistical Theory](#6-methodology--statistical-theory)
 
 ---
 
@@ -24,19 +25,26 @@ Use this index to find the right guide for your task.
 
 ---
 
-## 2. Specialised Modelling Workflows
+## 2. Multivariate & Multi-Source Co-Kriging
+
+| Guide | Purpose |
+| :--- | :--- |
+| [**Multivariate Stream Co-Kriging (Factor-LMC)**](./multivariate_cokriging_guide.md) | Jointly modelling $P \ge 2$ chemical and ecological targets across heterotopic networks via `scripts/run_s3n_cokriging.R`, Factor-LMC NNGP (`--factors`), and Dual CV benchmarks. |
+| [**Multi-Source Fusion & Citizen-Science Co-Kriging**](./multi_source_and_citizen_science_guide.md) | Supplementing statutory networks (`RSN` / `SSN`) with citizen science or campaign data via Factor-LMC / Colocated co-kriging, reach priority (`--prefer-source`), reliability weighting (`--source-weight`), and source SE (`--source-se`). |
+
+---
+
+## 3. Specialised Modelling Workflows
 
 | Guide | Purpose |
 | :--- | :--- |
 | [**Regulatory Exceedance & WFD Risk Mapping**](./regulatory_exceedance_mapping_guide.md) | Reach-level Gaussian exceedance probabilities (`--threshold=`, `--threshold-dir=`), built-in UK/WFD presets (`--threshold=uk`), 5-tier compliance classification, and dedicated risk maps. |
 | [**Spatio-Temporal Trends & Dynamic Borrowing**](./spatiotemporal_trends_and_borrowing_guide.md) | Multi-year/seasonal/monthly batch mapping (`--by=`), precision-weighted dynamic temporal borrowing (`--st-borrow`), and reach-level WLS trend significance (`fig6`). |
-| [**Multivariate Stream Co-Kriging (Factor-LMC)**](./multivariate_cokriging_guide.md) | Jointly modelling $P \ge 2$ chemical and ecological targets across heterotopic networks via `scripts/run_s3n_cokriging.R`, Factor-LMC NNGP (`--factors`), and Dual CV benchmarks. |
-| [**Multi-Source Fusion & Citizen-Science Co-Kriging**](./multi_source_and_citizen_science_guide.md) | Supplementing statutory networks (`RSN` / `SSN`) with citizen science or campaign data via Factor-LMC / Colocated co-kriging, reach priority (`--prefer-source`), reliability weighting (`--source-weight`), and source SE (`--source-se`). |
 | [**Non-Linear Spline (`GAM + S3N`) & Tree-Ensemble (`RF / GBM + S3N`) Guide**](./nonlinear_and_tree_ensemble_trend_guide.md) | Using `--trend=spline\|gam\|rf\|gbm` on standard raw or GAM-weighted data, zero-external-package architecture, orthogonal OOB/OOF residual kriging, and interpreting `GAM_EDF` / `VarImp(%)`. |
 
 ---
 
-## 3. Customising Data, Networks & Covariates
+## 4. Customising Data, Networks & Covariates
 
 | Guide | Purpose |
 | :--- | :--- |
@@ -46,7 +54,7 @@ Use this index to find the right guide for your task.
 
 ---
 
-## 4. Diagnostics & Output Interpretation
+## 5. Diagnostics & Output Interpretation
 
 | Guide | Purpose |
 | :--- | :--- |
@@ -56,11 +64,11 @@ Use this index to find the right guide for your task.
 
 ---
 
-## 5. Methodology & Statistical Theory
+## 6. Methodology & Statistical Theory
 
 | Guide | Purpose |
 | :--- | :--- |
 | [**S3N Modelling & Kriging Theory**](./s3n_modelling_and_kriging_guide.md) | Mathematical foundations of ROS imputation, 12 response transformations, Tail-Up / Tail-Down / Joint Additive stream covariance, multi-kernel NNGP estimation, hydrological CV modes (`--cv-mode=`), universal stream kriging, and C++ optimal monitoring design (`--design-sites=`). |
-| [**Two-Stage GAM & Measurement-Error Kriging**](./two_stage_gam_measurement_error_kriging_guide.md) | Propagating stage-1 temporal/GAM standard errors (`meas_uncertainty`) into stage-2 S3N kriging (`delta_se` / `total_tau.sq`). |
-| [**Preprocessing & C++ Neighbor Engine**](./preprocessing_pipeline.md) | Detailed walkthrough of `01_preprocess_orn.py` (GeoPackage extraction, ROS censored imputation, station snapping, AFV/Strahler computation) and the OpenMP C++ Euler-tour engine (`src/s3n_fast_neighbors.cpp`). |
 | [**Where This Pipeline Differs from `S3N`**](./where_this_differs_from_s3n.md) | Attribution to `S3N` (`arXiv:2512.12398`) and `BRISC`, which `S3N` functions are still used, and what our C++/R/Python platform replaces or adds. |
+| [**Preprocessing & C++ Neighbor Engine**](./preprocessing_pipeline.md) | Detailed walkthrough of `01_preprocess_orn.py` (GeoPackage extraction, ROS censored imputation, station snapping, AFV/Strahler computation) and the OpenMP C++ Euler-tour engine (`src/s3n_fast_neighbors.cpp`). |
+| [**Two-Stage GAM & Measurement-Error Kriging**](./two_stage_gam_measurement_error_kriging_guide.md) | Propagating stage-1 temporal/GAM standard errors (`meas_uncertainty`) into stage-2 S3N kriging (`delta_se` / `total_tau.sq`). |

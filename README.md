@@ -249,7 +249,8 @@ See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 
 This project was created with the assistance of artificial intelligence.
 
-- **Models Used:** Gemini Hydrogen, Gemini Argon
+- **Coding Assistant:** Google DeepMind Antigravity
+- **Models Used:** Gemini 4 Argon, Gemini 4 Hydrogen
 - **Human Oversight:** All code, statistical methods, documentation, and generated outputs were reviewed and verified by a human maintainer. Users remain responsible for validating model assumptions, outputs, and suitability for any downstream scientific or regulatory use.
 
 ---
