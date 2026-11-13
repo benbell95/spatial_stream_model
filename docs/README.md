@@ -19,6 +19,7 @@ Use this index to find the right guide for your task.
 
 | Guide | Purpose |
 | :--- | :--- |
+| [**CLI Workbench (`cli_workbench/index.html`)**](../cli_workbench/index.html) | Friendly standalone offline browser tool for building ready-to-run commands with grouped dropdowns, `i` option tooltips, and shell formatting for **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (including optional full `Rscript.exe` path & R-version selection). |
 | [**Setup, Architecture & Testing**](./setup_and_architecture.md) | Repository layout, directory & determinand configuration (`configs/directories.json`, `configs/determinands.json`), Python/R/C++ dependencies, compiling `src/s3n_fast_neighbors.so`, and running the test suite. |
 | [**End-to-End Usage Guide**](./usage_guide.md) | Complete CLI flag reference, flag/method decision cheat sheet, workflow examples (`01_preprocess_orn.py`, `run_s3n_determinand.R`, `02`/`03` split execution), and output file descriptions. |
 | [**Running on Databricks**](./databricks_guide.md) | Cell-by-cell notebook pattern for running the hybrid Python/R pipeline on Databricks Git Folders and Unity Catalog Volumes. |

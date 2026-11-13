@@ -25,6 +25,7 @@ This guide is the single reference for repository layout, environment dependenci
 
 ```text
 spatial_stream_model/
+├── cli_workbench/                    # Standalone offline CLI command builder (open index.html)
 ├── configs/
 │   ├── directories.json              # Default data, gis, processed, and output roots
 │   ├── determinands.json             # (Optional user file) Determinand labels & units
@@ -41,6 +42,7 @@ spatial_stream_model/
 │       └── <net>_<source>/           # Standardized 5-file output from 01_preprocess_orn.py
 ├── gis/
 │   └── ORN_v2.gpkg                   # National river network GeoPackage (~10.4 GB)
+├── modelling_dashboard/              # Interactive offline case-study explorer & results dashboard
 ├── output/
 │   ├── results/
 │   │   └── det_<code>_<net>_<src>.../# Model predictions, CV tables, parameters, fig1–fig5
@@ -68,6 +70,9 @@ spatial_stream_model/
 │   └── test_r_and_cpp.R              # R modules + C++ shared library unit tests
 └── docs/                             # Documentation (see docs/README.md)
 ```
+
+> [!TIP]
+> **Generating Commands Visually:** Open [`cli_workbench/index.html`](../cli_workbench/index.html) locally in any browser for a standalone point-and-click command builder supporting **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (including an optional full `Rscript.exe` path & R-version selector when R is not on Windows `PATH`).
 
 ---
 

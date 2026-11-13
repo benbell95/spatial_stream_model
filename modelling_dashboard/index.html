@@ -30,6 +30,7 @@
           <input id="featureSearch" class="search-input" type="search" placeholder="Find feature, flag, or case study..." autocomplete="off" />
           <div id="searchDropdown" class="search-dropdown"></div>
         </div>
+        <a class="btn btn-primary btn-workbench-nav" href="../cli_workbench/index.html" title="Open Standalone CLI Command Builder">CLI Workbench &rarr;</a>
         <button id="themeToggleBtn" class="btn" type="button" title="Toggle Dark / Light Theme">☀️ Light Mode</button>
       </div>
     </div>
@@ -44,7 +45,6 @@
       <button class="tab-btn" data-tab="cs6" role="tab">7. CS6: WaterBlitz Fusion</button>
       <button class="tab-btn" data-tab="cs7" role="tab">8. CS7: Data Transforms</button>
       <button class="tab-btn" data-tab="cs8" role="tab">9. CS8: Monitoring Design</button>
-      <button class="tab-btn" data-tab="workbench" role="tab">10. CLI Workbench</button>
     </nav>
   </header>
 
@@ -788,166 +788,6 @@ Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-
       <div class="card" style="margin-top:16px;">
         <div class="card-header"><h3 class="card-title">Top-20 Priority Candidate Reaches Across England (Ranked by Schur-Complement Variance Reduction)</h3></div>
         <div id="cs8-design-table" class="table-scroll"></div>
-      </div>
-    </section>
-
-    <!-- ===================================================================
-         TAB 10: INTERACTIVE CLI WORKBENCH
-         =================================================================== -->
-    <section id="tab-workbench" class="tab-panel">
-      <div class="hero-card">
-        <span class="hero-eyebrow">100% Client-Side Command Generator</span>
-        <h2>Interactive Pipeline CLI Workbench</h2>
-        <p>
-          Configure a study interactively—or load a curated preset—to assemble ready-to-run shell commands across preprocessing, single-determinand modelling, multivariate co-kriging, and post-run diagnostics.
-        </p>
-      </div>
-
-      <div class="workbench-grid">
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Configure Analysis</h3>
-            <div class="fig-toggle-bar" id="wbPresetBtns">
-              <button class="fig-toggle-btn" data-preset="nitrate">Nitrate Threshold</button>
-              <button class="fig-toggle-btn" data-preset="ecology">WHPT Ecology</button>
-              <button class="fig-toggle-btn" data-preset="seasonal">Seasonal Borrow</button>
-              <button class="fig-toggle-btn" data-preset="waterblitz">WaterBlitz Co-Kriging</button>
-              <button class="fig-toggle-btn" data-preset="design">Optimal Design</button>
-            </div>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="wbMode">Workflow Script</label>
-              <select id="wbMode">
-                <option value="det">Single-Determinand (run_s3n_determinand.R)</option>
-                <option value="cokrig">Multivariate Co-Kriging (run_s3n_cokriging.R)</option>
-                <option value="prep">Preprocessing (01_preprocess_orn.py)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbTarget">Target / Determinand(s)</label>
-              <input id="wbTarget" type="text" value="0117" />
-            </div>
-            <div class="field">
-              <label for="wbDataset">Dataset (`--dataset`)</label>
-              <select id="wbDataset">
-                <option value="auto">Auto-detect</option>
-                <option value="wq">wq (Water Quality)</option>
-                <option value="inverts">inverts (Macroinvertebrates)</option>
-                <option value="diatoms">diatoms</option>
-                <option value="macrophytes">macrophytes</option>
-                <option value="rhs">rhs (River Habitat)</option>
-                <option value="lcms">lcms (Organics)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbSource">Source (`--source`)</label>
-              <input id="wbSource" type="text" value="rsn" />
-            </div>
-            <div class="field">
-              <label for="wbTrend">Trend / Co-Krig Method</label>
-              <select id="wbTrend">
-                <option value="linear">linear (OLS/GLS fixed effects)</option>
-                <option value="gam">gam (REML cubic splines)</option>
-                <option value="spline">spline (GCV natural splines)</option>
-                <option value="rf">rf (Random Forest OOB)</option>
-                <option value="gbm">gbm (Gradient Boosted CV)</option>
-                <option value="lmc">lmc (Co-Kriging Factor-LMC)</option>
-                <option value="colocated">colocated (Strict Primary Anchor)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbKernel">Stream Kernel (`--kernel`)</label>
-              <select id="wbKernel">
-                <option value="exponential">exponential (default)</option>
-                <option value="auto">auto (Profile MLE best)</option>
-                <option value="spherical">spherical</option>
-                <option value="mariah">mariah</option>
-                <option value="linear">linear</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbTransform">Transform (`--transform`)</label>
-              <select id="wbTransform">
-                <option value="default">Default (log for WQ, none for Ecol)</option>
-                <option value="log">log</option>
-                <option value="boxcox">boxcox (MLE &lambda;)</option>
-                <option value="yeojohnson">yeojohnson</option>
-                <option value="sqrt">sqrt</option>
-                <option value="none">none (raw)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbThreshold">Exceedance Threshold (<code>--threshold</code>)</label>
-              <select id="wbThreshold">
-                <option value="none">None</option>
-                <option value="uk">uk (Auto Statutory Lookup)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbTemporal">Temporal (`--by` / Period)</label>
-              <select id="wbTemporal">
-                <option value="all">all (Combined Period)</option>
-                <option value="by_season">--by=season --st-borrow</option>
-                <option value="by_year">--by=year --st-borrow</option>
-                <option value="winter">Single Period: --season=winter</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbPreferSource">Priority / Weight (`--prefer-source`)</label>
-              <input id="wbPreferSource" type="text" placeholder="e.g. rsn" value="" />
-            </div>
-            <div class="field">
-              <label for="wbSourceWeight">Source Weight (`--source-weight`)</label>
-              <input id="wbSourceWeight" type="text" placeholder="e.g. rsn:1,waterblitz:0.35" value="" />
-            </div>
-            <div class="field">
-              <label for="wbSourceSe">Source SE (`--source-se`)</label>
-              <input id="wbSourceSe" type="text" placeholder="e.g. rsn:0.05,waterblitz:0.4" value="" />
-            </div>
-            <div class="field">
-              <label for="wbFormat">Figure Format / DPI</label>
-              <select id="wbFormat">
-                <option value="png_300">PNG @ 300 DPI (Best for Maps)</option>
-                <option value="svg">SVG (Best for Diagnostic Charts)</option>
-                <option value="pdf">PDF (Publication Print)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbDesignSites">Optimal Design Sites (<code>--design-sites</code>)</label>
-              <select id="wbDesignSites">
-                <option value="0">0 (Off)</option>
-                <option value="15">15 (Catchment Top-15 Map)</option>
-                <option value="25">25 (Regional Top-25 Map)</option>
-                <option value="50">50 (National Top-50 Map)</option>
-                <option value="100">100 (Comprehensive Top-100 Map)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="wbOmp">OpenMP Threads (`--omp`)</label>
-              <select id="wbOmp">
-                <option value="4">4 threads</option>
-                <option value="8">8 threads</option>
-                <option value="1">1 thread</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Generated Pipeline Command</h3>
-            <span class="pill pill-green">Verified CLI Syntax</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Ready to Execute</span><button class="copy-btn" data-copy-target="wbOutputCmd">Copy</button></div>
-            <pre id="wbOutputCmd"></pre>
-          </div>
-          <div id="wbNotes" class="interp-box">
-            <h4>Suggested Workflow Notes</h4>
-            <ul id="wbNotesList"></ul>
-          </div>
-        </div>
       </div>
     </section>
 

@@ -117,6 +117,9 @@ By default, scripts read from `gis/`, `data/`, `data/processed/`, and `output/` 
 
 ## 🚀 Quickstart
 
+> [!TIP]
+> **Prefer a visual command builder over typing flags manually?** Open [`cli_workbench/index.html`](cli_workbench/index.html) directly in your web browser (works completely offline, no server required). Pick your analysis options from grouped dropdowns with **`i`** tooltips and copy ready-to-run commands formatted for **Bash**, **Windows PowerShell**, or **Windows Command Prompt** (including an optional full `Rscript.exe` path & R-version selector if `Rscript` isn't on Windows `PATH`).
+
 ### Step 1 — Preprocess the River Network & Monitoring Data
 ```bash
 # Default: ORN v2 network + EA River Surveillance Network (auto-creates configs/determinands.json)
@@ -185,6 +188,7 @@ Rscript scripts/04_compare_model_runs.R \
 
 ```text
 spatial_stream_model/
+├── cli_workbench/                    # Standalone offline CLI command builder (open index.html)
 ├── configs/
 │   ├── directories.json              # Default gis, data, processed, and output roots
 │   ├── determinands.json             # Auto-generated determinand names, short labels & units
@@ -193,6 +197,7 @@ spatial_stream_model/
 ├── data/                             # Raw EA monitoring archives & processed/<net>_<source>/
 ├── docs/                             # Full guides & theoretical documentation (see docs/README.md)
 ├── gis/                              # Raw river network GeoPackages (e.g. ORN_v2.gpkg)
+├── modelling_dashboard/              # Interactive offline case-study explorer & results dashboard
 ├── output/                           # Generated results/, station_snapping/, and comparisons/
 ├── scripts/
 │   ├── 01_preprocess_orn.py          # GeoPackage extractor, ROS imputation & station snapping
@@ -237,8 +242,8 @@ See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 
 | Category | Guides |
 | :--- | :--- |
-| **Getting Started & CLI** | [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
-| **Specialised Workflows** | [Regulatory Exceedance & WFD Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Multi-Source & Citizen-Science Fusion](docs/multi_source_and_citizen_science_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
+| **Getting Started & CLI** | [Interactive CLI Workbench](cli_workbench/index.html) · [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
+| **Specialised Workflows** | [Regulatory Exceedance & Threshold Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Optimal Monitoring Network Design & Gap Mapping](docs/optimal_monitoring_design_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Multi-Source & Citizen-Science Fusion](docs/multi_source_and_citizen_science_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
 | **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks (`BYOWN`)](docs/custom_water_network_guide.md) · [ORN Covariates Reference (`--vars`)](docs/orn_variables_reference.md) |
 | **Diagnostics & Interpretation** | [Station Snapping Guide](docs/station_snapping_guide.md) · [Descriptive Statistics Guide](docs/descriptive_stats_interpretation_guide.md) · [Model Comparison Guide](docs/model_comparison_interpretation_guide.md) |
 | **Methodology & Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) · [Where This Differs from `S3N`](docs/where_this_differs_from_s3n.md) |

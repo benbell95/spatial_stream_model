@@ -272,6 +272,10 @@
   }
 
   function switchTab(tabId, updateHash) {
+    if (tabId === "workbench") {
+      window.location.href = "../cli_workbench/index.html";
+      return;
+    }
     document.querySelectorAll(".tab-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.tab === tabId);
     });
@@ -772,7 +776,7 @@
           <h4>${esc(f.title)}</h4>
           <p>${esc(f.desc)}</p>
           <div style="margin-top:8px;">
-            <button class="copy-btn" data-jump-tab="${esc(f.tab)}">Open Case Study &rarr;</button>
+            <button class="copy-btn" data-jump-tab="${esc(f.tab)}">${f.tab === "workbench" ? "Open CLI Workbench &rarr;" : "Open Case Study &rarr;"}</button>
           </div>
         </div>
       `).join("");
@@ -838,112 +842,6 @@
     document.addEventListener("click", (e) => {
       if (!e.target.closest(".search-box")) drop.classList.remove("open");
     });
-  }
-
-  function initWorkbench() {
-    const ids = ["wbMode", "wbTarget", "wbDataset", "wbSource", "wbTrend", "wbKernel", "wbTransform", "wbThreshold", "wbTemporal", "wbPreferSource", "wbSourceWeight", "wbSourceSe", "wbDesignSites", "wbFormat", "wbOmp"];
-    const els = {};
-    ids.forEach((id) => { els[id] = document.getElementById(id); });
-    const outEl = document.getElementById("wbOutputCmd");
-    const notesEl = document.getElementById("wbNotesList");
-    if (!outEl) return;
-
-    function rebuild() {
-      const mode = els.wbMode.value;
-      const target = els.wbTarget.value.trim() || "0117";
-      const ds = els.wbDataset.value;
-      const src = els.wbSource.value.trim() || "rsn";
-      const trend = els.wbTrend.value;
-      const kernel = els.wbKernel.value;
-      const trans = els.wbTransform.value;
-      const thr = els.wbThreshold.value;
-      const temp = els.wbTemporal.value;
-      const pref = els.wbPreferSource.value.trim();
-      const wt = els.wbSourceWeight.value.trim();
-      const se = els.wbSourceSe.value.trim();
-      const des = els.wbDesignSites ? Number(els.wbDesignSites.value || 0) : 0;
-      const fmtVal = els.wbFormat.value;
-      const omp = els.wbOmp.value;
-
-      const notes = [];
-      let cmd = "";
-
-      if (mode === "prep") {
-        cmd = `python3 scripts/01_preprocess_orn.py --source=${src}`;
-        if (ds !== "auto") cmd += ` --dataset=${ds}`;
-        if (trans !== "default") cmd += ` --transform=${trans}`;
-        notes.push("Outputs snapped topology, log_AFV, ROS-imputed samples & network metadata to data/processed/.");
-      } else if (mode === "cokrig") {
-        const ckTargets = target.includes(",") ? target : `${target},0180`;
-        const method = trend === "colocated" ? "colocated" : "lmc";
-        cmd = `Rscript scripts/run_s3n_cokriging.R --targets=${ckTargets} --source=${src} --method=${method}`;
-        if (ds !== "auto") cmd += ` --dataset=${ds}`;
-        if (kernel !== "exponential") cmd += ` --kernel=${kernel}`;
-        if (thr === "uk") cmd += ` --threshold=uk`;
-        if (pref) cmd += ` --prefer-source=${pref}`;
-        if (wt) cmd += ` --source-weight=${wt}`;
-        if (se) cmd += ` --source-se=${se}`;
-        if (des > 0) {
-          cmd += ` --design-sites=${des}`;
-          notes.push(`Runs OpenMP C++ greedy active learning (C_s3n_optimal_design) to rank top ${des} sites & plot fig_optimal_design_* maps.`);
-        }
-        if (fmtVal === "png_300") cmd += ` --dpi=300`;
-        else cmd += ` --fig-format=${fmtVal}`;
-        cmd += ` --omp=${omp}`;
-        notes.push("Evaluates Univariate S3N vs Co-Kriging (All-Holdout) vs Co-Kriging (Aux-Aided) CV benchmarks automatically.");
-        if (wt || se) notes.push("Routes through OpenMP weighted C++ solver C_s3n_multivariate_nngp_weighted.");
-      } else {
-        cmd = `Rscript scripts/run_s3n_determinand.R ${target}`;
-        if (ds !== "auto") cmd += ` --dataset=${ds}`;
-        if (src !== "rsn") cmd += ` --source=${src}`;
-        if (["spline", "gam", "rf", "gbm"].includes(trend)) cmd += ` --trend=${trend}`;
-        if (kernel !== "exponential") cmd += ` --kernel=${kernel}`;
-        if (trans !== "default") cmd += ` --transform=${trans}`;
-        if (thr === "uk") cmd += ` --threshold=uk`;
-        if (temp === "by_season") cmd += ` --by=season --st-borrow`;
-        else if (temp === "by_year") cmd += ` --by=year --st-borrow`;
-        else if (temp === "winter") cmd += ` --season=winter`;
-        if (target === "whpt_aspt" || ds === "inverts") cmd += ` --reverse-color`;
-        if (pref) cmd += ` --prefer-source=${pref}`;
-        if (wt) cmd += ` --source-weight=${wt}`;
-        if (se) cmd += ` --source-se=${se}`;
-        if (des > 0) {
-          cmd += ` --design-sites=${des}`;
-          notes.push(`Runs OpenMP C++ greedy active learning (C_s3n_optimal_design) to rank top ${des} sites & plot fig_optimal_design_* maps.`);
-        }
-        if (fmtVal === "png_300") cmd += ` --dpi=300`;
-        else cmd += ` --fig-format=${fmtVal}`;
-        cmd += ` --omp=${omp}`;
-        notes.push("Runs England + Humber + Thames + Severn models with 5-fold hydrological/random CV and maps.");
-        if (fmtVal === "svg") notes.push("Tip: Use --dpi=300 PNG for 90k-reach national maps and --fig-format=svg for diagnostic bar/forest charts.");
-      }
-      outEl.textContent = cmd;
-      notesEl.innerHTML = notes.map((n) => `<li>${esc(n)}</li>`).join("");
-    }
-
-    Object.values(els).forEach((el) => {
-      if (el) el.addEventListener("change", rebuild);
-      if (el && el.tagName === "INPUT") el.addEventListener("input", rebuild);
-    });
-
-    const presets = {
-      nitrate: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "auto", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbFormat: "png_300" },
-      ecology: { wbMode: "det", wbTarget: "whpt_aspt", wbDataset: "inverts", wbSource: "rsn", wbTrend: "gam", wbKernel: "exponential", wbTransform: "none", wbThreshold: "none", wbTemporal: "all", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbFormat: "png_300" },
-      seasonal: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "exponential", wbTransform: "log", wbThreshold: "none", wbTemporal: "by_season", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbDesignSites: "0", wbFormat: "png_300" },
-      waterblitz: { wbMode: "cokrig", wbTarget: "0117,0180", wbDataset: "wq", wbSource: "rsn+ssn+waterblitz_tobit", wbTrend: "lmc", wbKernel: "exponential", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "rsn,ssn", wbSourceWeight: "rsn:1,ssn:1,waterblitz:0.25", wbSourceSe: "", wbDesignSites: "0", wbFormat: "png_300" },
-      design: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "exponential", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbDesignSites: "50", wbFormat: "png_300" }
-    };
-
-    document.querySelectorAll("#wbPresetBtns [data-preset]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const p = presets[btn.dataset.preset];
-        if (!p) return;
-        Object.entries(p).forEach(([k, v]) => { if (els[k]) els[k].value = v; });
-        rebuild();
-      });
-    });
-
-    rebuild();
   }
 
   function initCopyButtons() {
@@ -1091,7 +989,6 @@
   populateCaseStudyData();
   initFeatureCatalog();
   initSearch();
-  initWorkbench();
   initCopyButtons();
   initLightbox();
 

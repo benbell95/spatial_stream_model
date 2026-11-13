@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pipeline CLI Workbench &middot; Spatial Stream Network Modelling</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Sticky Top Chrome -->
+  <header class="top-chrome">
+    <div class="header-bar">
+      <div class="brand-wrap">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#06131f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">Pipeline CLI Workbench</h1>
+          <p class="brand-sub">Standalone Offline Command Builder &middot; Grouped Options, Dropdowns &amp; Hover Reference</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <a class="btn" href="../modelling_dashboard/index.html" title="Open the Case-Study Modelling Dashboard (when available)">&larr; Dashboard</a>
+        <button id="themeToggleBtn" class="btn" type="button" title="Toggle Dark / Light Theme">☀️ Light Mode</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-wrap">
+
+    <!-- 1. GENERATED COMMAND BOX (TOP, FULL WIDTH) -->
+    <section class="card wb-command-card" aria-labelledby="cmdHeading">
+      <div class="card-header">
+        <div>
+          <h2 id="cmdHeading" class="card-title" style="font-size:1.12rem;">Generated Pipeline Command</h2>
+          <p style="margin:2px 0 0; font-size:0.80rem; color:var(--text-secondary);">Updates live as you choose a target shell or modify any workflow option below.</p>
+        </div>
+        <div class="wb-cmd-controls">
+          <div id="wbShellBtns" class="fig-toggle-bar" role="group" aria-label="Target Shell">
+            <button class="fig-toggle-btn active" type="button" data-shell="bash">Bash</button>
+            <button class="fig-toggle-btn" type="button" data-shell="powershell">PowerShell</button>
+            <button class="fig-toggle-btn" type="button" data-shell="cmd">Command</button>
+          </div>
+          <button id="wbWrapToggleBtn" class="btn" type="button" title="Switch between single-line and multi-line wrapped command">Wrap Flags: On</button>
+          <button id="wbResetBtn" class="btn" type="button" title="Reset all options to default values">Reset Defaults</button>
+        </div>
+      </div>
+
+      <div id="wbWinRBar" class="wb-win-r-bar" hidden>
+        <label id="wbWinFullPathLabel" class="wb-win-toggle" for="wbWinFullPath">
+          <input id="wbWinFullPath" type="checkbox" />
+          <span>Use full <code>Rscript.exe</code> path (if not in PATH)</span>
+        </label>
+        <div id="wbWinRVersionWrap" class="wb-win-version-wrap is-disabled">
+          <label for="wbRVersionSel">R Version:</label>
+          <select id="wbRVersionSel" disabled>
+            <option value="4.5.0">4.5.0</option>
+            <option value="4.4.3" selected>4.4.3</option>
+            <option value="4.4.2">4.4.2</option>
+            <option value="4.4.1">4.4.1</option>
+            <option value="4.4.0">4.4.0</option>
+            <option value="4.3.3">4.3.3</option>
+            <option value="custom">Custom version or path...</option>
+          </select>
+          <input id="wbRVersionCustom" type="text" value="" placeholder="e.g. 4.5.1 or D:\R\R-4.4.3\bin\x64\Rscript.exe" hidden disabled />
+        </div>
+        <span class="info-wrap">
+          <button type="button" class="info-tip-btn" aria-label="Info about Windows Rscript path">i</button>
+          <span class="info-popover"><strong>Windows Rscript Path</strong>CRAN's Windows installer does not add <code>Rscript.exe</code> to <code>PATH</code> automatically. Enable this option to emit the full path under <code>C:\Program Files\R\R-&lt;ver&gt;\bin\x64\Rscript.exe</code> (using PowerShell's <code>&amp; "..."</code> call operator or Command Prompt's quoted <code>"..."</code>). Choose <em>Custom...</em> for any other version or custom install directory.</span>
+        </span>
+      </div>
+
+      <div class="code-wrap" style="margin-top:4px;">
+        <div class="code-bar">
+          <span id="wbCmdTargetScript">Bash &middot; scripts/run_s3n_determinand.R</span>
+          <button class="copy-btn" data-copy-target="wbOutputCmd">Copy Command</button>
+        </div>
+        <pre id="wbOutputCmd" class="wb-cmd-pre"></pre>
+      </div>
+
+      <div id="wbNotes" class="interp-box" style="margin-top:12px;">
+        <h4>Active Capabilities &amp; Expected Outputs</h4>
+        <ul id="wbNotesList"></ul>
+      </div>
+    </section>
+
+    <!-- 2. DISCOVERY & INSPECTION COMMANDS (--list) -->
+    <section id="wbDiscoveryCard" class="card wb-discovery-card" aria-labelledby="discoveryHeading">
+      <div class="card-header">
+        <div>
+          <h2 id="discoveryHeading" class="card-title">Discovery &amp; Reference Commands (<code>--list</code>)</h2>
+          <p style="margin:2px 0 0; font-size:0.80rem; color:var(--text-secondary);">Click any option to preview its inspection command above (click again or change any analysis option below to return to your pipeline command).</p>
+        </div>
+        <span class="pill pill-blue">Read-Only Lookups</span>
+      </div>
+
+      <div id="wbListBtns" class="wb-list-btns" role="group" aria-label="List Commands">
+        <button class="fig-toggle-btn" type="button" data-list-cmd="sources">List Sources</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="networks">List Networks</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="determinands">List Determinands</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="basins">List Basins &amp; RBDs</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="catchments">List Snapping Catchments</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="outputs">List Output Runs (Stats)</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="comparisons">List Output Runs (Compare)</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="vars">List Covariates</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="transforms">List Transforms</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="kernels">List Kernels</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="trends">List Trend Engines</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="cv">List CV Modes</button>
+        <button class="fig-toggle-btn" type="button" data-list-cmd="thresholds">List Thresholds</button>
+      </div>
+    </section>
+
+    <!-- 3. CONFIGURE ANALYSIS (ORGANISED BY FUNCTION / ABILITY) -->
+    <section aria-label="Configure Analysis">
+      <div class="wb-sections-grid">
+
+        <!-- GROUP 1: CORE WORKFLOW, TARGET & DATA SOURCE -->
+        <div class="wb-group-card">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">1. Core Workflow, Target &amp; Data Source</h3>
+              <p class="wb-group-sub">Select the pipeline entrypoint, variable(s), monitoring feed, and river network.</p>
+            </div>
+            <span class="pill pill-green">Inputs</span>
+          </div>
+          <div class="form-grid">
+            <div class="field" data-applies="all">
+              <div class="field-head">
+                <label for="wbMode">Workflow Script</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Workflow Script">i</button>
+                  <span class="info-popover"><strong>Workflow Entrypoint</strong><code>run_s3n_determinand.R</code> fits univariate S3N models + maps. <code>run_s3n_cokriging.R</code> fits multivariate Factor-LMC / Colocated co-kriging across 2+ targets. <code>01_preprocess_orn.py</code> snaps monitoring stations onto ORN v2 and computes topology/AFV tables.</span>
+                </span>
+              </div>
+              <select id="wbMode">
+                <option value="det">Single-Determinand (run_s3n_determinand.R)</option>
+                <option value="cokrig">Multivariate Co-Kriging (run_s3n_cokriging.R)</option>
+                <option value="prep">Preprocessing &amp; Snapping (01_preprocess_orn.py)</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbTargetSel">Target / Determinand(s)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Target determinands">i</button>
+                  <span class="info-popover"><strong>Target Code(s)</strong>Includes all numerical RSN &amp; SSN determinands grouped by category: <strong>Water Quality</strong> (nutrients, ions, metals, pesticides, PFAS), <strong>Biology</strong> (<code>inverts</code>, <code>macrophytes</code>, <code>diatoms</code>), <strong>Habitat</strong> (<code>rhs</code>), <strong>Organics</strong> (<code>lcms</code>), and Co-Kriging suites. Select a specific <code>--dataset</code> to filter the list, or choose <em>Custom...</em>.</span>
+                </span>
+              </div>
+              <select id="wbTargetSel">
+                <option value="0117">0117 — Nitrate as N (mg/l, RSN+SSN)</option>
+                <option value="custom">Custom determinand code / CAS / index...</option>
+              </select>
+              <input id="wbTargetCustom" class="wb-custom-sub" type="text" value="0117" placeholder="e.g. 0117, whpt_aspt, or 206440 (LCMS CAS)" hidden />
+            </div>
+
+            <div class="field" data-applies="all">
+              <div class="field-head">
+                <label for="wbDataset">Dataset (<code>--dataset</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Dataset flag">i</button>
+                  <span class="info-popover"><strong>Observation Modality (<code>--dataset</code>)</strong>Routes to the appropriate sample table: <code>wq</code> (water chemistry), <code>inverts</code> (WHPT), <code>diatoms</code>, <code>macrophytes</code>, <code>rhs</code> (River Habitat), or <code>lcms</code> (organic pollutants). <em>Auto-detect</em> infers the dataset automatically from target code.</span>
+                </span>
+              </div>
+              <select id="wbDataset">
+                <option value="auto">Auto-detect from target</option>
+                <option value="wq">wq (Water Chemistry)</option>
+                <option value="inverts">inverts (Macroinvertebrates)</option>
+                <option value="diatoms">diatoms (Diatom Indices)</option>
+                <option value="macrophytes">macrophytes (Macrophyte Indices)</option>
+                <option value="rhs">rhs (River Habitat Surveys)</option>
+                <option value="lcms">lcms (LCMS/GCMS Organics)</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="all">
+              <div class="field-head">
+                <label for="wbSourceSel">Monitoring Source (<code>--source</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Source flag">i</button>
+                  <span class="info-popover"><strong>Sample Network (<code>--source</code>)</strong>Combine networks with <code>+</code>. Options include statutory <code>rsn</code> (River Surveillance Network), <code>ssn</code> (Small Streams), <code>rss</code> (union), and custom/citizen feeds like <code>waterblitz_tobit</code> prepared with <code>format_custom_data.py</code>.</span>
+                </span>
+              </div>
+              <select id="wbSourceSel">
+                <option value="rsn">rsn — River Surveillance Network (Default)</option>
+                <option value="ssn">ssn — Small Streams Network</option>
+                <option value="rss">rss — Statutory Union (RSN + SSN)</option>
+                <option value="rsn+ssn">rsn+ssn — Composite RSN + SSN</option>
+                <option value="rsn+ssn+waterblitz_tobit">rsn+ssn+waterblitz_tobit — Statutory + Citizen Fusion</option>
+                <option value="custom">Custom source spec...</option>
+              </select>
+              <input id="wbSourceCustom" class="wb-custom-sub" type="text" value="rsn" placeholder="e.g. rsn+my_custom_source" hidden />
+            </div>
+
+            <div class="field" data-applies="all">
+              <div class="field-head">
+                <label for="wbNetworkSel">River Network (<code>--network</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Network flag">i</button>
+                  <span class="info-popover"><strong>Stream Topology (<code>--network</code>)</strong><code>orn</code> selects England's Ordnance Survey Open Rivers Network v2 (<code>90,876+</code> directed reaches). Switch to <em>Custom...</em> for a Bring-Your-Own-Water-Network (<code>BYOWN</code>) profile registered in <code>configs/networks/</code>.</span>
+                </span>
+              </div>
+              <select id="wbNetworkSel">
+                <option value="orn">orn — OS Open Rivers v2 (Default)</option>
+                <option value="custom">Custom BYOWN network ID...</option>
+              </select>
+              <input id="wbNetworkCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. my_basin_net" hidden />
+            </div>
+          </div>
+        </div>
+
+        <!-- GROUP 2: TRANSFORM, CENSORING & SPATIAL ENGINE -->
+        <div class="wb-group-card">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">2. Transformations, Censoring &amp; Spatial Model</h3>
+              <p class="wb-group-sub">Control response scale normalization, detection limits, fixed effects, and kernels.</p>
+            </div>
+            <span class="pill pill-green">Model Physics</span>
+          </div>
+          <div class="form-grid">
+            <div class="field" data-applies="all">
+              <div class="field-head">
+                <label for="wbTransform">Response Transform (<code>--transform</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Transform flag">i</button>
+                  <span class="info-popover"><strong>Normalization Scale (<code>--transform</code>)</strong>Defaults to <code>log</code> for WQ (ensures positivity on skewed concentrations) and <code>none</code> for ecology. Use <code>boxcox</code> for Profile-MLE optimal power &lambda;, <code>yeojohnson</code> if data contain zeroes/negatives, or <code>sqrt</code> for moderate right skew.</span>
+                </span>
+              </div>
+              <select id="wbTransform">
+                <option value="default">Default (log for WQ, none for Ecology)</option>
+                <option value="log">log — Natural Logarithm ln(y)</option>
+                <option value="boxcox">boxcox — Profile-MLE Box-Cox (&lambda;)</option>
+                <option value="yeojohnson">yeojohnson — Profile-MLE Yeo-Johnson</option>
+                <option value="sqrt">sqrt — Square Root</option>
+                <option value="cbrt">cbrt — Cube Root</option>
+                <option value="logit">logit — Proportions / Bounded Indices</option>
+                <option value="asin">asin — Arcsine Square-Root</option>
+                <option value="none">none — Raw Un-Transformed Units</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbNorm">Post-Fit Normalisation (<code>--norm</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Norm flag">i</button>
+                  <span class="info-popover"><strong>Dimensionless Display Scale (<code>--norm</code>)</strong>Adds dimensionless comparison columns &amp; maps while fitting in standard model units. <code>robust_zscore</code> ((x &minus; median) / 1.4826&middot;MAD) highlights local sub-catchment anomalies resistant to extreme outliers.</span>
+                </span>
+              </div>
+              <select id="wbNorm">
+                <option value="none">none — Native Physical Units (Default)</option>
+                <option value="robust_zscore">robust_zscore — National Median / MAD Z-Score</option>
+                <option value="zscore">zscore — National Mean / SD Z-Score</option>
+                <option value="minmax">minmax — Scaled [0, 1] Range</option>
+                <option value="percentile">percentile — Empirical Rank (0–100%)</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,prep">
+              <div class="field-head">
+                <label for="wbCensor">Left-Censored <code>&lt; LOD</code> (<code>--censor</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Censor flag">i</button>
+                  <span class="info-popover"><strong>Non-Detect Handling (<code>--censor</code>)</strong><code>ros</code> uses Regression on Order Statistics; <code>ros_site</code> fits separate ROS curves per station; <code>em</code> activates iterative <strong>Spatial Tobit EM kriging</strong> incorporating spatial neighbors around censored/range intervals.</span>
+                </span>
+              </div>
+              <select id="wbCensor">
+                <option value="default">Default (ROS Imputation)</option>
+                <option value="ros">ros — Global Log-Probability ROS</option>
+                <option value="ros_site">ros_site — Site-Level Hierarchical ROS</option>
+                <option value="em">em — Spatial Tobit EM Censored Kriging</option>
+                <option value="half">half — 0.5 &times; Detection Limit</option>
+                <option value="dl">dl — Face-Value Detection Limit</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbTrend">Trend / Co-Kriging Method</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Trend or Co-Kriging Method">i</button>
+                  <span class="info-popover"><strong>Mean Structure / Joint Engine</strong>For single-determinand runs: sets <code>--trend=linear|gam|spline|rf|gbm</code> (GAM/RF/GBM apply orthogonal out-of-fold spatial residual kriging). For Co-Kriging runs: switches <code>--method=lmc</code> (Factor-LMC Joint NNGP) vs. <code>colocated</code>.</span>
+                </span>
+              </div>
+              <select id="wbTrend">
+                <option value="linear">linear — Spatial GLS Fixed Effects (Default)</option>
+                <option value="gam">gam — REML Penalised Cubic Splines (GAM+S3N)</option>
+                <option value="spline">spline — GCV Natural Regression Splines</option>
+                <option value="rf">rf — Random Forest + Orthogonal Kriging</option>
+                <option value="gbm">gbm — Gradient Boosted Trees + Kriging</option>
+                <option value="lmc">lmc — Co-Kriging Factor-LMC Joint NNGP</option>
+                <option value="colocated">colocated — Co-Kriging Primary Anchor Mode</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbKernel">Stream Kernel (<code>--kernel</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Kernel flag">i</button>
+                  <span class="info-popover"><strong>Spatial Correlation Decay (<code>--kernel</code>)</strong>Shape of covariance decay along stream distance. <code>auto</code> evaluates Exponential, Spherical, Mariah, and Linear with sill kernels via Profile Likelihood and picks the best fit per domain.</span>
+                </span>
+              </div>
+              <select id="wbKernel">
+                <option value="exponential">exponential (Default)</option>
+                <option value="auto">auto — Profile MLE Best Kernel</option>
+                <option value="spherical">spherical — Finite Range Cutoff</option>
+                <option value="mariah">mariah — Long-Tail Hyperbolic</option>
+                <option value="linear">linear — Linear with Sill</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbAfv">Confluence Weight (<code>--afv</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about AFV flag">i</button>
+                  <span class="info-popover"><strong>Additive Function Value (<code>--afv</code>)</strong>Determines how Tail-Up variance splits at river confluences: equal upstream network length (<code>length</code>), Shreve stream order magnitude (<code>shreve</code>), or orographic rainfall + aquifer permeability proxy (<code>hydro_yield</code>).</span>
+                </span>
+              </div>
+              <select id="wbAfv">
+                <option value="length">length — Upstream River Length (Default)</option>
+                <option value="shreve">shreve — Shreve Link Magnitude</option>
+                <option value="hydro_yield">hydro_yield — Orographic + Aquifer Proxy</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- GROUP 3: VALIDATION, RISK, TEMPORAL & MONITORING DESIGN -->
+        <div class="wb-group-card">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">3. Validation, Threshold Risk, Time &amp; Network Design</h3>
+              <p class="wb-group-sub">Configure hydrological CV, exceedance mapping, dynamic time borrowing, and site placement.</p>
+            </div>
+            <span class="pill pill-green">Decision Support</span>
+          </div>
+          <div class="form-grid">
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbCvMode">Cross-Validation (<code>--cv-mode</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about CV Mode flag">i</button>
+                  <span class="info-popover"><strong>Holdout Validation Strategy (<code>--cv-mode</code>)</strong><code>random</code> uses 5-fold random splits; <code>spatial</code> uses K-means geographic blocks; <code>catchment</code> tests whole-basin extrapolation; <code>downstream</code> / <code>upstream</code> test flow-direction generalization.</span>
+                </span>
+              </div>
+              <select id="wbCvMode">
+                <option value="random">random — 5-Fold Random CV (Default)</option>
+                <option value="spatial">spatial — K-Means Spatial Blocks</option>
+                <option value="catchment">catchment — Leave-Catchment-Out CV</option>
+                <option value="downstream">downstream — Hold Out Lower Reaches</option>
+                <option value="upstream">upstream — Hold Out Headwaters</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbThresholdSel">Exceedance Risk (<code>--threshold</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Threshold flag">i</button>
+                  <span class="info-popover"><strong>5-Tier Threshold Probability Mapping</strong>Computes reach-level Gaussian exceedance probability <code>P(Y &gt; T)</code> (or <code>&lt; T</code>) using S3N mean &amp; SE. <code>uk</code> auto-loads indicative thresholds (e.g. <code>11.3 mg/L</code> Nitrate, <code>0.069 mg/L</code> PO4, <code>6.0 mg/L</code> DO, <code>5.0</code> WHPT).</span>
+                </span>
+              </div>
+              <select id="wbThresholdSel">
+                <option value="none">Off (Point &amp; SE Maps Only)</option>
+                <option value="uk">uk — Auto Indicative UK Standards</option>
+                <option value="custom">Custom numeric threshold...</option>
+              </select>
+              <div id="wbThresholdCustomWrap" class="wb-custom-row" hidden>
+                <input id="wbThresholdVal" type="number" step="any" value="10" placeholder="Threshold value" />
+                <select id="wbThresholdDir">
+                  <option value="above">above (Y &gt; T)</option>
+                  <option value="below">below (Y &lt; T)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbTemporal">Temporal Slicing (<code>--by</code> / Filter)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Temporal flag">i</button>
+                  <span class="info-popover"><strong>Spatio-Temporal Batching (<code>--by</code>)</strong>Slices data by season, year, or month with synchronized colorbars and <code>fig6</code> trend slopes. Adding <code>--st-borrow</code> applies precision-weighted exponential smoothing across consecutive slices.</span>
+                </span>
+              </div>
+              <select id="wbTemporal">
+                <option value="all">all — Combined Period (Default)</option>
+                <option value="by_season">--by=season --st-borrow (4 Seasons + Trends)</option>
+                <option value="by_year">--by=year --st-borrow (Annual + Trends)</option>
+                <option value="by_month">--by=month --st-borrow (Monthly Cycle)</option>
+                <option value="season_winter">--season=winter (Single Season Filter)</option>
+                <option value="year_2024">--year=2024 (Single Year Filter)</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbDesignSites">Optimal Design (<code>--design-sites</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Design Sites flag">i</button>
+                  <span class="info-popover"><strong>Active-Learning Site Placement (<code>--design-sites=K</code>)</strong>Runs OpenMP C++ greedy Schur-complement selection (<code>C_s3n_optimal_design</code>) to rank top <code>K</code> unmonitored reaches maximizing variance reduction and renders <code>fig_optimal_design_*</code> maps.</span>
+                </span>
+              </div>
+              <select id="wbDesignSites">
+                <option value="0">0 — Off (Default)</option>
+                <option value="15">15 — Top-15 Recommended Reaches + Maps</option>
+                <option value="25">25 — Top-25 Recommended Reaches + Maps</option>
+                <option value="50">50 — National Top-50 Design + Maps</option>
+                <option value="100">100 — Comprehensive Top-100 Design</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbBasinSel">Catchment Focus (<code>--basin</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Basin flag">i</button>
+                  <span class="info-popover"><strong>Extra Basin Maps &amp; Metrics (<code>--basin</code>)</strong>All England + Humber + Thames + Severn are always fitted. Pick a river name (e.g. <code>Eden</code>) or numeric <code>CatchID</code> (e.g. <code>3125</code>) to render high-resolution dedicated basin figures (<code>fig5+</code>) and design rankings.</span>
+                </span>
+              </div>
+              <select id="wbBasinSel">
+                <option value="none">Default (England + Humber/Thames/Severn)</option>
+                <option value="Eden">Eden — River Eden (CatchID 3125)</option>
+                <option value="Wye">Wye — River Wye</option>
+                <option value="Trent">Trent — River Trent</option>
+                <option value="custom">Custom river name or CatchID...</option>
+              </select>
+              <input id="wbBasinCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. Eden,Wye or 3125" hidden />
+            </div>
+          </div>
+        </div>
+
+        <!-- GROUP 4: MULTI-SOURCE FUSION, GRAPHICS & COMPUTE -->
+        <div class="wb-group-card">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">4. Multi-Source Fusion, Graphics &amp; Compute</h3>
+              <p class="wb-group-sub">Control statutory vs. citizen-science weighting, map DPI/format, and OpenMP threads.</p>
+            </div>
+            <span class="pill pill-amber">Fusion &amp; Output</span>
+          </div>
+          <div class="form-grid">
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbPreferSel">Source Priority (<code>--prefer-source</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Prefer Source flag">i</button>
+                  <span class="info-popover"><strong>Reach De-Duplication Priority (<code>--prefer-source</code>)</strong>When statutory (<code>rsn</code>, <code>ssn</code>) and citizen-science stations share the same reach, drops lower-priority observations on co-located reaches so statutory labs anchor those locations.</span>
+                </span>
+              </div>
+              <select id="wbPreferSel">
+                <option value="">None — Pool All Sources Equally</option>
+                <option value="rsn">rsn — Statutory RSN Priority</option>
+                <option value="rsn,ssn">rsn,ssn — Statutory RSN + SSN Priority</option>
+                <option value="custom">Custom priority list...</option>
+              </select>
+              <input id="wbPreferCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. rsn,ssn" hidden />
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbWeightSel">Source Weights (<code>--source-weight</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Source Weight flag">i</button>
+                  <span class="info-popover"><strong>Reliability Weighting (<code>--source-weight</code>)</strong>Applies analytic variance inflation <code>V_wt = (1/w &minus; 1)&tau;&sup2;</code> per source (<code>0 &lt; w &le; 1</code>). Setting <code>waterblitz:0.25</code> injects <code>3&tau;&sup2;</code> extra measurement variance so citizen-science noise does not distort statutory fits.</span>
+                </span>
+              </div>
+              <select id="wbWeightSel">
+                <option value="">Equal Weights (w = 1.0)</option>
+                <option value="rsn:1,ssn:0.75">rsn:1,ssn:0.75 — Mild SSN Down-Weight</option>
+                <option value="rsn:1,ssn:1,waterblitz:0.25">rsn:1,ssn:1,waterblitz:0.25 — 4x Citizen Penalty</option>
+                <option value="custom">Custom source weights...</option>
+              </select>
+              <input id="wbWeightCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. rsn:1,waterblitz:0.35" hidden />
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbSeSel">Explicit Source SE (<code>--source-se</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Source SE flag">i</button>
+                  <span class="info-popover"><strong>Known Analytical Noise Floor (<code>--source-se</code>)</strong>Injects explicit model-scale standard error (&sigma;_source&sup2;) on top of nugget variance via the weighted C++ solver. Useful when test kits or sensors have calibrated lab error bars.</span>
+                </span>
+              </div>
+              <select id="wbSeSel">
+                <option value="">None (Estimated from Nugget)</option>
+                <option value="rsn:0.05,waterblitz:0.40">rsn:0.05,waterblitz:0.40 — Lab vs. Kit SE</option>
+                <option value="custom">Custom source SE map...</option>
+              </select>
+              <input id="wbSeCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. rsn:0.05,waterblitz:0.4" hidden />
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbFormat">Figure Output (<code>--dpi</code> / <code>--fig-format</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Figure Output flag">i</button>
+                  <span class="info-popover"><strong>Publication Graphics Mode</strong>Use <code>PNG @ 300 DPI</code> for crisp 90k-reach national stream maps (fast rasterization), <code>SVG</code> for resolution-independent vector diagnostics &amp; small basins, or <code>PDF</code> for print typesetting.</span>
+                </span>
+              </div>
+              <select id="wbFormat">
+                <option value="png_300">PNG @ 300 DPI (High-Res Maps)</option>
+                <option value="png_200">PNG @ 200 DPI (Default Fast)</option>
+                <option value="svg">SVG (Scalable Vector Graphics)</option>
+                <option value="pdf">PDF (Vector Print Export)</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbPalette">Color Palette (<code>--reverse-color</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Palette flag">i</button>
+                  <span class="info-popover"><strong>Color Gradient Polarity</strong>Standard renders cool blue (low) &rarr; warm crimson (high), ideal for pollutants. <code>--reverse-color</code> flips the gradient so low ecological scores (like impaired <code>WHPT ASPT</code> or Dissolved Oxygen) glow warning red.</span>
+                </span>
+              </div>
+              <select id="wbPalette">
+                <option value="auto">Auto (Invert for Ecology Datasets)</option>
+                <option value="standard">Standard (Blue-Low &rarr; Red-High)</option>
+                <option value="reverse">Force --reverse-color (Red-Low &rarr; Blue-High)</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det,cokrig">
+              <div class="field-head">
+                <label for="wbOmp">OpenMP Threads (<code>--omp</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about OpenMP flag">i</button>
+                  <span class="info-popover"><strong>Parallel C++ Compute (<code>--omp</code>)</strong>Controls thread count inside <code>s3n_fast_neighbors.so</code> for NNGP likelihood, kriging prediction, weighted Co-Kriging, and Greedy Optimal Monitoring Design. Use <code>4</code> on laptops or <code>8+</code> on workstations.</span>
+                </span>
+              </div>
+              <select id="wbOmp">
+                <option value="4">4 threads (Balanced Default)</option>
+                <option value="8">8 threads (Workstation Fast)</option>
+                <option value="1">1 thread (Low-Memory Safe)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <script src="targets.js"></script>
+  <script src="workbench.js"></script>
+</body>
+</html>

@@ -5,6 +5,8 @@ This guide documents all scripts, command-line options, output directory convent
 > **Mathematical & Algorithmic Deep-Dive**: For a step-by-step theoretical and mathematical explanation of how the `S3N` package, stream-network covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbor Gaussian Process (`NNGP`) estimation, and Universal Stream Kriging work, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
 > 
 > **Two-Stage GAM Modeling & Measurement Error Kriging**: For a dedicated guide on using first-stage Generalized Additive Models (GAMs) with S3N to account for heteroskedastic estimation uncertainty via Approach A Measurement Error Kriging, see [`./two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md).
+>
+> **Interactive CLI Workbench**: If you prefer a friendly visual builder instead of assembling flags by hand, open [`cli_workbench/index.html`](../cli_workbench/index.html) directly in your browser (works completely offline). It groups all workflow flags into clean dropdowns with `i` hover tooltips and switches cleanly between **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (with an optional full `Rscript.exe` path & R-version picker).
 
 ---
 
