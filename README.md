@@ -4,10 +4,17 @@
 [![R 3.5+](https://img.shields.io/badge/R-3.5%2B-276DC3?logo=r&logoColor=white)](docs/setup_and_architecture.md)
 [![C++ OpenMP](https://img.shields.io/badge/C%2B%2B-OpenMP%20Engine-00599C?logo=cplusplus&logoColor=white)](src/s3n_fast_neighbors.cpp)
 [![Base R Graphics](https://img.shields.io/badge/Plots-Pure%20Base%20R-16A085)](docs/usage_guide.md)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 A high-speed, headless pipeline for **Spatial Stream Network (`S3N` / NNGP)** regression, 5-fold cross-validation, universal stream kriging, and diagnostic reporting across national and regional river networks (defaulting to the Ordnance Survey Open Rivers Network v2, `ORN v2`, across England).
 
 Designed to run cleanly on Linux servers, laptops, and Databricks clusters **without heavy GIS/plotting dependencies** (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
+
+> **Attribution:** This pipeline is built upon and inspired by the **Scalable Spatial Stream Network (`S3N`)** framework ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear $\mathcal{O}(n)$ Nearest-Neighbor Gaussian Process (`NNGP`) scaling to river networks. Full credit belongs to the authors of the foundational packages and theory on which this repository stands:
+> - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
+>   Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
+>
+> See [Where This Pipeline Differs from `S3N`](docs/where_this_differs_from_s3n.md) for `BRISC` attribution and a full breakdown of what is shared, replaced, or added.
 
 ---
 
@@ -207,4 +214,12 @@ See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 | **Specialised Workflows** | [Regulatory Exceedance & WFD Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
 | **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks (`BYOWN`)](docs/custom_water_network_guide.md) · [ORN Covariates Reference (`--vars`)](docs/orn_variables_reference.md) |
 | **Diagnostics & Interpretation** | [Station Snapping Guide](docs/station_snapping_guide.md) · [Descriptive Statistics Guide](docs/descriptive_stats_interpretation_guide.md) · [Model Comparison Guide](docs/model_comparison_interpretation_guide.md) |
-| **Methodology & Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) |
+| **Methodology & Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) · [Where This Differs from `S3N`](docs/where_this_differs_from_s3n.md) |
+
+---
+
+## 📄 License
+
+This codebase is licensed under the **GNU General Public License v3.0 (`GPL-3.0`)** — see the [LICENSE](LICENSE) file for the full text, consistent with the `GPL-3` / `GPL-2 | GPL-3` licenses of `S3N`, `BRISC`, and `mgcv`.
+
+External river-network geometries and monitoring datasets (`gis/` and `data/`) are **not** included in this repository; users download them directly from their respective providers and remain responsible for complying with those datasets' terms and attributions (such as the UK Open Government Licence v3.0 for OS Open Rivers / Environment Agency ARD data).

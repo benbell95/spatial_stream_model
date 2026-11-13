@@ -150,3 +150,9 @@ Rscript tests/test_r_and_cpp.R
 
 > [!NOTE]
 > Both test suites check determinand metadata resolution (e.g., `"0117"` → `"Nitrate"`, `"whpt_aspt"` → `"ASPT"`), so on a fresh clone run `python3 scripts/01_preprocess_orn.py --list-sources` once if `configs/determinands.json` has not been generated yet.
+
+---
+
+## 5. License
+
+This repository's source code is licensed under the **GNU General Public License v3.0 (`GPL-3.0`)** — see [`LICENSE`](../LICENSE). External river networks and monitoring datasets placed under `gis/` and `data/` are downloaded separately from their upstream providers and remain governed by their own licences and attribution terms.
