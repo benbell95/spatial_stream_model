@@ -168,8 +168,13 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
   dir_p <- if (grepl("^/", dir_path)) dir_path else rel_path(BASE_DIR, dir_path)
   if (!dir.exists(dir_p) && !grepl("^/", dir_path)) {
+    cand_in_res <- rel_path(out_root, "results", dir_path)
     cand_in_out <- rel_path(out_root, dir_path)
-    if (dir.exists(cand_in_out)) dir_p <- cand_in_out
+    if (dir.exists(cand_in_res)) {
+      dir_p <- cand_in_res
+    } else if (dir.exists(cand_in_out)) {
+      dir_p <- cand_in_out
+    }
   }
   if (!dir.exists(dir_p)) {
     stop(sprintf("Model output directory does not exist: %s", dir_p))
@@ -377,15 +382,17 @@ list_available_model_runs <- function(out_root = NULL) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
   dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(out_root, "results"), recursive = TRUE, showWarnings = FALSE)
   dir.create(rel_path(out_root, "comparisons"), recursive = TRUE, showWarnings = FALSE)
   dir.create(rel_path(out_root, "descriptives"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(rel_path(out_root, "station_snapping"), recursive = TRUE, showWarnings = FALSE)
   cat("==============================================================================\n")
   cat(sprintf("Available Model Run Output Directories (under '%s'):\n", out_root))
   cat("==============================================================================\n")
   all_dirs <- if (dir.exists(out_root)) list.dirs(out_root, recursive = TRUE, full.names = TRUE) else character(0)
   found <- 0L
   for (d in all_dirs) {
-    if (grepl("/(comparisons|descriptives)(/|$)", d)) next
+    if (grepl("/(comparisons|descriptives|station_snapping)(/|$)", d)) next
     has_det_files <- length(list.files(d, pattern = "^cv_comparison_.*\\.csv$")) > 0 &&
                      length(list.files(d, pattern = "^predictions_.*\\.csv$")) > 0
     has_std_files <- file.exists(file.path(d, "tables/cv_model_comparison.csv"))

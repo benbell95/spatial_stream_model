@@ -124,7 +124,7 @@ if (nzchar(trans_tag)) {
 if (nzchar(vars_tag)) {
   sub_tag <- paste0(sub_tag, "_", vars_tag)
 }
-OUT_ROOT <- rel_path(OUT_BASE, sub_tag)
+OUT_ROOT <- rel_path(OUT_BASE, "results", sub_tag)
 dir.create(file.path(OUT_ROOT, "tables"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "predictions"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(OUT_ROOT, "models"), recursive = TRUE, showWarnings = FALSE)
@@ -336,6 +336,7 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
   if ("meas_method" %in% names(df_ord)) {
     pred_df$meas_method <- df_ord$meas_method
   }
+  pred_df <- add_normalised_columns(pred_df)
   write.csv(pred_df, file.path(OUT_ROOT, sprintf("predictions/%s_nitrate_predictions.csv", domain_id)), row.names = FALSE)
 
   # 5. 5-Fold Out-of-Sample Cross-Validation

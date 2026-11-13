@@ -351,6 +351,8 @@ suppressPackageStartupMessages({
 })
 dyn.load(rel_path(BASE_DIR, "src", "s3n_fast_neighbors.so"))
 meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
+norm_cli       <- parse_norm_mode(args, default = "none")
+norm_meta      <- get_norm_meta(norm_cli)
 
 # Range mode handling and folder tagging
 range_arg <- grep("^--range-mode=", args, value = TRUE)
@@ -438,7 +440,7 @@ if (nzchar(trans_tag)) {
 if (nzchar(vars_tag)) {
   out_folder_name <- paste0(out_folder_name, "_", vars_tag)
 }
-OUT_DIR <- rel_path(OUT_BASE, out_folder_name)
+OUT_DIR <- rel_path(OUT_BASE, "results", out_folder_name)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 if (!is.na(detected_range_mode)) {
@@ -1292,6 +1294,17 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag) {
   all_params$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
   all_params$Meas_Method      <- if (active_meas_error) "gam" else "standard"
 
+  # Compute normalised results (Z-score, Robust Z-score, Min-Max, Percentile) using England-wide reference stats
+  eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred)
+  hum_pred <- add_normalised_columns(hum_pred, ref_df = eng_pred)
+  tha_pred <- add_normalised_columns(tha_pred, ref_df = eng_pred)
+  sev_pred <- add_normalised_columns(sev_pred, ref_df = eng_pred)
+  if (length(extra_fits) > 0) {
+    for (k in seq_along(extra_fits)) {
+      extra_fits[[k]]$pred_df <- add_normalised_columns(extra_fits[[k]]$pred_df, ref_df = eng_pred)
+    }
+  }
+
   write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
   write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)
   write.csv(tha_pred,   file.path(out_subdir, sprintf("predictions_thames_%s.csv", det_code)), row.names = FALSE)
@@ -1343,26 +1356,31 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   all_params     <- sl$params
 
   n_figs <- 4L + length(extra_fits)
-  cat(sprintf("\nGenerating %d publication-quality figures in %s (shared scale [%.3f, %.3f]) ...\n",
-              n_figs, out_subdir,
-              trans_obj$inv(sc_val$vmin),
-              trans_obj$inv(sc_val$vmax)))
+  scale_disp_min <- if (norm_meta$mode == "none") trans_obj$inv(sc_val$vmin) else sc_val$vmin
+  scale_disp_max <- if (norm_meta$mode == "none") trans_obj$inv(sc_val$vmax) else sc_val$vmax
+  cat(sprintf("\nGenerating %d publication-quality figures in %s (shared scale [%.3f, %.3f]%s) ...\n",
+              n_figs, out_subdir, scale_disp_min, scale_disp_max,
+              if (norm_meta$mode == "none") "" else paste0(", norm = ", norm_meta$mode)))
 
-  fig1_path <- file.path(out_subdir, sprintf("fig1_england_stream_%s_map.png", det_code))
-  fig2_path <- file.path(out_subdir, sprintf("fig2_humber_basin_%s_map.png", det_code))
-  fig3_path <- file.path(out_subdir, sprintf("fig3_thames_severn_%s_maps.png", det_code))
+  ftag      <- norm_meta$file_tag
+  fig1_path <- file.path(out_subdir, sprintf("fig1_england_stream_%s_map%s.png", det_code, ftag))
+  fig2_path <- file.path(out_subdir, sprintf("fig2_humber_basin_%s_map%s.png", det_code, ftag))
+  fig3_path <- file.path(out_subdir, sprintf("fig3_thames_severn_%s_maps%s.png", det_code, ftag))
   fig4_path <- file.path(out_subdir, sprintf("fig4_cv_and_diagnostics_%s.png", det_code))
   vars_sub  <- format_covariates_subtitle(var_specs = var_specs, param_tab = all_params)
   net_lbl   <- net_meta$short_label
 
   plot_fig1_england_map(eng_pred, det_code, det_title_name, det_unit, trans_obj, fig1_path,
                         reverse_color = reverse_color, sc_val = sc_val, sc_se = sc_se_eng,
-                        vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
+                        vars_label = vars_sub, network_label = net_lbl, source_label = source_label,
+                        norm_mode = norm_cli)
   plot_fig2_humber_map(hum_pred, all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig2_path,
                        reverse_color = reverse_color, sc_se = sc_se_hum,
-                       vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
+                       vars_label = vars_sub, network_label = net_lbl, source_label = source_label,
+                       norm_mode = norm_cli)
   plot_fig3_thames_severn_map(tha_pred, sev_pred, sc_val, det_code, det_title_name, det_unit, trans_obj, fig3_path,
-                              reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
+                              reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl, source_label = source_label,
+                              norm_mode = norm_cli)
 
   extra_cv_for_fig4 <- lapply(extra_fits, function(ef) {
     list(
@@ -1379,11 +1397,12 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
       ef <- extra_fits[[k]]
-      fig_k_path <- file.path(out_subdir, sprintf("fig%d_%s_basin_%s_map.png", 4L + k, ef$info$slug, det_code))
+      fig_k_path <- file.path(out_subdir, sprintf("fig%d_%s_basin_%s_map%s.png", 4L + k, ef$info$slug, det_code, ftag))
       plot_basin_map(ef$pred_df, ef$info$short_title, ef$info$domain_label,
                      all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig_k_path,
                      reverse_color = reverse_color, sc_se = sc_se_hum,
-                     vars_label = vars_sub, network_label = net_lbl, source_label = source_label)
+                     vars_label = vars_sub, network_label = net_lbl, source_label = source_label,
+                     norm_mode = norm_cli)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
     }
   }
@@ -1392,13 +1411,17 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
 
 compute_batch_scales <- function(slice_list) {
   valid_s <- Filter(Negate(is.null), slice_list)
-  all_pred_vals <- unlist(lapply(valid_s, function(s) s$eng_pred$pred_model_sc))
+  all_pred_vals <- unlist(lapply(valid_s, function(s) s$eng_pred[[norm_meta$pred_col]]))
   all_se_eng    <- unlist(lapply(valid_s, function(s) s$eng_pred$se_model_sc))
   all_se_hum    <- unlist(lapply(valid_s, function(s) s$hum_pred$se_model_sc))
   all_cv_vals   <- unlist(lapply(valid_s, function(s) c(s$res_eng$cv_pts$obs_y, s$res_eng$cv_pts$cv_comb)))
   all_raw_preds <- unlist(lapply(valid_s, function(s) quantile(s$eng_pred$pred_combined, probs = c(0.01, 0.96), na.rm = TRUE)))
 
-  sc_val    <- compute_color_scale(all_pred_vals, trans_obj, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+  sc_val <- if (norm_meta$mode == "none") {
+    compute_color_scale(all_pred_vals, trans_obj, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+  } else {
+    compute_norm_color_scale(all_pred_vals, norm_meta$mode, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+  }
   sc_se_eng <- compute_se_scale(all_se_eng)
   sc_se_hum <- compute_se_scale(all_se_hum)
 
@@ -1442,7 +1465,7 @@ if (!is.na(by_mode)) {
   grid_items <- lapply(Filter(Negate(is.null), batch_res), function(sl) {
     list(label = sl$period_tag, eng_pred = sl$eng_pred, cv_tab = sl$cv)
   })
-  fig5_grid_path <- file.path(OUT_DIR, sprintf("fig5_england_by_%s_%s_map.png", by_mode, det_code))
+  fig5_grid_path <- file.path(OUT_DIR, sprintf("fig5_england_by_%s_%s_map%s.png", by_mode, det_code, norm_meta$file_tag))
   cat(sprintf("\nGenerating Figure 5 (%d-panel All England %s comparison grid): %s ...\n",
               length(grid_items), by_mode, fig5_grid_path))
   comb_cv <- do.call(rbind, lapply(batch_res, function(x) if (!is.null(x)) x$cv else NULL))
@@ -1452,7 +1475,7 @@ if (!is.na(by_mode)) {
                                   det_code, det_name, det_unit, trans_obj,
                                   fig5_grid_path, reverse_color = reverse_color,
                                   vars_label = vars_sub_grid, network_label = net_meta$short_label,
-                                  source_label = source_label)
+                                  source_label = source_label, norm_mode = norm_cli)
   write.csv(comb_cv, file.path(OUT_DIR, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
   write.csv(comb_pa, file.path(OUT_DIR, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
 } else {
@@ -1482,19 +1505,26 @@ if (!is.na(by_mode)) {
     # sibling period predictions in OUT_DIR so scale bars stay consistent across periods
     sib_files <- list.files(OUT_DIR, pattern = sprintf("^predictions_%s\\.csv$", det_code),
                             recursive = TRUE, full.names = TRUE)
-    sib_vals <- sl_one$eng_pred$pred_model_sc
+    sib_vals <- sl_one$eng_pred[[norm_meta$pred_col]]
     sib_se_e <- sl_one$eng_pred$se_model_sc
     sib_se_h <- sl_one$hum_pred$se_model_sc
     if (length(sib_files) > 1) {
       for (sf in sib_files) {
         sdf <- tryCatch(normalize_pred_df(read.csv(sf)), error = function(e) NULL)
         if (!is.null(sdf)) {
-          sib_vals <- c(sib_vals, sdf$pred_model_sc)
+          if (norm_meta$mode != "none" && !(norm_meta$pred_col %in% names(sdf))) {
+            sdf <- add_normalised_columns(sdf)
+          }
+          sib_vals <- c(sib_vals, sdf[[norm_meta$pred_col]])
           sib_se_e <- c(sib_se_e, sdf$se_model_sc)
         }
       }
     }
-    sc_val_one <- compute_color_scale(sib_vals, trans_obj, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+    sc_val_one <- if (norm_meta$mode == "none") {
+      compute_color_scale(sib_vals, trans_obj, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+    } else {
+      compute_norm_color_scale(sib_vals, norm_meta$mode, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+    }
     sc_se_e1   <- compute_se_scale(sib_se_e)
     sc_se_h1   <- compute_se_scale(sib_se_h)
     plot_temporal_slice(sl_one, sc_val_one, sc_se_e1, sc_se_h1)

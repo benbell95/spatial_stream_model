@@ -2,7 +2,7 @@
 
 This project implements a scalable spatial stream model (S3N) using Environment Agency (EA) water quality data (NCEA) on the UK Open Rivers Network (ORN) riverline dataset. 
 
-This project was built using Google Antigravity and the Gemini Argon 4 model, and reviewed by a human :)
+This project was built using Google Gemini Argon 4, and Flash 3.8 models. All code was reviewed by a human :)
 
 It is based on this paper: Kunke, J.P., Olden, J.D. and McCormick, T.H., 2025. Scalable Spatial Stream Network (S3N) Models. arXiv preprint arXiv:2512.12398. [arXiv preprint arXiv:2512.12398.](https://arxiv.org/abs/2512.12398)
 

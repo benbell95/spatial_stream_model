@@ -1164,6 +1164,210 @@ compute_se_scale <- function(se_vals, vmin_se = NULL, vmax_se = NULL) {
   list(vmin = vmin, vmax = vmax, ticks = ticks, labels = sprintf("%.2f", ticks))
 }
 
+# ------------------------------------------------------------------------------
+# Prediction Normalisation Utilities (Z-score, Robust Z-score, Min-Max, Percentile)
+# ------------------------------------------------------------------------------
+parse_norm_mode <- function(args = character(0), default = "none") {
+  mode <- default
+  for (a in args) {
+    if (grepl("^--(norm|normalise|normalize)=", a, ignore.case = TRUE)) {
+      raw_m <- tolower(trimws(sub("^--(norm|normalise|normalize)=", "", a, ignore.case = TRUE)))
+      mode <- switch(raw_m,
+        "none"          = "none",
+        "raw"           = "none",
+        "z"             = "zscore",
+        "zscore"        = "zscore",
+        "z-score"       = "zscore",
+        "z_score"       = "zscore",
+        "standard"      = "zscore",
+        "robust"        = "robust_zscore",
+        "robust_z"      = "robust_zscore",
+        "robust-z"      = "robust_zscore",
+        "robust_zscore" = "robust_zscore",
+        "robust-zscore" = "robust_zscore",
+        "mad"           = "robust_zscore",
+        "minmax"        = "minmax",
+        "min-max"       = "minmax",
+        "min_max"       = "minmax",
+        "01"            = "minmax",
+        "pct"           = "percentile",
+        "rank"          = "percentile",
+        "percentile"    = "percentile",
+        stop(sprintf(
+          "Unknown --norm='%s'. Valid options: none, zscore, robust_zscore, minmax, percentile",
+          raw_m
+        ))
+      )
+    }
+  }
+  mode
+}
+
+get_norm_meta <- function(norm_mode = "none") {
+  m <- tolower(trimws(if (is.null(norm_mode) || !nzchar(norm_mode)) "none" else norm_mode))
+  switch(m,
+    zscore = list(
+      mode         = "zscore",
+      pred_col     = "pred_zscore",
+      obs_col      = "obs_zscore",
+      tu_col       = "pred_tu_zscore",
+      td_col       = "pred_td_zscore",
+      unit_label   = "Z-score (SD)",
+      short_label  = "Z-score",
+      file_tag     = "_zscore",
+      is_diverging = TRUE
+    ),
+    robust_zscore = list(
+      mode         = "robust_zscore",
+      pred_col     = "pred_robust_zscore",
+      obs_col      = "obs_robust_zscore",
+      tu_col       = "pred_tu_robust_zscore",
+      td_col       = "pred_td_robust_zscore",
+      unit_label   = "Robust Z (MAD)",
+      short_label  = "Robust Z",
+      file_tag     = "_robust_zscore",
+      is_diverging = TRUE
+    ),
+    minmax = list(
+      mode         = "minmax",
+      pred_col     = "pred_minmax",
+      obs_col      = "obs_minmax",
+      tu_col       = "pred_tu_minmax",
+      td_col       = "pred_td_minmax",
+      unit_label   = "Min-Max [0, 1]",
+      short_label  = "Min-Max",
+      file_tag     = "_minmax",
+      is_diverging = FALSE
+    ),
+    percentile = list(
+      mode         = "percentile",
+      pred_col     = "pred_percentile",
+      obs_col      = "obs_percentile",
+      tu_col       = "pred_tu_percentile",
+      td_col       = "pred_td_percentile",
+      unit_label   = "Percentile (%)",
+      short_label  = "Percentile",
+      file_tag     = "_percentile",
+      is_diverging = FALSE
+    ),
+    list(
+      mode         = "none",
+      pred_col     = "pred_model_sc",
+      obs_col      = "obs_model_sc",
+      tu_col       = "pred_tu_sc",
+      td_col       = "pred_td_sc",
+      unit_label   = NULL,
+      short_label  = NULL,
+      file_tag     = "",
+      is_diverging = FALSE
+    )
+  )
+}
+
+get_norm_pal <- function(norm_mode = "none", reverse_color = FALSE) {
+  nm <- get_norm_meta(norm_mode)
+  if (isTRUE(nm$is_diverging)) {
+    cols <- c("#1f4e78", "#3b82b6", "#8cc0de", "#f2f2ef", "#f4a582", "#d6604d", "#99000d")
+    if (isTRUE(reverse_color)) cols <- rev(cols)
+    return(colorRampPalette(cols)(256))
+  }
+  get_val_pal(reverse_color)
+}
+
+compute_norm_color_scale <- function(vals, norm_mode = "none", vmin_raw = NULL, vmax_raw = NULL) {
+  nm <- get_norm_meta(norm_mode)
+  if (nm$mode %in% c("zscore", "robust_zscore")) {
+    qs <- quantile(vals, probs = c(0.01, 0.99), na.rm = TRUE)
+    lim <- max(abs(qs), na.rm = TRUE)
+    if (!is.finite(lim) || lim < 0.5) lim <- 2.0
+    lim <- ceiling(lim * 2) / 2
+    vmin <- if (!is.null(vmin_raw) && !is.na(vmin_raw)) as.numeric(vmin_raw) else -lim
+    vmax <- if (!is.null(vmax_raw) && !is.na(vmax_raw)) as.numeric(vmax_raw) else lim
+    if (vmax <= vmin) { vmin <- -2.0; vmax <- 2.0 }
+    ticks <- pretty(c(vmin, vmax), n = 6)
+    ticks <- ticks[ticks >= vmin - 1e-9 & ticks <= vmax + 1e-9]
+    if (!(0 %in% ticks) && vmin < 0 && vmax > 0) ticks <- sort(unique(c(ticks, 0)))
+    if (length(ticks) < 3) ticks <- seq(vmin, vmax, length.out = 5)
+    labels <- sprintf("%+.1f", ticks)
+    labels[abs(ticks) < 1e-9] <- "0.0"
+    return(list(vmin = vmin, vmax = vmax, ticks = ticks, labels = labels))
+  }
+  if (nm$mode == "minmax") {
+    vmin <- if (!is.null(vmin_raw) && !is.na(vmin_raw)) as.numeric(vmin_raw) else 0.0
+    vmax <- if (!is.null(vmax_raw) && !is.na(vmax_raw)) as.numeric(vmax_raw) else 1.0
+    if (vmax <= vmin) { vmin <- 0.0; vmax <- 1.0 }
+    ticks <- pretty(c(vmin, vmax), n = 5)
+    ticks <- ticks[ticks >= vmin - 1e-9 & ticks <= vmax + 1e-9]
+    if (length(ticks) < 3) ticks <- seq(vmin, vmax, length.out = 5)
+    return(list(vmin = vmin, vmax = vmax, ticks = ticks, labels = sprintf("%.2f", ticks)))
+  }
+  if (nm$mode == "percentile") {
+    vmin <- if (!is.null(vmin_raw) && !is.na(vmin_raw)) as.numeric(vmin_raw) else 0.0
+    vmax <- if (!is.null(vmax_raw) && !is.na(vmax_raw)) as.numeric(vmax_raw) else 100.0
+    if (vmax <= vmin) { vmin <- 0.0; vmax <- 100.0 }
+    ticks <- pretty(c(vmin, vmax), n = 5)
+    ticks <- ticks[ticks >= vmin - 1e-9 & ticks <= vmax + 1e-9]
+    if (length(ticks) < 3) ticks <- seq(vmin, vmax, length.out = 5)
+    return(list(vmin = vmin, vmax = vmax, ticks = ticks, labels = sprintf("%.0f%%", ticks)))
+  }
+  compute_color_scale(vals, FALSE, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+}
+
+add_normalised_columns <- function(df, ref_df = df) {
+  df     <- normalize_pred_df(df)
+  ref_df <- normalize_pred_df(ref_df)
+  ref_x  <- ref_df$pred_model_sc
+  ref_x  <- ref_x[is.finite(ref_x)]
+  if (length(ref_x) == 0) return(df)
+
+  # 1. Standard Z-score (mean / SD on model scale)
+  mu_x <- mean(ref_x, na.rm = TRUE)
+  sd_x <- sd(ref_x, na.rm = TRUE)
+  if (!is.finite(sd_x) || sd_x < 1e-12) sd_x <- 1.0
+
+  # 2. Robust Z-score (median / MAD on model scale, with IQR/SD fallback)
+  med_x <- median(ref_x, na.rm = TRUE)
+  mad_x <- mad(ref_x, center = med_x, constant = 1.4826, na.rm = TRUE)
+  if (!is.finite(mad_x) || mad_x < 1e-12) {
+    iqr_x <- IQR(ref_x, na.rm = TRUE) / 1.349
+    mad_x <- if (is.finite(iqr_x) && iqr_x >= 1e-12) iqr_x else sd_x
+  }
+
+  # 3. Min-Max [0, 1] on model scale
+  min_x <- min(ref_x, na.rm = TRUE)
+  rng_x <- max(ref_x, na.rm = TRUE) - min_x
+  if (!is.finite(rng_x) || rng_x < 1e-12) rng_x <- 1.0
+
+  # 4. Empirical Percentile Rank [0, 100] on model scale (invariant to monotonic transforms)
+  pct_fn <- ecdf(ref_x)
+
+  df$pred_zscore        <- round((df$pred_model_sc - mu_x) / sd_x, 5)
+  df$pred_robust_zscore <- round((df$pred_model_sc - med_x) / mad_x, 5)
+  df$pred_minmax        <- round((df$pred_model_sc - min_x) / rng_x, 5)
+  df$pred_percentile    <- round(100.0 * pct_fn(df$pred_model_sc), 2)
+
+  if ("pred_tu_sc" %in% names(df)) {
+    df$pred_tu_zscore        <- round((df$pred_tu_sc - mu_x) / sd_x, 5)
+    df$pred_tu_robust_zscore <- round((df$pred_tu_sc - med_x) / mad_x, 5)
+    df$pred_tu_minmax        <- round((df$pred_tu_sc - min_x) / rng_x, 5)
+    df$pred_tu_percentile    <- round(100.0 * pct_fn(df$pred_tu_sc), 2)
+  }
+  if ("pred_td_sc" %in% names(df)) {
+    df$pred_td_zscore        <- round((df$pred_td_sc - mu_x) / sd_x, 5)
+    df$pred_td_robust_zscore <- round((df$pred_td_sc - med_x) / mad_x, 5)
+    df$pred_td_minmax        <- round((df$pred_td_sc - min_x) / rng_x, 5)
+    df$pred_td_percentile    <- round(100.0 * pct_fn(df$pred_td_sc), 2)
+  }
+  if ("obs_model_sc" %in% names(df)) {
+    has_o <- !is.na(df$obs_model_sc) & is.finite(df$obs_model_sc)
+    df$obs_zscore        <- ifelse(has_o, round((df$obs_model_sc - mu_x) / sd_x, 5), NA_real_)
+    df$obs_robust_zscore <- ifelse(has_o, round((df$obs_model_sc - med_x) / mad_x, 5), NA_real_)
+    df$obs_minmax        <- ifelse(has_o, round((df$obs_model_sc - min_x) / rng_x, 5), NA_real_)
+    df$obs_percentile    <- ifelse(has_o, round(100.0 * pct_fn(df$obs_model_sc), 2), NA_real_)
+  }
+  df
+}
+
 # Schema normalizers so both 02_fit_s3n_models.R outputs and run_s3n_determinand.R outputs work seamlessly
 normalize_pred_df <- function(df) {
   if (!("pred_model_sc" %in% names(df)) && ("pred_log_combined" %in% names(df))) {
@@ -1356,10 +1560,15 @@ draw_top_banner <- function(banner, cex = 0.88, col = "#2c3e50") {
 # Figure 1: Full England Stream Network Map
 plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_log, out_file,
                                   reverse_color = FALSE, sc_val = NULL, sc_se = NULL,
-                                  vars_label = NULL, network_label = NULL, source_label = NULL) {
+                                  vars_label = NULL, network_label = NULL, source_label = NULL,
+                                  norm_mode = "none") {
   tr       <- as_transformer(use_log)
+  nm       <- get_norm_meta(norm_mode)
   eng_pred <- normalize_pred_df(eng_pred)
-  pal_use  <- get_val_pal(reverse_color)
+  if (nm$mode != "none" && !(nm$pred_col %in% names(eng_pred))) {
+    eng_pred <- add_normalised_columns(eng_pred)
+  }
+  pal_use  <- get_norm_pal(nm$mode, reverse_color)
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
   has_net  <- !is.null(network_label) && nzchar(network_label)
   banner   <- format_top_banner(network_label, vars_label, source_label)
@@ -1368,13 +1577,21 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
-  if (is.null(sc_val)) sc_val <- compute_color_scale(eng_pred$pred_model_sc, tr)
-  if (is.null(sc_se))  sc_se  <- compute_se_scale(eng_pred$se_model_sc)
+  if (is.null(sc_val)) {
+    sc_val <- if (nm$mode == "none") {
+      compute_color_scale(eng_pred$pred_model_sc, tr)
+    } else {
+      compute_norm_color_scale(eng_pred[[nm$pred_col]], nm$mode)
+    }
+  }
+  if (is.null(sc_se)) sc_se <- compute_se_scale(eng_pred$se_model_sc)
   n_obs_eng <- sum(eng_pred$has_obs == 1)
   n_tot_eng <- nrow(eng_pred)
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
-  cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, det_unit)
+  unit_disp <- if (nm$mode == "none") det_unit else nm$unit_label
+  norm_tag  <- if (nm$mode == "none") "" else sprintf(" [%s]", nm$short_label)
+  cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, unit_disp)
   net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
   src_tag   <- if (!is.null(source_label) && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
   sub_a <- if (has_vars) {
@@ -1386,8 +1603,8 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   }
 
   plot_stream_network(
-    eng_pred, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
-    main_title = sprintf("A. S3N Predicted %s Across England (%s Reaches)", det_short, format(n_tot_eng, big.mark = ",")),
+    eng_pred, nm$pred_col, vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
+    main_title = sprintf("A. S3N Predicted %s%s Across England (%s Reaches)", det_short, norm_tag, format(n_tot_eng, big.mark = ",")),
     sub_title  = sub_a,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
     show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
@@ -1407,7 +1624,7 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
   )
   obs_eng <- eng_pred[eng_pred$has_obs == 1, ]
   points(obs_eng$mid_X, obs_eng$mid_Y, pch = 21,
-         bg = map_to_colors(obs_eng$obs_model_sc, sc_val$vmin, sc_val$vmax, pal_use),
+         bg = map_to_colors(obs_eng[[nm$obs_col]], sc_val$vmin, sc_val$vmax, pal_use),
          col = "#111111", cex = 0.65, lwd = 0.5)
   legend("topleft", legend = sprintf("Observed %s Station (colored by %s)", src_tag, det_short),
          pch = 21, pt.bg = "#e67e22", col = "#111111", pt.cex = 1.0, bty = "n", cex = 0.80)
@@ -1416,11 +1633,16 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, use_lo
 
 # Generic 2-Panel River Basin High-Resolution S3N Map (used for Figure 2 Humber & Figure 5+ Custom Basins)
 plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                           reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL, source_label = NULL) {
+                           reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL, source_label = NULL,
+                           norm_mode = "none") {
   tr         <- as_transformer(use_log)
+  nm         <- get_norm_meta(norm_mode)
   basin_pred <- normalize_pred_df(basin_pred)
+  if (nm$mode != "none" && !(nm$pred_col %in% names(basin_pred))) {
+    basin_pred <- add_normalised_columns(basin_pred)
+  }
   cv_tab     <- normalize_cv_tab(cv_tab)
-  pal_use    <- get_val_pal(reverse_color)
+  pal_use    <- get_norm_pal(nm$mode, reverse_color)
   has_vars   <- !is.null(vars_label) && nzchar(vars_label)
   has_net    <- !is.null(network_label) && nzchar(network_label)
   banner     <- format_top_banner(network_label, vars_label, source_label)
@@ -1432,6 +1654,8 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   if (is.null(sc_se)) sc_se <- compute_se_scale(basin_pred$se_model_sc)
   n_obs_basin <- sum(basin_pred$has_obs == 1)
   det_short   <- shorten_det_name(det_name)
+  unit_disp   <- if (nm$mode == "none") det_unit else nm$unit_label
+  norm_tag    <- if (nm$mode == "none") "" else sprintf(" [%s]", nm$short_label)
   net_tag     <- if (has_net) sprintf(" [%s]", network_label) else ""
   src_tag     <- if (!is.null(source_label) && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
   cv_row      <- subset(cv_tab, (Domain == domain_label | grepl(paste0("^", basin_title), Domain)) &
@@ -1453,13 +1677,13 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   }
 
   plot_stream_network(
-    basin_pred, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
-    main_title = sprintf("A. %s: S3N Predicted %s (%s Reaches)",
-                         basin_title, det_short, format(nrow(basin_pred), big.mark = ",")),
+    basin_pred, nm$pred_col, vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
+    main_title = sprintf("A. %s: S3N Predicted %s%s (%s Reaches)",
+                         basin_title, det_short, norm_tag, format(nrow(basin_pred), big.mark = ",")),
     sub_title  = sub_a,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels,
-    cbar_title = sprintf("%s\n(%s)", sub(" \\[.*\\]$", "", det_short), det_unit),
-    show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.35, max_lwd = 2.8
+    cbar_title = sprintf("%s\n(%s)", sub(" \\[.*\\]$", "", det_short), unit_disp),
+    show_obs = TRUE, obs_col = nm$obs_col, base_lwd = 0.35, max_lwd = 2.8
   )
   legend("topleft", legend = sprintf("Observed %s Station (same color scale)", src_tag),
          pch = 21, pt.bg = "#f4d03f", col = "#111111", pt.cex = 1.1, bty = "n", cex = 0.82)
@@ -1485,19 +1709,27 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
 
 # Figure 2: Humber River Basin High-Resolution S3N Map
 plot_fig2_humber_map <- function(hum_pred, cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                                 reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL, source_label = NULL) {
+                                 reverse_color = FALSE, sc_se = NULL, vars_label = NULL, network_label = NULL, source_label = NULL,
+                                 norm_mode = "none") {
   plot_basin_map(hum_pred, "Humber Basin", "Humber Basin (CatchID=80)",
                  cv_tab, sc_val, det_code, det_name, det_unit, use_log, out_file,
                  reverse_color = reverse_color, sc_se = sc_se,
-                 vars_label = vars_label, network_label = network_label, source_label = source_label)
+                 vars_label = vars_label, network_label = network_label, source_label = source_label,
+                 norm_mode = norm_mode)
 }
 
 # Figure 3: Thames & Severn River Basins S3N Maps
 plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, det_name, det_unit, use_log, out_file,
-                                        reverse_color = FALSE, vars_label = NULL, network_label = NULL, source_label = NULL) {
+                                        reverse_color = FALSE, vars_label = NULL, network_label = NULL, source_label = NULL,
+                                        norm_mode = "none") {
+  nm       <- get_norm_meta(norm_mode)
   tha_pred <- normalize_pred_df(tha_pred)
   sev_pred <- normalize_pred_df(sev_pred)
-  pal_use  <- get_val_pal(reverse_color)
+  if (nm$mode != "none") {
+    if (!(nm$pred_col %in% names(tha_pred))) tha_pred <- add_normalised_columns(tha_pred)
+    if (!(nm$pred_col %in% names(sev_pred))) sev_pred <- add_normalised_columns(sev_pred)
+  }
+  pal_use  <- get_norm_pal(nm$mode, reverse_color)
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
   has_net  <- !is.null(network_label) && nzchar(network_label)
   banner   <- format_top_banner(network_label, vars_label, source_label)
@@ -1508,7 +1740,9 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
 
   det_short <- shorten_det_name(det_name)
   det_cbar  <- sub(" \\[.*\\]$", "", det_short)
-  cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, det_unit)
+  unit_disp <- if (nm$mode == "none") det_unit else nm$unit_label
+  norm_tag  <- if (nm$mode == "none") "" else sprintf(" [%s]", nm$short_label)
+  cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, unit_disp)
   net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
   src_tag   <- if (!is.null(source_label) && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
   sub_tha <- if (has_vars) {
@@ -1525,21 +1759,21 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
   }
 
   plot_stream_network(
-    tha_pred, "pred_tu_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
-    main_title = sprintf("A. Thames Basin: S3N Tail-Up Predicted %s (%s Reaches)",
-                         det_short, format(nrow(tha_pred), big.mark = ",")),
+    tha_pred, nm$tu_col, vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
+    main_title = sprintf("A. Thames Basin: S3N Tail-Up Predicted %s%s (%s Reaches)",
+                         det_short, norm_tag, format(nrow(tha_pred), big.mark = ",")),
     sub_title  = sub_tha,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
-    show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.40, max_lwd = 2.8
+    show_obs = TRUE, obs_col = nm$obs_col, base_lwd = 0.40, max_lwd = 2.8
   )
 
   plot_stream_network(
-    sev_pred, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
-    main_title = sprintf("B. Severn Basin: S3N Predicted %s (%s Reaches)",
-                         det_short, format(nrow(sev_pred), big.mark = ",")),
+    sev_pred, nm$pred_col, vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
+    main_title = sprintf("B. Severn Basin: S3N Predicted %s%s (%s Reaches)",
+                         det_short, norm_tag, format(nrow(sev_pred), big.mark = ",")),
     sub_title  = sub_sev,
     cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,
-    show_obs = TRUE, obs_col = "obs_model_sc", base_lwd = 0.40, max_lwd = 2.8
+    show_obs = TRUE, obs_col = nm$obs_col, base_lwd = 0.40, max_lwd = 2.8
   )
   draw_top_banner(banner)
 }
@@ -1770,7 +2004,8 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
 # Figure 5 (Temporal Multi-Panel Grid): All England S3N Comparison Across Seasons, Years, or Months
 plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_code, det_name, det_unit,
                                             use_log, out_file, reverse_color = FALSE,
-                                            vars_label = NULL, network_label = NULL, source_label = NULL) {
+                                            vars_label = NULL, network_label = NULL, source_label = NULL,
+                                            norm_mode = "none") {
   period_items <- Filter(Negate(is.null), period_items)
   n_pan <- length(period_items)
   if (n_pan == 0) return(invisible(NULL))
@@ -1798,9 +2033,11 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
     nrow_g <- 3L; ncol_g <- 4L; w_px <- 4600L; h_px <- 3700L
   }
 
-  pal_use   <- get_val_pal(reverse_color)
+  nm        <- get_norm_meta(norm_mode)
+  pal_use   <- get_norm_pal(nm$mode, reverse_color)
   det_short <- sub(" \\[.*\\]$", "", shorten_det_name(det_name))
-  cbar_lbl  <- sprintf("%s\n(%s)", det_short, det_unit)
+  unit_disp <- if (nm$mode == "none") det_unit else nm$unit_label
+  cbar_lbl  <- sprintf("%s\n(%s)", det_short, unit_disp)
   mode_cap  <- paste0(toupper(substr(by_mode, 1, 1)), tolower(substr(by_mode, 2, nchar(by_mode))))
 
   png(out_file, width = w_px, height = h_px, res = 200, type = "cairo")
@@ -1812,6 +2049,9 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
   for (i in seq_along(period_items)) {
     item   <- period_items[[i]]
     eng_df <- normalize_pred_df(item$eng_pred)
+    if (nm$mode != "none" && !(nm$pred_col %in% names(eng_df))) {
+      eng_df <- add_normalised_columns(eng_df)
+    }
     n_obs_i <- sum(eng_df$has_obs == 1, na.rm = TRUE)
     med_raw <- median(eng_df$pred_combined, na.rm = TRUE)
 
@@ -1855,7 +2095,7 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
     max_m_t <- if (ncol_g >= 3) 48 else 65
     max_s_t <- if (ncol_g >= 3) 60 else 90
     plot_stream_network(
-      eng_df, "pred_model_sc", vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
+      eng_df, nm$pred_col, vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
       main_title = main_t,
       sub_title  = sub_t,
       cbar_ticks = sc_val$ticks, cbar_labels = sc_val$labels, cbar_title = cbar_lbl,

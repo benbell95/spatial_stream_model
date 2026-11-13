@@ -6,7 +6,7 @@
 # provides detailed diagnostics, coordinate tables, and catchment-level base-R
 # visualizations of monitoring station snapping to river network reaches.
 #
-# Key Outputs (saved to `output/station_snapping_<network>/` by default):
+# Key Outputs (saved to `output/station_snapping/<network>/` by default):
 #   1. `station_snapping_all.csv`:
 #        Full station-to-reach snapping table containing:
 #          - Station ID (`site_id`, `wims_id`, `wims_region_code`)
@@ -740,11 +740,11 @@ analyze_station_snapping <- function(
   net_meta <- load_network_metadata(proc_dir)
 
   if (is.null(out_dir) || !nzchar(out_dir)) {
-    folder_name <- paste0("station_snapping_", net_meta$abbr)
+    folder_name <- net_meta$abbr
     if (nzchar(src_ftag)) {
       folder_name <- paste0(folder_name, "_", src_ftag)
     }
-    out_dir <- rel_path(o_root, folder_name)
+    out_dir <- rel_path(o_root, "station_snapping", folder_name)
   }
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 

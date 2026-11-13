@@ -36,11 +36,23 @@ reverse_color <- FALSE
 vmin_raw      <- NULL
 vmax_raw      <- NULL
 custom_basins <- character(0)
+norm_cli      <- parse_norm_mode(args, default = "none")
+norm_meta     <- get_norm_meta(norm_cli)
 
 for (a in args) {
   if (grepl("^--(dir|out-dir|output-dir|out|output)=", a)) {
     d_val <- sub("^--(dir|out-dir|output-dir|out|output)=", "", a)
-    target_dir <- if (grepl("^/", d_val)) d_val else rel_path(BASE_DIR, d_val)
+    cand_direct <- if (grepl("^/", d_val)) d_val else rel_path(BASE_DIR, d_val)
+    if (!dir.exists(cand_direct) && !grepl("^/", d_val)) {
+      cand_res <- rel_path(dir_cfg$out_dir, "results", d_val)
+      cand_out <- rel_path(dir_cfg$out_dir, d_val)
+      if (dir.exists(cand_res)) {
+        cand_direct <- cand_res
+      } else if (dir.exists(cand_out)) {
+        cand_direct <- cand_out
+      }
+    }
+    target_dir <- cand_direct
   } else if (grepl("^--code=", a)) {
     det_code_cli <- sub("^--code=", "", a)
   } else if (grepl("^--name=", a)) {
@@ -202,6 +214,13 @@ load_plot_bundle <- function(dir_p) {
     }
   }
 
+  if (norm_meta$mode != "none") {
+    if (!(norm_meta$pred_col %in% names(eng_pred))) eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred)
+    if (!(norm_meta$pred_col %in% names(hum_pred))) hum_pred <- add_normalised_columns(hum_pred, ref_df = eng_pred)
+    if (!(norm_meta$pred_col %in% names(tha_pred))) tha_pred <- add_normalised_columns(tha_pred, ref_df = eng_pred)
+    if (!(norm_meta$pred_col %in% names(sev_pred))) sev_pred <- add_normalised_columns(sev_pred, ref_df = eng_pred)
+  }
+
   list(
     FIG_DIR        = FIG_DIR,
     is_default_out = is_default_out,
@@ -239,7 +258,7 @@ bundles <- lapply(dirs_to_plot, load_plot_bundle)
 
 # Also check if target_dir is a single period subfolder (e.g. output/det_0117/season_summer)
 # and pool scale ranges with any sibling period folders in dirname(target_dir)
-scale_vals <- unlist(lapply(bundles, function(b) b$eng_pred$pred_model_sc))
+scale_vals <- unlist(lapply(bundles, function(b) b$eng_pred[[norm_meta$pred_col]]))
 scale_se_e <- unlist(lapply(bundles, function(b) b$eng_pred$se_model_sc))
 scale_se_h <- unlist(lapply(bundles, function(b) b$hum_pred$se_model_sc))
 
@@ -251,7 +270,10 @@ if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir
     for (sc in sib_csvs) {
       sdf <- tryCatch(normalize_pred_df(read.csv(sc)), error = function(e) NULL)
       if (!is.null(sdf)) {
-        scale_vals <- c(scale_vals, sdf$pred_model_sc)
+        if (norm_meta$mode != "none" && !(norm_meta$pred_col %in% names(sdf))) {
+          sdf <- add_normalised_columns(sdf)
+        }
+        scale_vals <- c(scale_vals, sdf[[norm_meta$pred_col]])
         scale_se_e <- c(scale_se_e, sdf$se_model_sc)
       }
     }
@@ -259,7 +281,11 @@ if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir
 }
 
 use_log_shared <- bundles[[1]]$use_log
-shared_sc_val  <- compute_color_scale(scale_vals, use_log_shared, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+shared_sc_val  <- if (norm_meta$mode == "none") {
+  compute_color_scale(scale_vals, use_log_shared, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+} else {
+  compute_norm_color_scale(scale_vals, norm_meta$mode, vmin_raw = vmin_raw, vmax_raw = vmax_raw)
+}
 shared_sc_se_e <- compute_se_scale(scale_se_e)
 shared_sc_se_h <- compute_se_scale(scale_se_h)
 
@@ -273,15 +299,19 @@ yr_d          <- range(all_raw_preds, na.rm = TRUE)
 ylim_d_shared <- if (length(bundles) > 1) c(max(0, yr_d[1] - 0.05 * diff(yr_d)), yr_d[2] + 0.15 * diff(yr_d)) else NULL
 
 for (b in bundles) {
-  f1_name <- if (b$is_default_out) "fig1_england_stream_nitrate_map.png" else sprintf("fig1_england_stream_%s_map.png", b$det_code)
-  f2_name <- if (b$is_default_out) "fig2_humber_basin_s3n_map.png"       else sprintf("fig2_humber_basin_%s_map.png", b$det_code)
-  f3_name <- if (b$is_default_out) "fig3_thames_severn_s3n_maps.png"     else sprintf("fig3_thames_severn_%s_maps.png", b$det_code)
+  ftag    <- norm_meta$file_tag
+  f1_name <- if (b$is_default_out) sprintf("fig1_england_stream_nitrate_map%s.png", ftag) else sprintf("fig1_england_stream_%s_map%s.png", b$det_code, ftag)
+  f2_name <- if (b$is_default_out) sprintf("fig2_humber_basin_s3n_map%s.png", ftag)       else sprintf("fig2_humber_basin_%s_map%s.png", b$det_code, ftag)
+  f3_name <- if (b$is_default_out) sprintf("fig3_thames_severn_s3n_maps%s.png", ftag)     else sprintf("fig3_thames_severn_%s_maps%s.png", b$det_code, ftag)
   f4_name <- if (b$is_default_out) "fig4_cv_and_diagnostics.png"         else sprintf("fig4_cv_and_diagnostics_%s.png", b$det_code)
 
-  cat(sprintf("Rendering 4 figures in %s (shared scale [%s, %s])...\n",
+  sc_lo_disp <- if (norm_meta$mode == "none") (if (b$use_log) exp(shared_sc_val$vmin) else shared_sc_val$vmin) else shared_sc_val$vmin
+  sc_hi_disp <- if (norm_meta$mode == "none") (if (b$use_log) exp(shared_sc_val$vmax) else shared_sc_val$vmax) else shared_sc_val$vmax
+  cat(sprintf("Rendering 4 figures in %s (shared scale [%s, %s]%s)...\n",
               b$FIG_DIR,
-              formatC(if (b$use_log) exp(shared_sc_val$vmin) else shared_sc_val$vmin, format = "fg", digits = 3),
-              formatC(if (b$use_log) exp(shared_sc_val$vmax) else shared_sc_val$vmax, format = "fg", digits = 3)))
+              formatC(sc_lo_disp, format = "fg", digits = 3),
+              formatC(sc_hi_disp, format = "fg", digits = 3),
+              if (norm_meta$mode == "none") "" else paste0(", norm = ", norm_meta$mode)))
 
   vars_sub <- format_covariates_subtitle(param_tab = b$param_tab)
   net_lbl  <- extract_network_label_from_tables(b$cv_tab, b$param_tab, b$FIG_DIR)
@@ -289,15 +319,15 @@ for (b in bundles) {
   plot_fig1_england_map(b$eng_pred, b$det_code, b$det_name, b$det_unit, b$use_log,
                         file.path(b$FIG_DIR, f1_name), reverse_color = reverse_color,
                         sc_val = shared_sc_val, sc_se = shared_sc_se_e,
-                        vars_label = vars_sub, network_label = net_lbl)
+                        vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
 
   plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
                        file.path(b$FIG_DIR, f2_name), reverse_color = reverse_color,
-                       sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl)
+                       sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
 
   plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
                               file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color,
-                              vars_label = vars_sub, network_label = net_lbl)
+                              vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
 
   plot_fig4_diagnostics(b$eng_pred, b$eng_cv, b$hum_cv, b$cv_tab, b$param_tab,
                         b$det_code, b$det_name, b$det_unit, b$use_log,
@@ -324,10 +354,10 @@ for (b in bundles) {
       if (nrow(b_pred) > 0) {
         b_slug <- gsub("[^a-z0-9]+", "_", tolower(b_title))
         b_slug <- gsub("^_|_$", "", b_slug)
-        f5_b_name <- file.path(b$FIG_DIR, sprintf("fig%d_%s_%s_map.png", 4 + bi, b_slug, b$det_code))
+        f5_b_name <- file.path(b$FIG_DIR, sprintf("fig%d_%s_%s_map%s.png", 4 + bi, b_slug, b$det_code, ftag))
         cat(sprintf("Rendering custom basin figure: %s (%d reaches)...\n", basename(f5_b_name), nrow(b_pred)))
         plot_basin_map(b_pred, b_title, b_title, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$use_log,
-                       f5_b_name, reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl)
+                       f5_b_name, reverse_color = reverse_color, vars_label = vars_sub, network_label = net_lbl, norm_mode = norm_cli)
       }
     }
   }
@@ -353,13 +383,13 @@ for (m_type in c("season", "year", "month")) {
     b0 <- m_bundles[[1]]
     vars_sub_g <- format_covariates_subtitle(param_tab = b0$param_tab)
     net_lbl_g  <- extract_network_label_from_tables(b0$cv_tab, b0$param_tab, target_dir)
-    fig5_path <- file.path(target_dir, sprintf("fig5_england_by_%s_%s_map.png", m_type, b0$det_code))
+    fig5_path <- file.path(target_dir, sprintf("fig5_england_by_%s_%s_map%s.png", m_type, b0$det_code, norm_meta$file_tag))
     cat(sprintf("Rendering Figure 5 (%d-panel All England %s comparison grid): %s...\n",
                 length(grid_items), m_type, fig5_path))
     plot_fig5_temporal_england_grid(grid_items, m_type, shared_sc_val,
                                     b0$det_code, b0$det_name, b0$det_unit, b0$use_log,
                                     fig5_path, reverse_color = reverse_color,
-                                    vars_label = vars_sub_g, network_label = net_lbl_g)
+                                    vars_label = vars_sub_g, network_label = net_lbl_g, norm_mode = norm_cli)
   }
 }
 

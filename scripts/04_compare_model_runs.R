@@ -2115,8 +2115,13 @@ if (sys.nframe() == 0L) {
   if (length(pos_dirs) == 1 && !is.null(by_mode)) {
     p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else rel_path(BASE_DIR, pos_dirs[1])
     if (!dir.exists(p_dir)) {
-      alt_p <- rel_path(out_root_cli, pos_dirs[1])
-      if (dir.exists(alt_p)) p_dir <- alt_p
+      alt_res <- rel_path(out_root_cli, "results", pos_dirs[1])
+      alt_p   <- rel_path(out_root_cli, pos_dirs[1])
+      if (dir.exists(alt_res)) {
+        p_dir <- alt_res
+      } else if (dir.exists(alt_p)) {
+        p_dir <- alt_p
+      }
     }
     subs <- list.dirs(p_dir, recursive = FALSE, full.names = TRUE)
     if (by_mode == "season") {
@@ -2134,8 +2139,13 @@ if (sys.nframe() == 0L) {
     # Check if single directory contains temporal subdirectories automatically
     p_dir <- if (grepl("^/", pos_dirs[1])) pos_dirs[1] else rel_path(BASE_DIR, pos_dirs[1])
     if (!dir.exists(p_dir)) {
-      alt_p <- rel_path(out_root_cli, pos_dirs[1])
-      if (dir.exists(alt_p)) p_dir <- alt_p
+      alt_res <- rel_path(out_root_cli, "results", pos_dirs[1])
+      alt_p   <- rel_path(out_root_cli, pos_dirs[1])
+      if (dir.exists(alt_res)) {
+        p_dir <- alt_res
+      } else if (dir.exists(alt_p)) {
+        p_dir <- alt_p
+      }
     }
     subs <- list.dirs(p_dir, recursive = FALSE, full.names = TRUE)
     for (m_type in c("season", "year", "month")) {
