@@ -148,7 +148,7 @@ resolve_run_dir_path <- function(dir_path, out_root = NULL, base_dir = BASE_DIR)
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- default_out
   }
-  if (grepl("^/", dir_path)) return(dir_path)
+  if (is_abs_path(dir_path)) return(dir_path)
 
   out_roots <- unique(c(out_root, default_out))
   stripped <- sub("^(output|results)/+", "", dir_path)

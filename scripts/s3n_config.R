@@ -42,15 +42,44 @@ rel_path <- function(base_dir, ...) {
   sub("^\\./", "", p)
 }
 
+is_abs_path <- function(p) {
+  grepl("^(/|\\\\\\\\|[A-Za-z]:[/\\\\])", as.character(p)[1])
+}
+
 format_rel_display_path <- function(p, base_dir = ".") {
   p_clean <- sub("^\\./", "", p)
   if (!is.null(base_dir) && nzchar(base_dir) && base_dir != ".") {
-    prefix <- paste0(gsub("/+$", "", base_dir), "/")
-    if (startsWith(p_clean, prefix)) {
-      p_clean <- substr(p_clean, nchar(prefix) + 1L, nchar(p_clean))
+    b_clean <- gsub("[/\\\\]+$", "", base_dir)
+    for (sep in c("/", "\\")) {
+      prefix <- paste0(b_clean, sep)
+      if (startsWith(p_clean, prefix)) {
+        p_clean <- substr(p_clean, nchar(prefix) + 1L, nchar(p_clean))
+        break
+      }
     }
   }
   p_clean
+}
+
+resolve_python_bin <- function() {
+  for (cand in c("python3", "python")) {
+    p <- unname(Sys.which(cand))
+    if (nzchar(p) && !grepl("WindowsApps", p, ignore.case = TRUE)) {
+      return(list(bin = p, prefix = character(0)))
+    }
+  }
+  if (.Platform$OS.type == "windows") {
+    py_launcher <- unname(Sys.which("py"))
+    if (nzchar(py_launcher)) {
+      return(list(bin = py_launcher, prefix = "-3"))
+    }
+  }
+  list(bin = "python3", prefix = character(0))
+}
+
+run_python_script <- function(script_path, script_args = character(0), stdout = "", stderr = "") {
+  py <- resolve_python_bin()
+  system2(py$bin, args = c(py$prefix, shQuote(script_path), script_args), stdout = stdout, stderr = stderr)
 }
 
 # ==============================================================================
@@ -199,7 +228,7 @@ parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
   resolve_arg <- function(p, default) {
     p <- if (is.null(p) || is.na(p) || !nzchar(trimws(p))) default else trimws(p)
     p <- path.expand(p)
-    if (!grepl("^(/|[A-Za-z]:)", p)) {
+    if (!is_abs_path(p)) {
       p <- rel_path(base_dir, p)
     }
     sub("^\\./", "", p)
@@ -395,7 +424,7 @@ load_source_registry <- function(base_dir = NULL, force_reload = FALSE) {
     py_script <- rel_path(base_dir, "scripts", "01_preprocess_orn.py")
     if (file.exists(py_script)) {
       suppressWarnings(tryCatch({
-        system2("python3", c(py_script, "--list-sources"), stdout = FALSE, stderr = FALSE)
+        run_python_script(py_script, "--list-sources", stdout = FALSE, stderr = FALSE)
       }, error = function(e) NULL))
     }
   }
@@ -757,19 +786,16 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
       src_tag
     }
     cat(sprintf("Preprocessing water network '%s' (source='%s') via scripts/01_preprocess_orn.py...\n", net_cli_arg, py_src))
-    extra_py_args <- paste0(" --out-dir=", shQuote(sub_d))
+    py_args <- c(paste0("--network=", shQuote(net_cli_arg)),
+                 paste0("--source=", shQuote(py_src)),
+                 paste0("--out-dir=", shQuote(sub_d)))
     if (!is.null(g_dir) && nzchar(g_dir)) {
-      extra_py_args <- paste0(extra_py_args, " --gis-dir=", shQuote(g_dir))
+      py_args <- c(py_args, paste0("--gis-dir=", shQuote(g_dir)))
     }
     if (!is.null(d_dir) && nzchar(d_dir)) {
-      extra_py_args <- paste0(extra_py_args, " --data-dir=", shQuote(d_dir))
+      py_args <- c(py_args, paste0("--data-dir=", shQuote(d_dir)))
     }
-    cmd <- sprintf("python3 %s --network=%s --source=%s%s",
-                   shQuote(rel_path(base_dir, "scripts", "01_preprocess_orn.py")),
-                   shQuote(net_cli_arg),
-                   shQuote(py_src),
-                   extra_py_args)
-    status <- system(cmd)
+    status <- run_python_script(rel_path(base_dir, "scripts", "01_preprocess_orn.py"), py_args)
     if (status != 0L) {
       stop(sprintf("Failed to preprocess water network '%s' with source '%s'. Run `python3 scripts/01_preprocess_orn.py --list-networks`.", net_cli_arg, src_tag))
     }

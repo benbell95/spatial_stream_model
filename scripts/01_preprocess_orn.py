@@ -716,6 +716,11 @@ def _get_gdal_lib():
         "libgdal.so.35",
         "libgdal.so.34",
         "libgdal.so",
+        "gdal309.dll",
+        "gdal308.dll",
+        "gdal307.dll",
+        "gdal306.dll",
+        "gdal.dll",
     ]
     gdal = None
     for cand in candidates:

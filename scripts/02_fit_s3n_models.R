@@ -52,10 +52,8 @@ if ("--list-sources" %in% args) {
 }
 
 if ("--list-networks" %in% args) {
-  py_cmd <- sprintf("python3 %s --list-networks --gis-dir=%s",
-                    shQuote(rel_path(BASE_DIR, "scripts", "01_preprocess_orn.py")),
-                    shQuote(GIS_DIR))
-  system(py_cmd)
+  run_python_script(rel_path(BASE_DIR, "scripts", "01_preprocess_orn.py"),
+                    c("--list-networks", paste0("--gis-dir=", shQuote(GIS_DIR))))
   quit(save = "no", status = 0)
 }
 if ("--list-vars" %in% args || "--list-covariates" %in% args) {

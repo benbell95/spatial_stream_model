@@ -44,8 +44,8 @@ norm_meta     <- get_norm_meta(norm_cli)
 for (a in args) {
   if (grepl("^--(dir|out-dir|output-dir|out|output)=", a)) {
     d_val <- sub("^--(dir|out-dir|output-dir|out|output)=", "", a)
-    cand_direct <- if (grepl("^/", d_val)) d_val else rel_path(BASE_DIR, d_val)
-    if (!dir.exists(cand_direct) && !grepl("^/", d_val)) {
+    cand_direct <- if (is_abs_path(d_val)) d_val else rel_path(BASE_DIR, d_val)
+    if (!dir.exists(cand_direct) && !is_abs_path(d_val)) {
       cand_res <- rel_path(dir_cfg$out_dir, "results", d_val)
       cand_out <- rel_path(dir_cfg$out_dir, d_val)
       if (dir.exists(cand_res)) {

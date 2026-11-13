@@ -486,7 +486,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
       slug <- sprintf("compare_%d_runs_%s_to_%s", K, bundles[[1]]$dir_name, bundles[[K]]$dir_name)
     }
     out_dir <- rel_path(eff_out_root, "comparisons", slug)
-  } else if (!grepl("^/", out_dir)) {
+  } else if (!is_abs_path(out_dir)) {
     out_dir <- rel_path(BASE_DIR, out_dir)
   }
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -959,7 +959,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
   run_labels <- sapply(bundles, function(b) b$label)
   det_short  <- shorten_det_name(bundles[[1]]$det_name)
 
-  png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 2000, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(2, 2), mar = c(5.2, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
@@ -1101,7 +1101,7 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
   det_unit   <- bundles[[1]]$det_unit
   is_log_b1  <- (bundles[[1]]$trans_type == "log")
 
-  png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 2000, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(2, 2), mar = c(4.8, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
@@ -1280,7 +1280,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
   same_det   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
   det_short  <- if (same_det) shorten_det_name(bundles[[1]]$det_name) else sprintf("%s vs. %s", shorten_det_name(bundles[[1]]$det_name), shorten_det_name(bundles[[2]]$det_name))
 
-  png(out_file, width = 2600, height = 1350, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 1350, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(5.0, 9.5, 3.8, 2.0), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
@@ -1395,7 +1395,7 @@ plot_comp4_side_by_side_maps <- function(bundles, out_file) {
     nc <- 3; nr <- ceiling(K / 3); w_px <- 3200; h_px <- 1100 * nr
   }
 
-  png(out_file, width = w_px, height = h_px, res = 200, type = "cairo")
+  open_png_device(out_file, width = w_px, height = h_px, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(nr, nc), mar = c(1.2, 1.2, 3.2, 1.2), oma = c(0, 0, 2.5, 0), bg = "white")
 
@@ -1446,7 +1446,7 @@ plot_comp5_reach_relationships <- function(bundles, strat_df, rel_info, run_cols
   pm <- rel_info$pm
   run_labels <- sapply(bundles, function(b) b$label)
 
-  png(out_file, width = 2600, height = 2000, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 2000, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(2, 2), mar = c(5.0, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 

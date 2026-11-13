@@ -34,6 +34,14 @@ for (.mod in c("s3n_config.R", "s3n_transforms.R", "s3n_covariates.R")) {
 rm(.mod, .mod_p, .s3n_mod_dir)
 
 
+open_png_device <- function(out_file, width, height, res = 200) {
+  if (isTRUE(capabilities("cairo"))) {
+    png(out_file, width = width, height = height, res = res, type = "cairo")
+  } else {
+    png(out_file, width = width, height = height, res = res)
+  }
+}
+
 val_cols     <- colorRampPalette(c("#1b4f72", "#2874a6", "#1abc9c", "#f4d03f", "#e67e22", "#c0392b", "#641e16"))(256)
 val_cols_rev <- rev(val_cols)
 uncert_cols  <- colorRampPalette(c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"))(256)
@@ -442,7 +450,7 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, trans_
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
   has_net  <- !is.null(network_label) && nzchar(network_label)
   banner   <- format_top_banner(network_label, vars_label, source_label)
-  png(out_file, width = 2600, height = 1450, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 1450, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
       oma = get_banner_oma(banner), bg = "white")
@@ -514,7 +522,7 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   has_vars   <- !is.null(vars_label) && nzchar(vars_label)
   has_net    <- !is.null(network_label) && nzchar(network_label)
   banner     <- format_top_banner(network_label, vars_label, source_label)
-  png(out_file, width = 2600, height = 1350, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 1350, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
       oma = get_banner_oma(banner), bg = "white")
@@ -599,7 +607,7 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
   has_vars <- !is.null(vars_label) && nzchar(vars_label)
   has_net  <- !is.null(network_label) && nzchar(network_label)
   banner   <- format_top_banner(network_label, vars_label, source_label)
-  png(out_file, width = 2600, height = 1250, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2600, height = 1250, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
       oma = get_banner_oma(banner), bg = "white")
@@ -651,7 +659,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   tr       <- as_transformer(trans_obj)
   banner   <- format_top_banner(network_label, vars_label, source_label)
 
-  png(out_file, width = 2400, height = 1800, res = 200, type = "cairo")
+  open_png_device(out_file, width = 2400, height = 1800, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(2, 2), mar = c(4.5, 5.2, 3.8, 1.8),
       oma = get_banner_oma(banner), bg = "white")
@@ -905,7 +913,7 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
   cbar_lbl  <- sprintf("%s\n(%s)", det_short, unit_disp)
   mode_cap  <- paste0(toupper(substr(by_mode, 1, 1)), tolower(substr(by_mode, 2, nchar(by_mode))))
 
-  png(out_file, width = w_px, height = h_px, res = 200, type = "cairo")
+  open_png_device(out_file, width = w_px, height = h_px, res = 200)
   on.exit(dev.off(), add = TRUE)
   par(mfrow = c(nrow_g, ncol_g), mar = c(1.0, 1.0, 3.6, 1.0), oma = c(0.5, 0.5, 3.8, 0.5), bg = "white")
 

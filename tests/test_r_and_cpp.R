@@ -147,9 +147,9 @@ assert_near(snap_out$y, c(0.0, 0.0), tol = 1e-4, msg = "snapped Y including on-c
 
 cat("  [PASS] Buffered markdown writer and station chord projection\n")
 
-cat("=== 4. Testing C++ Shared Library (s3n_fast_neighbors.so) ===\n")
+cat(sprintf("=== 4. Testing C++ Shared Library (s3n_fast_neighbors%s) ===\n", .Platform$dynlib.ext))
 if (!is.loaded("C_compute_s3n_neighbors")) {
-  dyn.load("src/s3n_fast_neighbors.so")
+  dyn.load(file.path("src", paste0("s3n_fast_neighbors", .Platform$dynlib.ext)))
 }
 assert_true(is.loaded("C_build_tree_tin_tout"), "C_build_tree_tin_tout loaded")
 assert_true(is.loaded("C_compute_s3n_neighbors"), "C_compute_s3n_neighbors loaded")

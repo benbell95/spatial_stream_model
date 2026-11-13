@@ -214,7 +214,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
 
   # Figure 1: 4-Panel Distributions, Representativeness, Tail-Up vs Tail-Down & Uncertainty
   fig1_file <- file.path(out_dir, "fig_desc1_distributions_and_representativeness.png")
-  png(fig1_file, width = 2600, height = 2000, res = 200, type = "cairo")
+  open_png_device(fig1_file, width = 2600, height = 2000, res = 200)
   par(mfrow = c(2, 2), mar = c(4.8, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Kernel Density of Full Network Predictions vs. Observed Monitoring Stations
@@ -344,7 +344,7 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
 
   # Figure 2: 4-Panel Stratified Environmental & Topological Gradients
   fig2_file <- file.path(out_dir, "fig_desc2_stratified_gradients.png")
-  png(fig2_file, width = 2600, height = 2000, res = 200, type = "cairo")
+  open_png_device(fig2_file, width = 2600, height = 2000, res = 200)
   par(mfrow = c(2, 2), mar = c(5.0, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Boxplot by Combined Landscape Regime (Upland, Lowland Non-Aquifer, Lowland Aquifer)
@@ -593,7 +593,7 @@ run_descriptive_stats <- function(run_dir, label = NULL, out_dir = NULL, out_roo
 
   if (is.null(out_dir) || !nzchar(out_dir)) {
     out_dir <- rel_path(b1$dir_path, "descriptives")
-  } else if (!grepl("^/", out_dir)) {
+  } else if (!is_abs_path(out_dir)) {
     out_dir <- rel_path(BASE_DIR, out_dir)
   }
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)

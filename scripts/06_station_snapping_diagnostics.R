@@ -373,7 +373,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   c_name <- if (nrow(cs_row) > 0) cs_row$Main_River[1] else paste0("Catchment ", cid)
   r_name <- if (nrow(cs_row) > 0 && nzchar(cs_row$RBD_Name[1])) paste0(" (", cs_row$RBD_Name[1], " RBD)") else ""
 
-  png(out_png, width = 2500, height = 1750, res = 150, type = "cairo")
+  open_png_device(out_png, width = 2500, height = 1750, res = 150)
   on.exit(dev.off(), add = TRUE)
 
   # Layout: Left half = Panel A (1, 3, 5), Top-right = Panel B (2), Bottom-right 2x2 = Insets (4, 6, 7, 8)
@@ -603,7 +603,7 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
 # Plot 2: Network-Wide Station Snapping Overview Figure (4 Panels)
 # ------------------------------------------------------------------------------
 plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_png, source_abbr = "RSN") {
-  png(out_png, width = 2400, height = 1750, res = 150, type = "cairo")
+  open_png_device(out_png, width = 2400, height = 1750, res = 150)
   on.exit(dev.off(), add = TRUE)
 
   par(mfrow = c(2, 2), mar = c(4.5, 4.8, 4.2, 1.8), bg = "#FFFFFF")

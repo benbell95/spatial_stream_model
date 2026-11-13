@@ -20,11 +20,12 @@ load_s3n_backend <- function(base_dir = ".") {
   }
   suppressPackageStartupMessages(library(S3N))
 
-  so_path <- rel_path(base_dir, "src", "s3n_fast_neighbors.so")
+  so_name <- paste0("s3n_fast_neighbors", .Platform$dynlib.ext)
+  so_path <- rel_path(base_dir, "src", so_name)
   if (!is.loaded("C_compute_s3n_neighbors")) {
     if (!file.exists(so_path)) {
-      stop(sprintf("Compiled C++ neighbor library not found at '%s'. Run: R CMD SHLIB -o %s %s",
-                   so_path, so_path, rel_path(base_dir, "src", "s3n_fast_neighbors.cpp")))
+      stop(sprintf("Compiled C++ neighbor library not found at '%s'. Run: R CMD SHLIB %s",
+                   so_path, rel_path(base_dir, "src", "s3n_fast_neighbors.cpp")))
     }
     dyn.load(so_path)
   }
