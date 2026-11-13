@@ -1040,22 +1040,29 @@ def resolve_source_tag(source="rsn", registry=None):
     if len(tokens) > 1:
         if set(tokens) == {"rsn", "ssn"}:
             return "rss", ["rsn", "ssn"], "RSS", "Combined River Surveillance & Small Streams (RSS)"
-        # Expand composite tokens and check aliases
+        # Expand composite tokens and check aliases (with hyphen-to-underscore fallback)
         expanded = []
         for tk in tokens:
-            if tk in composites_reg:
-                expanded.extend(composites_reg[tk].get("sources", [tk]))
-            elif tk in sources_reg and sources_reg[tk].get("alias_target"):
-                expanded.append(sources_reg[tk]["alias_target"])
-            elif f"{tk}_tobit" in sources_reg:
-                expanded.append(f"{tk}_tobit")
+            if tk in ("ssn", "small_stream", "small_streams", "small-stream", "small-streams"):
+                expanded.append("ssn")
+                continue
+            if tk in ("rsn", "river_surveillance", "river-surveillance"):
+                expanded.append("rsn")
+                continue
+            tk_under = tk.replace("-", "_")
+            cand = tk if (tk in composites_reg or tk in sources_reg or os.path.isdir(os.path.join(DATA_DIR, "custom", tk))) else (
+                tk_under if (tk_under in composites_reg or tk_under in sources_reg or os.path.isdir(os.path.join(DATA_DIR, "custom", tk_under))) else tk
+            )
+            if cand in composites_reg:
+                expanded.extend(composites_reg[cand].get("sources", [cand]))
+            elif cand in sources_reg and sources_reg[cand].get("alias_target"):
+                expanded.append(sources_reg[cand]["alias_target"])
+            elif f"{cand}_tobit" in sources_reg:
+                expanded.append(f"{cand}_tobit")
             else:
-                expanded.append(tk)
-        unique_tokens = []
-        for t in expanded:
-            if t not in unique_tokens:
-                unique_tokens.append(t)
-        combo_key = "_".join(unique_tokens)
+                expanded.append(cand)
+        unique_tokens = sorted(set(expanded))
+        combo_key = "+".join(unique_tokens)
         combo_abbr = "+".join(sources_reg[t].get("abbr", t.upper()) if t in sources_reg else t.upper() for t in unique_tokens)
         combo_label = f"Combined Monitoring Sources ({combo_abbr})"
         return combo_key, unique_tokens, combo_abbr, combo_label

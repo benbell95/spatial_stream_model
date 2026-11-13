@@ -361,6 +361,7 @@ load_source_registry <- function(base_dir = NULL) {
 
 resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
   if (is.null(source) || !nzchar(trimws(as.character(source)))) return("rsn")
+  if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
   raw_orig <- trimws(as.character(source))
   if (grepl("\\(([A-Za-z0-9_]+)\\)", raw_orig)) {
     inner <- tolower(sub(".*\\(([A-Za-z0-9_]+)\\).*", "\\1", raw_orig))
@@ -382,24 +383,27 @@ resolve_source_tag <- function(source = "rsn", base_dir = NULL) {
   tokens <- tokens[nzchar(tokens)]
   if (length(tokens) > 1) {
     if (setequal(tokens, c("rsn", "ssn"))) return("rss")
-    # Normalize tokens
+    reg <- load_source_registry(base_dir)
+    # Normalize tokens (supporting hyphenated CLI aliases like waterblitz-tobit -> waterblitz_tobit)
     norm_tokens <- vapply(tokens, function(tk) {
-      if (tk %in% c("ssn", "small_stream", "small_streams", "small-stream", "small-streams")) "ssn"
-      else if (tk %in% c("rsn", "river_surveillance")) "rsn"
-      else if (tk == "tobitz") "tobit"
-      else if (endsWith(tk, "_tobitz")) sub("_tobitz$", "_tobit", tk)
-      else {
-        reg <- load_source_registry(base_dir)
-        if (tk %in% names(reg$sources) && !is.null(reg$sources[[tk]]$alias_target) && nzchar(reg$sources[[tk]]$alias_target)) {
-          reg$sources[[tk]]$alias_target
-        } else if (paste0(tk, "_tobit") %in% names(reg$sources)) {
-          paste0(tk, "_tobit")
-        } else {
-          tk
-        }
+      if (tk %in% c("ssn", "small_stream", "small_streams", "small-stream", "small-streams")) return("ssn")
+      if (tk %in% c("rsn", "river_surveillance", "river-surveillance")) return("rsn")
+      if (tk == "tobitz") return("tobit")
+      if (endsWith(tk, "_tobitz") || endsWith(tk, "-tobitz")) tk <- sub("z$", "", tk)
+      tk_under <- gsub("-", "_", tk)
+      cand <- if (tk %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk))) tk
+              else if (tk_under %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk_under))) tk_under
+              else tk
+      if (cand %in% names(reg$sources) && !is.null(reg$sources[[cand]]$alias_target) && nzchar(reg$sources[[cand]]$alias_target)) {
+        reg$sources[[cand]]$alias_target
+      } else if (paste0(cand, "_tobit") %in% names(reg$sources)) {
+        paste0(cand, "_tobit")
+      } else {
+        cand
       }
     }, character(1))
-    return(paste(norm_tokens, collapse = "_"))
+    norm_tokens <- sort(unique(norm_tokens))
+    return(paste(norm_tokens, collapse = "+"))
   }
 
   # Single source resolution
@@ -538,14 +542,20 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
     c("rsn", "ssn")
   } else if (src_tag %in% names(reg$composites)) {
     reg$composites[[src_tag]]$sources
+  } else if (grepl("[+]", src_tag)) {
+    unlist(strsplit(src_tag, "[+]"))
   } else if (length(raw_tokens) > 1) {
     vapply(raw_tokens, function(tk) {
-      if (tk %in% names(reg$sources) && !is.null(reg$sources[[tk]]$alias_target) && nzchar(reg$sources[[tk]]$alias_target)) {
-        reg$sources[[tk]]$alias_target
-      } else if (paste0(tk, "_tobit") %in% names(reg$sources)) {
-        paste0(tk, "_tobit")
+      tk_under <- gsub("-", "_", tk)
+      cand <- if (tk %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk))) tk
+              else if (tk_under %in% names(reg$sources) || dir.exists(file.path(base_dir, "data", "custom", tk_under))) tk_under
+              else tk
+      if (cand %in% names(reg$sources) && !is.null(reg$sources[[cand]]$alias_target) && nzchar(reg$sources[[cand]]$alias_target)) {
+        reg$sources[[cand]]$alias_target
+      } else if (paste0(cand, "_tobit") %in% names(reg$sources)) {
+        paste0(cand, "_tobit")
       } else {
-        tk
+        cand
       }
     }, character(1))
   } else if (!src_tag %in% names(reg$sources) && grepl("_", src_tag)) {
