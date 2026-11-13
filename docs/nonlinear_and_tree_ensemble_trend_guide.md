@@ -4,6 +4,17 @@
 
 ---
 
+## Table of Contents
+
+- [1. Key Distinction: `--trend=gam` vs. Two-Stage `meas_method="gam"`](#1-key-distinction---trendgam-vs-two-stage-meas_methodgam)
+- [2. Package Requirements (Zero Extra Installs Needed)](#2-package-requirements-zero-extra-installs-needed)
+- [3. Supported Trend Modes & Tuning Flags](#3-supported-trend-modes--tuning-flags)
+- [4. How Orthogonal Out-of-Fold Residual Kriging Works](#4-how-orthogonal-out-of-fold-residual-kriging-works)
+- [5. Practical Usage Examples](#5-practical-usage-examples)
+- [6. Interpreting Outputs & Diagnostics](#6-interpreting-outputs--diagnostics)
+
+---
+
 ## 1. Key Distinction: `--trend=gam` vs. Two-Stage `meas_method="gam"`
 
 Because both features involve Generalized Additive Models, it is important not to confuse them:

@@ -4,6 +4,18 @@
 
 ---
 
+## Table of Contents
+
+- [1. CLI & R Usage](#1-cli--r-usage)
+  - [Command Line](#command-line)
+  - [Supported CLI Flags](#supported-cli-flags)
+  - [Calling from R](#calling-from-r)
+- [2. Generated Outputs (`output/station_snapping/<net>_<source>/`)](#2-generated-outputs-outputstation_snappingnet_source)
+- [3. Key Columns in `station_snapping_all.csv`](#3-key-columns-in-station_snapping_allcsv)
+- [4. Interpreting the Diagnostic Figures](#4-interpreting-the-diagnostic-figures)
+
+---
+
 ## 1. CLI & R Usage
 
 ### Command Line

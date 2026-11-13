@@ -4,6 +4,16 @@ Use this index to find the right guide for your task.
 
 ---
 
+## Table of Contents
+
+- [1. Getting Started & CLI Reference](#1-getting-started--cli-reference)
+- [2. Specialised Modelling Workflows](#2-specialised-modelling-workflows)
+- [3. Customising Data, Networks & Covariates](#3-customising-data-networks--covariates)
+- [4. Diagnostics & Output Interpretation](#4-diagnostics--output-interpretation)
+- [5. Methodology & Statistical Theory](#5-methodology--statistical-theory)
+
+---
+
 ## 1. Getting Started & CLI Reference
 
 | Guide | Purpose |

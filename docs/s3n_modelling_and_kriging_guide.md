@@ -1,5 +1,51 @@
 # Scalable Spatial Stream Network (S3N) Modelling & Universal Kriging — Complete Theoretical & Algorithmic Guide
 
+## Table of Contents
+
+- [1. Executive Overview & Motivation](#1-executive-overview--motivation)
+  - [1.1 Why Standard Geostatistics Fails on River Networks](#11-why-standard-geostatistics-fails-on-river-networks)
+  - [1.2 The Computational Bottleneck of Classical SSN Models](#12-the-computational-bottleneck-of-classical-ssn-models)
+  - [1.3 How the `S3N` Package Solves the Scalability Barrier](#13-how-the-s3n-package-solves-the-scalability-barrier)
+- [2. End-to-End Architecture: From Raw GIS & Monitoring Data to Modelled Output](#2-end-to-end-architecture-from-raw-gis--monitoring-data-to-modelled-output)
+  - [2.1 Multi-Network Monitoring Data Sources & Domain Naming Conventions](#21-multi-network-monitoring-data-sources--domain-naming-conventions)
+- [3. Stage 1: From Raw River Network & Monitoring Samples to a Directed Topological Graph](#3-stage-1-from-raw-river-network--monitoring-samples-to-a-directed-topological-graph)
+  - [3.1 Step 1.1: Multi-Source Sample Ingestion & Left-Censored (`< LOD`) Imputation via Robust Lognormal ROS](#31-step-11-multi-source-sample-ingestion--left-censored--lod-imputation-via-robust-lognormal-ros)
+  - [3.2 Step 1.2: Directed Acyclic River Graph Construction (`Fnode → Tnode` & `parent_dn`)](#32-step-12-directed-acyclic-river-graph-construction-fnode--tnode--parent_dn)
+  - [3.3 Step 1.3: Orthogonal Station Snapping (`≤ 250 m`) & Exact Hydrologic Coordinates](#33-step-13-orthogonal-station-snapping--250-m--exact-hydrologic-coordinates)
+  - [3.4 Step 1.4: Confluence Weighting & Additive Function Values (`AFV` and `log_AFV`)](#34-step-14-confluence-weighting--additive-function-values-afv-and-log_afv)
+  - [3.5 Step 1.5: Environmental Design Matrix Construction (`build_design_matrix()`)](#35-step-15-environmental-design-matrix-construction-build_design_matrix)
+  - [3.6 Step 1.6: Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging (`--trend=linear|spline|gam|rf|gbm`)](#36-step-16-non-linear--spline-fixed-effects-gam--s3n--tree-ensemble-regression-kriging---trendlinearsplinegamrfgbm)
+- [4. Stage 2: Spatial Stream Network (SSN) Covariance Theory](#4-stage-2-spatial-stream-network-ssn-covariance-theory)
+  - [4.1 Hydrologic Stream Distance (`d_hydro(s_i, s_j)`)](#41-hydrologic-stream-distance-d_hydros_i-s_j)
+  - [4.2 The `Tail-Up` Covariance Function (`C_TU`: Flow-Connected + Confluence Weighting)](#42-the-tail-up-covariance-function-c_tu-flow-connected--confluence-weighting)
+  - [4.3 The `Tail-Down` Covariance Function (`C_TD`: Hydrologic Stream Distance)](#43-the-tail-down-covariance-function-c_td-hydrologic-stream-distance)
+  - [4.4 Stream Covariance Kernel Families (`--kernel=exponential|spherical|mariah|linear|auto`)](#44-stream-covariance-kernel-families---kernelexponentialsphericalmariahlinearauto)
+  - [4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`, `--combine=joint`)](#45-joint-additive-covariance-tail-up--tail-down--euclidean---combinejoint)
+- [5. Stage 3: The `S3N` Package Architecture & C++ OpenMP Neighbor Engine](#5-stage-3-the-s3n-package-architecture--c-openmp-neighbor-engine)
+  - [5.1 Core Functions in the `S3N` R Package](#51-core-functions-in-the-s3n-r-package)
+  - [5.2 How the C++ Euler-Tour & Stream Neighbor Engine Works (`../src/s3n_fast_neighbors.cpp`)](#52-how-the-c-euler-tour--stream-neighbor-engine-works-srcs3n_fast_neighborscpp)
+- [6. Stage 4: Sparse NNGP Maximum Likelihood Estimation & Parametric Bootstrap](#6-stage-4-sparse-nngp-maximum-likelihood-estimation--parametric-bootstrap)
+  - [6.1 How `BRISC_estimation_stream()` Avoids the `O(n³)` Matrix Inversion](#61-how-brisc_estimation_stream-avoids-the-on³-matrix-inversion)
+  - [6.2 Parametric Bootstrap Confidence Intervals (`BRISC_bootstrap()`)](#62-parametric-bootstrap-confidence-intervals-brisc_bootstrap)
+- [7. Stage 5: How Universal Stream Kriging Works in Detail (`BRISC_prediction_stream`)](#7-stage-5-how-universal-stream-kriging-works-in-detail-brisc_prediction_stream)
+  - [7.1 Mathematical Formulation of Universal Stream Kriging (`UK`)](#71-mathematical-formulation-of-universal-stream-kriging-uk)
+  - [7.2 How `SE(s₀)` Behaves Across the River Network (3 Canonical Regimes)](#72-how-ses₀-behaves-across-the-river-network-3-canonical-regimes)
+  - [7.3 Variance-Weighted Spatial Information Combination (`S3N Combined`)](#73-variance-weighted-spatial-information-combination-s3n-combined)
+  - [7.4 Back-Transformation to the Physical Scale & Normalised Outputs](#74-back-transformation-to-the-physical-scale--normalised-outputs)
+- [8. Stage 6: Out-of-Sample 5-Fold Cross-Validation Protocol](#8-stage-6-out-of-sample-5-fold-cross-validation-protocol)
+- [9. Worked Numerical Walkthrough: Universal Kriging of a Single River Reach](#9-worked-numerical-walkthrough-universal-kriging-of-a-single-river-reach)
+- [10. Hydrological Cross-Validation & Optimal Monitoring Network Design](#10-hydrological-cross-validation--optimal-monitoring-network-design)
+  - [10.1 Hydrological Cross-Validation Modes (`--cv-mode=<mode>`)](#101-hydrological-cross-validation-modes---cv-modemode)
+  - [10.2 Optimal Monitoring Network Design (`--design-sites=<K>`)](#102-optimal-monitoring-network-design---design-sitesk)
+- [11. Spatio-Temporal Trend Mapping, Dynamic Borrowing & Spatial Tobit EM Censored Kriging](#11-spatio-temporal-trend-mapping-dynamic-borrowing--spatial-tobit-em-censored-kriging)
+  - [11.1 Spatio-Temporal Trend Mapping & Dynamic Borrowing (`--by=year|season|month`, `--st-borrow`)](#111-spatio-temporal-trend-mapping--dynamic-borrowing---byyearseasonmonth---st-borrow)
+  - [11.2 Spatial Tobit / Iterative EM Censored Kriging (`--censor=em|tobit`)](#112-spatial-tobit--iterative-em-censored-kriging---censoremtobit)
+- [12. Summary Reference: Key Equations at a Glance](#12-summary-reference-key-equations-at-a-glance)
+- [13. References & Further Reading](#13-references--further-reading)
+- [14. Related Project Documentation](#14-related-project-documentation)
+
+---
+
 ## 1. Executive Overview & Motivation
 
 ### 1.1 Why Standard Geostatistics Fails on River Networks

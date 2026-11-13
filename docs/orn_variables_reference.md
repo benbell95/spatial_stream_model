@@ -4,6 +4,19 @@ This document details all variables extracted from the **Ordnance Survey Open Ri
 
 ---
 
+## Table of Contents
+
+- [1. Source Tables in `ORN_v2.gpkg`](#1-source-tables-in-orn_v2gpkg)
+- [2. Spatial Stream Network Topology & Covariance Variables](#2-spatial-stream-network-topology--covariance-variables)
+- [3. Fixed-Effect Regression Covariates (`X`)](#3-fixed-effect-regression-covariates-x)
+- [4. Variables Extracted for Visualization, Basin Selection, Optional Predictors & Reference](#4-variables-extracted-for-visualization-basin-selection-optional-predictors--reference)
+- [5. Selecting & Comparing Fixed-Effect Covariates (`--vars=...` & `--list-vars`)](#5-selecting--comparing-fixed-effect-covariates---vars----list-vars)
+  - [5.1 Available Fixed-Effect Terms (`COVARIATE_CATALOG`)](#51-available-fixed-effect-terms-covariate_catalog)
+  - [5.2 Example Commands for Comparing Fixed-Effect Specifications](#52-example-commands-for-comparing-fixed-effect-specifications)
+  - [5.3 Plot Subtitles & Differentiated Output Folders When `--vars` Is Used](#53-plot-subtitles--differentiated-output-folders-when---vars-is-used)
+
+---
+
 ## 1. Source Tables in `ORN_v2.gpkg`
 
 [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) queries five tables inside [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) (configured in [`configs/networks/orn.json`](../configs/networks/orn.json)):

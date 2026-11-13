@@ -4,6 +4,23 @@ This guide is the single reference for repository layout, environment dependenci
 
 ---
 
+## Table of Contents
+
+- [1. Repository & Output Layout](#1-repository--output-layout)
+- [2. Software & Hardware Requirements](#2-software--hardware-requirements)
+  - [2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`)](#21-python-environment-01_preprocess_ornpy-format_custom_datapy)
+  - [2.2 R Environment](#22-r-environment)
+  - [2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)](#23-compiled-c--openmp-library-srcs3n_fast_neighborscpp)
+  - [2.4 Linux System Dependencies](#24-linux-system-dependencies)
+  - [2.5 Hardware Profile](#25-hardware-profile)
+- [3. Configuration Files & Environment Variables](#3-configuration-files--environment-variables)
+  - [3.1 Directory Paths (`configs/directories.json`)](#31-directory-paths-configsdirectoriesjson)
+  - [3.2 Determinand Metadata Catalog (`configs/determinands.json`)](#32-determinand-metadata-catalog-configsdeterminandsjson)
+- [4. Running the Automated Test Suite](#4-running-the-automated-test-suite)
+- [5. License](#5-license)
+
+---
+
 ## 1. Repository & Output Layout
 
 ```text

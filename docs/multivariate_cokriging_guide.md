@@ -4,6 +4,31 @@
 
 ---
 
+## Table of Contents
+
+- [1. Why Multivariate Stream Co-Kriging?](#1-why-multivariate-stream-co-kriging)
+  - [How Do Variables Help Predict Each Other?](#how-do-variables-help-predict-each-other)
+  - [Example: Why Model Nitrate (`0117`) and Orthophosphate (`0180`) Together Rather Than Separately?](#example-why-model-nitrate-0117-and-orthophosphate-0180-together-rather-than-separately)
+  - [Key Use Cases](#key-use-cases)
+- [2. Mathematical Model: Scalable Factor-LMC Joint Stream NNGP](#2-mathematical-model-scalable-factor-lmc-joint-stream-nngp)
+  - [How $P = 2$–$4$ vs. $P = 5+$ Variables Scale (`--factors=K`)](#how-p--24-vs-p--5-variables-scale---factorsk)
+- [3. CLI Reference (`scripts/run_s3n_cokriging.R`)](#3-cli-reference-scriptsrun_s3n_cokrigingr)
+  - [Target & Transform Options](#target--transform-options)
+  - [Co-Kriging & Spatial Options](#co-kriging--spatial-options)
+- [4. Practical Examples](#4-practical-examples)
+  - [Example 1: Coupled Nutrient Pair (Nitrate + Orthophosphate)](#example-1-coupled-nutrient-pair-nitrate--orthophosphate)
+  - [Example 2: Cross-Dataset Water Quality & Ecology Co-Kriging ($P = 4$)](#example-2-cross-dataset-water-quality--ecology-co-kriging-p--4)
+  - [Example 3: Scalable 6-Variable Catchment Syndrome Synthesis ($K = 3$ Latent Factors)](#example-3-scalable-6-variable-catchment-syndrome-synthesis-k--3-latent-factors)
+  - [Example 4: Fast Exploratory Screening (`--method=colocated`)](#example-4-fast-exploratory-screening---methodcolocated)
+- [5. Dual Cross-Validation & Output Interpretation](#5-dual-cross-validation--output-interpretation)
+  - [Output Directory & Artifacts (`output/results/cokrig_<targets>_<net>_<src>/`)](#output-directory--artifacts-outputresultscokrig_targets_net_src)
+- [6. How to Interpret the Co-Kriging Figures](#6-how-to-interpret-the-co-kriging-figures)
+  - [Interpreting `fig_cokrig_england_<code>.png` ("Figure 1" National Map)](#interpreting-fig_cokrig_england_codepng-figure-1-national-map)
+  - [Interpreting `fig_cokrig_cross_correlation.png`](#interpreting-fig_cokrig_cross_correlationpng)
+- [Related Guides](#related-guides)
+
+---
+
 ## 1. Why Multivariate Stream Co-Kriging?
 
 Single-determinand S3N models each variable completely in isolation. Multivariate Stream Co-Kriging fits $P \ge 2$ variables together inside a unified C++/OpenMP solver ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp), `C_s3n_multivariate_nngp`) and modular R engine ([`scripts/s3n_multivariate_functions.R`](../scripts/s3n_multivariate_functions.R)) so **variables actively borrow spatial strength from one another** while writing standard `predictions_<domain>_<code>.csv` files compatible with downstream tools.

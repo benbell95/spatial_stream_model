@@ -1,5 +1,30 @@
 # S3N Multi-Run & Cross-Determinand Model Comparison — Interpretation Guide
 
+## Table of Contents
+
+- [1. Overview & Supported Comparison Modes](#1-overview--supported-comparison-modes)
+- [2. Quick-Start CLI Reference & Generated Outputs](#2-quick-start-cli-reference--generated-outputs)
+  - [2.1 Running the Script](#21-running-the-script)
+  - [2.2 Output Files Written to `output/comparisons/<comparison_slug>/`](#22-output-files-written-to-outputcomparisonscomparison_slug)
+- [3. Section-by-Section Guide to the Comparison Report](#3-section-by-section-guide-to-the-comparison-report)
+  - [3.1 Sections 1–3: Executive Summary, Winner Determination & Cross-Validation Metrics (`cv_metrics_comparison.csv`)](#31-sections-13-executive-summary-winner-determination--cross-validation-metrics-cv_metrics_comparisoncsv)
+  - [3.2 Section 4: Formal Statistical Hypothesis Tests (`statistical_tests_summary.csv`)](#32-section-4-formal-statistical-hypothesis-tests-statistical_tests_summarycsv)
+  - [3.3 Section 5: Descriptive Statistics & Stratified Gradient Comparison (`descriptive_stats_summary.csv` & `stratified_results_summary.csv`)](#33-section-5-descriptive-statistics--stratified-gradient-comparison-descriptive_stats_summarycsv--stratified_results_summarycsv)
+  - [3.4 Section 6: Reach-Level Relationship, Co-Occurrence & Stoichiometric Analysis (`reach_relationship_summary.csv`)](#34-section-6-reach-level-relationship-co-occurrence--stoichiometric-analysis-reach_relationship_summarycsv)
+  - [3.5 Section 7: Fixed-Effect (`β`) & Spatial Covariance Parameter Comparison (`parameter_comparison.csv`)](#35-section-7-fixed-effect-β--spatial-covariance-parameter-comparison-parameter_comparisoncsv)
+- [4. Visual Diagnostic Guide: Interpreting the 5 Comparison Figures](#4-visual-diagnostic-guide-interpreting-the-5-comparison-figures)
+  - [4.1 Figure 1: `fig_comp1_cv_performance.png`](#41-figure-1-fig_comp1_cv_performancepng)
+  - [4.2 Figure 2: `fig_comp2_predictions_and_uncertainty.png`](#42-figure-2-fig_comp2_predictions_and_uncertaintypng)
+  - [4.3 Figure 3: `fig_comp3_parameter_forest.png`](#43-figure-3-fig_comp3_parameter_forestpng)
+  - [4.4 Figure 4: `fig_comp4_side_by_side_maps.png`](#44-figure-4-fig_comp4_side_by_side_mapspng)
+  - [4.5 Figure 5: `fig_comp5_reach_relationships.png`](#45-figure-5-fig_comp5_reach_relationshipspng)
+- [5. Worked Empirical Summaries *(Illustrative Reference Examples)*](#5-worked-empirical-summaries-illustrative-reference-examples)
+  - [5.1 Worked Example 1: Cross-Network Comparison — Nitrate (`0117`) on `ORN v2` vs. Custom `EU-Hydro (Thames)`](#51-worked-example-1-cross-network-comparison--nitrate-0117-on-orn-v2-vs-custom-eu-hydro-thames)
+  - [5.2 Worked Example 2: Cross-Determinand Comparison — Nitrate (`0117`) vs. Orthophosphate (`0180`) on `ORN v2`](#52-worked-example-2-cross-determinand-comparison--nitrate-0117-vs-orthophosphate-0180-on-orn-v2)
+- [6. Related Documentation](#6-related-documentation)
+
+---
+
 ## 1. Overview & Supported Comparison Modes
 
 The **S3N Model Run Comparison & Statistical Evaluation** script ([`../scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R)) performs automated statistical hypothesis testing, reach-by-reach spatial co-location analysis, environmental gradient comparison, parameter stability testing, and base-R visualization across **two or more completed `S3N` model output directories**. Internally, it also calls [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) to compute unified descriptive and stratified statistics for every model run being compared.

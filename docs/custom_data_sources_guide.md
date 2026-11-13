@@ -4,6 +4,35 @@ This guide explains how to incorporate additional monitoring data sources and cu
 
 ---
 
+## Table of Contents
+
+- [1. Executive Overview & Architecture](#1-executive-overview--architecture)
+- [2. Ingestion Methods: How to Provide Your Data](#2-ingestion-methods-how-to-provide-your-data)
+- [3. Dataset Requirements & Schema Specifications](#3-dataset-requirements--schema-specifications)
+  - [3.1 Station Points Table (`sites.csv`)](#31-station-points-table-sitescsv)
+  - [3.2 Sample Observations Table (`samples.csv`)](#32-sample-observations-table-samplescsv)
+  - [3.3 Automated Formatting Tool: `scripts/format_custom_data.py`](#33-automated-formatting-tool-scriptsformat_custom_datapy)
+- [4. Ingestion Workflows](#4-ingestion-workflows)
+  - [Method 1: Drop-In Directory (`data/custom/<project_name>/`)](#method-1-drop-in-directory-datacustomproject_name)
+  - [Method 2: Ad-Hoc CLI Flags (Zero Configuration)](#method-2-ad-hoc-cli-flags-zero-configuration)
+  - [Method 3: Permanent Declarative JSON Profile (`configs/sources/<name>.json`)](#method-3-permanent-declarative-json-profile-configssourcesnamejson)
+  - [Method 4: Multi-Source Combination & Composites (`--source=rsn+custom`)](#method-4-multi-source-combination--composites---sourcersncustom)
+- [5. Hydrological & Geostatistical Modeling Considerations](#5-hydrological--geostatistical-modeling-considerations)
+  - [5.1 Snapping Distance & Unrepresented Headwaters](#51-snapping-distance--unrepresented-headwaters)
+  - [5.2 Catchment Subsetting](#52-catchment-subsetting)
+  - [5.3 Sampling Frequency Imbalance & Aggregation](#53-sampling-frequency-imbalance--aggregation)
+  - [5.4 Left-Censored Values & Detection Limits (`< LOD`)](#54-left-censored-values--detection-limits--lod)
+  - [5.5 Two-Stage Modeling with Pre-Fitted Values (GAMs, Machine Learning) & Approach A: Measurement Error Kriging](#55-two-stage-modeling-with-pre-fitted-values-gams-machine-learning--approach-a-measurement-error-kriging)
+- [6. End-to-End Walkthrough: Adding a Custom Dataset](#6-end-to-end-walkthrough-adding-a-custom-dataset)
+  - [Step 1: Create Custom Data Directory & Files](#step-1-create-custom-data-directory--files)
+  - [Step 2: Combine with National RSN and Preprocess](#step-2-combine-with-national-rsn-and-preprocess)
+  - [Step 3: Run Station Snapping Diagnostics](#step-3-run-station-snapping-diagnostics)
+  - [Step 4: Fit S3N Model & Predict Across All Reaches](#step-4-fit-s3n-model--predict-across-all-reaches)
+  - [Step 5: Direct Statistical Comparison Against Baseline RSN](#step-5-direct-statistical-comparison-against-baseline-rsn)
+- [7. Troubleshooting & Diagnostics Reference](#7-troubleshooting--diagnostics-reference)
+
+---
+
 ## 1. Executive Overview & Architecture
 
 The `S3N` pipeline models spatial autocorrelation along river networks using moving-average covariance functions:

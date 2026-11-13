@@ -9,6 +9,23 @@ This document provides complete technical documentation for the three-stage **Sc
 
 ---
 
+## Table of Contents
+
+- [Part I: Python GIS & Monitoring Preprocessing (`01_preprocess_orn.py`)](#part-i-python-gis--monitoring-preprocessing-01_preprocess_ornpy)
+  - [1. Multi-Network Monitoring Data Ingestion (`--source=<name>`)](#1-multi-network-monitoring-data-ingestion---sourcename)
+  - [2. Zero-Dependency GeoPackage WKB Geometry Decoding (`parse_gpkg_multilinestring()`)](#2-zero-dependency-geopackage-wkb-geometry-decoding-parse_gpkg_multilinestring)
+  - [3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()`)](#3-spatial-grid-snapping--exact-along-reach-projection-point_to_polyline)
+  - [4. Subsetting to Monitored Catchments & Aggregating 100 m Covariates](#4-subsetting-to-monitored-catchments--aggregating-100-m-covariates)
+  - [5. Directed River Tree Construction & Additive Function Values](#5-directed-river-tree-construction--additive-function-values)
+- [Part II: OpenMP C++ Stream-Tree Neighbor & NNGP Engine (`src/s3n_fast_neighbors.cpp`)](#part-ii-openmp-c-stream-tree-neighbor--nngp-engine-srcs3n_fast_neighborscpp)
+  - [1. O(1) Flow-Connectedness via Euler-Tour DFS Timestamps (`C_build_tree_tin_tout()` L27–70)](#1-o1-flow-connectedness-via-euler-tour-dfs-timestamps-c_build_tree_tin_tout-l2770)
+  - [2. Pairwise Stream Distance & Weight Kernel (`calc_pair` L99–140)](#2-pairwise-stream-distance--weight-kernel-calc_pair-l99140)
+  - [3. Compressed Sparse Row (CSR) Neighbor Buffers (`C_compute_s3n_neighbors()` L142–302)](#3-compressed-sparse-row-csr-neighbor-buffers-c_compute_s3n_neighbors-l142302)
+- [Part III: R S3N Estimation, Prediction & Cross-Validation (`02_fit_s3n_models.R` & `run_s3n_determinand.R`)](#part-iii-r-s3n-estimation-prediction--cross-validation-02_fit_s3n_modelsr--run_s3n_determinandr)
+- [Part IV: System Requirements, Environment & Dependencies](#part-iv-system-requirements-environment--dependencies)
+
+---
+
 ## Part I: Python GIS & Monitoring Preprocessing (`01_preprocess_orn.py`)
 
 [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~13–15 seconds** using pure Python standard library modules (`sqlite3`, `struct`, `math`, `csv`).

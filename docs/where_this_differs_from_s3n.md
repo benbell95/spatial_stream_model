@@ -1,5 +1,21 @@
 # Where This Pipeline Differs from the S3N Package
 
+## Table of Contents
+
+- [Acknowledgements, Foundations & Attribution](#acknowledgements-foundations--attribution)
+- [1. High-Level Overview: `S3N` vs. This Pipeline](#1-high-level-overview-s3n-vs-this-pipeline)
+- [2. Where This Pipeline Uses the `S3N` Package](#2-where-this-pipeline-uses-the-s3n-package)
+- [3. Where This Pipeline Replaces `S3N`](#3-where-this-pipeline-replaces-s3n)
+  - [3.1 Zero-Dependency GIS Ingestion, Cycle Resolution & Station Snapping](#31-zero-dependency-gis-ingestion-cycle-resolution--station-snapping)
+  - [3.2 Sub-Second C++/OpenMP Euler-Tour Neighbor Engine](#32-sub-second-copenmp-euler-tour-neighbor-engine)
+  - [3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting (`--afv=`)](#33-numerically-stable-log_afv--physical-confluence-weighting---afv)
+  - [3.4 Combining `Tail-Up` & `Tail-Down`](#34-combining-tail-up--tail-down)
+- [4. Additional Features Available in This Pipeline](#4-additional-features-available-in-this-pipeline)
+- [5. License](#5-license)
+- [6. Related Documentation](#6-related-documentation)
+
+---
+
 ## Acknowledgements, Foundations & Attribution
 
 This pipeline is built upon and inspired by the **Scalable Spatial Stream Network (`S3N`)** statistical framework and its reference R implementation, [`jpierkunke/S3N`](https://github.com/jpierkunke/S3N). The key conceptual breakthrough—embedding dendritic river-network covariance structures inside a **Nearest-Neighbor Gaussian Process (`NNGP`)** so that likelihood evaluation and kriging scale linearly $\mathcal{O}(n)$ rather than cubically $\mathcal{O}(n^3)$—originates directly with `S3N`.

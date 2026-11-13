@@ -8,6 +8,37 @@ This guide documents all scripts, command-line options, output directory convent
 
 ---
 
+## Table of Contents
+
+- [1. Overview of Pipeline Scripts](#1-overview-of-pipeline-scripts)
+- [2. Primary Runner: `scripts/run_s3n_determinand.R`](#2-primary-runner-scriptsrun_s3n_determinandr)
+  - [2.1 Synopsis](#21-synopsis)
+  - [2.2 Complete Option Reference](#22-complete-option-reference)
+  - [2.3 Common Determinand Codes (`det_code`)](#23-common-determinand-codes-det_code)
+  - [2.4 Ecological & Biological Datasets (`--dataset=inverts|diatoms|macrophytes|rhs|lcms`)](#24-ecological--biological-datasets---datasetinvertsdiatomsmacrophytesrhslcms)
+  - [2.5 Quick Decision Cheat Sheet ("Which Flag Should I Choose?")](#25-quick-decision-cheat-sheet-which-flag-should-i-choose)
+  - [2.5 Universal Data Transformation Engine (`--transform=<type>`)](#25-universal-data-transformation-engine---transformtype)
+  - [2.6 Multi-Network Monitoring Data Sources & Custom Datasets (`--source=<name>`)](#26-multi-network-monitoring-data-sources--custom-datasets---sourcename)
+  - [2.7 Practical Examples for `scripts/run_s3n_determinand.R`](#27-practical-examples-for-scriptsrun_s3n_determinandr)
+- [3. GIS & Network Preprocessor: `scripts/01_preprocess_orn.py`](#3-gis--network-preprocessor-scripts01_preprocess_ornpy)
+  - [3.1 Synopsis](#31-synopsis)
+  - [3.2 Complete Option Reference](#32-complete-option-reference)
+  - [3.3 Station-to-Reach Snapping Tolerance (`--max-snap-dist`)](#33-station-to-reach-snapping-tolerance---max-snap-dist)
+  - [3.4 Practical Examples for `scripts/01_preprocess_orn.py`](#34-practical-examples-for-scripts01_preprocess_ornpy)
+- [4. Output Files & Directory Structure](#4-output-files--directory-structure)
+  - [4.1 Preprocessed Data Directory (`data/processed/<net>_<source>/`)](#41-preprocessed-data-directory-dataprocessednet_source)
+  - [4.2 Output Directory Layout (`output/`) & Model Run Results (`output/results/`)](#42-output-directory-layout-output--model-run-results-outputresults)
+- [5. Software Dependencies, C++ Compilation & Automated Tests](#5-software-dependencies-c-compilation--automated-tests)
+- [6. Single-Output Descriptive Statistics & Diagnostics: `scripts/05_descriptive_stats.R`](#6-single-output-descriptive-statistics--diagnostics-scripts05_descriptive_statsr)
+- [7. Comparing 2 or More Model Runs & Cross-Determinand Relationships: `scripts/04_compare_model_runs.R`](#7-comparing-2-or-more-model-runs--cross-determinand-relationships-scripts04_compare_model_runsr)
+- [8. Station-to-Reach Snapping Diagnostics & Catchment Plots: `scripts/06_station_snapping_diagnostics.R`](#8-station-to-reach-snapping-diagnostics--catchment-plots-scripts06_station_snapping_diagnosticsr)
+- [12. Regenerating & Customising Existing Plots (`scripts/03_generate_plots.R`)](#12-regenerating--customising-existing-plots-scripts03_generate_plotsr)
+  - [Key Plot-Customisation Flags](#key-plot-customisation-flags)
+  - [Practical Examples](#practical-examples)
+  - [Standalone Script Shorthands (`02_fit_s3n_models.R` & `03_generate_plots.R`)](#standalone-script-shorthands-02_fit_s3n_modelsr--03_generate_plotsr)
+
+---
+
 ## 1. Overview of Pipeline Scripts
 
 | Script | Language | Purpose |

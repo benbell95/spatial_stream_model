@@ -4,6 +4,26 @@ This guide explains what is required in a river/stream network dataset to work w
 
 ---
 
+## Table of Contents
+
+- [1. Overview & Architecture](#1-overview--architecture)
+- [2. Dataset Requirements](#2-dataset-requirements)
+  - [2.1 File Format](#21-file-format)
+  - [2.2 Geometry Requirements](#22-geometry-requirements)
+  - [2.3 Coordinate Reference System (CRS)](#23-coordinate-reference-system-crs)
+  - [2.4 Flow Routing & Topology Requirements](#24-flow-routing--topology-requirements)
+  - [2.5 Required vs. Optional vs. Auto-Computed Attributes](#25-required-vs-optional-vs-auto-computed-attributes)
+- [3. Step-by-Step Setup Guide](#3-step-by-step-setup-guide)
+  - [Step 1: Place Your GeoPackage or GeoParquet File in `gis/` and Inspect Its Schema](#step-1-place-your-geopackage-or-geoparquet-file-in-gis-and-inspect-its-schema)
+  - [Step 2: Create a Network Profile in `configs/networks/<abbr>.json`](#step-2-create-a-network-profile-in-configsnetworksabbrjson)
+  - [Step 3: Run the Preprocessor on Your Network](#step-3-run-the-preprocessor-on-your-network)
+  - [Step 4: Run S3N Models with Your Water Network](#step-4-run-s3n-models-with-your-water-network)
+  - [Step 5: Re-Generate or Customize Plots](#step-5-re-generate-or-customize-plots)
+- [4. Ad-Hoc Usage (Running Directly on a `.parquet` or `.gpkg` File Without a Config File)](#4-ad-hoc-usage-running-directly-on-a-parquet-or-gpkg-file-without-a-config-file)
+- [5. Troubleshooting & Validation Checklist](#5-troubleshooting--validation-checklist)
+
+---
+
 ## 1. Overview & Architecture
 
 The `S3N` R package models spatial autocorrelation along river networks using two moving-average covariance structures:

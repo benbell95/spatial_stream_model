@@ -8,6 +8,30 @@ This guide explains **when** to keep networks as separate co-kriged variables ve
 
 ---
 
+## Table of Contents
+
+- [1. Why Co-Kriging Beats Naive Data Pooling](#1-why-co-kriging-beats-naive-data-pooling)
+  - [How the Pipeline Solves Each Issue](#how-the-pipeline-solves-each-issue)
+- [2. Core Multi-Source & Network-Preference Options](#2-core-multi-source--network-preference-options)
+  - [Option Summary](#option-summary)
+  - [Mathematical Formulation of `--source-weight` and `--source-se`](#mathematical-formulation-of---source-weight-and---source-se)
+- [3. High-Value Real-World Use Cases](#3-high-value-real-world-use-cases)
+  - [Use Case 1: National `RSN` + Citizen Science WaterBlitz Colorimetric Kits](#use-case-1-national-rsn--citizen-science-waterblitz-colorimetric-kits)
+  - [Use Case 2: Ecological Statutory `WHPT ASPT` + Volunteer `Riverfly ARMI`](#use-case-2-ecological-statutory-whpt-aspt--volunteer-riverfly-armi)
+  - [Use Case 3: Accredited `RSN` + Regional Water Company / Catchment Trust Grab Samples (Same Method)](#use-case-3-accredited-rsn--regional-water-company--catchment-trust-grab-samples-same-method)
+  - [Use Case 4: High-Frequency Sondes / In-Situ Telemetry + Spot `RSN` Monitoring](#use-case-4-high-frequency-sondes--in-situ-telemetry--spot-rsn-monitoring)
+- [4. End-to-End Worked Workflow (`RSN` + Citizen Science WaterBlitz)](#4-end-to-end-worked-workflow-rsn--citizen-science-waterblitz)
+  - [Step 1: Standardise Citizen Science Data (with Tobit Range & Site Grouping)](#step-1-standardise-citizen-science-data-with-tobit-range--site-grouping)
+  - [Step 2: Snap Both Networks to the Stream Network (`ORN v2`)](#step-2-snap-both-networks-to-the-stream-network-orn-v2)
+  - [Step 3: Verify Station Snapping Quality](#step-3-verify-station-snapping-quality)
+  - [Step 4: Run Baseline Univariate `RSN` vs. Co-Kriged Multi-Source Model](#step-4-run-baseline-univariate-rsn-vs-co-kriged-multi-source-model)
+  - [Step 5: Alternative Single-Determinand Weighted Pooling (Matched Methods Only)](#step-5-alternative-single-determinand-weighted-pooling-matched-methods-only)
+  - [Step 6: Evaluate Added Value & Inspect Diagnostics](#step-6-evaluate-added-value--inspect-diagnostics)
+- [5. Practical Caveats & Checklist Before Trusting a Fused Map](#5-practical-caveats--checklist-before-trusting-a-fused-map)
+- [Related Guides](#related-guides)
+
+---
+
 ## 1. Why Co-Kriging Beats Naive Data Pooling
 
 Simply appending citizen-science or campaign readings into the same target variable as `RSN` laboratory assays causes four structural problems in spatial stream modelling:

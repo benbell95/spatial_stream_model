@@ -1,5 +1,25 @@
 # S3N Descriptive Statistics & Environmental Gradient Analysis — Interpretation Guide
 
+## Table of Contents
+
+- [1. Overview & Purpose](#1-overview--purpose)
+- [2. Quick-Start CLI Reference & Generated Outputs](#2-quick-start-cli-reference--generated-outputs)
+  - [2.1 Running the Script](#21-running-the-script)
+  - [2.2 Output Files Written to `<run_dir>/descriptives/`](#22-output-files-written-to-run_dirdescriptives)
+- [3. Section-by-Section Guide to the Report & Metrics](#3-section-by-section-guide-to-the-report--metrics)
+  - [3.1 Section 1: Comprehensive Distributional Statistics (`descriptive_stats_summary.csv`)](#31-section-1-comprehensive-distributional-statistics-descriptive_stats_summarycsv)
+  - [3.2 Section 2: Monitoring Network Representativeness & Bias Analysis (`monitoring_representativeness.csv`)](#32-section-2-monitoring-network-representativeness--bias-analysis-monitoring_representativenesscsv)
+  - [3.3 Section 3: Stratified Environmental, Topological & Basin Analysis (`stratified_results_summary.csv`)](#33-section-3-stratified-environmental-topological--basin-analysis-stratified_results_summarycsv)
+  - [3.4 Section 4: Within-Run Statistical Hypothesis Tests (`within_run_statistical_tests.csv`)](#34-section-4-within-run-statistical-hypothesis-tests-within_run_statistical_testscsv)
+  - [3.5 Section 5: Cross-Validation Performance Summary (`cv_comparison_*.csv`)](#35-section-5-cross-validation-performance-summary-cv_comparison_csv)
+- [4. Visual Diagnostic Guide: Interpreting the Figures](#4-visual-diagnostic-guide-interpreting-the-figures)
+  - [4.1 Figure 1: `fig_desc1_distributions_and_representativeness.png`](#41-figure-1-fig_desc1_distributions_and_representativenesspng)
+  - [4.2 Figure 2: `fig_desc2_stratified_gradients.png`](#42-figure-2-fig_desc2_stratified_gradientspng)
+- [5. Worked Empirical Summary: Nitrate (`0117`) on ORN v2 (`output/results/det_0117_orn_rsn/descriptives/`)](#5-worked-empirical-summary-nitrate-0117-on-orn-v2-outputresultsdet_0117_orn_rsndescriptives)
+- [6. Related Documentation](#6-related-documentation)
+
+---
+
 ## 1. Overview & Purpose
 
 The **Single-Output Descriptive Statistics & Environmental Gradient Analysis** script ([`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R)) evaluates the full reach-level prediction table, station observations, and 5-fold cross-validation results produced by a single Spatial Stream Network (`S3N`) model run.

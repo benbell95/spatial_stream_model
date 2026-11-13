@@ -4,6 +4,20 @@ Databricks notebooks are well suited to this hybrid pipeline because they native
 
 ---
 
+## Table of Contents
+
+- [1. Repository Setup: Databricks Git Folders](#1-repository-setup-databricks-git-folders)
+- [2. Notebook Architecture (Cell-by-Cell Flow)](#2-notebook-architecture-cell-by-cell-flow)
+  - [Cell 1: Compile C++ Engine & Check Dependencies (`%sh` and `%r`)](#cell-1-compile-c-engine--check-dependencies-sh-and-r)
+  - [Cell 2: Configure Large Data Storage (Unity Catalog Volumes)](#cell-2-configure-large-data-storage-unity-catalog-volumes)
+  - [Cell 3: GIS & Data Preprocessing (`%python`)](#cell-3-gis--data-preprocessing-python)
+  - [Cell 4: S3N Modelling & Interactive Inspection (`%r`)](#cell-4-s3n-modelling--interactive-inspection-r)
+  - [Cell 5: Model Comparison & Diagnostics (`%r`)](#cell-5-model-comparison--diagnostics-r)
+  - [Cell 6: Inline Visualization (`%python`)](#cell-6-inline-visualization-python)
+- [3. Databricks-Specific Advantages](#3-databricks-specific-advantages)
+
+---
+
 ## 1. Repository Setup: Databricks Git Folders
 
 1. Clone this repository into **Databricks Git Folders**:

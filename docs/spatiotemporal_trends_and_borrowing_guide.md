@@ -4,6 +4,27 @@ This guide explains how to run temporal batch analyses (`--by=year|season|month`
 
 ---
 
+## Table of Contents
+
+- [1. Quick Start & CLI Flags](#1-quick-start--cli-flags)
+- [2. Practical Usage Examples](#2-practical-usage-examples)
+  - [2.1 Multi-Year Trend Mapping (Standard vs. Dynamic Borrowing)](#21-multi-year-trend-mapping-standard-vs-dynamic-borrowing)
+  - [2.2 Combining with Regulatory Exceedance Mapping (`--threshold=uk`)](#22-combining-with-regulatory-exceedance-mapping---thresholduk)
+  - [2.3 Seasonal & Monthly Dynamics](#23-seasonal--monthly-dynamics)
+  - [2.4 Combining with Custom Basins, Non-Linear Trends, or Normalisation](#24-combining-with-custom-basins-non-linear-trends-or-normalisation)
+- [3. How Dynamic Borrowing Across Time Works (`--st-borrow`)](#3-how-dynamic-borrowing-across-time-works---st-borrow)
+  - [3.1 Why Borrow Strength Across Time?](#31-why-borrow-strength-across-time)
+  - [3.2 Two-Step Empirical Bayes Temporal Smoother](#32-two-step-empirical-bayes-temporal-smoother)
+- [4. How Reach-Level Trend Analysis Works](#4-how-reach-level-trend-analysis-works)
+  - [4.1 Precision-Weighted Least Squares (WLS) Slope](#41-precision-weighted-least-squares-wls-slope)
+  - [4.2 Wald $Z$-Test & 5-Tier Significance Classification](#42-wald-z-test--5-tier-significance-classification)
+- [5. Output Files, Columns & Figures](#5-output-files-columns--figures)
+- [6. How to Interpret Figure 6 & Figure 7](#6-how-to-interpret-figure-6--figure-7)
+  - [Figure 6 (`fig6_spatiotemporal_trends_by_<by>_<code>.png`) — Overall Trend](#figure-6-fig6_spatiotemporal_trends_by_by_codepng--overall-trend)
+  - [Figure 7 (`fig7_spatiotemporal_transitions_by_<by>_<code>.png`) — Period-to-Period Transitions](#figure-7-fig7_spatiotemporal_transitions_by_by_codepng--period-to-period-transitions)
+
+---
+
 ## 1. Quick Start & CLI Flags
 
 | Flag | Default | Description |

@@ -4,6 +4,40 @@ This guide details the statistical methodology, mathematical formulation, C++ im
 
 ---
 
+## Table of Contents
+
+- [1. Executive Summary & Why Two-Stage Modeling is Needed](#1-executive-summary--why-two-stage-modeling-is-needed)
+  - [1.1 The Spatiotemporal Decoupling Challenge in River Networks](#11-the-spatiotemporal-decoupling-challenge-in-river-networks)
+  - [1.2 The Statistical Validity of Two-Stage Modeling](#12-the-statistical-validity-of-two-stage-modeling)
+- [2. Mathematical & Theoretical Foundations](#2-mathematical--theoretical-foundations)
+  - [2.1 The Two-Stage Observation Model](#21-the-two-stage-observation-model)
+  - [2.2 The Delta Method for Response Variance Conversion](#22-the-delta-method-for-response-variance-conversion)
+  - [2.3 Nugget Decomposition](#23-nugget-decomposition)
+  - [2.4 Heteroskedastic NNGP Prediction & Denoising](#24-heteroskedastic-nngp-prediction--denoising)
+- [3. High-Performance C++ Solver Architecture](#3-high-performance-c-solver-architecture)
+  - [3.1 Stack Allocation & Numerical Stability](#31-stack-allocation--numerical-stability)
+  - [3.2 Machine-Precision Consistency Verification](#32-machine-precision-consistency-verification)
+- [4. Input Data Format & Schema Specification](#4-input-data-format--schema-specification)
+  - [4.1 Station Coordinate Points (`sites.csv`)](#41-station-coordinate-points-sitescsv)
+  - [4.2 GAM Predictions Table (`samples.csv`)](#42-gam-predictions-table-samplescsv)
+  - [4.3 Multi-Temporal Aggregation](#43-multi-temporal-aggregation)
+- [5. End-to-End Workflow & Command Reference](#5-end-to-end-workflow--command-reference)
+  - [Step 1: Preprocess River Network & Snap Stations](#step-1-preprocess-river-network--snap-stations)
+  - [Step 2: Fit S3N Model with Measurement Error Kriging](#step-2-fit-s3n-model-with-measurement-error-kriging)
+  - [Step 3: Standalone Model Execution](#step-3-standalone-model-execution)
+- [6. Output Tables & Interpretation](#6-output-tables--interpretation)
+  - [6.1 Parameter Estimates Table (`parameters_0117.csv`)](#61-parameter-estimates-table-parameters_0117csv)
+  - [6.2 Cross-Validation Comparison Table (`cv_comparison_0117.csv`)](#62-cross-validation-comparison-table-cv_comparison_0117csv)
+- [7. Diagnostic Comparison: Standard S3N vs Measurement Error Kriging](#7-diagnostic-comparison-standard-s3n-vs-measurement-error-kriging)
+- [8. Troubleshooting & FAQ](#8-troubleshooting--faq)
+  - [Q1: What if my first-stage model outputs standard errors on the log-scale already?](#q1-what-if-my-first-stage-model-outputs-standard-errors-on-the-log-scale-already)
+  - [Q2: What if some stations have missing uncertainty (`NA` or `0`)?](#q2-what-if-some-stations-have-missing-uncertainty-na-or-0)
+  - [Q3: Does this affect regular non-GAM runs (e.g. `--source=rsn`)?](#q3-does-this-affect-regular-non-gam-runs-eg---sourcersn)
+  - [Q4: Can I use this for sensor telemetry with calibration drift uncertainty?](#q4-can-i-use-this-for-sensor-telemetry-with-calibration-drift-uncertainty)
+- [9. Related Guides & References](#9-related-guides--references)
+
+---
+
 ## 1. Executive Summary & Why Two-Stage Modeling is Needed
 
 ### 1.1 The Spatiotemporal Decoupling Challenge in River Networks
