@@ -15,7 +15,9 @@ Full credit belongs to the authors of the foundational packages and theory on wh
   - Ver Hoef, J. M., Peterson, E. E., & Theobald, D. (2006). *Spatial Statistical Models that Use Flow and Stream Distance*. *Environmental and Ecological Statistics*, 13(4), 449–464.
   - Ver Hoef, J. M., & Peterson, E. E. (2010). *A Moving Average Approach for Spatial Statistical Models of Stream Networks*. *Journal of the American Statistical Association*, 105(489), 6–18.
 
-In this repository, `S3N` serves as an optional fitting/kriging backend for standard univariate exponential models, while the surrounding codebase wraps and extends it into an end-to-end national preprocessing, modelling, validation, multivariate co-kriging, risk-mapping, and reporting platform.
+In this repository, `S3N` is used for standard univariate exponential model fitting, bootstrapping, and kriging, while the surrounding codebase wraps and extends it (alongside a built-in OpenMP C++ NNGP fallback and extensions) into an end-to-end national preprocessing, modelling, validation, multivariate co-kriging, risk-mapping, and reporting platform.
+
+> **Citation:** If you use this pipeline, please cite the original `S3N` paper: Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. arXiv:2512.12398 ([https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)).
 
 ---
 
