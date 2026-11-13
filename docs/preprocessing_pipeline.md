@@ -108,59 +108,12 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 ## Part IV: System Requirements, Environment & Dependencies
 
-The entire S3N pipeline was deliberately engineered to minimize external software dependencies so that it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
-
-### 1. Python Environment & Packages ([`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py))
-- **Python Version**: **Python ≥ 3.8** (tested on `Python 3.14.8`). Note: `statistics.NormalDist()` used in the Robust Lognormal ROS censored-value imputation was introduced in Python 3.8.
-- **Third-Party Python Packages**: **None (Zero `pip` or `conda` dependencies)**.
-- **Standard Library Modules Used**:
-  | Module | Role in [`01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) |
-  | :--- | :--- |
-  | `sqlite3` | Queries the 10.4 GB [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) OGC GeoPackage directly via SQL without `GDAL`/`fiona`/`geopandas`. |
-  | `struct` | Unpacks little-endian binary GeoPackage headers and WKB `LineString`/`MultiLineString` coordinate arrays. |
-  | `statistics` | Computes means, medians, standard deviations, and normal quantiles (`NormalDist().inv_cdf`) for ROS imputation. |
-  | `math`, `collections`, `csv`, `argparse`, `os`, `time` | Geometry projection, tree traversal, CSV I/O, and CLI argument parsing. |
-
----
-
-### 2. R Environment & Packages ([`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R), [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R))
-- **R Version**: **R ≥ 3.5.0** (tested on `R 4.6.2` and `R 4.5.x` on `x86_64-redhat-linux-gnu`).
-- **Required R Packages** (installed in the default R package library):
-  | Package | Version / Source | Location | Purpose |
-  | :--- | :--- | :--- | :--- |
-  | **`S3N`** | `1.0.5` (`remotes::install_github("jpierkunke/S3N")`) | Standard R Library (`.libPaths()`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging prediction (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`) (Kunke et al., 2024; `https://github.com/jpierkunke/S3N`). |
-  | `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr` | CRAN | Standard R Library (`.libPaths()`) | Package dependencies required by the upstream `jpierkunke/S3N` package namespace. |
-  | `jsonlite` *(optional/recommended)* | CRAN | Standard R Library (`.libPaths()`) | Rich JSON parsing for `configs/*.json` and `network_metadata.json` (with built-in base-R fallback in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
-  | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Bundled with R | All linear algebra (`qr.solve`), statistical functions, and publication-quality base-R PNG graphics (`png(..., type = "cairo")`, `segments`, `points`, `barplot`, `boxplot`). |
-- **No `ggplot2` / `sf` / `SSN2` Required**: All maps and diagnostic plots use pure base R graphics, and all stream-tree neighbor calculations use the compiled C++ OpenMP engine ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)). Shared R modules live in [`scripts/s3n_config.R`](../scripts/s3n_config.R), [`scripts/s3n_covariates.R`](../scripts/s3n_covariates.R), [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R), [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R), and [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R).
-
----
-
-### 3. Compiled C++ / OpenMP Shared Library ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp))
-- **Compiled Binary**: [`src/s3n_fast_neighbors.so`](../src/s3n_fast_neighbors.so), loaded dynamically by the R scripts via `dyn.load(file.path(BASE_DIR, "src/s3n_fast_neighbors.so"))`.
-- **Recompilation Command** (if migrating to a new CPU architecture or OS):
-  ```bash
-  PKG_CXXFLAGS="-fopenmp -O3" PKG_LIBS="-fopenmp" R CMD SHLIB src/s3n_fast_neighbors.cpp
-  ```
-
----
-
-### 4. System / OS Dependencies (Linux)
-| Dependency | Fedora / RHEL Package | Ubuntu / Debian Package | Purpose |
-| :--- | :--- | :--- | :--- |
-| **C/C++ Compiler & OpenMP** | `gcc`, `gcc-c++`, `libgomp` | `build-essential`, `libomp-dev` | Compiling [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) and the `S3N` C/C++ BRISC backend with multi-threaded OpenMP (`-fopenmp`). |
-| **R Development Headers & BLAS/LAPACK** | `R-core-devel`, `openblas-devel`, `lapack-devel` | `r-base-dev`, `libopenblas-dev`, `liblapack-dev` | Provides `<R.h>`, `<Rinternals.h>`, `<R_ext/Lapack.h>`, and `<R_ext/BLAS.h>` for `S3N` and `s3n_fast_neighbors.so`. |
-| **Cairo Graphics** | `cairo`, `cairo-devel` | `libcairo2`, `libcairo2-dev` | Enables anti-aliased headless PNG rendering (`type = "cairo"`) in R without an X11 display server. |
-| **SQLite3** | `sqlite-libs` | `libsqlite3-0` | Underlying C library used by Python's built-in `sqlite3` module to read `ORN_v2.gpkg`. |
-
----
-
-### 5. Input Data & Hardware Requirements
+- **Software & Compilation**: `01_preprocess_orn.py` requires only **Python ≥ 3.8** (standard library only, zero `pip` packages). R scripts require **R ≥ 3.5.0**, `S3N` (plus its CRAN dependencies), optional `jsonlite`, and [`src/s3n_fast_neighbors.so`](../src/s3n_fast_neighbors.so) (`R CMD SHLIB src/s3n_fast_neighbors.cpp`). Shared R helper modules live in [`scripts/s3n_config.R`](../scripts/s3n_config.R), [`scripts/s3n_covariates.R`](../scripts/s3n_covariates.R), [`scripts/s3n_transforms.R`](../scripts/s3n_transforms.R), [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R), and [`scripts/s3n_plot_functions.R`](../scripts/s3n_plot_functions.R). See [`./setup_and_architecture.md`](./setup_and_architecture.md) for full OS package tables, `configs/determinands.json` schema, and test commands.
 - **Required Data Files**:
   1. [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) (~10.4 GB Ordnance Survey Open Rivers Network v2 GeoPackage — only required when running [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)).
   2. [`data/NCEA_River_Surveillance_Network_ARD_Open/`](../data/NCEA_River_Surveillance_Network_ARD_Open) (~235 MB across EA RSN Water Quality, Macroinvertebrate, Diatom, Macrophyte, River Habitat Survey, and LCMS/GCMS CSV files).
   3. [`data/NCEA_Small_Streams_Network_ARD_Open/`](../data/NCEA_Small_Streams_Network_ARD_Open) (~48 MB across EA SSN Small Streams Network CSV files — required when using `--source=ssn` or `--source=rss`).
 - **Memory & CPU**:
   - **RAM**: ~1.5 GB peak memory (fits comfortably on any laptop or standard VM).
-  - **CPU**: Uses 4 OpenMP threads by default (`n_omp = 4L`); a full national + 3-basin S3N run with 5-fold cross-validation and 4 figures completes in **~18–25 seconds**.
+  - **CPU**: Uses 4 OpenMP threads by default (`n_omp = 4L` / `--omp=4`); a full national + 3-basin S3N run with 5-fold cross-validation and 4 figures completes in **~18–25 seconds**.
 

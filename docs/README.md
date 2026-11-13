@@ -1,6 +1,43 @@
-The docs folder contains detailed instructions for using these scripts.
+# S3N Documentation Index
 
-1. [Usage Guide](usage_guide.md) - This provides usage instructions, lists all available commands and options.
-2. [Preprocessing Pipeline](preprocessing_pipeline.md) - This gives detailed technical information about the pre-processing stage (making the water network dataset compatible with this script).
-3. [ORN Variables](orn_variables_reference.md) - This provides detailed information about the variables available in the ORN water network dataset, and how these are used by the spatial model.
-4. [Custom water network](custom_water_network_guide.md) - This provides detailed technical information to use these scripts with different/custom water network datasets.
+Use this index to find the right guide for your task.
+
+---
+
+## 1. Getting Started & CLI Reference
+
+| Guide | Purpose |
+| :--- | :--- |
+| [**Setup, Architecture & Testing**](./setup_and_architecture.md) | Repository layout, directory & determinand configuration (`configs/directories.json`, `configs/determinands.json`), Python/R/C++ dependencies, compiling `src/s3n_fast_neighbors.so`, and running the test suite. |
+| [**End-to-End Usage Guide**](./usage_guide.md) | Complete CLI flag reference, flag/method decision cheat sheet, workflow examples (`01_preprocess_orn.py`, `run_s3n_determinand.R`, `02`/`03` split execution), and output file descriptions. |
+| [**Preprocessing & C++ Neighbor Engine**](./preprocessing_pipeline.md) | Detailed walkthrough of `01_preprocess_orn.py` (GeoPackage extraction, ROS censored imputation, station snapping, AFV/Strahler computation) and the OpenMP C++ Euler-tour engine (`src/s3n_fast_neighbors.cpp`). |
+| [**Running on Databricks**](./databricks_guide.md) | Cell-by-cell notebook pattern for running the hybrid Python/R pipeline on Databricks Git Folders and Unity Catalog Volumes. |
+
+---
+
+## 2. Customising Data, Networks & Covariates
+
+| Guide | Purpose |
+| :--- | :--- |
+| [**Custom Monitoring Data Sources**](./custom_data_sources_guide.md) | Adding your own monitoring CSVs via `format_custom_data.py`, `configs/sources/*.json`, censored/range handling (`--range-mode`), and composite source combinations (`+`). |
+| [**Custom Water Networks (`BYOWN`)**](./custom_water_network_guide.md) | Bringing your own river network GeoPackage/Shapefile via `configs/networks/<id>.json` and understanding the standardized 5-file processed schema. |
+| [**ORN Variables & Covariates Reference**](./orn_variables_reference.md) | All `15` covariates in `COVARIATE_CATALOG`, default vs. optional predictors, and mixed `+/-` `--vars=` selection syntax. |
+
+---
+
+## 3. Diagnostics & Output Interpretation
+
+| Guide | Purpose |
+| :--- | :--- |
+| [**Station Snapping Diagnostics**](./station_snapping_guide.md) | Running `06_station_snapping_diagnostics.R`, inspecting snapping distances/coordinates, and interpreting catchment snapping maps. |
+| [**Descriptive Statistics Guide**](./descriptive_stats_interpretation_guide.md) | Interpreting single-run outputs from `05_descriptive_stats.R` (distributional metrics, monitoring bias tests, landscape/hydrogeology/stream-order gradients, within-run hypothesis tests). |
+| [**Model Comparison Guide**](./model_comparison_interpretation_guide.md) | Interpreting multi-run outputs from `04_compare_model_runs.R` (cross-network, covariate, transform, temporal, and cross-determinand comparisons, `N:P` stoichiometry, `ΔZ` divergence, and Wald `Z`-tests). |
+
+---
+
+## 4. Methodology & Statistical Theory
+
+| Guide | Purpose |
+| :--- | :--- |
+| [**S3N Modelling & Kriging Theory**](./s3n_modelling_and_kriging_guide.md) | Mathematical foundations of ROS imputation, 12 response transformations, Tail-Up / Tail-Down stream covariance, NNGP estimation, and universal stream kriging. |
+| [**Two-Stage GAM & Measurement-Error Kriging**](./two_stage_gam_measurement_error_kriging_guide.md) | Propagating stage-1 temporal/GAM standard errors (`meas_uncertainty`) into stage-2 S3N kriging (`delta_se` / `total_tau.sq`). |
