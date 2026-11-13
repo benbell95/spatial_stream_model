@@ -610,7 +610,42 @@ To make the mathematics concrete, let us trace how the pipeline computes the fin
 
 ---
 
-## 10. Summary Reference: Key Equations at a Glance
+## 10. Hydrological Cross-Validation & Optimal Monitoring Network Design
+
+### 10.1 Hydrological Cross-Validation Modes (`--cv-mode=<mode>`)
+
+Standard 5-fold random station CV (`--cv-mode=random`) randomly splits monitoring stations across folds. Because adjacent stations along the same river channel are strongly spatially autocorrelated, random CV can overestimate generalisation performance to unmonitored catchments or headwaters. Four CV splitting modes are supported in [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
+
+| Mode (`--cv-mode=...`) | Splitting Strategy | What It Measures | Automatic Fallback |
+| :--- | :--- | :--- | :--- |
+| `random` *(default)* | 5-fold random station split | In-network interpolation accuracy | — |
+| `catchment` | 5-fold CV grouped by `CatchID` (greedy balanced assignment) | **Leave-Catchment-Out**: generalisation to completely unmonitored river basins | Falls back to `spatial_block` if domain has `< 2` catchments |
+| `strahler` | Train on mainstems (`Strahler >= 3`), evaluate on headwaters (`Strahler <= 2`) | **Headwater Extrapolation**: accuracy when predicting unmonitored small streams from mainstem gauges | Falls back to `spatial_block` if `< 5` mainstem or `< 5` headwater stations |
+| `spatial_block` | 5-fold `stats::kmeans` clustering on standardised `(mid_X, mid_Y)` coordinates | Spatial block generalisation across geographically contiguous regions | Falls back to `random` if `< 5` unique coordinates |
+
+- Non-default CV modes append `_cv_<mode>` to the output directory (e.g. `output/results/det_0117_orn_rsn_cv_catchment/`).
+- `cv_comparison_<det>.csv` records the executed mode in `CV_Mode` and appends `[CV:<mode>]` to `Spatial_Method`, while keeping `Model` names unchanged so downstream plotting and comparison scripts remain compatible.
+
+### 10.2 Optimal Monitoring Network Design (`--design-sites=<K>`)
+
+Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes the OpenMP C++ greedy active-learning solver (`C_s3n_optimal_design` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)) to identify where new monitoring stations would most reduce domain-wide prediction uncertainty.
+
+Starting from the current kriging variance $\sigma^2_{\text{curr}}(s_j) = \text{SE}_{\text{curr}}(s_j)^2$ at evaluation reaches $s_j \in \mathcal{E}$, at each step $t = 1, \dots, K$ the solver evaluates every unmonitored candidate reach $c \in \mathcal{C}$ and computes the Schur-complement variance reduction across all evaluation reaches if a new station were placed at $c$:
+
+$$\Delta V(c) = \sum_{j \in \mathcal{E}} \frac{\big[C_{\text{S3N}}(s_j, c)\big]^2}{\sigma^2_{\text{curr}}(c) + \tau^2}$$
+
+The candidate $c^*$ maximising $\Delta V(c)$ is selected, $\sigma^2_{\text{curr}}(s_j)$ is updated in place for all $j \in \mathcal{E}$, and the loop repeats until $K$ stations are ranked. For huge national domains ($> 4{,}000$ reaches), candidates and evaluation reaches are deterministically thinned to $4{,}000$ evenly spaced reaches to keep runtime under a second.
+
+Results are exported to `optimal_monitoring_design_<det>.csv` with `Rank`, reach metadata (`RivID`, `CatchID`, `Strahler`, `Dist2Mth_km`, `US_Accum_km`, `mid_X`, `mid_Y`, `Elevation`), `Current_SE_sc`, `Var_Reduced`, `Pct_Var_Reduced`, `Cum_Pct_Reduced`, `Mean_SE_Before`, and `Mean_SE_After`.
+
+```bash
+# Leave-Catchment-Out CV + rank top 15 optimal new monitoring reaches
+Rscript scripts/run_s3n_determinand.R 0117 --cv-mode=catchment --design-sites=15
+```
+
+---
+
+## 11. Summary Reference: Key Equations at a Glance
 
 | Modelling Step | Mathematical Expression | Code Implementation |
 | :--- | :--- | :--- |
@@ -626,7 +661,7 @@ To make the mathematics concrete, let us trace how the pipeline computes the fin
 
 ---
 
-## 11. References & Further Reading
+## 12. References & Further Reading
 
 - **Kunke, J. P., Olden, J. D., & McCormick, T. H. (2024/2026)**. *Scalable Spatial Stream Network (S3N) Models for Large River Networks*. `S3N` R Package (`https://github.com/jpierkunke/S3N`).
 - **Saha, A., & Datta, A. (2018)**. *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. Stat, 7(1), e184.
@@ -637,9 +672,10 @@ To make the mathematics concrete, let us trace how the pipeline computes the fin
 
 ---
 
-## 12. Related Project Documentation
+## 13. Related Project Documentation
 
 - **End-to-End Pipeline Usage Guide**: [`./usage_guide.md`](./usage_guide.md)
+- **Regulatory Exceedance Probability & WFD Risk Mapping Guide**: [`./regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md)
 - **Two-Stage GAM Modeling & Measurement Error Kriging Guide**: [`./two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md)
 - **Custom Monitoring Data & External Sources Guide**: [`./custom_data_sources_guide.md`](./custom_data_sources_guide.md)
 - **Single-Output Descriptive Statistics Interpretation Guide**: [`./descriptive_stats_interpretation_guide.md`](./descriptive_stats_interpretation_guide.md)

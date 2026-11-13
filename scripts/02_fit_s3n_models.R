@@ -72,12 +72,27 @@ if ("--list-trends" %in% args) {
   print_available_trends()
   quit(save = "no", status = 0)
 }
-kernel_cli    <- parse_kernel_arg(args, default = "exponential")
-combine_cli   <- parse_combine_arg(args, default = "joint")
-afv_cli       <- parse_afv_arg(args, default = "length")
-trend_cli     <- parse_trend_arg(args, default = "linear")
-spline_df_cli <- parse_spline_df_arg(args, default = 3L)
-trees_cli     <- parse_trees_arg(args, default = 100L)
+if (any(c("--list-validation", "--list-cv") %in% args)) {
+  print_available_validation_options()
+  quit(save = "no", status = 0)
+}
+if ("--list-thresholds" %in% args) {
+  print_available_thresholds()
+  quit(save = "no", status = 0)
+}
+kernel_cli        <- parse_kernel_arg(args, default = "exponential")
+combine_cli       <- parse_combine_arg(args, default = "joint")
+afv_cli           <- parse_afv_arg(args, default = "length")
+trend_cli         <- parse_trend_arg(args, default = "linear")
+spline_df_cli     <- parse_spline_df_arg(args, default = 3L)
+trees_cli         <- parse_trees_arg(args, default = 100L)
+cv_mode_cli       <- parse_cv_mode_arg(args, default = "random")
+threshold_cli     <- parse_threshold_arg(args)
+threshold_dir_cli <- parse_threshold_dir_arg(args, default = "above")
+th_res            <- resolve_threshold_spec(threshold_cli, threshold_dir_cli, "0117", args)
+threshold_cli     <- th_res$val
+threshold_dir_cli <- th_res$dir
+design_sites_cli  <- parse_design_sites_arg(args, default = 0L)
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
 PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
@@ -157,6 +172,9 @@ if (afv_cli != "length") {
 if (trend_cli != "linear") {
   sub_tag <- paste0(sub_tag, "_trend_", trend_cli)
 }
+if (cv_mode_cli != "random") {
+  sub_tag <- paste0(sub_tag, "_cv_", cv_mode_cli)
+}
 OUT_ROOT <- rel_path(OUT_BASE, "results", sub_tag)
 dir.create(OUT_ROOT, recursive = TRUE, showWarnings = FALSE)
 
@@ -182,7 +200,11 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     afv_scheme = afv_cli,
     trend = trend_cli,
     spline_df = spline_df_cli,
-    n_trees = trees_cli
+    n_trees = trees_cli,
+    cv_mode = cv_mode_cli,
+    threshold = threshold_cli,
+    threshold_dir = threshold_dir_cli,
+    design_sites = design_sites_cli
   )
 }
 
@@ -261,6 +283,26 @@ all_params$Network_Label    <- net_meta$short_label
 
 write.csv(all_cv, file.path(OUT_ROOT, "cv_comparison_0117.csv"), row.names = FALSE)
 write.csv(all_params, file.path(OUT_ROOT, "parameters_0117.csv"), row.names = FALSE)
+exceed_list <- Filter(Negate(is.null), list(
+  if (!is.null(res_england)) res_england$exceed_summary else NULL,
+  if (!is.null(res_humber))  res_humber$exceed_summary  else NULL,
+  if (!is.null(res_thames))  res_thames$exceed_summary  else NULL,
+  if (!is.null(res_severn))  res_severn$exceed_summary  else NULL
+))
+if (length(exceed_list) > 0L) {
+  write.csv(do.call(rbind, exceed_list),
+            file.path(OUT_ROOT, "exceedance_summary_0117.csv"), row.names = FALSE)
+}
+design_list <- Filter(Negate(is.null), list(
+  if (!is.null(res_england)) res_england$design_df else NULL,
+  if (!is.null(res_humber))  res_humber$design_df  else NULL,
+  if (!is.null(res_thames))  res_thames$design_df  else NULL,
+  if (!is.null(res_severn))  res_severn$design_df  else NULL
+))
+if (length(design_list) > 0L) {
+  write.csv(do.call(rbind, design_list),
+            file.path(OUT_ROOT, "optimal_monitoring_design_0117.csv"), row.names = FALSE)
+}
 if (!is.null(res_england) && !is.null(res_england$cv_pts)) {
   write.csv(res_england$cv_pts, file.path(OUT_ROOT, "cv_predictions_england_0117.csv"), row.names = FALSE)
 }

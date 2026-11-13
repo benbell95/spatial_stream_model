@@ -160,6 +160,262 @@ print_available_kernels <- function() {
   cat("  shreve       : Shreve hydrological link magnitude (number of upstream headwater sources)\n")
   cat("  hydro_yield  : Elevation/orographic rainfall + Principal Aquifer baseflow hydrological yield proxy\n\n")
   print_available_trends()
+  cat("\n")
+  print_available_validation_options()
+}
+
+S3N_CV_MODES <- c("random", "catchment", "strahler", "spatial_block")
+
+normalize_cv_mode_name <- function(cv_mode, default = "random") {
+  m <- tolower(trimws(as.character(cv_mode)))
+  if (length(m) == 0L || !nzchar(m)) return(default)
+  if (m %in% c("random", "5fold", "kfold")) return("random")
+  if (m %in% c("catchment", "leave_catchment_out", "lco", "basin")) return("catchment")
+  if (m %in% c("strahler", "headwater", "headwater_extrapolation")) return("strahler")
+  if (m %in% c("spatial_block", "spatial", "block", "kmeans")) return("spatial_block")
+  warning(sprintf("Unknown --cv-mode '%s'; defaulting to '%s'.", cv_mode, default))
+  default
+}
+
+parse_cv_mode_arg <- function(args, default = "random") {
+  hit <- grep("^--cv-mode=", args, value = TRUE)
+  if (length(hit) == 0L) return(default)
+  normalize_cv_mode_name(sub("^--cv-mode=", "", hit[1]), default = default)
+}
+
+S3N_UK_THRESHOLDS <- list(
+  "0117"      = list(val = 11.3,  dir = "above", unit = "mg/L",  ref = "UK DWI / Nitrates Directive (11.3 mg/L as N = 50 mg/L NO3)"),
+  "0116"      = list(val = 11.3,  dir = "above", unit = "mg/L",  ref = "UK Nitrates Directive proxy (11.3 mg/L TON as N)"),
+  "0180"      = list(val = 0.069, dir = "above", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate SRP)"),
+  "0111"      = list(val = 0.60,  dir = "above", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate 90%ile NH4-N)"),
+  "0119"      = list(val = 0.021, dir = "above", unit = "mg/L",  ref = "UK WFD / Freshwater Fish EQS (annual mean un-ionised NH3-N)"),
+  "0085"      = list(val = 5.0,   dir = "above", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative lowland high-alkalinity Good/Moderate 90%ile BOD)"),
+  "9924"      = list(val = 6.0,   dir = "below", unit = "mg/L",  ref = "UK WFD 2015 Directions (indicative salmonid Good oxygenation threshold)"),
+  "0061"      = list(val = 6.0,   dir = "below", unit = "pH",    ref = "UK WFD 2015 Directions (minimum Good pH boundary; use --threshold=9.0 --threshold-dir=above for upper bound)"),
+  "0076"      = list(val = 25.0,  dir = "above", unit = "CEL",   ref = "UK WFD 2015 Directions (cyprinid Good/Moderate 98%ile temperature)"),
+  "0052"      = list(val = 1.2,   dir = "above", unit = "ug/L",  ref = "UK WFD EQS (bioavailable Dissolved Lead annual average)"),
+  "0106"      = list(val = 0.08,  dir = "above", unit = "ug/L",  ref = "UK WFD EQS (Dissolved Cadmium annual average, low-hardness baseline)"),
+  "whpt_aspt" = list(val = 5.0,   dir = "below", unit = "ASPT",  ref = "UK WFD / UKTAG (indicative Good/Moderate WHPT ASPT boundary)")
+)
+
+parse_threshold_arg <- function(args, default = NA_real_) {
+  hit <- grep("^--threshold=", args, value = TRUE)
+  if (length(hit) == 0L) return(default)
+  raw <- tolower(trimws(sub("^--threshold=", "", hit[1])))
+  if (raw %in% c("uk", "wfd", "default", "ea")) return("uk")
+  val <- suppressWarnings(as.numeric(raw))
+  if (!is.finite(val)) {
+    warning(sprintf("Invalid --threshold '%s'; ignoring exceedance risk mapping.", hit[1]))
+    return(default)
+  }
+  val
+}
+
+resolve_threshold_spec <- function(threshold_arg, threshold_dir_arg, det_code, args = character(0)) {
+  if (identical(threshold_arg, "uk")) {
+    key <- tolower(trimws(as.character(det_code)))
+    if (!(key %in% names(S3N_UK_THRESHOLDS))) {
+      stop(sprintf(
+        "No built-in UK/WFD default threshold is registered for '%s'. Run --list-thresholds to see supported codes or pass a numeric --threshold=<val>.",
+        det_code
+      ))
+    }
+    spec <- S3N_UK_THRESHOLDS[[key]]
+    explicit_dir <- any(grepl("^--threshold-dir=", args))
+    dir_use <- if (explicit_dir) threshold_dir_arg else spec$dir
+    cat(sprintf("  [UK/WFD Threshold Preset] %s -> %.4g %s (%s) [%s]\n",
+                det_code, spec$val, spec$unit, dir_use, spec$ref))
+    return(list(val = spec$val, dir = dir_use, ref = spec$ref))
+  }
+  list(val = threshold_arg, dir = threshold_dir_arg, ref = NULL)
+}
+
+print_available_thresholds <- function() {
+  cat("Built-in UK / WFD Regulatory Threshold Presets (--threshold=uk):\n")
+  for (k in names(S3N_UK_THRESHOLDS)) {
+    s <- S3N_UK_THRESHOLDS[[k]]
+    cat(sprintf("  %-10s : %6.4g %-5s (%-5s) — %s\n", k, s$val, s$unit, s$dir, s$ref))
+  }
+  cat("\nNote: WFD phosphorus, ammonia, and DO boundaries are site-type dependent (alkalinity & altitude)\n")
+  cat("under the WFD (Standards and Classification) Directions (England & Wales) 2015.\n")
+  cat("Values above are indicative lowland/high-alkalinity defaults; override any time with --threshold=<val>.\n")
+}
+
+parse_threshold_dir_arg <- function(args, default = "above") {
+  hit <- grep("^--threshold-dir=", args, value = TRUE)
+  if (length(hit) == 0L) return(default)
+  d <- tolower(trimws(sub("^--threshold-dir=", "", hit[1])))
+  if (d %in% c("above", "gt", "high", "exceed")) return("above")
+  if (d %in% c("below", "lt", "low", "deficit")) return("below")
+  warning(sprintf("Unknown --threshold-dir '%s'; defaulting to '%s'.", d, default))
+  default
+}
+
+parse_design_sites_arg <- function(args, default = 0L) {
+  hit <- grep("^--(design-sites|optimal-design)=", args, value = TRUE)
+  if (length(hit) == 0L) return(as.integer(default))
+  val <- suppressWarnings(as.integer(sub("^--(design-sites|optimal-design)=", "", hit[1])))
+  if (is.na(val) || val < 0L) return(as.integer(default))
+  val
+}
+
+print_available_validation_options <- function() {
+  cat("Available Cross-Validation Modes (--cv-mode=<mode>):\n")
+  cat("  random        : Standard 5-fold random station CV (default)\n")
+  cat("  catchment     : 5-fold Leave-Catchment-Out CV grouped by CatchID\n")
+  cat("  strahler      : Train on mainstems (Strahler >= 3), test on headwaters (Strahler <= 2)\n")
+  cat("  spatial_block : 5-fold spatial block CV via k-means clustering on (mid_X, mid_Y)\n\n")
+  cat("Regulatory Exceedance & Optimal Monitoring Design Flags:\n")
+  cat("  --threshold=<val|uk>       : Raw-scale regulatory threshold (or 'uk' for built-in UK/WFD presets)\n")
+  cat("  --threshold-dir=above|below: Exceedance direction (above = P(Y > T); below = P(Y < T))\n")
+  cat("  --list-thresholds          : Print built-in UK / WFD regulatory threshold presets\n")
+  cat("  --design-sites=<K>         : Rank top K unmonitored reaches minimizing mean kriging variance\n")
+}
+
+build_cv_folds <- function(df_obs, cv_mode = "random", k_folds = 5L, seed = 2026L) {
+  req_mode <- normalize_cv_mode_name(cv_mode, default = "random")
+  n_obs <- nrow(df_obs)
+  set.seed(seed)
+
+  make_spatial_blocks <- function() {
+    coords <- cbind(as.numeric(df_obs$mid_X), as.numeric(df_obs$mid_Y))
+    ok <- is.finite(coords[, 1]) & is.finite(coords[, 2])
+    if (sum(ok) < k_folds || nrow(unique(coords[ok, , drop = FALSE])) < k_folds) {
+      return(list(folds = sample(rep(seq_len(k_folds), length.out = n_obs)),
+                  actual_mode = "random",
+                  note = "insufficient unique coordinates for spatial_block; fell back to random"))
+    }
+    km <- stats::kmeans(scale(coords[ok, , drop = FALSE]), centers = k_folds, nstart = 10L)
+    folds <- sample(rep(seq_len(k_folds), length.out = n_obs))
+    folds[ok] <- as.integer(km$cluster)
+    list(folds = folds, actual_mode = "spatial_block", note = NULL)
+  }
+
+  if (req_mode == "catchment") {
+    cats <- as.character(df_obs$CatchID)
+    u_cats <- unique(cats[!is.na(cats)])
+    if (length(u_cats) < 2L) {
+      res <- make_spatial_blocks()
+      res$note <- "domain has < 2 catchments; fell back to spatial_block"
+      return(res)
+    }
+    k_use <- min(as.integer(k_folds), length(u_cats))
+    cat_counts <- sort(table(cats), decreasing = TRUE)
+    fold_loads <- integer(k_use)
+    cat_to_fold <- integer(length(cat_counts))
+    names(cat_to_fold) <- names(cat_counts)
+    for (nm in names(cat_counts)) {
+      f_min <- which.min(fold_loads)
+      cat_to_fold[nm] <- f_min
+      fold_loads[f_min] <- fold_loads[f_min] + as.integer(cat_counts[nm])
+    }
+    folds <- as.integer(cat_to_fold[cats])
+    return(list(folds = folds, actual_mode = "catchment", note = NULL))
+  }
+
+  if (req_mode == "strahler") {
+    st <- as.numeric(df_obs$Strahler)
+    n_main <- sum(is.finite(st) & st >= 3)
+    n_head <- sum(is.finite(st) & st <= 2)
+    if (n_main < 5L || n_head < 5L) {
+      res <- make_spatial_blocks()
+      res$note <- sprintf("insufficient Strahler split (mainstem=%d, headwater=%d); fell back to spatial_block",
+                          n_main, n_head)
+      return(res)
+    }
+    folds <- rep(NA_integer_, n_obs)
+    folds[is.finite(st) & st >= 3] <- 0L
+    folds[is.finite(st) & st <= 2] <- 1L
+    return(list(folds = folds, actual_mode = "strahler", note = NULL))
+  }
+
+  if (req_mode == "spatial_block") {
+    return(make_spatial_blocks())
+  }
+
+  list(folds = sample(rep(seq_len(k_folds), length.out = n_obs)),
+       actual_mode = "random", note = NULL)
+}
+
+compute_exceedance_risk <- function(pred_sc, se_sc, threshold_val, trans_obj, dir = "above") {
+  thresh_sc <- as.numeric(trans_obj$fwd(threshold_val))
+  if (!is.finite(thresh_sc)) {
+    stop(sprintf("Threshold %.4g is outside the domain of transformation '%s'.",
+                 threshold_val, trans_obj$short_label))
+  }
+  se_safe <- pmax(as.numeric(se_sc), 1e-8)
+  z <- (thresh_sc - as.numeric(pred_sc)) / se_safe
+  p <- if (identical(dir, "below")) {
+    stats::pnorm(z, lower.tail = TRUE)
+  } else {
+    stats::pnorm(z, lower.tail = FALSE)
+  }
+  p <- pmin(1.0, pmax(0.0, p))
+  tier <- ifelse(
+    p < 0.05, "Confidently Compliant",
+    ifelse(p < 0.20, "Likely Compliant",
+           ifelse(p <= 0.80, "Uncertain / Priority Monitoring",
+                  ifelse(p <= 0.95, "Likely Exceeding", "Confidently Exceeding")))
+  )
+  list(prob = p, tier = tier, thresh_sc = thresh_sc)
+}
+
+compute_optimal_monitoring_design <- function(df_ord, n_obs, se_comb, parent_0, tt, up_dist,
+                                            params_5, k_design = 10L) {
+  k_req <- as.integer(k_design)
+  if (is.na(k_req) || k_req <= 0L) return(NULL)
+  cand_all <- which(df_ord$has_obs == 0L)
+  if (length(cand_all) == 0L) return(NULL)
+
+  # Deterministic evenly-spaced thinning for huge national domains (> 4000 reaches)
+  cand_use <- if (length(cand_all) > 4000L) {
+    cand_all[unique(round(seq(1, length(cand_all), length.out = 4000L)))]
+  } else {
+    cand_all
+  }
+  q_tot <- nrow(df_ord)
+  eval_use <- if (q_tot > 4000L) {
+    unique(round(seq(1, q_tot, length.out = 4000L)))
+  } else {
+    seq_len(q_tot)
+  }
+
+  k_use <- min(k_req, length(cand_use))
+  res <- .Call(
+    "C_s3n_optimal_design",
+    as.integer(parent_0),
+    as.integer(df_ord$CatchID),
+    as.integer(tt[[1]]),
+    as.integer(tt[[2]]),
+    as.double(df_ord$Dist2Mth_km),
+    as.double(up_dist),
+    as.double(df_ord$mid_X),
+    as.double(df_ord$mid_Y),
+    as.double(se_comb),
+    as.double(params_5),
+    as.integer(cand_use - 1L),
+    as.integer(eval_use - 1L),
+    as.integer(k_use)
+  )
+  if (length(res$cand_pos) == 0L) return(NULL)
+  sel_rows <- cand_use[res$cand_pos + 1L]
+  data.frame(
+    Rank            = seq_along(sel_rows),
+    RivID           = df_ord$RivID[sel_rows],
+    CatchID         = df_ord$CatchID[sel_rows],
+    Strahler        = df_ord$Strahler[sel_rows],
+    Dist2Mth_km     = round(df_ord$Dist2Mth_km[sel_rows], 3),
+    US_Accum_km     = round(df_ord$US_Accum_km[sel_rows], 3),
+    mid_X           = round(df_ord$mid_X[sel_rows], 1),
+    mid_Y           = round(df_ord$mid_Y[sel_rows], 1),
+    Elevation       = round(df_ord$Elevation[sel_rows], 1),
+    Current_SE_sc   = round(se_comb[sel_rows], 5),
+    Var_Reduced     = round(res$var_reduced, 6),
+    Pct_Var_Reduced = round(res$pct_var_reduced, 4),
+    Cum_Pct_Reduced = round(res$cum_pct_reduced, 4),
+    Mean_SE_Before  = round(res$mean_se_before, 5),
+    Mean_SE_After   = round(res$mean_se_after, 5)
+  )
 }
 
 fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
@@ -740,7 +996,11 @@ fit_s3n_domain <- function(df,
                            afv_scheme = "length",
                            trend = "linear",
                            spline_df = 3L,
-                           n_trees = 100L) {
+                           n_trees = 100L,
+                           cv_mode = "random",
+                           threshold = NA_real_,
+                           threshold_dir = "above",
+                           design_sites = 0L) {
   obs_idx <- which(df$has_obs == 1L & !is.na(df[[obs_col]]))
   n_obs   <- length(obs_idx)
   if (n_obs < 15L) {
@@ -980,9 +1240,77 @@ fit_s3n_domain <- function(df,
     pred_df$pred_trend_sc <- round(as.numeric(X_all %*% fit_tu$Beta) + trend_fit$g_perp_eval, 5)
   }
 
-  # 5-Fold Cross-Validation (using topology vectors directly without copying df_ord)
-  set.seed(2026)
-  folds    <- sample(rep(1:5, length.out = n_obs))
+  exceed_summary <- NULL
+  if (!is.na(threshold) && is.finite(threshold)) {
+    thresh_dir_use <- if (tolower(as.character(threshold_dir)) == "below") "below" else "above"
+    ex_res <- compute_exceedance_risk(pred_comb, se_comb, threshold, trans_obj, dir = thresh_dir_use)
+    pred_df$exceed_prob     <- round(ex_res$prob, 5)
+    pred_df$compliance_tier <- ex_res$tier
+    tier_levels <- c(
+      "Confidently Compliant",
+      "Likely Compliant",
+      "Uncertain / Priority Monitoring",
+      "Likely Exceeding",
+      "Confidently Exceeding"
+    )
+    tier_tab <- table(factor(ex_res$tier, levels = tier_levels))
+    exceed_summary <- data.frame(
+      Domain        = domain_label,
+      Threshold_Raw = threshold,
+      Threshold_Sc  = round(ex_res$thresh_sc, 5),
+      Direction     = thresh_dir_use,
+      Tier          = names(tier_tab),
+      Reach_Count   = as.integer(tier_tab),
+      Reach_Pct     = round(100 * as.numeric(tier_tab) / q_tot, 2)
+    )
+    cat(sprintf("  [Regulatory Exceedance Risk] Threshold = %.4g (%s, dir=%s):\n",
+                threshold, trans_obj$short_label, thresh_dir_use))
+    for (ti in seq_len(nrow(exceed_summary))) {
+      cat(sprintf("    %-33s : %6d reaches (%5.1f%%)\n",
+                  exceed_summary$Tier[ti], exceed_summary$Reach_Count[ti], exceed_summary$Reach_Pct[ti]))
+    }
+  }
+
+  design_df <- NULL
+  if (!is.na(design_sites) && as.integer(design_sites) > 0L) {
+    params_5 <- if (!is.null(joint_fit)) {
+      as.numeric(c(
+        joint_fit$params["sigma.sq_tu"] + joint_fit$params["sigma.sq_td"],
+        joint_fit$params["sigma.sq_euc"],
+        joint_fit$params["tau.sq"],
+        mean(c(joint_fit$params["phi_tu"], joint_fit$params["phi_td"])),
+        as.double(kid_tu)
+      ))
+    } else {
+      as.numeric(c(
+        0.5 * (fit_tu$Theta[1] + fit_td$Theta[1]),
+        0.0,
+        0.5 * (fit_tu$Theta[2] + fit_td$Theta[2]),
+        0.5 * (fit_tu$Theta[3] + fit_td$Theta[3]),
+        as.double(kid_tu)
+      ))
+    }
+    t_des <- proc.time()
+    design_df <- compute_optimal_monitoring_design(
+      df_ord = df_ord, n_obs = n_obs, se_comb = se_comb,
+      parent_0 = parent_0, tt = tt, up_dist = up_dist,
+      params_5 = params_5, k_design = as.integer(design_sites)
+    )
+    if (!is.null(design_df) && nrow(design_df) > 0L) {
+      design_df <- cbind(Domain = domain_label, design_df)
+      cat(sprintf("  [Optimal Monitoring Design] Ranked top %d sites in %.2fs (cumulative kriging variance reduction: %.2f%%)\n",
+                  nrow(design_df), (proc.time() - t_des)[3], tail(design_df$Cum_Pct_Reduced, 1)))
+    }
+  }
+
+  # Cross-Validation (random, catchment, strahler, or spatial_block)
+  cv_info  <- build_cv_folds(df_ord[1:n_obs, , drop = FALSE], cv_mode = cv_mode, k_folds = 5L, seed = 2026L)
+  folds    <- cv_info$folds
+  if (!is.null(cv_info$note)) {
+    cat(sprintf("  [CV Mode: %s -> %s] Note: %s\n", cv_mode, cv_info$actual_mode, cv_info$note))
+  } else {
+    cat(sprintf("  [CV Mode: %s] Evaluating held-out predictions...\n", cv_info$actual_mode))
+  }
   cv_ols   <- rep(NA_real_, n_obs)
   cv_trend <- rep(NA_real_, n_obs)
   cv_tu    <- rep(NA_real_, n_obs)
@@ -999,9 +1327,10 @@ fit_s3n_domain <- function(df,
   my_vec    <- df_ord$mid_Y
   unobs_tail <- if (q_tot > n_obs) (n_obs + 1L):q_tot else integer(0)
 
-  for (k in 1:5) {
+  fold_ids <- sort(unique(folds[is.finite(folds) & folds > 0L]))
+  for (k in fold_ids) {
     te <- which(folds == k)
-    tr <- which(folds != k)
+    tr <- which(!is.na(folds) & folds != k)
     if (length(te) == 0L || length(tr) < ncol(X_obs)) next
 
     beta_ols <- tryCatch(
@@ -1134,11 +1463,15 @@ fit_s3n_domain <- function(df,
     cat(sprintf("  [Non-Spatial Trend CV (%s)] RMSE = %.4f | MAE = %.4f | R2 = %.4f (vs Linear OLS R2 = %.4f)\n",
                 trend_fit$label, rmse(y_vec, cv_trend), mae(y_vec, cv_trend), r2(y_vec, cv_trend), r2(y_vec, cv_ols)))
   }
+  if (cv_info$actual_mode != "random") {
+    sp_method_lbl <- sprintf("%s [CV:%s]", sp_method_lbl, cv_info$actual_mode)
+  }
 
   cv_summary <- data.frame(
     Domain         = domain_label,
     n_obs          = n_obs,
     n_reaches      = q_tot,
+    CV_Mode        = cv_info$actual_mode,
     Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
     Spatial_Method = sp_method_lbl,
     RMSE           = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
@@ -1211,10 +1544,12 @@ fit_s3n_domain <- function(df,
   )
 
   list(
-    pred_df    = pred_df,
-    cv_summary = cv_summary,
-    param_df   = param_df,
-    cv_pts     = cv_pts,
-    runtimes   = c(neighbor_sec = t_nb, est_sec = t_est, boot_sec = t_bs, pred_sec = t_pred)
+    pred_df        = pred_df,
+    cv_summary     = cv_summary,
+    param_df       = param_df,
+    cv_pts         = cv_pts,
+    exceed_summary = exceed_summary,
+    design_df      = design_df,
+    runtimes       = c(neighbor_sec = t_nb, est_sec = t_est, boot_sec = t_bs, pred_sec = t_pred)
   )
 }

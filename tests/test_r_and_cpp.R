@@ -371,4 +371,91 @@ for (t_mode in c("gam", "rf", "gbm")) {
 }
 
 cat("  [PASS] Spline, GAM + S3N, Random Forest + S3N, and Gradient Boosted Trees + S3N regression kriging\n")
+
+# ==============================================================================
+# 7. Validation Modes, Regulatory Exceedance Risk & Optimal Monitoring Design
+# ==============================================================================
+cat("[Test 7/7] Testing CV modes, exceedance probability, and C++ optimal design...\n")
+
+assert_true(parse_cv_mode_arg("--cv-mode=catchment") == "catchment", "parse_cv_mode_arg catchment")
+assert_true(parse_cv_mode_arg("--cv-mode=strahler") == "strahler", "parse_cv_mode_arg strahler")
+assert_true(parse_cv_mode_arg("--cv-mode=spatial_block") == "spatial_block", "parse_cv_mode_arg spatial_block")
+assert_true(abs(parse_threshold_arg("--threshold=11.3") - 11.3) < 1e-9, "parse_threshold_arg")
+assert_true(identical(parse_threshold_arg("--threshold=uk"), "uk"), "parse_threshold_arg uk")
+uk_no3 <- resolve_threshold_spec("uk", "above", "0117")
+assert_true(abs(uk_no3$val - 11.3) < 1e-9 && uk_no3$dir == "above", "UK threshold preset 0117")
+uk_do <- resolve_threshold_spec("uk", "above", "9924")
+assert_true(abs(uk_do$val - 6.0) < 1e-9 && uk_do$dir == "below", "UK threshold preset 9924 auto-below")
+assert_true(parse_threshold_dir_arg("--threshold-dir=below") == "below", "parse_threshold_dir_arg below")
+assert_true(parse_design_sites_arg("--design-sites=5") == 5L, "parse_design_sites_arg")
+
+df_obs_syn <- df_syn[df_syn$has_obs == 1L, ]
+df_obs_syn$CatchID <- rep(c(101L, 102L, 103L, 104L), length.out = nrow(df_obs_syn))
+df_obs_syn$Strahler <- rep(c(1L, 2L, 3L, 4L), length.out = nrow(df_obs_syn))
+
+cv_rand <- build_cv_folds(df_obs_syn, cv_mode = "random", k_folds = 5L)
+assert_true(cv_rand$actual_mode == "random" && length(unique(cv_rand$folds)) == 5L, "random CV 5 folds")
+
+cv_cat <- build_cv_folds(df_obs_syn, cv_mode = "catchment", k_folds = 5L)
+assert_true(cv_cat$actual_mode == "catchment", "catchment CV mode active")
+# Verify each CatchID maps to exactly one fold
+for (cid in unique(df_obs_syn$CatchID)) {
+  assert_true(length(unique(cv_cat$folds[df_obs_syn$CatchID == cid])) == 1L,
+              paste0("CatchID ", cid, " stays in a single fold"))
+}
+
+cv_str <- build_cv_folds(df_obs_syn, cv_mode = "strahler")
+assert_true(cv_str$actual_mode == "strahler", "strahler CV mode active")
+assert_true(all(cv_str$folds[df_obs_syn$Strahler >= 3L] == 0L), "strahler trains on mainstems >= 3")
+assert_true(all(cv_str$folds[df_obs_syn$Strahler <= 2L] == 1L), "strahler tests on headwaters <= 2")
+
+cv_sb <- build_cv_folds(df_obs_syn, cv_mode = "spatial_block", k_folds = 4L)
+assert_true(cv_sb$actual_mode == "spatial_block" && length(unique(cv_sb$folds)) == 4L, "spatial_block CV 4 folds")
+
+# Exceedance risk tests (above & below)
+tr_log <- build_transformer("log")
+ex_above <- compute_exceedance_risk(c(log(5.0), log(10.0), log(20.0)), c(0.1, 0.2, 0.1), 10.0, tr_log, dir = "above")
+assert_true(ex_above$prob[1] < 0.05 && ex_above$tier[1] == "Confidently Compliant", "above tier low")
+assert_true(abs(ex_above$prob[2] - 0.5) < 1e-6 && ex_above$tier[2] == "Uncertain / Priority Monitoring", "above tier mid")
+assert_true(ex_above$prob[3] > 0.95 && ex_above$tier[3] == "Confidently Exceeding", "above tier high")
+
+ex_below <- compute_exceedance_risk(c(log(5.0), log(20.0)), c(0.1, 0.1), 10.0, tr_log, dir = "below")
+assert_true(ex_below$prob[1] > 0.95 && ex_below$tier[1] == "Confidently Exceeding", "below tier exceeding")
+assert_true(ex_below$prob[2] < 0.05 && ex_below$tier[2] == "Confidently Compliant", "below tier compliant")
+
+# End-to-end fit_s3n_domain with catchment CV + threshold + optimal monitoring design
+df_syn_cat <- df_syn
+df_syn_cat$CatchID <- rep(c(101L, 102L, 103L, 104L), length.out = nrow(df_syn_cat))
+sink(tempfile())
+dom_val <- fit_s3n_domain(
+  df = df_syn_cat, domain_id = "test", domain_label = "Synthetic Basin",
+  trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+  kernel = "exponential", combine_mode = "joint", afv_scheme = "length",
+  trend = "linear", cv_mode = "catchment", threshold = 5.0,
+  threshold_dir = "above", design_sites = 3L
+)
+sink()
+assert_true(!is.null(dom_val), "fit_s3n_domain validation+risk+design succeeded")
+assert_true(all(c("exceed_prob", "compliance_tier") %in% names(dom_val$pred_df)), "pred_df has exceedance columns")
+assert_true(!is.null(dom_val$exceed_summary) && sum(dom_val$exceed_summary$Reach_Count) == nrow(df_syn_cat),
+            "exceed_summary counts sum to total reaches")
+assert_true(!is.null(dom_val$design_df) && nrow(dom_val$design_df) == 3L, "design_df ranked 3 sites")
+assert_true(all(dom_val$design_df$Var_Reduced >= 0) && all(diff(dom_val$design_df$Cum_Pct_Reduced) >= -1e-9),
+            "design_df cumulative variance reduction is non-decreasing")
+assert_true(all(dom_val$cv_summary$CV_Mode == "catchment"), "cv_summary records CV_Mode=catchment")
+
+# Verify exceedance risk plotting functions render cleanly to PNG
+tmp_ex_eng <- tempfile(fileext = ".png")
+tmp_ex_bas <- tempfile(fileext = ".png")
+plot_fig_exceedance_england(dom_val$pred_df, "0117", "Nitrate as N", "mg/L", tmp_ex_eng,
+                            threshold_val = 5.0, threshold_dir = "above")
+plot_fig_exceedance_basins(dom_val$pred_df, dom_val$pred_df, dom_val$pred_df,
+                           "0117", "Nitrate as N", "mg/L", tmp_ex_bas,
+                           threshold_val = 5.0, threshold_dir = "above")
+assert_true(file.exists(tmp_ex_eng) && file.info(tmp_ex_eng)$size > 1000, "exceedance england PNG rendered")
+assert_true(file.exists(tmp_ex_bas) && file.info(tmp_ex_bas)$size > 1000, "exceedance basins PNG rendered")
+unlink(c(tmp_ex_eng, tmp_ex_bas))
+
+cat("  [PASS] Hydrological CV modes, regulatory exceedance tiers, plots, and C++ optimal monitoring design\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

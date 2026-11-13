@@ -93,12 +93,24 @@ if ("--list-trends" %in% args) {
   print_available_trends()
   quit(save = "no", status = 0)
 }
-kernel_cli    <- parse_kernel_arg(args, default = "exponential")
-combine_cli   <- parse_combine_arg(args, default = "joint")
-afv_cli       <- parse_afv_arg(args, default = "length")
-trend_cli     <- parse_trend_arg(args, default = "linear")
-spline_df_cli <- parse_spline_df_arg(args, default = 3L)
-trees_cli     <- parse_trees_arg(args, default = 100L)
+if (any(c("--list-validation", "--list-cv") %in% args)) {
+  print_available_validation_options()
+  quit(save = "no", status = 0)
+}
+if ("--list-thresholds" %in% args) {
+  print_available_thresholds()
+  quit(save = "no", status = 0)
+}
+kernel_cli        <- parse_kernel_arg(args, default = "exponential")
+combine_cli       <- parse_combine_arg(args, default = "joint")
+afv_cli           <- parse_afv_arg(args, default = "length")
+trend_cli         <- parse_trend_arg(args, default = "linear")
+spline_df_cli     <- parse_spline_df_arg(args, default = 3L)
+trees_cli         <- parse_trees_arg(args, default = 100L)
+cv_mode_cli       <- parse_cv_mode_arg(args, default = "random")
+threshold_cli     <- parse_threshold_arg(args)
+threshold_dir_cli <- parse_threshold_dir_arg(args, default = "above")
+design_sites_cli  <- parse_design_sites_arg(args, default = 0L)
 
 PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
 net_meta       <- load_network_metadata(PROC_DIR)
@@ -704,6 +716,12 @@ if (afv_cli != "length") {
 if (trend_cli != "linear") {
   out_folder_name <- paste0(out_folder_name, "_trend_", trend_cli)
 }
+if (cv_mode_cli != "random") {
+  out_folder_name <- paste0(out_folder_name, "_cv_", cv_mode_cli)
+}
+th_res <- resolve_threshold_spec(threshold_cli, threshold_dir_cli, det_code, args)
+threshold_cli     <- th_res$val
+threshold_dir_cli <- th_res$dir
 OUT_DIR <- rel_path(OUT_BASE, "results", out_folder_name)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -831,7 +849,11 @@ slice_ctx <- list(
   afv_scheme     = afv_cli,
   trend          = trend_cli,
   spline_df      = spline_df_cli,
-  n_trees        = trees_cli
+  n_trees        = trees_cli,
+  cv_mode        = cv_mode_cli,
+  threshold      = threshold_cli,
+  threshold_dir  = threshold_dir_cli,
+  design_sites   = design_sites_cli
 )
 
 fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
@@ -926,7 +948,11 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
       afv_scheme = ctx$afv_scheme,
       trend = ctx$trend,
       spline_df = ctx$spline_df,
-      n_trees = ctx$n_trees
+      n_trees = ctx$n_trees,
+      cv_mode = ctx$cv_mode,
+      threshold = ctx$threshold,
+      threshold_dir = ctx$threshold_dir,
+      design_sites = ctx$design_sites
     )
   }
 
@@ -1011,6 +1037,28 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   }
   write.csv(all_params, file.path(out_subdir, sprintf("parameters_%s.csv", ctx$det_code)),  row.names = FALSE)
   write.csv(all_cv,     file.path(out_subdir, sprintf("cv_comparison_%s.csv", ctx$det_code)), row.names = FALSE)
+  exceed_list <- Filter(Negate(is.null), c(
+    list(res_eng$exceed_summary),
+    if (!is.null(res_hum)) list(res_hum$exceed_summary) else NULL,
+    if (!is.null(res_tha)) list(res_tha$exceed_summary) else NULL,
+    if (!is.null(res_sev)) list(res_sev$exceed_summary) else NULL,
+    lapply(extra_fits, function(ef) ef$exceed_summary)
+  ))
+  if (length(exceed_list) > 0L) {
+    write.csv(do.call(rbind, exceed_list),
+              file.path(out_subdir, sprintf("exceedance_summary_%s.csv", ctx$det_code)), row.names = FALSE)
+  }
+  design_list <- Filter(Negate(is.null), c(
+    list(res_eng$design_df),
+    if (!is.null(res_hum)) list(res_hum$design_df) else NULL,
+    if (!is.null(res_tha)) list(res_tha$design_df) else NULL,
+    if (!is.null(res_sev)) list(res_sev$design_df) else NULL,
+    lapply(extra_fits, function(ef) ef$design_df)
+  ))
+  if (length(design_list) > 0L) {
+    write.csv(do.call(rbind, design_list),
+              file.path(out_subdir, sprintf("optimal_monitoring_design_%s.csv", ctx$det_code)), row.names = FALSE)
+  }
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
       ef <- extra_fits[[k]]
@@ -1098,6 +1146,35 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
                      vars_label = vars_sub, network_label = net_lbl, source_label = source_label,
                      norm_mode = norm_cli)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
+    }
+  }
+
+  if ("compliance_tier" %in% names(eng_pred) && "exceed_prob" %in% names(eng_pred)) {
+    ex_eng_path <- file.path(out_subdir, sprintf("fig_exceedance_england_%s.png", det_code))
+    ex_bas_path <- file.path(out_subdir, sprintf("fig_exceedance_basins_%s.png", det_code))
+    plot_fig_exceedance_england(
+      eng_pred, det_code, det_title_name, det_unit, ex_eng_path,
+      threshold_val = threshold_cli, threshold_dir = threshold_dir_cli,
+      vars_label = vars_sub, network_label = net_lbl, source_label = source_label
+    )
+    plot_fig_exceedance_basins(
+      hum_pred, tha_pred, sev_pred, det_code, det_title_name, det_unit, ex_bas_path,
+      threshold_val = threshold_cli, threshold_dir = threshold_dir_cli,
+      vars_label = vars_sub, network_label = net_lbl, source_label = source_label
+    )
+    cat(sprintf("  + Saved regulatory exceedance & management tier maps: %s, %s\n",
+                basename(ex_eng_path), basename(ex_bas_path)))
+    if (length(extra_fits) > 0) {
+      for (k in seq_along(extra_fits)) {
+        ef <- extra_fits[[k]]
+        ex_k_path <- file.path(out_subdir, sprintf("fig_exceedance_basin_%s_%s.png", ef$info$slug, det_code))
+        plot_fig_exceedance_basin(
+          ef$pred_df, ef$info$short_title, det_code, det_title_name, det_unit, ex_k_path,
+          threshold_val = threshold_cli, threshold_dir = threshold_dir_cli,
+          vars_label = vars_sub, network_label = net_lbl, source_label = source_label
+        )
+        cat(sprintf("  + Saved custom basin exceedance map: %s\n", basename(ex_k_path)))
+      }
     }
   }
   cat(sprintf("Completed '%s'! Saved tables and all %d figures to %s/\n", sl$period_tag, n_figs, out_subdir))

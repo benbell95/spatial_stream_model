@@ -39,6 +39,7 @@ Use this index to find the right guide for your task.
 
 | Guide | Purpose |
 | :--- | :--- |
-| [**S3N Modelling & Kriging Theory**](./s3n_modelling_and_kriging_guide.md) | Mathematical foundations of ROS imputation, 12 response transformations, Tail-Up / Tail-Down / Joint Additive stream covariance, multi-kernel NNGP estimation, and universal stream kriging. |
+| [**S3N Modelling & Kriging Theory**](./s3n_modelling_and_kriging_guide.md) | Mathematical foundations of ROS imputation, 12 response transformations, Tail-Up / Tail-Down / Joint Additive stream covariance, multi-kernel NNGP estimation, hydrological CV modes (`--cv-mode=`), universal stream kriging, and C++ optimal monitoring design (`--design-sites=`). |
 | [**Non-Linear Spline (`GAM + S3N`) & Tree-Ensemble (`RF / GBM + S3N`) Guide**](./nonlinear_and_tree_ensemble_trend_guide.md) | Using `--trend=spline\|gam\|rf\|gbm` on standard raw or GAM-weighted data, zero-external-package architecture, orthogonal OOB/OOF residual kriging, and interpreting `GAM_EDF` / `VarImp(%)`. |
+| [**Regulatory Exceedance & WFD Risk Mapping**](./regulatory_exceedance_mapping_guide.md) | Reach-level Gaussian exceedance probabilities (`--threshold=`, `--threshold-dir=`), 5-tier WFD compliance classification, and `exceedance_summary_<det>.csv` interpretation. |
 | [**Two-Stage GAM & Measurement-Error Kriging**](./two_stage_gam_measurement_error_kriging_guide.md) | Propagating stage-1 temporal/GAM standard errors (`meas_uncertainty`) into stage-2 S3N kriging (`delta_se` / `total_tau.sq`). |

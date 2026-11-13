@@ -1300,6 +1300,206 @@ SEXP C_s3n_joint_nngp(
     return out;
 }
 
+// =============================================================================
+// C_s3n_optimal_design:
+// Fast OpenMP Greedy Variance-Reduction (Active-Learning) Monitoring Network
+// Design. Given current kriging SEs across the river network and fitted
+// stream covariance parameters, sequentially selects K unmonitored reaches
+// that maximize expected reduction in domain-wide kriging variance.
+//
+// Args:
+//   parent_dn_r, net_id_r, tin_r, tout_r, d2m_km_r, up_dist_km_r, mid_x_r, mid_y_r
+//   se_curr_r   : length q vector of current kriging SEs
+//   params_r    : 5-vector: (sigma_sq_stream, sigma_sq_euc, tau_sq, phi, kernel_id)
+//   cand_idx_r  : 0-based integer vector of candidate unmonitored reach indices
+//   eval_idx_r  : 0-based integer vector of target evaluation reach indices
+//   k_design_r  : integer scalar K (number of new monitoring stations to select)
+// =============================================================================
+SEXP C_s3n_optimal_design(
+    SEXP parent_dn_r, SEXP net_id_r,
+    SEXP tin_r, SEXP tout_r,
+    SEXP d2m_km_r, SEXP up_dist_km_r,
+    SEXP mid_x_r, SEXP mid_y_r,
+    SEXP se_curr_r, SEXP params_r,
+    SEXP cand_idx_r, SEXP eval_idx_r,
+    SEXP k_design_r
+) {
+    int q      = Rf_length(parent_dn_r);
+    int n_cand = Rf_length(cand_idx_r);
+    int n_eval = Rf_length(eval_idx_r);
+    int K      = std::min(Rf_asInteger(k_design_r), n_cand);
+
+    const int*    parent_dn  = INTEGER(parent_dn_r);
+    const int*    net_id     = INTEGER(net_id_r);
+    const int*    tin        = INTEGER(tin_r);
+    const int*    tout       = INTEGER(tout_r);
+    const double* d2m_km     = REAL(d2m_km_r);
+    const double* up_dist_km = REAL(up_dist_km_r);
+    const double* mid_x      = REAL(mid_x_r);
+    const double* mid_y      = REAL(mid_y_r);
+    const double* se_curr    = REAL(se_curr_r);
+    const int*    cand_idx   = INTEGER(cand_idx_r);
+    const int*    eval_idx   = INTEGER(eval_idx_r);
+
+    const double* params = REAL(params_r);
+    double sig_str = std::max(0.0, params[0]);
+    double sig_euc = std::max(0.0, params[1]);
+    double tau_sq  = std::max(1e-6, params[2]);
+    double phi     = std::max(1e-6, params[3]);
+    int kernel_id  = (Rf_length(params_r) >= 5) ? (int)std::round(params[4]) : 0;
+    double sig_tot = std::max(1e-8, sig_str + sig_euc);
+    double w_str   = sig_str / sig_tot;
+    double w_euc   = sig_euc / sig_tot;
+
+    auto pair_corr = [&](int a, int b) -> double {
+        if (a == b) return 1.0;
+        double r_str = 0.0;
+        if (w_str > 0.0 && net_id[a] == net_id[b]) {
+            double dist = 1e6;
+            if ((tin[a] <= tin[b] && tout[b] <= tout[a]) ||
+                (tin[b] <= tin[a] && tout[a] <= tout[b])) {
+                dist = std::max(1e-4, std::abs(up_dist_km[a] - up_dist_km[b]));
+            } else {
+                int anc = a;
+                int guard = 0;
+                while (anc >= 0 && anc < q && !(tin[anc] <= tin[b] && tout[b] <= tout[anc]) && guard < q) {
+                    anc = parent_dn[anc];
+                    guard++;
+                }
+                if (anc >= 0 && anc < q && tin[anc] <= tin[b] && tout[b] <= tout[anc]) {
+                    dist = std::max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * d2m_km[anc]);
+                }
+            }
+            if (dist < 1e5) {
+                r_str = eval_stream_kernel(dist, phi, kernel_id);
+            }
+        }
+        double r_euc = 0.0;
+        if (w_euc > 0.0) {
+            double dx = (mid_x[a] - mid_x[b]) * 0.001;
+            double dy = (mid_y[a] - mid_y[b]) * 0.001;
+            r_euc = eval_stream_kernel(std::hypot(dx, dy), phi, kernel_id);
+        }
+        return w_str * r_str + w_euc * r_euc;
+    };
+
+    std::vector<double> v_eval(n_eval, 0.0);
+    double base_var_sum = 0.0;
+    for (int e = 0; e < n_eval; ++e) {
+        double s = se_curr[eval_idx[e]];
+        v_eval[e] = std::max(0.0, s * s);
+        base_var_sum += v_eval[e];
+    }
+    if (base_var_sum < 1e-12) base_var_sum = 1e-12;
+
+    std::vector<double> v_cand(n_cand, 0.0);
+    std::vector<char>   chosen(n_cand, 0);
+    for (int c = 0; c < n_cand; ++c) {
+        double s = se_curr[cand_idx[c]];
+        v_cand[c] = std::max(0.0, s * s);
+    }
+
+    SEXP sel_pos_r    = PROTECT(Rf_allocVector(INTSXP, K));
+    SEXP dv_r         = PROTECT(Rf_allocVector(REALSXP, K));
+    SEXP pct_r        = PROTECT(Rf_allocVector(REALSXP, K));
+    SEXP cum_pct_r    = PROTECT(Rf_allocVector(REALSXP, K));
+    SEXP se_before_r  = PROTECT(Rf_allocVector(REALSXP, K));
+    SEXP se_after_r   = PROTECT(Rf_allocVector(REALSXP, K));
+
+    int*    sel_pos   = INTEGER(sel_pos_r);
+    double* dv_out    = REAL(dv_r);
+    double* pct_out   = REAL(pct_r);
+    double* cum_out   = REAL(cum_pct_r);
+    double* se_bef    = REAL(se_before_r);
+    double* se_aft    = REAL(se_after_r);
+
+    double cum_dv = 0.0;
+
+    for (int step = 0; step < K; ++step) {
+        double mean_se_b = 0.0;
+        for (int e = 0; e < n_eval; ++e) mean_se_b += std::sqrt(v_eval[e]);
+        mean_se_b /= std::max(1, n_eval);
+
+        std::vector<double> cand_gains(n_cand, -1.0);
+        #pragma omp parallel for schedule(dynamic, 4)
+        for (int c = 0; c < n_cand; ++c) {
+            if (chosen[c] || v_cand[c] <= 1e-10) continue;
+            int u = cand_idx[c];
+            double vc = v_cand[c];
+            double denom = vc + tau_sq;
+            double total_dv = 0.0;
+            for (int e = 0; e < n_eval; ++e) {
+                if (v_eval[e] <= 1e-10) continue;
+                double r = pair_corr(eval_idx[e], u);
+                if (r <= 1e-6) continue;
+                double cov_ec = std::sqrt(v_eval[e] * vc) * r;
+                double dv = (cov_ec * cov_ec) / denom;
+                if (dv > v_eval[e]) dv = v_eval[e];
+                total_dv += dv;
+            }
+            cand_gains[c] = total_dv;
+        }
+
+        int best_c = -1;
+        double best_dv = -1.0;
+        for (int c = 0; c < n_cand; ++c) {
+            if (!chosen[c] && cand_gains[c] > best_dv) {
+                best_dv = cand_gains[c];
+                best_c = c;
+            }
+        }
+        if (best_c < 0) break;
+
+        chosen[best_c] = 1;
+        int u_best = cand_idx[best_c];
+        double vc_best = v_cand[best_c];
+        double denom_best = vc_best + tau_sq;
+
+        // Update remaining evaluation and candidate variances
+        for (int e = 0; e < n_eval; ++e) {
+            if (v_eval[e] <= 1e-10) continue;
+            double r = pair_corr(eval_idx[e], u_best);
+            if (r <= 1e-6) continue;
+            double cov_ec = std::sqrt(v_eval[e] * vc_best) * r;
+            double dv = (cov_ec * cov_ec) / denom_best;
+            v_eval[e] = std::max(0.0, v_eval[e] - dv);
+        }
+        for (int c = 0; c < n_cand; ++c) {
+            if (chosen[c] || v_cand[c] <= 1e-10) continue;
+            double r = pair_corr(cand_idx[c], u_best);
+            if (r <= 1e-6) continue;
+            double cov_cc = std::sqrt(v_cand[c] * vc_best) * r;
+            double dv = (cov_cc * cov_cc) / denom_best;
+            v_cand[c] = std::max(0.0, v_cand[c] - dv);
+        }
+
+        double mean_se_a = 0.0;
+        for (int e = 0; e < n_eval; ++e) mean_se_a += std::sqrt(v_eval[e]);
+        mean_se_a /= std::max(1, n_eval);
+
+        cum_dv += std::max(0.0, best_dv);
+        sel_pos[step] = best_c + 1; // 1-based position into cand_idx_r
+        dv_out[step]  = std::max(0.0, best_dv);
+        pct_out[step] = 100.0 * std::max(0.0, best_dv) / base_var_sum;
+        cum_out[step] = 100.0 * cum_dv / base_var_sum;
+        se_bef[step]  = mean_se_b;
+        se_aft[step]  = mean_se_a;
+    }
+
+    SEXP out = PROTECT(Rf_allocVector(VECSXP, 6));
+    SEXP nms = PROTECT(Rf_allocVector(STRSXP, 6));
+    SET_VECTOR_ELT(out, 0, sel_pos_r);   SET_STRING_ELT(nms, 0, Rf_mkChar("cand_pos"));
+    SET_VECTOR_ELT(out, 1, dv_r);        SET_STRING_ELT(nms, 1, Rf_mkChar("var_reduced"));
+    SET_VECTOR_ELT(out, 2, pct_r);       SET_STRING_ELT(nms, 2, Rf_mkChar("pct_var_reduced"));
+    SET_VECTOR_ELT(out, 3, cum_pct_r);   SET_STRING_ELT(nms, 3, Rf_mkChar("cum_pct_reduced"));
+    SET_VECTOR_ELT(out, 4, se_before_r); SET_STRING_ELT(nms, 4, Rf_mkChar("mean_se_before"));
+    SET_VECTOR_ELT(out, 5, se_after_r);  SET_STRING_ELT(nms, 5, Rf_mkChar("mean_se_after"));
+    Rf_setAttrib(out, R_NamesSymbol, nms);
+
+    UNPROTECT(8);
+    return out;
+}
+
 }
 
 

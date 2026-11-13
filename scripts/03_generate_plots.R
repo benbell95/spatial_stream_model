@@ -381,6 +381,33 @@ for (b in bundles) {
       }
     }
   }
+
+  if ("compliance_tier" %in% names(b$eng_pred) && "exceed_prob" %in% names(b$eng_pred)) {
+    ex_t_val <- NA_real_
+    ex_t_dir <- "above"
+    ex_sum_csv <- find_first_csv(b$bundle_dir, "^exceedance_summary_.*\\.csv$", required = FALSE)
+    if (!is.null(ex_sum_csv) && file.exists(ex_sum_csv)) {
+      ex_df <- read.csv(ex_sum_csv, stringsAsFactors = FALSE)
+      if (nrow(ex_df) > 0L && "Threshold_Raw" %in% names(ex_df)) {
+        ex_t_val <- as.numeric(ex_df$Threshold_Raw[1])
+        if ("Direction" %in% names(ex_df)) ex_t_dir <- as.character(ex_df$Direction[1])
+      }
+    }
+    ex_eng_path <- file.path(b$FIG_DIR, sprintf("fig_exceedance_england_%s.png", b$det_code))
+    ex_bas_path <- file.path(b$FIG_DIR, sprintf("fig_exceedance_basins_%s.png", b$det_code))
+    plot_fig_exceedance_england(
+      b$eng_pred, b$det_code, b$det_name, b$det_unit, ex_eng_path,
+      threshold_val = ex_t_val, threshold_dir = ex_t_dir,
+      vars_label = vars_sub, network_label = net_lbl, source_label = b$source_label
+    )
+    plot_fig_exceedance_basins(
+      b$hum_pred, b$tha_pred, b$sev_pred, b$det_code, b$det_name, b$det_unit, ex_bas_path,
+      threshold_val = ex_t_val, threshold_dir = ex_t_dir,
+      vars_label = vars_sub, network_label = net_lbl, source_label = b$source_label
+    )
+    cat(sprintf("  + Saved regulatory exceedance & management tier maps: %s, %s\n",
+                basename(ex_eng_path), basename(ex_bas_path)))
+  }
 }
 
 # If temporal subdirectories (year_*, season_*, month_*) exist under target_dir,

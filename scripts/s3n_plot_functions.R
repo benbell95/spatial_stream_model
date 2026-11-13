@@ -993,3 +993,219 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
         side = 3, line = 1.6, outer = TRUE, cex = 1.20, font = 2, col = "#111111")
   mtext(wrap_title(sub_outer, 190), side = 3, line = 0.2, outer = TRUE, cex = 0.90, col = "#444444")
 }
+
+# ==============================================================================
+# Regulatory Exceedance Probability & 5-Tier WFD Management Classification Plots
+# ==============================================================================
+
+COMPLIANCE_TIER_LEVELS <- c(
+  "Confidently Compliant",
+  "Likely Compliant",
+  "Uncertain / Priority Monitoring",
+  "Likely Exceeding",
+  "Confidently Exceeding"
+)
+
+COMPLIANCE_TIER_COLORS <- c(
+  "Confidently Compliant"           = "#1a9850",
+  "Likely Compliant"                = "#91cf60",
+  "Uncertain / Priority Monitoring" = "#f4d03f",
+  "Likely Exceeding"                = "#f46d43",
+  "Confidently Exceeding"           = "#d73027"
+)
+
+EXCEED_PROB_PAL <- colorRampPalette(c("#1a9850", "#91cf60", "#f4d03f", "#f46d43", "#d73027"))(256)
+
+plot_compliance_tier_network <- function(df, main_title, sub_title,
+                                         base_lwd = 0.35, max_lwd = 2.6,
+                                         show_obs = TRUE, show_legend = TRUE,
+                                         max_main_chars = 65, max_sub_chars = 90) {
+  ord <- order(df$Shreve)
+  d   <- df[ord, ]
+
+  xr <- range(c(d$start_X, d$end_X), na.rm = TRUE)
+  yr <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
+  dx <- diff(xr)
+  dy <- diff(yr)
+
+  right_pad <- if (show_legend) 0.04 * dx else 0.03 * dx
+  plot(NA, xlim = c(xr[1] - 0.03 * dx, xr[2] + right_pad),
+       ylim = c(yr[1] - 0.03 * dy, yr[2] + 0.06 * dy),
+       asp = 1, axes = FALSE, xlab = "", ylab = "")
+  rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
+
+  lwds <- base_lwd + (max_lwd - base_lwd) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+  tier_chr <- as.character(d$compliance_tier)
+  cols <- unname(COMPLIANCE_TIER_COLORS[tier_chr])
+  cols[is.na(cols)] <- "#cccccc"
+  segments(d$start_X, d$start_Y, d$end_X, d$end_Y, col = cols, lwd = lwds)
+
+  if (show_obs) {
+    obs_d <- d[d$has_obs == 1, ]
+    if (nrow(obs_d) > 0L) {
+      points(obs_d$mid_X, obs_d$mid_Y, pch = 3, col = "#222222", cex = 0.45, lwd = 0.7)
+    }
+  }
+
+  # Scale bar
+  sb_len <- if (dx > 250000) 100000 else if (dx > 80000) 25000 else 15000
+  sb_lab <- paste0(sb_len / 1000, " km")
+  sb_x0  <- if (dx > 250000) xr[2] - sb_len - 0.02 * dx else xr[1] + 0.02 * dx
+  sb_y0  <- yr[1] + 0.015 * dy
+  rect(sb_x0 - 0.01 * dx, sb_y0 - 0.015 * dy, sb_x0 + sb_len + 0.01 * dx, sb_y0 + 0.038 * dy,
+       col = rgb(1, 1, 1, 0.85), border = NA)
+  segments(sb_x0, sb_y0, sb_x0 + sb_len, sb_y0, lwd = 2.5, col = "#222222")
+  segments(sb_x0, sb_y0 - 0.008 * dy, sb_x0, sb_y0 + 0.008 * dy, lwd = 1.5, col = "#222222")
+  segments(sb_x0 + sb_len, sb_y0 - 0.008 * dy, sb_x0 + sb_len, sb_y0 + 0.008 * dy, lwd = 1.5, col = "#222222")
+  text(sb_x0 + 0.5 * sb_len, sb_y0 + 0.020 * dy, labels = sb_lab, cex = 0.78, font = 2, col = "#222222")
+
+  if (show_legend) {
+    tab <- table(factor(tier_chr, levels = COMPLIANCE_TIER_LEVELS))
+    pct <- 100 * as.numeric(tab) / max(1L, nrow(d))
+    leg_labels <- sprintf("%s (%s, %.1f%%)",
+                          COMPLIANCE_TIER_LEVELS,
+                          format(as.integer(tab), big.mark = ","),
+                          pct)
+    legend("topleft",
+           legend = leg_labels,
+           col    = unname(COMPLIANCE_TIER_COLORS[COMPLIANCE_TIER_LEVELS]),
+           lwd    = 3.5,
+           bg     = rgb(1, 1, 1, 0.90),
+           box.col = "#cccccc",
+           cex    = 0.76,
+           title  = "Management Classification",
+           title.cex = 0.80)
+  }
+
+  draw_plot_header(
+    main_title = main_title, sub_title = sub_title,
+    max_main = max_main_chars, max_sub = max_sub_chars,
+    cex_main = 0.96, cex_sub = 0.80, adj = 0
+  )
+}
+
+plot_fig_exceedance_england <- function(eng_pred, det_code, det_name, det_unit, out_file,
+                                        threshold_val = NA_real_, threshold_dir = "above",
+                                        vars_label = NULL, network_label = NULL, source_label = NULL) {
+  if (!("compliance_tier" %in% names(eng_pred)) || !("exceed_prob" %in% names(eng_pred))) {
+    return(invisible(NULL))
+  }
+  det_short <- shorten_det_name(det_name)
+  has_net   <- !is.null(network_label) && nzchar(network_label)
+  net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
+  banner    <- format_top_banner(network_label, vars_label, source_label)
+  dir_sym   <- if (identical(tolower(as.character(threshold_dir)), "below")) "<" else ">"
+  thresh_txt <- if (is.finite(threshold_val)) {
+    sprintf("Threshold: Y %s %s %s", dir_sym, formatC(threshold_val, format = "fg", digits = 4), det_unit)
+  } else {
+    "Regulatory Threshold Classification"
+  }
+
+  open_png_device(out_file, width = 2600, height = 1350, res = 200)
+  on.exit(dev.off(), add = TRUE)
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
+
+  plot_compliance_tier_network(
+    eng_pred,
+    main_title = sprintf("A. All England: Assigned Management Classification — %s", det_short),
+    sub_title  = sprintf("%s | %s reaches%s",
+                         thresh_txt, format(nrow(eng_pred), big.mark = ","), net_tag),
+    base_lwd = 0.25, max_lwd = 2.0, show_obs = FALSE, show_legend = TRUE
+  )
+
+  plot_stream_network(
+    eng_pred, "exceed_prob", vmin = 0, vmax = 1, pal = EXCEED_PROB_PAL,
+    main_title = sprintf("B. All England: Exceedance Probability P(Y %s T) — %s", dir_sym, det_short),
+    sub_title  = sprintf("Gaussian predictive probability from S3N kriging mean & SE%s", net_tag),
+    cbar_ticks = c(0, 0.05, 0.20, 0.50, 0.80, 0.95, 1.0),
+    cbar_labels = c("0%", "5%", "20%", "50%", "80%", "95%", "100%"),
+    cbar_title = sprintf("P(Y %s T)\n(%%)", dir_sym),
+    show_obs = FALSE, base_lwd = 0.25, max_lwd = 2.0
+  )
+  draw_top_banner(banner)
+}
+
+plot_fig_exceedance_basins <- function(hum_pred, tha_pred, sev_pred, det_code, det_name, det_unit, out_file,
+                                       threshold_val = NA_real_, threshold_dir = "above",
+                                       vars_label = NULL, network_label = NULL, source_label = NULL) {
+  basins <- list(
+    list(df = hum_pred, title = "A. Humber Basin"),
+    list(df = tha_pred, title = "B. Thames Basin"),
+    list(df = sev_pred, title = "C. Severn Basin")
+  )
+  basins <- Filter(function(x) !is.null(x$df) && nrow(x$df) > 0L && ("compliance_tier" %in% names(x$df)), basins)
+  if (length(basins) == 0L) return(invisible(NULL))
+
+  det_short  <- shorten_det_name(det_name)
+  banner     <- format_top_banner(network_label, vars_label, source_label)
+  dir_sym    <- if (identical(tolower(as.character(threshold_dir)), "below")) "<" else ">"
+  thresh_txt <- if (is.finite(threshold_val)) {
+    sprintf("Threshold: Y %s %s %s", dir_sym, formatC(threshold_val, format = "fg", digits = 4), det_unit)
+  } else {
+    "Management Classification"
+  }
+
+  open_png_device(out_file, width = 3000, height = 1150, res = 200)
+  on.exit(dev.off(), add = TRUE)
+  par(mfrow = c(1, length(basins)), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
+
+  for (b in basins) {
+    plot_compliance_tier_network(
+      b$df,
+      main_title = sprintf("%s: Management Classification (%s)", b$title, det_short),
+      sub_title  = sprintf("%s | %s reaches (n = %d obs)",
+                           thresh_txt, format(nrow(b$df), big.mark = ","), sum(b$df$has_obs == 1)),
+      base_lwd = 0.35, max_lwd = 2.4, show_obs = TRUE, show_legend = TRUE,
+      max_main_chars = 52, max_sub_chars = 68
+    )
+  }
+  draw_top_banner(banner)
+}
+
+plot_fig_exceedance_basin <- function(basin_pred, basin_title, det_code, det_name, det_unit, out_file,
+                                      threshold_val = NA_real_, threshold_dir = "above",
+                                      vars_label = NULL, network_label = NULL, source_label = NULL) {
+  if (is.null(basin_pred) || !("compliance_tier" %in% names(basin_pred)) || !("exceed_prob" %in% names(basin_pred))) {
+    return(invisible(NULL))
+  }
+  det_short  <- shorten_det_name(det_name)
+  has_net    <- !is.null(network_label) && nzchar(network_label)
+  net_tag    <- if (has_net) sprintf(" [%s]", network_label) else ""
+  banner     <- format_top_banner(network_label, vars_label, source_label)
+  dir_sym    <- if (identical(tolower(as.character(threshold_dir)), "below")) "<" else ">"
+  thresh_txt <- if (is.finite(threshold_val)) {
+    sprintf("Threshold: Y %s %s %s", dir_sym, formatC(threshold_val, format = "fg", digits = 4), det_unit)
+  } else {
+    "Regulatory Threshold Classification"
+  }
+
+  open_png_device(out_file, width = 2600, height = 1350, res = 200)
+  on.exit(dev.off(), add = TRUE)
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+      oma = get_banner_oma(banner), bg = "white")
+
+  plot_compliance_tier_network(
+    basin_pred,
+    main_title = sprintf("A. %s: Assigned Management Classification (%s)", basin_title, det_short),
+    sub_title  = sprintf("%s | %s reaches%s",
+                         thresh_txt, format(nrow(basin_pred), big.mark = ","), net_tag),
+    base_lwd = 0.35, max_lwd = 2.8, show_obs = TRUE, show_legend = TRUE
+  )
+
+  plot_stream_network(
+    basin_pred, "exceed_prob", vmin = 0, vmax = 1, pal = EXCEED_PROB_PAL,
+    main_title = sprintf("B. %s: Exceedance Probability P(Y %s T) (%s)", basin_title, dir_sym, det_short),
+    sub_title  = sprintf("Gaussian predictive probability from S3N kriging mean & SE%s", net_tag),
+    cbar_ticks = c(0, 0.05, 0.20, 0.50, 0.80, 0.95, 1.0),
+    cbar_labels = c("0%", "5%", "20%", "50%", "80%", "95%", "100%"),
+    cbar_title = sprintf("P(Y %s T)\n(%%)", dir_sym),
+    show_obs = FALSE, base_lwd = 0.35, max_lwd = 2.8
+  )
+  obs_b <- basin_pred[basin_pred$has_obs == 1, ]
+  if (nrow(obs_b) > 0L) {
+    points(obs_b$mid_X, obs_b$mid_Y, pch = 3, col = "#222222", cex = 0.55, lwd = 0.8)
+  }
+  draw_top_banner(banner)
+}
