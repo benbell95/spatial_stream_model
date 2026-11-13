@@ -455,7 +455,11 @@ plot_fig_exceedance_basins(dom_val$pred_df, dom_val$pred_df, dom_val$pred_df,
                            threshold_val = 5.0, threshold_dir = "above")
 assert_true(file.exists(tmp_ex_eng) && file.info(tmp_ex_eng)$size > 1000, "exceedance england PNG rendered")
 assert_true(file.exists(tmp_ex_bas) && file.info(tmp_ex_bas)$size > 1000, "exceedance basins PNG rendered")
-unlink(c(tmp_ex_eng, tmp_ex_bas))
+tmp_opt_des <- tempfile(fileext = ".png")
+plot_fig_optimal_design(dom_val$pred_df, dom_val$design_df, "Synthetic Basin",
+                        "0117", "Nitrate as N", "mg/L", tr_log, tmp_opt_des)
+assert_true(file.exists(tmp_opt_des) && file.info(tmp_opt_des)$size > 1000, "optimal design PNG rendered")
+unlink(c(tmp_ex_eng, tmp_ex_bas, tmp_opt_des))
 
 cat("  [PASS] Hydrological CV modes, regulatory exceedance tiers, plots, and C++ optimal monitoring design\n")
 

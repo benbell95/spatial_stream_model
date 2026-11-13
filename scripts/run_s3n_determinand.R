@@ -1083,6 +1083,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
     sev_pred       = sev_pred,
     res_eng        = res_eng,
     res_hum        = res_hum,
+    res_tha        = res_tha,
+    res_sev        = res_sev,
     extra_fits     = extra_fits,
     cv             = all_cv,
     params         = all_params
@@ -1180,6 +1182,46 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
           vars_label = vars_sub, network_label = net_lbl, source_label = source_label
         )
         cat(sprintf("  + Saved custom basin exceedance map: %s\n", basename(ex_k_path)))
+      }
+    }
+  }
+
+  if (!is.null(sl$res_eng) && !is.null(sl$res_eng$design_df) && nrow(sl$res_eng$design_df) > 0L) {
+    des_eng_path <- file.path(out_subdir, sprintf("fig_optimal_design_england_%s.png", det_code))
+    plot_fig_optimal_design(
+      eng_pred, sl$res_eng$design_df, domain_label = sl$res_eng$design_df$Domain[1],
+      det_code, det_title_name, det_unit, trans_obj, des_eng_path,
+      sc_se = sc_se_eng, vars_label = vars_sub, network_label = net_lbl, source_label = source_label
+    )
+    cat(sprintf("  + Saved All England optimal monitoring design map: %s\n", basename(des_eng_path)))
+    des_sub_specs <- list(
+      list(res = sl$res_hum, pred = hum_pred, slug = "humber", sc = sc_se_hum),
+      list(res = sl$res_tha, pred = tha_pred, slug = "thames", sc = NULL),
+      list(res = sl$res_sev, pred = sev_pred, slug = "severn", sc = NULL)
+    )
+    for (ds in des_sub_specs) {
+      if (!is.null(ds$res) && !is.null(ds$res$design_df) && nrow(ds$res$design_df) > 0L) {
+        des_b_path <- file.path(out_subdir, sprintf("fig_optimal_design_%s_%s.png", ds$slug, det_code))
+        plot_fig_optimal_design(
+          ds$pred, ds$res$design_df, domain_label = ds$res$design_df$Domain[1],
+          det_code, det_title_name, det_unit, trans_obj, des_b_path,
+          sc_se = ds$sc, vars_label = vars_sub, network_label = net_lbl, source_label = source_label
+        )
+        cat(sprintf("  + Saved %s optimal monitoring design map: %s\n", ds$slug, basename(des_b_path)))
+      }
+    }
+    if (length(extra_fits) > 0L) {
+      for (k in seq_along(extra_fits)) {
+        ef <- extra_fits[[k]]
+        if (!is.null(ef$design_df) && nrow(ef$design_df) > 0L) {
+          des_k_path <- file.path(out_subdir, sprintf("fig_optimal_design_basin_%s_%s.png", ef$info$slug, det_code))
+          plot_fig_optimal_design(
+            ef$pred_df, ef$design_df, domain_label = ef$design_df$Domain[1],
+            det_code, det_title_name, det_unit, trans_obj, des_k_path,
+            sc_se = NULL, vars_label = vars_sub, network_label = net_lbl, source_label = source_label
+          )
+          cat(sprintf("  + Saved custom basin optimal design map: %s\n", basename(des_k_path)))
+        }
       }
     }
   }

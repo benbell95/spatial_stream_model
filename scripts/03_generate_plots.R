@@ -408,6 +408,31 @@ for (b in bundles) {
     cat(sprintf("  + Saved regulatory exceedance & management tier maps: %s, %s\n",
                 basename(ex_eng_path), basename(ex_bas_path)))
   }
+
+  des_csv <- find_first_csv(b$bundle_dir, "^optimal_monitoring_design_.*\\.csv$", required = FALSE)
+  if (!is.null(des_csv) && file.exists(des_csv)) {
+    des_df <- tryCatch(read.csv(des_csv, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (!is.null(des_df) && nrow(des_df) > 0L && "Domain" %in% names(des_df)) {
+      des_dom_specs <- list(
+        list(pred = b$eng_pred, pattern = "^All England", slug = "england", sc = shared_sc_se_e),
+        list(pred = b$hum_pred, pattern = "^Humber",      slug = "humber",  sc = shared_sc_se_h),
+        list(pred = b$tha_pred, pattern = "^Thames",      slug = "thames",  sc = NULL),
+        list(pred = b$sev_pred, pattern = "^Severn",      slug = "severn",  sc = NULL)
+      )
+      for (ds in des_dom_specs) {
+        sub_d <- des_df[grepl(ds$pattern, des_df$Domain, ignore.case = TRUE), , drop = FALSE]
+        if (nrow(sub_d) > 0L && !is.null(ds$pred) && nrow(ds$pred) > 0L) {
+          des_out <- file.path(b$FIG_DIR, sprintf("fig_optimal_design_%s_%s.png", ds$slug, b$det_code))
+          plot_fig_optimal_design(
+            ds$pred, sub_d, domain_label = sub_d$Domain[1],
+            b$det_code, b$det_name, b$det_unit, b$trans_obj, des_out,
+            sc_se = ds$sc, vars_label = vars_sub, network_label = net_lbl, source_label = b$source_label
+          )
+          cat(sprintf("  + Saved optimal monitoring design map: %s\n", basename(des_out)))
+        }
+      }
+    }
+  }
 }
 
 # If temporal subdirectories (year_*, season_*, month_*) exist under target_dir,

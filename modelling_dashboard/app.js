@@ -67,6 +67,22 @@
       title: "Humber, Thames & Severn Nitrate Exceedance Risk Maps",
       note: "Basin-level threshold risk view identifying localized high-risk tributaries where exceedance confidence exceeds 95%."
     },
+    opt_design_england: {
+      title: "All England Optimal Monitoring Design & Gap Map (--design-sites=50)",
+      note: "Top 50 greedy C++ active-learning placements reduce evaluated England variance by 80.74% (Mean Kriging SE 0.7961 -> 0.3228 log)."
+    },
+    opt_design_humber: {
+      title: "Humber Basin Optimal Monitoring Design Map (CatchID=80, K=50)",
+      note: "Ranks top 50 Humber gap-bridging tributaries, achieving 32.31% cumulative variance reduction (Mean SE 0.7177 -> 0.5714)."
+    },
+    opt_design_thames: {
+      title: "Thames Basin Optimal Monitoring Design Map (CatchID=3055, K=50)",
+      note: "Targets under-monitored Thames headwater and tributary gaps for 43.55% cumulative variance reduction (Mean SE -> 0.5207)."
+    },
+    opt_design_severn: {
+      title: "Severn Basin Optimal Monitoring Design Map (CatchID=2786, K=50)",
+      note: "Places 50 priority stations along Severn mid-reach and headwater gaps for 43.01% cumulative variance reduction."
+    },
     st_season_grid: {
       title: "All England Nitrate by Meteorological Season (fig5 Grid)",
       note: "Synchronized shared color scale across Winter (DJF), Spring (MAM), Summer (JJA), and Autumn (SON)."
@@ -182,10 +198,43 @@
     wb_wt_xcorr: {
       title: "Favoured RSN+SSN Latent Cross-Correlation Matrix (0117 vs. 0180, SVG)",
       note: "De-weighting citizen noise lifts England Corr_Nugget (+0.1335 -> +0.7083) and Corr_Total (+0.2989 -> +0.4308)."
+    },
+    tr_diff_map: {
+      title: "Nitrate Transform Divergence Map (Raw vs. Log, Negatives & Sqrt vs. Log)",
+      note: "Highlights 6,349 physically impossible negative reaches (min -4.817 mg/L) under Raw (none) vs. clean positivity and convergence under Sqrt / Box-Cox."
+    },
+    tr_raw_map: {
+      title: "England Nitrate — Untransformed Raw (--transform=none)",
+      note: "Native mg/L scale (CV R2 = 0.5335) violates physical positivity with 47 negative CV predictions and P05 = -0.288 mg/L."
+    },
+    tr_sqrt_map: {
+      title: "England Nitrate — Fixed Square Root (--transform=sqrt)",
+      note: "Model-scale CV R2 = 0.6349, 0 negative reaches, lowest MAE (1.5705 mg/L), and near-Gaussian CV residuals (+0.184)."
+    },
+    tr_boxcox_map: {
+      title: "England Nitrate — Profile-MLE Box-Cox (lambda = 0.50)",
+      note: "Automatic MLE converges to lambda = 0.50 (CV R2 = 0.6352, Raw MAE = 1.5704 mg/L, 0 negative reaches)."
+    },
+    tr_side_by_side: {
+      title: "4-Transform National Nitrate Prediction Maps Side-by-Side (0117)",
+      note: "Identical 1,210 RSN stations on 90,876 reaches: Raw (none), Log (ln), Sqrt (0.50), and Profile-MLE Box-Cox (0.50)."
+    },
+    tr_comp_svg: {
+      title: "6-Panel Transform Diagnostics Summary (SVG)",
+      note: "Compares CV R2 (model vs. raw scale), Raw RMSE/MAE, Skewness & Negatives, River Quantiles, Management Tiers, and Spearman Rank Concordance."
+    },
+    tr_pred_dens: {
+      title: "Back-Transformed Nitrate Density, Quantiles & Positivity Bounds",
+      note: "Shows Raw crossing 0 mg/L (6.99% negative reaches), Log median downward shift (-1.0078 mg/L raw bias), and Sqrt/Box-Cox alignment."
+    },
+    tr_param_forest: {
+      title: "Model-Scale Variance Components & Parameter Comparison",
+      note: "Tail-Up, Tail-Down, Nugget, and effective range shifts across Raw, Log, Sqrt, and Profile-MLE Box-Cox."
     }
   };
 
   const FEATURE_CATALOG = [
+    { cat: "major", badge: "CS7", title: "Data Transformation Comparison (Raw, Log, Sqrt, Box-Cox)", desc: "Benchmarks 4 Nitrate transformations across physical positivity, Jensen median bias, residual symmetry (0.118 skew), and Profile-MLE Box-Cox (lambda=0.50).", tab: "cs7" },
     { cat: "major", badge: "CS6", title: "Citizen Science WaterBlitz Co-Kriging Fusion", desc: "Ingest 44,982 England WaterBlitz citizen observations via format_custom_data.py and compare Equal vs. Statutory-Favoured (rsn,ssn priority + 0.25 weight) bivariate Co-Kriging.", tab: "cs6" },
     { cat: "major", badge: "Stage 1", title: "Zero-Dependency Python WKB GIS Extractor", desc: "Pure stdlib sqlite3 + binary WKB decoder extracts 90,876 ORN v2 reaches in ~8-15s without GDAL or sf.", tab: "overview" },
     { cat: "major", badge: "Stage 2", title: "C++/OpenMP Euler-Tour Joint NNGP", desc: "Sub-second O(n) Tail-Up + Tail-Down + Euclidean additive kriging via compiled s3n_fast_neighbors.so.", tab: "cs1" },
@@ -199,10 +248,11 @@
     { cat: "minor", badge: "Kernels", title: "5 Stream Covariance Kernels (--kernel)", desc: "exponential, spherical, mariah, linear, or auto (selects best kernel by Profile MLE likelihood).", tab: "cs1" },
     { cat: "minor", badge: "Confluence", title: "3 Physical AFV Weighting Schemes (--afv)", desc: "Branch weights by upstream length, Shreve link magnitude, or hydro_yield (orographic + aquifer proxy).", tab: "cs1" },
     { cat: "minor", badge: "Covariates", title: "15 Covariates & Mixed +/- Selection (--vars)", desc: "Customize predictors with --vars=+Soil_Idx,-Slope_z; inspect full catalog via --list-vars.", tab: "cs1" },
-    { cat: "minor", badge: "Transforms", title: "12 Transforms & 4 Normalisations", desc: "boxcox, yeojohnson, log, sqrt, logit, asin + Taylor/Duan back-transform; robust_zscore, zscore, minmax, percentile.", tab: "cs2" },
+    { cat: "minor", badge: "Transforms", title: "12 Transforms & 4 Normalisations", desc: "boxcox, yeojohnson, log, sqrt, logit, asin + Taylor/Duan back-transform; robust_zscore, zscore, minmax, percentile.", tab: "cs7" },
     { cat: "minor", badge: "Censoring", title: "ROS, Site-ROS & Spatial Tobit EM (< LOD)", desc: "Handle left-censored '<' detection limits (--censor=ros|ros_site|em) and colorimetric ranges (--range-mode=tobit).", tab: "cs2" },
     { cat: "minor", badge: "Uncertainty", title: "Two-Stage Approach A Meas-Error Kriging", desc: "--meas-error / --gam and --source-se propagate Delta-Method observation SE into prediction SE maps.", tab: "cs2" },
-    { cat: "minor", badge: "Validation", title: "Hydrological CV Modes & Optimal Design", desc: "--cv-mode=random|spatial|downstream|upstream plus C++ greedy entropy --design-sites=<K> site placement.", tab: "cs1" },
+    { cat: "major", badge: "CS8", title: "Optimal Monitoring Network Design & Gap Mapping", desc: "--design-sites=<K> runs OpenMP C++ Schur-complement active learning and renders multi-panel gap maps (80.74% variance drop at K=50).", tab: "cs8" },
+    { cat: "minor", badge: "Validation", title: "Hydrological CV Modes (--cv-mode)", desc: "--cv-mode=random|spatial|catchment|downstream|upstream evaluates geographic & downstream extrapolation.", tab: "cs1" },
     { cat: "minor", badge: "Networks", title: "BYOWN Custom GeoPackage & GeoParquet", desc: "Bring your own river shapefile/gpkg via JSON profile (--network) or convert via --convert-to-geoparquet.", tab: "overview" },
     { cat: "minor", badge: "Graphics", title: "Hybrid DPI, Vector SVG & Size Scaling", desc: "--fig-format=png|pdf|svg, --dpi=<N>, and --fig-size=<pct> across standalone & runner scripts.", tab: "workbench" }
   ];
@@ -267,7 +317,10 @@
       ["fig-slot-cs5-audits", "desc_grad"],
       ["fig-slot-cs5-snap", "snap_overview"],
       ["fig-slot-cs6-maps", "wb_diff_0117"],
-      ["fig-slot-cs6-charts", "wb_comp_svg"]
+      ["fig-slot-cs6-charts", "wb_comp_svg"],
+      ["fig-slot-cs7-maps", "tr_diff_map"],
+      ["fig-slot-cs7-charts", "tr_comp_svg"],
+      ["fig-slot-cs8-design", "opt_design_england"]
     ];
     defaults.forEach(([slotId, figKey]) => renderFigureInto(slotId, figKey));
 
@@ -617,6 +670,93 @@
       t.cs6_cov_comp || [],
       (r) => String(r.Domain_Short) === "All England" ? "highlight-row" : ""
     );
+
+    // --- CS7: Data Transforms Comparison ---
+    const kpi7 = document.getElementById("cs7-kpis");
+    if (kpi7) {
+      kpi7.innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">Profile-MLE Box-Cox &lambda;</div><div class="kpi-val pos">0.50 (Sqrt)</div><div class="kpi-note">MLE converges to power 0.50, cutting skew 1.001 &rarr; 0.118</div></div>
+        <div class="kpi-card"><div class="kpi-label">Raw Positivity Violations</div><div class="kpi-val warn">6,349 (6.99%)</div><div class="kpi-note">47 negative CV stations; min -4.817 mg/L vs. 0% under Sqrt/Log/Box-Cox</div></div>
+        <div class="kpi-card"><div class="kpi-label">Best Model-Scale vs. Raw Error</div><div class="kpi-val pos">0.6784 / 1.57</div><div class="kpi-note">Log tops model R&sup2;; Sqrt &amp; Box-Cox minimize Raw MAE (1.57 mg/L)</div></div>
+        <div class="kpi-card"><div class="kpi-label">Log Median Bias vs. Rank</div><div class="kpi-val amber">-1.01 mg/L</div><div class="kpi-note">exp(&mu;) Jensen shift vs. Sqrt/Box-Cox &rho;=0.982 rank agreement</div></div>
+      `;
+    }
+
+    renderTable("cs7-summary-table",
+      [
+        { label: "Transform", key: "Transform" },
+        { label: "Lambda", key: "Lambda" },
+        { label: "Model R²", key: "R2_ModelSc", num: true, digits: 4 },
+        { label: "Raw R²", key: "R2_Raw_mgL", num: true, digits: 4 },
+        { label: "Raw RMSE", key: "RMSE_Raw_mgL", num: true, digits: 4 },
+        { label: "Raw MAE", key: "MAE_Raw_mgL", num: true, digits: 4 },
+        { label: "Raw Bias", key: "Bias_Raw_mgL", num: true, digits: 4 },
+        { label: "CV Skew", key: "CV_Resid_Skew", num: true, digits: 3 },
+        { label: "Neg Reaches", fn: (r) => `${Number(r.Neg_Reaches).toLocaleString()} (${fmt(r.Neg_Reach_Pct, 2)}%)`, num: true },
+        { label: "Min mg/L", key: "Eng_Min_mgL", num: true, digits: 3 },
+        { label: "Uncertain %", fn: (r) => `${fmt(r.Uncertain_Pct, 2)}%`, num: true },
+        { label: "rho vs Log", key: "Spearman_vs_Log", num: true, digits: 4 }
+      ],
+      t.cs7_transform_summary || [],
+      (r) => String(r.Key) === "boxcox" || String(r.Key) === "sqrt" ? "highlight-row" : ""
+    );
+
+    renderTable("cs7-cv-table",
+      [
+        { label: "Transform", key: "Run_Label" },
+        { label: "Domain", key: "Canon_Domain" },
+        { label: "n Obs", key: "n_obs", num: true },
+        { label: "Model", key: "Canon_Model" },
+        { label: "CV R²", key: "R2", num: true, digits: 4 },
+        { label: "CV RMSE", key: "RMSE", num: true, digits: 4 },
+        { label: "CV MAE", key: "MAE", num: true, digits: 4 },
+        { label: "Gain vs OLS", fn: (r) => `${r.Delta_R2_vs_OLS >= 0 ? "+" : ""}${fmt(r.Delta_R2_vs_OLS, 4)}`, num: true }
+      ],
+      (t.cs7_cv_comp || []).filter((r) => String(r.Canon_Model) === "S3N Combined"),
+      (r) => String(r.Canon_Domain).includes("All England") ? "highlight-row" : ""
+    );
+
+    // --- CS8: Optimal Monitoring Network Design ---
+    const kpi8 = document.getElementById("cs8-kpis");
+    if (kpi8) {
+      kpi8.innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">England Variance Drop (+50)</div><div class="kpi-val pos">80.74%</div><div class="kpi-note">Evaluated ORN variance reduced across 90,876 reaches</div></div>
+        <div class="kpi-card"><div class="kpi-label">National Mean Kriging SE</div><div class="kpi-val pos">0.796 &rarr; 0.323</div><div class="kpi-note">-59.5% SE reduction on log scale (1,210 &rarr; +50 sites)</div></div>
+        <div class="kpi-card"><div class="kpi-label">Top Single Placement (#1)</div><div class="kpi-val">Riv 18175</div><div class="kpi-note">Humber CatchID 80 (Strahler O1): +4.58% variance drop</div></div>
+        <div class="kpi-card"><div class="kpi-label">Per-Basin Gains (+50 Each)</div><div class="kpi-val pos">32.3 / 43.6 / 43.0%</div><div class="kpi-note">Humber / Thames / Severn independent variance drops</div></div>
+      `;
+    }
+
+    renderTable("cs8-design-summary-table",
+      [
+        { label: "Domain (K=50 Added Sites)", key: "Domain" },
+        { label: "Rank-50 Reach", fn: (r) => `Riv ${r.RivID} (C${r.CatchID})` },
+        { label: "Order", key: "Strahler", num: true },
+        { label: "Cum Var Drop", fn: (r) => `${fmt(r.Cum_Pct_Reduced, 2)}%`, num: true },
+        { label: "Mean SE Final", key: "Mean_SE_After", num: true, digits: 4 }
+      ],
+      t.cs2_design_summary || [],
+      (r) => String(r.Domain).includes("All England") ? "highlight-row" : ""
+    );
+
+    renderTable("cs8-design-table",
+      [
+        { label: "Rank", key: "Rank", num: true },
+        { label: "RivID", key: "RivID", num: true },
+        { label: "CatchID", key: "CatchID", num: true },
+        { label: "Order", key: "Strahler", num: true },
+        { label: "Dist2Mth (km)", key: "Dist2Mth_km", num: true, digits: 1 },
+        { label: "US Accum (km)", key: "US_Accum_km", num: true, digits: 1 },
+        { label: "Elev (m)", key: "Elevation", num: true, digits: 1 },
+        { label: "Local SE", key: "Current_SE_sc", num: true, digits: 4 },
+        { label: "Var Reduced", key: "Var_Reduced", num: true, digits: 2 },
+        { label: "+dV %", fn: (r) => `+${fmt(r.Pct_Var_Reduced, 2)}%`, num: true },
+        { label: "Cum %", fn: (r) => `${fmt(r.Cum_Pct_Reduced, 2)}%`, num: true },
+        { label: "Mean SE", key: "Mean_SE_After", num: true, digits: 4 }
+      ],
+      t.cs2_design_eng || [],
+      (r) => Number(r.Rank) <= 5 ? "highlight-row" : ""
+    );
   }
 
   function initFeatureCatalog() {
@@ -665,7 +805,9 @@
           : k.startsWith("whpt") || k.includes("exceed") || k.includes("no3_z") ? "cs2"
           : k.startsWith("st_") ? "cs3"
           : k.startsWith("cokrig") || k.startsWith("rss_") ? "cs4"
-          : k.startsWith("wb_") ? "cs6" : "cs5"
+          : k.startsWith("wb_") ? "cs6"
+          : k.startsWith("tr_") ? "cs7"
+          : k.startsWith("opt_design_") ? "cs8" : "cs5"
       }))
     ];
 
@@ -699,7 +841,7 @@
   }
 
   function initWorkbench() {
-    const ids = ["wbMode", "wbTarget", "wbDataset", "wbSource", "wbTrend", "wbKernel", "wbTransform", "wbThreshold", "wbTemporal", "wbPreferSource", "wbSourceWeight", "wbSourceSe", "wbFormat", "wbOmp"];
+    const ids = ["wbMode", "wbTarget", "wbDataset", "wbSource", "wbTrend", "wbKernel", "wbTransform", "wbThreshold", "wbTemporal", "wbPreferSource", "wbSourceWeight", "wbSourceSe", "wbDesignSites", "wbFormat", "wbOmp"];
     const els = {};
     ids.forEach((id) => { els[id] = document.getElementById(id); });
     const outEl = document.getElementById("wbOutputCmd");
@@ -719,6 +861,7 @@
       const pref = els.wbPreferSource.value.trim();
       const wt = els.wbSourceWeight.value.trim();
       const se = els.wbSourceSe.value.trim();
+      const des = els.wbDesignSites ? Number(els.wbDesignSites.value || 0) : 0;
       const fmtVal = els.wbFormat.value;
       const omp = els.wbOmp.value;
 
@@ -740,6 +883,10 @@
         if (pref) cmd += ` --prefer-source=${pref}`;
         if (wt) cmd += ` --source-weight=${wt}`;
         if (se) cmd += ` --source-se=${se}`;
+        if (des > 0) {
+          cmd += ` --design-sites=${des}`;
+          notes.push(`Runs OpenMP C++ greedy active learning (C_s3n_optimal_design) to rank top ${des} sites & plot fig_optimal_design_* maps.`);
+        }
         if (fmtVal === "png_300") cmd += ` --dpi=300`;
         else cmd += ` --fig-format=${fmtVal}`;
         cmd += ` --omp=${omp}`;
@@ -760,6 +907,10 @@
         if (pref) cmd += ` --prefer-source=${pref}`;
         if (wt) cmd += ` --source-weight=${wt}`;
         if (se) cmd += ` --source-se=${se}`;
+        if (des > 0) {
+          cmd += ` --design-sites=${des}`;
+          notes.push(`Runs OpenMP C++ greedy active learning (C_s3n_optimal_design) to rank top ${des} sites & plot fig_optimal_design_* maps.`);
+        }
         if (fmtVal === "png_300") cmd += ` --dpi=300`;
         else cmd += ` --fig-format=${fmtVal}`;
         cmd += ` --omp=${omp}`;
@@ -778,8 +929,9 @@
     const presets = {
       nitrate: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "auto", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbFormat: "png_300" },
       ecology: { wbMode: "det", wbTarget: "whpt_aspt", wbDataset: "inverts", wbSource: "rsn", wbTrend: "gam", wbKernel: "exponential", wbTransform: "none", wbThreshold: "none", wbTemporal: "all", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbFormat: "png_300" },
-      seasonal: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "exponential", wbTransform: "log", wbThreshold: "none", wbTemporal: "by_season", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbFormat: "png_300" },
-      waterblitz: { wbMode: "cokrig", wbTarget: "0117,0180", wbDataset: "wq", wbSource: "rsn+ssn+waterblitz_tobit", wbTrend: "lmc", wbKernel: "exponential", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "rsn,ssn", wbSourceWeight: "rsn:1,ssn:1,waterblitz:0.25", wbSourceSe: "", wbFormat: "png_300" }
+      seasonal: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "exponential", wbTransform: "log", wbThreshold: "none", wbTemporal: "by_season", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbDesignSites: "0", wbFormat: "png_300" },
+      waterblitz: { wbMode: "cokrig", wbTarget: "0117,0180", wbDataset: "wq", wbSource: "rsn+ssn+waterblitz_tobit", wbTrend: "lmc", wbKernel: "exponential", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "rsn,ssn", wbSourceWeight: "rsn:1,ssn:1,waterblitz:0.25", wbSourceSe: "", wbDesignSites: "0", wbFormat: "png_300" },
+      design: { wbMode: "det", wbTarget: "0117", wbDataset: "wq", wbSource: "rsn", wbTrend: "linear", wbKernel: "exponential", wbTransform: "log", wbThreshold: "uk", wbTemporal: "all", wbPreferSource: "", wbSourceWeight: "", wbSourceSe: "", wbDesignSites: "50", wbFormat: "png_300" }
     };
 
     document.querySelectorAll("#wbPresetBtns [data-preset]").forEach((btn) => {

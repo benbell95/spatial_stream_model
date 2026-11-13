@@ -37,12 +37,14 @@
     <nav class="tab-strip" role="tablist" aria-label="Dashboard Sections">
       <button class="tab-btn active" data-tab="overview" role="tab">1. Overview &amp; Engine</button>
       <button class="tab-btn" data-tab="cs1" role="tab">2. CS1: Nitrate &amp; GAM</button>
-      <button class="tab-btn" data-tab="cs2" role="tab">3. CS2: Ecology, Risk &amp; Transforms</button>
+      <button class="tab-btn" data-tab="cs2" role="tab">3. CS2: Ecology &amp; Risk</button>
       <button class="tab-btn" data-tab="cs3" role="tab">4. CS3: Temporal Trends</button>
       <button class="tab-btn" data-tab="cs4" role="tab">5. CS4: Co-Kriging &amp; Multi-Source</button>
       <button class="tab-btn" data-tab="cs5" role="tab">6. CS5: Audits &amp; N:P</button>
       <button class="tab-btn" data-tab="cs6" role="tab">7. CS6: WaterBlitz Fusion</button>
-      <button class="tab-btn" data-tab="workbench" role="tab">8. CLI Workbench</button>
+      <button class="tab-btn" data-tab="cs7" role="tab">8. CS7: Data Transforms</button>
+      <button class="tab-btn" data-tab="cs8" role="tab">9. CS8: Monitoring Design</button>
+      <button class="tab-btn" data-tab="workbench" role="tab">10. CLI Workbench</button>
     </nav>
   </header>
 
@@ -280,9 +282,9 @@ Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --des
     <section id="tab-cs2" class="tab-panel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 2 · Regulatory Compliance, Ecology &amp; Uncertainty</span>
-        <h2>Ecological Health (<code>whpt_aspt</code>), Threshold Exceedance &amp; Transformations</h2>
+        <h2>Ecological Health (<code>whpt_aspt</code>) &amp; Threshold Exceedance Risk</h2>
         <p>
-          Showcases ecological modelling with <code>--reverse-color</code> on macroinvertebrate <code>WHPT ASPT</code> (`1,160` observed reaches), 5-tier probabilistic threshold exceedance mapping (<code>--threshold=uk</code>) for both Nitrate &amp; Orthophosphate, and raw vs. <code>robust_zscore</code> normalisation comparisons.
+          Showcases ecological modelling with <code>--reverse-color</code> on macroinvertebrate <code>WHPT ASPT</code> (<code>1,160</code> observed reaches), 5-tier probabilistic threshold exceedance mapping (<code>--threshold=uk</code>) for Nitrate &amp; Orthophosphate, and raw vs. <code>robust_zscore</code> normalisation comparisons.
         </p>
       </div>
 
@@ -343,7 +345,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
           <div class="card-header"><h3 class="card-title">WHPT ASPT &amp; Orthophosphate CV Benchmarks</h3></div>
           <div id="cs2-cv-table" class="table-scroll"></div>
           <div class="caveat-box">
-            <strong>12 Built-In Transforms &amp; 4 Normalisations:</strong> <code>log</code>, <code>log10</code>, <code>log1p</code>, <code>sqrt</code>, <code>cbrt</code>, <code>fourthrt</code>, <code>reciprocal</code>, <code>boxcox</code> (Profile MLE &lambda;), <code>yeojohnson</code>, <code>asin</code>, <code>logit</code>, <code>none</code> + Taylor/Duan back-transformation, plus <code>zscore</code>, <code>robust_zscore</code>, <code>minmax</code>, <code>percentile</code>.
+            <strong>12 Built-In Transforms &amp; 4 Normalisations:</strong> <code>log</code>, <code>log10</code>, <code>log1p</code>, <code>sqrt</code>, <code>cbrt</code>, <code>fourthrt</code>, <code>reciprocal</code>, <code>boxcox</code> (Profile MLE &lambda;), <code>yeojohnson</code>, <code>asin</code>, <code>logit</code>, <code>none</code> + Taylor/Duan back-transformation, plus <code>zscore</code>, <code>robust_zscore</code>, <code>minmax</code>, <code>percentile</code> (benchmarked in <strong>CS7</strong>).
           </div>
         </div>
       </div>
@@ -645,7 +647,152 @@ Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
     </section>
 
     <!-- ===================================================================
-         TAB 8: INTERACTIVE CLI WORKBENCH
+         TAB 8: CASE STUDY 7 - DATA TRANSFORMATIONS (NO3-N 0117)
+         =================================================================== -->
+    <section id="tab-cs7" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 7 · Response Scale Transformations (Nitrate-N 0117)</span>
+        <h2>Raw vs. Log vs. Square-Root vs. Profile-MLE Box-Cox on England Nitrate</h2>
+        <p>
+          Evaluates four response transformations on identical England RSN Nitrate observations (<code>1,210</code> stations, <code>90,876</code> reaches, <code>267</code> catchments, management threshold <code>11.3 mg/L</code>): untransformed <code>--transform=none</code>, natural log <code>--transform=log</code>, square root <code>--transform=sqrt</code>, and Profile-MLE Box-Cox <code>--transform=boxcox</code> (which estimates <code>&lambda; = 0.50</code> from the data). Compares model-scale CV accuracy, raw-scale prediction error, Gaussian residual symmetry, physical positivity, and 5-tier threshold stability.
+        </p>
+      </div>
+
+      <div id="cs7-kpis" class="kpi-row"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">National Nitrate Maps &amp; Transform Divergence</h3>
+            <div class="fig-toggle-bar" data-group="cs7-maps">
+              <button class="fig-toggle-btn active" data-fig="tr_diff_map">Transform Diff &amp; Negatives Map</button>
+              <button class="fig-toggle-btn" data-fig="tr_side_by_side">4-Transform Side-by-Side Maps</button>
+              <button class="fig-toggle-btn" data-fig="tr_raw_map">Raw (none) National Map</button>
+              <button class="fig-toggle-btn" data-fig="tr_sqrt_map">Sqrt National Map</button>
+              <button class="fig-toggle-btn" data-fig="tr_boxcox_map">Box-Cox (0.50) National Map</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs7-maps"></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Four Nitrate Transform Runs &amp; Automated Multi-Run Comparison</span><button class="copy-btn" data-copy-target="code-cs7">Copy</button></div>
+            <pre id="code-cs7"># 1. Untransformed Raw mg/L (linear scale, no positivity bound)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=none --threshold=uk --dpi=300 --omp=4
+
+# 2. Natural Log ln(y) (baseline multiplicative / right-skew standard)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=log --threshold=uk --dpi=300 --omp=4
+
+# 3. Fixed Square Root sqrt(y) (power lambda = 0.50)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --threshold=uk --dpi=300 --omp=4
+
+# 4. Profile-MLE Box-Cox (automatically selects lambda = 0.50 on 0117)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=boxcox --threshold=uk --dpi=300 --omp=4
+
+# 5. Cross-transform comparison &amp; custom 6-panel transform diagnostics
+Rscript scripts/04_compare_model_runs.R \
+  output/results/det_0117_orn_rsn_trans_raw \
+  output/results/det_0117_orn_rsn \
+  output/results/det_0117_orn_rsn_trans_sqrt \
+  output/results/det_0117_orn_rsn_trans_boxcox_lam0.50 \
+  --labels="Raw (none),Log (ln),Sqrt,Box-Cox (0.50)" \
+  --out=output/comparisons/cs7_transforms_0117
+Rscript scripts/08_compare_transforms.R --dpi=300</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Cross-Scale Accuracy, Skew &amp; Threshold Impact</h3>
+            <div class="fig-toggle-bar" data-group="cs7-charts">
+              <button class="fig-toggle-btn active" data-fig="tr_comp_svg">6-Panel Transform Diagnostics (SVG)</button>
+              <button class="fig-toggle-btn" data-fig="tr_pred_dens">Back-Transformed Density &amp; Bounds</button>
+              <button class="fig-toggle-btn" data-fig="tr_param_forest">Variance Component &amp; Parameter Shifts</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs7-charts"></div>
+          <div class="interp-box">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>Why Untransformed <code>Raw (none)</code> Breaks Physical Positivity:</strong> On native <code>mg/L</code>, <code>Raw</code> reaches <code>R&sup2;_Raw = 0.5335</code> only because OLS and Kriging minimize raw squared error directly. In exchange, it produces <strong>47 negative CV predictions</strong> and <strong>6,349 negative England reaches (6.99% of the network, min -4.817 mg/L, P05 -0.288 mg/L)</strong> in cleaner upland catchments (Lake District, Pennines, Devon), alongside strongly right-skewed CV residuals (<code>+1.398</code>).</li>
+              <li><strong>Why <code>Log (ln)</code> Tops Model-Scale R&sup2; Yet Shows Median Back-Transform Bias:</strong> Natural log leads model-scale CV (<code>R&sup2;_Model = 0.6784</code>, zero negatives) and sets the baseline rank ordering, but over-compresses Nitrate into left-skewed residuals (<code>-0.904</code>). Because exponentiating Gaussian log-predictions <code>exp(&mu;)</code> targets the conditional <em>median</em> rather than the arithmetic <em>mean</em> (Jensen&rsquo;s inequality), raw-scale bias reaches <code>-1.0078 mg/L</code> (<code>R&sup2;_Raw = 0.3859</code>, <code>RMSE_Raw = 2.7513</code>) and wider log back-transform intervals push Uncertain reaches around <code>11.3 mg/L</code> up to <code>9.22%</code> (vs <code>1.54%&ndash;2.15%</code> for the other transforms).</li>
+              <li><strong>Why <code>Sqrt</code> &amp; Profile-MLE <code>Box-Cox (&lambda; = 0.50)</code> Hit the Sweet Spot:</strong> Data-driven Profile-MLE Box-Cox independently selects <code>&lambda; = 0.50</code> (<code>2(sqrt(y)&minus;1)</code>, affine-equivalent to <code>sqrt</code>), confirming square-root normalization matches English Nitrate&rsquo;s mild right skew (<code>1.001 &rarr; 0.118</code>). Both achieve nearly Gaussian CV residuals (<code>+0.184</code> / <code>+0.185</code>), <strong>zero negative reaches (0.00%)</strong>, the lowest raw-scale <code>MAE (1.5704 mg/L)</code> and <code>MedAE (0.9647 mg/L)</code>, the strongest regional CV in Thames (<code>0.1906</code>) and Severn (<code>0.4031</code>), and <code>&rho; = 0.9818</code> Spearman rank concordance with Log.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">National Transform Comparison (90,876 England Reaches)</h3></div>
+          <div id="cs7-summary-table" class="table-scroll"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Catchment-Stratified CV Performance Across Transforms</h3></div>
+          <div id="cs7-cv-table" class="table-scroll"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 9: CASE STUDY 8 - OPTIMAL MONITORING NETWORK DESIGN
+         =================================================================== -->
+    <section id="tab-cs8" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 8 · Active-Learning Optimal Monitoring Design (<code>--design-sites=50</code>)</span>
+        <h2>Pinpointing Uncertainty Gaps &amp; Highest-Impact Station Placements (Nitrate 0117)</h2>
+        <p>
+          Runs our OpenMP C++ greedy Schur-complement solver (<code>C_s3n_optimal_design</code>) across <code>90,876</code> England ORN v2 reaches (<code>1,210</code> existing RSN stations, <code>267</code> catchments) as well as independent Humber, Thames, and Severn optimizations. Evaluates both stream-network covariance (Tail-Up + Tail-Down) and Euclidean correlation so new stations maximize network-wide uncertainty reduction without clustering next to redundant reaches.
+        </p>
+      </div>
+
+      <div id="cs8-kpis" class="kpi-row"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Monitoring Gap Maps &amp; Priority Station Placements</h3>
+            <div class="fig-toggle-bar" data-group="cs8-design">
+              <button class="fig-toggle-btn active" data-fig="opt_design_england">All England Top-50 Map</button>
+              <button class="fig-toggle-btn" data-fig="opt_design_humber">Humber Top-50</button>
+              <button class="fig-toggle-btn" data-fig="opt_design_thames">Thames Top-50</button>
+              <button class="fig-toggle-btn" data-fig="opt_design_severn">Severn Top-50</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs8-design"></div>
+          <div class="code-wrap">
+            <div class="code-bar"><span>Bash · Active-Learning Optimal Monitoring Placement &amp; Gap Mapping</span><button class="copy-btn" data-copy-target="code-cs8">Copy</button></div>
+            <pre id="code-cs8"># 1. Fit All England + core basins &amp; rank top 50 new monitoring reaches per domain
+Rscript scripts/run_s3n_determinand.R 0117 --design-sites=50 --threshold=uk --dpi=300 --omp=4
+
+# 2. Target a specific catchment (--basin=Eden) for top 15 local additions
+Rscript scripts/run_s3n_determinand.R 0117 --basin=Eden --design-sites=15 --threshold=uk --dpi=300
+
+# 3. Re-render optimal_monitoring_design_*.csv maps cleanly as scalable SVG
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-format=svg</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Per-Domain Uncertainty Reduction Summary (<code>K = 50</code>)</h3></div>
+          <div id="cs8-design-summary-table" class="table-scroll"></div>
+          <div class="interp-box" style="margin-top:16px;">
+            <h4>Suggested Interpretation</h4>
+            <ul>
+              <li><strong>80.74% Evaluated Variance Drop from +50 Stations:</strong> Starting from <code>1,210</code> England RSN stations (mean Kriging SE <code>0.7961</code> log units), adding <code>50</code> optimally placed sites cuts Mean Kriging SE by <strong>-59.5%</strong> (<code>0.7961 &rarr; 0.3228</code>). Independent <code>K = 50</code> basin designs cut variance by <code>32.31%</code> in Humber, <code>43.55%</code> in Thames, and <code>43.01%</code> in Severn.</li>
+              <li><strong>Schur-Complement De-Duplication:</strong> Updating <code>v_eval</code> and <code>v_cand</code> in place after every selection prevents picking neighbouring tributaries on the same river, dispersing Top-10 picks across Humber (<code>#1 Riv 18175</code>, <code>+4.58% dV</code>), Eden (<code>#2 Riv 155540</code>, <code>+3.90% dV</code>), Thames (<code>#3 Riv 137890</code>, <code>+3.74% dV</code>), Severn (<code>#4 Riv 110339</code>, <code>+3.58% dV</code>), and Tweed/Border (<code>#5 Riv 149271</code>, <code>+3.50% dV</code>).</li>
+              <li><strong>Combining Epistemic SE Gaps with Compliance Risk:</strong> Note how <code>#12 Riv 34767</code> has lower local SE (<code>0.1782</code>) yet high connected reach (<code>+2.12% dV</code>) because stream correlation propagates certainty downstream and across junctions. Pairing <code>--design-sites=50</code> with <code>--threshold=uk</code> lets teams prioritise gaps inside yellow <code>Uncertain (20–80%)</code> zones.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="card-header"><h3 class="card-title">Top-20 Priority Candidate Reaches Across England (Ranked by Schur-Complement Variance Reduction)</h3></div>
+        <div id="cs8-design-table" class="table-scroll"></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 10: INTERACTIVE CLI WORKBENCH
          =================================================================== -->
     <section id="tab-workbench" class="tab-panel">
       <div class="hero-card">
@@ -665,6 +812,7 @@ Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
               <button class="fig-toggle-btn" data-preset="ecology">WHPT Ecology</button>
               <button class="fig-toggle-btn" data-preset="seasonal">Seasonal Borrow</button>
               <button class="fig-toggle-btn" data-preset="waterblitz">WaterBlitz Co-Kriging</button>
+              <button class="fig-toggle-btn" data-preset="design">Optimal Design</button>
             </div>
           </div>
           <div class="form-grid">
@@ -763,6 +911,16 @@ Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
                 <option value="png_300">PNG @ 300 DPI (Best for Maps)</option>
                 <option value="svg">SVG (Best for Diagnostic Charts)</option>
                 <option value="pdf">PDF (Publication Print)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="wbDesignSites">Optimal Design Sites (<code>--design-sites</code>)</label>
+              <select id="wbDesignSites">
+                <option value="0">0 (Off)</option>
+                <option value="15">15 (Catchment Top-15 Map)</option>
+                <option value="25">25 (Regional Top-25 Map)</option>
+                <option value="50">50 (National Top-50 Map)</option>
+                <option value="100">100 (Comprehensive Top-100 Map)</option>
               </select>
             </div>
             <div class="field">

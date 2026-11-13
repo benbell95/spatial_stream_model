@@ -1651,3 +1651,197 @@ plot_fig_cokrig_diagnostics <- function(cross_cov_df,
         side = 3, line = ban_h + 0.35, outer = TRUE, cex = 1.12, font = 2, col = "#111111")
   draw_top_banner(banner)
 }
+
+# ==============================================================================
+# Optimal Monitoring Network Design Map (--design-sites=<K>)
+# ==============================================================================
+
+plot_fig_optimal_design <- function(pred_df, design_df, domain_label,
+                                    det_code, det_name, det_unit, trans_obj, out_file,
+                                    sc_se = NULL, vars_label = NULL,
+                                    network_label = NULL, source_label = NULL) {
+  if (is.null(pred_df) || nrow(pred_df) == 0L || !("se_model_sc" %in% names(pred_df))) {
+    return(invisible(NULL))
+  }
+  if (is.null(design_df) || nrow(design_df) == 0L) {
+    return(invisible(NULL))
+  }
+
+  d_sub <- design_df
+  if ("Domain" %in% names(d_sub) && !is.null(domain_label) && nzchar(domain_label)) {
+    matched <- d_sub[d_sub$Domain == domain_label, , drop = FALSE]
+    if (nrow(matched) > 0L) d_sub <- matched
+  }
+  d_sub <- d_sub[order(d_sub$Rank), , drop = FALSE]
+  if (nrow(d_sub) == 0L) return(invisible(NULL))
+
+  tr <- if (!is.null(trans_obj)) trans_obj else build_transformer("log")
+  if (is.null(sc_se)) sc_se <- compute_se_scale(pred_df$se_model_sc)
+
+  det_short    <- shorten_det_name(det_name)
+  has_net      <- !is.null(network_label) && nzchar(network_label)
+  net_tag      <- if (has_net) sprintf(" [%s]", network_label) else ""
+  src_tag      <- if (!is.null(source_label) && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
+  se_scale_txt <- if (tr$type == "none") det_unit else sprintf("%s scale", tr$short_label)
+  se_cbar_txt  <- if (tr$type == "none") sprintf("Kriging SE\n(%s)", det_unit) else sprintf("Kriging SE\n(%s scale)", tr$short_label)
+  banner       <- format_top_banner(network_label, vars_label, source_label)
+
+  n_tot  <- nrow(pred_df)
+  n_obs  <- sum(pred_df$has_obs == 1, na.rm = TRUE)
+  k_sel  <- nrow(d_sub)
+  is_nat <- n_tot > 25000L
+
+  open_png_device(out_file, width = 2800, height = 1650, res = 200)
+  on.exit(dev.off(), add = TRUE)
+
+  oma_v <- get_banner_oma(banner)
+  ban_h <- oma_v[3]
+  oma_v[3] <- ban_h + 2.2
+  par(oma = oma_v, bg = "white")
+  layout(matrix(c(1, 2, 1, 3), nrow = 2, byrow = TRUE), widths = c(1.38, 1.0), heights = c(1.0, 1.12))
+
+  # Panel A: Stream Kriging SE (Monitoring Gaps) + Existing Sites + Top-K Recommended Sites
+  par(mar = c(1.4, 1.2, 4.4, 1.0))
+  plot_stream_network(
+    pred_df, "se_model_sc", vmin = sc_se$vmin, vmax = sc_se$vmax, pal = uncert_cols,
+    main_title = sprintf("A. Monitoring Gaps (Kriging SE) & Top-%d Recommended Sites", k_sel),
+    sub_title  = sprintf("Existing %s stations (n = %s) vs. greedy C++ variance-reduction placements (%s)%s",
+                         src_tag, format(n_obs, big.mark = ","), se_scale_txt, net_tag),
+    cbar_ticks = sc_se$ticks, cbar_labels = sc_se$labels, cbar_title = se_cbar_txt,
+    show_obs = FALSE,
+    base_lwd = if (is_nat) 0.18 else 0.40,
+    max_lwd  = if (is_nat) 1.60 else 2.60,
+    max_main_chars = 66, max_sub_chars = 92
+  )
+
+  # Existing stations (subtle teal crosses/dots so gaps & priority additions dominate)
+  obs_pts <- pred_df[pred_df$has_obs == 1, , drop = FALSE]
+  if (nrow(obs_pts) > 0L) {
+    points(obs_pts$mid_X, obs_pts$mid_Y, pch = 16,
+           col = rgb(0.05, 0.58, 0.53, if (is_nat) 0.55 else 0.72),
+           cex = if (is_nat) 0.42 else 0.68)
+  }
+
+  # Priority recommended stations drawn in reverse rank so #1 sits cleanly on top
+  n_top10 <- min(10L, k_sel)
+  if (k_sel > 10L) {
+    d_tail <- d_sub[rev(11:k_sel), , drop = FALSE]
+    points(d_tail$mid_X, d_tail$mid_Y, pch = 21, bg = "#ff9f1c", col = "#111111",
+           cex = if (is_nat) 1.05 else 1.25, lwd = 0.85)
+  }
+  d_head <- d_sub[rev(seq_len(n_top10)), , drop = FALSE]
+  points(d_head$mid_X, d_head$mid_Y, pch = 21, bg = "#d92638", col = "#ffffff",
+         cex = if (is_nat) 1.45 else 1.75, lwd = 1.15)
+  points(d_head$mid_X, d_head$mid_Y, pch = 21, bg = NA, col = "#111111",
+         cex = if (is_nat) 1.48 else 1.78, lwd = 0.75)
+
+  # Non-overlapping labels for top ranked sites
+  xr <- range(c(pred_df$start_X, pred_df$end_X), na.rm = TRUE)
+  yr <- range(c(pred_df$start_Y, pred_df$end_Y), na.rm = TRUE)
+  min_sep <- 0.022 * max(diff(xr), diff(yr))
+  placed_x <- numeric(0)
+  placed_y <- numeric(0)
+  for (i in seq_len(n_top10)) {
+    xi <- d_sub$mid_X[i]
+    yi <- d_sub$mid_Y[i]
+    too_close <- if (length(placed_x) > 0L) {
+      any(sqrt((xi - placed_x)^2 + (yi - placed_y)^2) < min_sep)
+    } else FALSE
+    if (!too_close || i <= 3L) {
+      off_x <- 0.014 * diff(xr)
+      off_y <- 0.010 * diff(yr) * ifelse(i %% 2L == 0L, -1, 1)
+      text(xi + off_x, yi + off_y, labels = sprintf("#%d", d_sub$Rank[i]),
+           cex = 0.76, font = 2, col = "#7f0000", adj = c(0, 0.5))
+      placed_x <- c(placed_x, xi)
+      placed_y <- c(placed_y, yi)
+    }
+  }
+
+  leg_lbls <- c(
+    sprintf("Existing %s Station (n = %s)", src_tag, format(n_obs, big.mark = ",")),
+    sprintf("Top 1-%d Priority New Site", n_top10)
+  )
+  leg_pch <- c(16, 21)
+  leg_bg  <- c("#0d9488", "#d92638")
+  leg_col <- c("#0d9488", "#111111")
+  leg_cex <- c(0.85, 1.35)
+  if (k_sel > 10L) {
+    leg_lbls <- c(leg_lbls, sprintf("Priority New Sites 11-%d", k_sel))
+    leg_pch  <- c(leg_pch, 21)
+    leg_bg   <- c(leg_bg, "#ff9f1c")
+    leg_col  <- c(leg_col, "#111111")
+    leg_cex  <- c(leg_cex, 1.05)
+  }
+  legend("topleft", legend = leg_lbls, pch = leg_pch, pt.bg = leg_bg, col = leg_col,
+         pt.cex = leg_cex, bg = rgb(1, 1, 1, 0.90), box.col = "#cbd5e1", cex = 0.80, inset = c(0.015, 0.015))
+
+  # Panel B: Cumulative Network Variance Reduction (%) & Mean SE Trajectory
+  par(mar = c(4.4, 4.8, 3.8, 4.8))
+  ranks   <- d_sub$Rank
+  cum_pct <- d_sub$Cum_Pct_Reduced
+  marg_pct <- d_sub$Pct_Var_Reduced
+  se_aft  <- d_sub$Mean_SE_After
+  se_bef0 <- d_sub$Mean_SE_Before[1]
+  se_end  <- tail(se_aft, 1)
+  se_drop_pct <- 100 * (se_bef0 - se_end) / max(1e-9, se_bef0)
+
+  y_max_cum <- max(1.0, max(cum_pct, na.rm = TRUE) * 1.18)
+  plot(ranks, cum_pct, type = "n", xlim = c(0.5, k_sel + 0.5), ylim = c(0, y_max_cum),
+       xlab = "Added Monitoring Stations Ranked by Variance Gain (Rank 1..K)",
+       ylab = "Cumulative Domain Variance Reduced (%)",
+       las = 1, cex.axis = 0.86, cex.lab = 0.92)
+  grid(col = "#e5e7eb", lty = "dotted")
+
+  # Scaled marginal per-site % contribution bars on bottom
+  m_scale <- if (max(marg_pct, na.rm = TRUE) > 0) (0.35 * y_max_cum) / max(marg_pct, na.rm = TRUE) else 1
+  rect(ranks - 0.32, 0, ranks + 0.32, marg_pct * m_scale, col = rgb(0.23, 0.51, 0.96, 0.25), border = rgb(0.23, 0.51, 0.96, 0.55))
+
+  lines(ranks, cum_pct, col = "#d92638", lwd = 2.4)
+  points(ranks, cum_pct, pch = 21, bg = ifelse(ranks <= 10L, "#d92638", "#ff9f1c"), col = "#111111",
+         cex = ifelse(k_sel <= 25L, 1.05, 0.78))
+
+  # Secondary right axis: Mean Kriging SE trajectory
+  par(new = TRUE)
+  se_rng <- range(c(se_bef0, se_aft), na.rm = TRUE)
+  if (diff(se_rng) < 1e-6) se_rng <- se_rng + c(-0.02, 0.02)
+  se_ylim <- c(se_rng[1] - 0.12 * diff(se_rng), se_rng[2] + 0.12 * diff(se_rng))
+  plot(c(0, ranks), c(se_bef0, se_aft), type = "l", col = "#0f766e", lwd = 2.0, lty = 2,
+       axes = FALSE, xlab = "", ylab = "", xlim = c(0.5, k_sel + 0.5), ylim = se_ylim)
+  axis(4, las = 1, cex.axis = 0.84, col.axis = "#0f766e")
+  mtext(sprintf("Mean Kriging SE (%s)", se_scale_txt), side = 4, line = 3.2, cex = 0.86, col = "#0f766e")
+
+  legend("right",
+         legend = c("Cumulative % Variance Reduced", "Marginal Gain (scaled)", sprintf("Mean Kriging SE (%.3f -> %.3f, -%.1f%%)", se_bef0, se_end, se_drop_pct)),
+         col = c("#d92638", rgb(0.23, 0.51, 0.96, 0.75), "#0f766e"),
+         lwd = c(2.4, 5, 2.0), lty = c(1, 1, 2),
+         bg = rgb(1, 1, 1, 0.92), box.col = "#cbd5e1", cex = 0.78, inset = c(0.02, 0.12))
+  mtext(sprintf("B. Cumulative Variance Reduction (+%d Sites: %.2f%%)", k_sel, tail(cum_pct, 1)),
+        side = 3, line = 1.0, adj = 0, cex = 0.88, font = 2, col = "#111111")
+
+  # Panel C: Top Priority Candidate Reaches Horizontal Bar Chart
+  n_show <- min(12L, k_sel)
+  d_top  <- d_sub[seq_len(n_show), , drop = FALSE]
+  d_rev  <- d_top[rev(seq_len(n_show)), , drop = FALSE]
+  par(mar = c(4.2, 11.4, 3.6, 1.8))
+  lbls_c <- sprintf("#%d Riv %s (C%s, O%s)", d_rev$Rank, d_rev$RivID, d_rev$CatchID, d_rev$Strahler)
+  x_lim_c <- max(d_rev$Current_SE_sc, na.rm = TRUE) * 1.56
+  cols_c  <- ifelse(d_rev$Rank <= 5L, "#d92638", ifelse(d_rev$Rank <= 10L, "#ea580c", "#ff9f1c"))
+  bp_c <- barplot(
+    d_rev$Current_SE_sc, horiz = TRUE, names.arg = lbls_c, las = 1,
+    col = cols_c, border = "#222222", xlim = c(0, x_lim_c),
+    xlab = sprintf("Local Baseline Kriging SE (%s)", se_scale_txt),
+    cex.names = 0.78, cex.axis = 0.84, cex.lab = 0.90
+  )
+  grid(nx = NULL, ny = NA, col = "#e5e7eb", lty = "dotted")
+  barplot(d_rev$Current_SE_sc, horiz = TRUE, add = TRUE, col = cols_c, border = "#222222", axes = FALSE, names.arg = rep("", n_show))
+  text(d_rev$Current_SE_sc + 0.018 * x_lim_c, bp_c,
+       labels = sprintf("SE=%.3f | +%.2f%% dV", d_rev$Current_SE_sc, d_rev$Pct_Var_Reduced),
+       adj = 0, cex = 0.70, font = 2, col = "#1e293b")
+  mtext(sprintf("C. Top-%d Priority Reaches (Stream Order & dV Gain)", n_show),
+        side = 3, line = 1.0, adj = 0, cex = 0.88, font = 2, col = "#111111")
+
+  mtext(wrap_title(sprintf("Optimal Monitoring Network Design (%s): %s (%s)", domain_label, det_short, det_code), 140),
+        side = 3, line = ban_h + 0.35, outer = TRUE, cex = 1.14, font = 2, col = "#111111")
+  draw_top_banner(banner)
+  invisible(out_file)
+}

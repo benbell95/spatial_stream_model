@@ -145,6 +145,10 @@ def main():
         "no3_exceed_england": stage_figure("output/results/det_0117_orn_rsn/fig_exceedance_england_0117", "cs2_no3_exceed_england", allow_svg=False),
         "no3_exceed_basins": stage_figure("output/results/det_0117_orn_rsn/fig_exceedance_basins_0117", "cs2_no3_exceed_basins", allow_svg=False),
         "po4_exceed_england": stage_figure("output/results/det_0180_orn_rsn/fig_exceedance_england_0180", "cs2_po4_exceed_england", allow_svg=False),
+        "opt_design_england": stage_figure("output/design_0117/results/det_0117_orn_rsn/fig_optimal_design_england_0117", "cs2_opt_design_england", allow_svg=False),
+        "opt_design_humber": stage_figure("output/design_0117/results/det_0117_orn_rsn/fig_optimal_design_humber_0117", "cs2_opt_design_humber", allow_svg=False),
+        "opt_design_thames": stage_figure("output/design_0117/results/det_0117_orn_rsn/fig_optimal_design_thames_0117", "cs2_opt_design_thames", allow_svg=False),
+        "opt_design_severn": stage_figure("output/design_0117/results/det_0117_orn_rsn/fig_optimal_design_severn_0117", "cs2_opt_design_severn", allow_svg=False),
 
         # Case Study 3: Spatio-Temporal Trends & Borrowing
         "st_year_grid": stage_figure("output/results/det_0117_orn_rsn_st/fig5_england_by_year_0117_map", "cs3_st_year_grid", allow_svg=False),
@@ -182,6 +186,16 @@ def main():
         "wb_wt_0180": stage_figure("output/cs6_weighted/results/cokrig_0117_0180_orn_rsn+ssn+waterblitz_tobit/fig_cokrig_england_0180", "cs6_wt_england_0180", allow_svg=False),
         "wb_wt_xcorr": stage_figure("output/cs6_weighted/results/cokrig_0117_0180_orn_rsn+ssn+waterblitz_tobit/fig_cokrig_cross_correlation", "cs6_wt_xcorr", allow_svg=True),
         "wb_snap_overview": stage_figure("output/station_snapping/orn_rsn+ssn+waterblitz_tobit/fig_snap_overview_orn", "cs6_wb_snap_overview", allow_svg=False),
+
+        # Case Study 7: Nitrate (0117) Data Transformations (Raw vs Log vs Sqrt vs Box-Cox)
+        "tr_diff_map": stage_figure("output/comparisons/cs7_transforms_0117/fig_cs7_transform_diff_0117", "cs7_tr_diff_map", allow_svg=False),
+        "tr_raw_map": stage_figure("output/results/det_0117_orn_rsn_trans_raw/fig1_england_stream_0117_map", "cs7_tr_raw_map", allow_svg=False),
+        "tr_sqrt_map": stage_figure("output/results/det_0117_orn_rsn_trans_sqrt/fig1_england_stream_0117_map", "cs7_tr_sqrt_map", allow_svg=False),
+        "tr_boxcox_map": stage_figure("output/results/det_0117_orn_rsn_trans_boxcox_lam0.50/fig1_england_stream_0117_map", "cs7_tr_boxcox_map", allow_svg=False),
+        "tr_side_by_side": stage_figure("output/comparisons/cs7_transforms_0117/fig_comp4_side_by_side_maps", "cs7_tr_side_by_side", allow_svg=False),
+        "tr_comp_svg": stage_figure("output/comparisons/cs7_transforms_0117/fig_cs7_transform_comparison", "cs7_tr_comp_svg", allow_svg=True),
+        "tr_pred_dens": stage_figure("output/comparisons/cs7_transforms_0117/fig_comp2_predictions_and_uncertainty", "cs7_tr_pred_dens", allow_svg=False),
+        "tr_param_forest": stage_figure("output/comparisons/cs7_transforms_0117/fig_comp3_parameter_forest", "cs7_tr_param_forest", allow_svg=False),
     }
 
     payload = {
@@ -209,6 +223,14 @@ def main():
             ],
             "exceed_0117": read_csv_rows("output/results/det_0117_orn_rsn/exceedance_summary_0117.csv"),
             "exceed_0180": read_csv_rows("output/results/det_0180_orn_rsn/exceedance_summary_0180.csv"),
+            "cs2_design_eng": [
+                r for r in read_csv_rows("output/design_0117/results/det_0117_orn_rsn/optimal_monitoring_design_0117.csv")
+                if r.get("Domain") == "All England RSN Network" and int(r.get("Rank", 999)) <= 20
+            ],
+            "cs2_design_summary": [
+                r for r in read_csv_rows("output/design_0117/results/det_0117_orn_rsn/optimal_monitoring_design_0117.csv")
+                if int(r.get("Rank", 0)) == 50
+            ],
             "st_year_cv": [
                 r for r in read_csv_rows("output/results/det_0117_orn_rsn_st/cv_summary_by_year_0117.csv")
                 if r.get("Domain") == "All England RSN Network" and "Combined" in str(r.get("Model", ""))
@@ -227,11 +249,15 @@ def main():
             "cs6_reach_comp": read_csv_rows("output/comparisons/cs6_equal_vs_favoured/cs6_reach_comparison_summary.csv"),
             "cs6_cv_comp": read_csv_rows("output/comparisons/cs6_equal_vs_favoured/cs6_cv_comparison.csv"),
             "cs6_cov_comp": read_csv_rows("output/comparisons/cs6_equal_vs_favoured/cs6_cross_covariance_comparison.csv"),
+            "cs7_transform_summary": read_csv_rows("output/comparisons/cs7_transforms_0117/cs7_transform_summary.csv"),
+            "cs7_cv_comp": read_csv_rows("output/comparisons/cs7_transforms_0117/cv_metrics_comparison.csv"),
+            "cs7_pred_dist": read_csv_rows("output/comparisons/cs7_transforms_0117/prediction_distribution_summary.csv"),
         },
         "reports": {
             "cokrig_eval": read_text_excerpt("output/results/cokrig_0117_0180_orn_rsn/cokriging_evaluation_report.md", max_lines=80),
             "cs6_equal_eval": read_text_excerpt("output/cs6_equal/results/cokrig_0117_0180_orn_rsn+ssn+waterblitz_tobit/cokriging_evaluation_report.md", max_lines=80),
             "cs6_weighted_eval": read_text_excerpt("output/cs6_weighted/results/cokrig_0117_0180_orn_rsn+ssn+waterblitz_tobit/cokriging_evaluation_report.md", max_lines=80),
+            "cs7_transforms_eval": read_text_excerpt("output/comparisons/cs7_transforms_0117/comparison_report.md", max_lines=80),
         },
     }
 

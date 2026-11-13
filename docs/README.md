@@ -39,6 +39,7 @@ Use this index to find the right guide for your task.
 | Guide | Purpose |
 | :--- | :--- |
 | [**Regulatory Exceedance & Threshold Risk Mapping**](./regulatory_exceedance_mapping_guide.md) | Reach-level Gaussian exceedance probabilities (`--threshold=`, `--threshold-dir=`), built-in indicative UK presets (`--threshold=uk`), 5-tier compliance classification, and dedicated risk maps. |
+| [**Optimal Monitoring Network Design & Gap Mapping**](./optimal_monitoring_design_guide.md) | OpenMP C++ active-learning placement (`--design-sites=<K>`), Schur-complement variance reduction, ranked CSV exports, and `fig_optimal_design_*` monitoring gap & gain curve maps. |
 | [**Spatio-Temporal Trends & Dynamic Borrowing**](./spatiotemporal_trends_and_borrowing_guide.md) | Multi-year/seasonal/monthly batch mapping (`--by=`), precision-weighted dynamic temporal borrowing (`--st-borrow`), and reach-level WLS trend significance (`fig6`). |
 | [**Non-Linear Spline (`GAM + S3N`) & Tree-Ensemble (`RF / GBM + S3N`) Guide**](./nonlinear_and_tree_ensemble_trend_guide.md) | Using `--trend=spline\|gam\|rf\|gbm` on standard raw or GAM-weighted data, zero-external-package architecture, orthogonal OOB/OOF residual kriging, and interpreting `GAM_EDF` / `VarImp(%)`. |
 

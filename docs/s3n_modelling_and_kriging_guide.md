@@ -680,6 +680,8 @@ Standard 5-fold random station CV (`--cv-mode=random`) randomly splits monitorin
 
 ### 10.2 Optimal Monitoring Network Design (`--design-sites=<K>`)
 
+*(For full CLI workflow, map panel breakdown, and interpretation guidance, see [`./optimal_monitoring_design_guide.md`](./optimal_monitoring_design_guide.md).)*
+
 Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes the OpenMP C++ greedy active-learning solver (`C_s3n_optimal_design` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)) to identify where new monitoring stations would most reduce domain-wide prediction uncertainty.
 
 Starting from the current kriging variance $\sigma^2_{\text{curr}}(s_j) = \text{SE}_{\text{curr}}(s_j)^2$ at evaluation reaches $s_j \in \mathcal{E}$, at each step $t = 1, \dots, K$ the solver evaluates every unmonitored candidate reach $c \in \mathcal{C}$ and computes the Schur-complement variance reduction across all evaluation reaches if a new station were placed at $c$:
@@ -690,7 +692,7 @@ $$
 
 The candidate $c^*$ maximising $\Delta V(c)$ is selected, $\sigma^2_{\text{curr}}(s_j)$ is updated in place for all $j \in \mathcal{E}$, and the loop repeats until $K$ stations are ranked. For huge national domains ($> 4{,}000$ reaches), candidates and evaluation reaches are deterministically thinned to $4{,}000$ evenly spaced reaches to keep runtime under a second.
 
-Results are exported to `optimal_monitoring_design_<det>.csv` with `Rank`, reach metadata (`RivID`, `CatchID`, `Strahler`, `Dist2Mth_km`, `US_Accum_km`, `mid_X`, `mid_Y`, `Elevation`), `Current_SE_sc`, `Var_Reduced`, `Pct_Var_Reduced`, `Cum_Pct_Reduced`, `Mean_SE_Before`, and `Mean_SE_After`.
+Results are exported to `optimal_monitoring_design_<det>.csv` with `Rank`, reach metadata (`RivID`, `CatchID`, `Strahler`, `Dist2Mth_km`, `US_Accum_km`, `mid_X`, `mid_Y`, `Elevation`), `Current_SE_sc`, `Var_Reduced`, `Pct_Var_Reduced`, `Cum_Pct_Reduced`, `Mean_SE_Before`, and `Mean_SE_After`, and rendered automatically into monitoring gap & priority placement maps (`fig_optimal_design_<domain>_<det>.png`) via `plot_fig_optimal_design()`.
 
 ```bash
 # Leave-Catchment-Out CV + rank top 15 optimal new monitoring reaches
