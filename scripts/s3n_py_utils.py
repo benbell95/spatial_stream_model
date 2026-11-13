@@ -297,6 +297,124 @@ def ensure_source_configs(base_dir=DEFAULT_BASE_DIR):
     return created
 
 
+_ECOLOGICAL_DETERMINAND_DEFAULTS = {
+    "whpt_aspt": ("WHPT ASPT", "WHPT Average Score Per Taxon", "ASPT"),
+    "whpt_ntaxa": ("WHPT N-Taxa", "WHPT Taxon Richness (N-Taxa)", "taxa"),
+    "life_family_index": ("LIFE Index", "LIFE Flow Velocity Stress Index (Family)", "LIFE"),
+    "psi_family_score": ("PSI Score", "PSI Fine Sediment Sensitivity Score", "%"),
+    "epsi_family_score": ("ePSI Score", "Empirically Weighted PSI Sediment Score", "%"),
+    "cci": ("CCI", "Community Conservation Index", "CCI"),
+    "dehli": ("DEHLI", "DEHLI Drought Stress Index", "DEHLI"),
+    "armi_score": ("ARMI Score", "Anglers' Riverfly Monitoring Score", "score"),
+    "percent_organic_tolerant": ("Organic-Tolerant Diatoms", "Organic-Tolerant Diatom Relative Abundance", "%"),
+    "percent_motile": ("Motile Diatoms", "Motile Diatom Guild Relative Abundance", "%"),
+    "rmni": ("RMNI", "River Macrophyte Nutrient Index (RMNI)", "RMNI"),
+    "rn_a_taxa": ("Macrophyte Taxa", "Macrophyte Aquatic Taxon Richness", "taxa"),
+    "hqa_score": ("RHS HQA", "River Habitat Survey Habitat Quality (HQA)", "HQA"),
+    "hms_score": ("RHS HMS", "River Habitat Survey Modification Score (HMS)", "HMS"),
+}
+
+_FALLBACK_CORE_DETERMINANDS = {
+    "0117": {"short": "Nitrate", "name": "Nitrate as N", "unit": "mg/L"},
+    "0180": {"short": "Orthophosphate", "name": "Orthophosphate, reactive as P", "unit": "mg/L"},
+    "0061": {"short": "pH", "name": "pH : In Situ", "unit": "pH units"},
+}
+
+
+def _normalize_det_unit(unit_str):
+    u = str(unit_str or "").strip()
+    if not u or u.lower() in ("na", "n/a", "none", "null"):
+        return ""
+    return re.sub(r"/l\b", "/L", u)
+
+
+def _derive_short_det_name(full_name):
+    s = str(full_name or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"\s*:\s*In Situ\s*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r",\s*reactive as P\s*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+as\s+[A-Za-z0-9]+$", "", s)
+    if "," in s and len(s) > 28:
+        s = s.split(",", 1)[0].strip()
+    return s
+
+
+def _scan_wq_determinands_csv(csv_path, catalog):
+    if not os.path.isfile(csv_path):
+        return
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return
+            fields = {c.strip(): c for c in reader.fieldnames}
+            code_col = fields.get("det_code") or fields.get("cas_number")
+            name_col = fields.get("det_desc") or fields.get("compound_name")
+            unit_col = fields.get("unit_short_desc")
+            if not code_col or not name_col:
+                return
+            for row in reader:
+                code = str(row.get(code_col) or "").strip()
+                if not code or code in catalog:
+                    continue
+                name = str(row.get(name_col) or "").strip() or code
+                unit = _normalize_det_unit(row.get(unit_col, "")) if unit_col else ""
+                catalog[code] = {
+                    "short": _derive_short_det_name(name) or code,
+                    "name": name,
+                    "unit": unit,
+                }
+    except Exception as e:
+        print(f"   [Warning] Could not scan determinands from {csv_path}: {e}")
+
+
+def ensure_determinands_config(base_dir=DEFAULT_BASE_DIR, data_dir=None, force_update=False):
+    """Generates configs/determinands.json from available RSN/SSN data files if missing."""
+    cfg_dir = _rel_join(base_dir, "configs")
+    os.makedirs(cfg_dir, exist_ok=True)
+    cat_path = os.path.join(cfg_dir, "determinands.json")
+    if os.path.isfile(cat_path) and not force_update:
+        return cat_path
+
+    catalog = {}
+    if os.path.isfile(cat_path):
+        try:
+            with open(cat_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                catalog.update(loaded)
+        except Exception:
+            pass
+
+    eff_data = data_dir or load_directory_config(base_dir, auto_create=False)["data_dir"]
+    rsn_dir = _rel_join(eff_data, "NCEA_River_Surveillance_Network_ARD_Open")
+    ssn_dir = _rel_join(eff_data, "NCEA_Small_Streams_Network_ARD_Open")
+
+    for d_dir, prefix in ((rsn_dir, "RSN"), (ssn_dir, "SSN")):
+        if not os.path.isdir(d_dir):
+            continue
+        _scan_wq_determinands_csv(os.path.join(d_dir, f"{prefix} Water Quality Samples.csv"), catalog)
+        _scan_wq_determinands_csv(os.path.join(d_dir, f"{prefix} LCMS GCMS Samples.csv"), catalog)
+
+    for key, (short_n, full_n, unit_n) in _ECOLOGICAL_DETERMINAND_DEFAULTS.items():
+        if key not in catalog:
+            catalog[key] = {"short": short_n, "name": full_n, "unit": unit_n}
+
+    if not catalog:
+        catalog.update(_FALLBACK_CORE_DETERMINANDS)
+
+    sorted_catalog = {k: catalog[k] for k in sorted(catalog.keys())}
+    try:
+        with open(cat_path, "w", encoding="utf-8") as f:
+            json.dump(sorted_catalog, f, indent=2)
+            f.write("\n")
+        print(f"   [Config] Wrote {len(sorted_catalog)} determinand entries to {cat_path}")
+    except Exception as e:
+        print(f"   [Warning] Failed to write determinands catalog {cat_path}: {e}")
+    return cat_path
+
+
 # ==============================================================================
 # 2. Coordinate Reference System (CRS) & Projection Helpers
 # ==============================================================================

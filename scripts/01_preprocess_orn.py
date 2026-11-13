@@ -83,6 +83,7 @@ from s3n_py_utils import (
     ensure_directory_config,
     ensure_network_configs,
     ensure_source_configs,
+    ensure_determinands_config,
     estimate_boxcox_lambda,
     estimate_yeojohnson_lambda,
     find_col,
@@ -103,11 +104,12 @@ from s3n_py_utils import (
 )
 
 
-def ensure_all_configs(base_dir=BASE_DIR):
-    """Ensures directory config, default network configs, and default source configs all exist."""
+def ensure_all_configs(base_dir=BASE_DIR, data_dir=None, update_determinands=False):
+    """Ensures directory, network, source, and determinand configs all exist."""
     ensure_directory_config(base_dir)
     ensure_network_configs(base_dir)
     ensure_source_configs(base_dir)
+    ensure_determinands_config(base_dir, data_dir=data_dir, force_update=update_determinands)
 
 
 DIR_CONFIG = load_directory_config(BASE_DIR, auto_create=False)
@@ -2321,9 +2323,14 @@ def main():
         action="store_true",
         help="List available monitoring data sources (RSN, SSN, RSS, custom) and their configuration, then exit.",
     )
+    parser.add_argument(
+        "--update-determinands",
+        action="store_true",
+        help="Rescan raw RSN/SSN CSVs to add any missing determinands to configs/determinands.json.",
+    )
     args = parser.parse_args()
     runtime_cfg = configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
-    ensure_all_configs(BASE_DIR)
+    ensure_all_configs(BASE_DIR, data_dir=runtime_cfg.data_dir, update_determinands=args.update_determinands)
     if args.list_transforms:
         print_available_transforms()
         return

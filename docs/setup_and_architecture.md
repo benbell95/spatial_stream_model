@@ -110,9 +110,9 @@ All Python and R scripts resolve root paths in this precedence order (highest to
    ```
 
 ### 3.2 Determinand Metadata Catalog (`configs/determinands.json`)
-`load_determinand_catalog()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R) looks for `configs/determinands.json` to map determinand codes (e.g., `"0117"`, `"whpt_aspt"`) to human-readable plot titles, short labels, and units.
+`load_determinand_catalog()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R) and [`scripts/s3n_py_utils.py`](../scripts/s3n_py_utils.py) reads `configs/determinands.json` to map determinand codes (e.g., `"0117"`, `"whpt_aspt"`) to human-readable plot titles, short labels, and units.
 
-If `configs/determinands.json` is absent on a fresh install, the pipeline falls back cleanly to using the raw determinand code as the label. To enable rich labels and units, create `configs/determinands.json` using this schema:
+On first run, [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) automatically generates `configs/determinands.json` by scanning available RSN/SSN Water Quality and LCMS/GCMS CSVs alongside the built-in ecological index definitions (preserving any manual edits on later runs; pass `--update-determinands` to rescan for new codes):
 
 ```json
 {
@@ -149,4 +149,4 @@ Rscript tests/test_r_and_cpp.R
 ```
 
 > [!NOTE]
-> Both test suites include assertions that check determinand metadata resolution (e.g., `"0117"` → `"Nitrate"`, `"whpt_aspt"` → `"ASPT"`), so ensure `configs/determinands.json` is populated before running them.
+> Both test suites check determinand metadata resolution (e.g., `"0117"` → `"Nitrate"`, `"whpt_aspt"` → `"ASPT"`), so on a fresh clone run `python3 scripts/01_preprocess_orn.py --list-sources` once if `configs/determinands.json` has not been generated yet.
