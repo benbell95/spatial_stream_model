@@ -740,4 +740,74 @@ assert_true(file.exists(tmp_rep_ck) && any(grepl("Executive Verdict", rep_lines)
 unlink(tmp_rep_ck)
 
 cat("  [PASS] Multivariate Stream Co-Kriging (Factor-LMC Joint NNGP & Co-Located)\n")
+
+# ==============================================================================
+# 10. Figure Format (PNG / PDF / SVG), DPI & Size Scaling Options
+# ==============================================================================
+cat("[10/10] Testing Figure Format (png/pdf/svg), DPI, and Size Scaling...\n")
+
+assert_true(abs(parse_fig_size_scale("150%") - 1.50) < 1e-9, "parse_fig_size_scale handles '150%'")
+assert_true(abs(parse_fig_size_scale("+25%") - 1.25) < 1e-9, "parse_fig_size_scale handles '+25%'")
+assert_true(abs(parse_fig_size_scale("-20%") - 0.80) < 1e-9, "parse_fig_size_scale handles '-20%'")
+assert_true(abs(parse_fig_size_scale("0.75") - 0.75) < 1e-9, "parse_fig_size_scale handles '0.75'")
+
+read_png_dims <- function(path) {
+  con <- file(path, "rb")
+  on.exit(close(con), add = TRUE)
+  hdr <- readBin(con, what = "raw", n = 24L)
+  stopifnot(identical(hdr[1:4], as.raw(c(0x89, 0x50, 0x4e, 0x47))))
+  w <- sum(as.integer(hdr[17:20]) * c(16777216, 65536, 256, 1))
+  h <- sum(as.integer(hdr[21:24]) * c(16777216, 65536, 256, 1))
+  c(width = w, height = h)
+}
+
+var_lbls_t <- vapply(targets_mv_meta, function(t) t$label, character(1))
+
+# 10a. PNG baseline (200 DPI, 100%) vs 300 DPI vs +50% size
+tmp_base <- tempfile(fileext = ".png")
+configure_plot_options(args = c("--fig-format=png", "--dpi=200", "--fig-size=100%"))
+plot_fig_cokrig_diagnostics(fit_lmc_full$cross_cov_df, fit_lmc_full$cv_compare_df, var_lbls_t, tmp_base)
+dims_base <- read_png_dims(tmp_base)
+
+tmp_dpi <- tempfile(fileext = ".png")
+configure_plot_options(args = c("--fig-format=png", "--dpi=300", "--fig-size=100%"))
+plot_fig_cokrig_diagnostics(fit_lmc_full$cross_cov_df, fit_lmc_full$cv_compare_df, var_lbls_t, tmp_dpi)
+dims_dpi <- read_png_dims(tmp_dpi)
+assert_true(abs(dims_dpi["width"] / dims_base["width"] - 1.5) < 0.02 &&
+            abs(dims_dpi["height"] / dims_base["height"] - 1.5) < 0.02,
+            sprintf("DPI=300 scales PNG pixel dimensions 1.5x (%dx%d -> %dx%d)",
+                    dims_base["width"], dims_base["height"], dims_dpi["width"], dims_dpi["height"]))
+
+tmp_sz <- tempfile(fileext = ".png")
+configure_plot_options(args = c("--fig-format=png", "--dpi=200", "--fig-size=+50%"))
+plot_fig_cokrig_diagnostics(fit_lmc_full$cross_cov_df, fit_lmc_full$cv_compare_df, var_lbls_t, tmp_sz)
+dims_sz <- read_png_dims(tmp_sz)
+assert_true(abs(dims_sz["width"] / dims_base["width"] - 1.5) < 0.02 &&
+            abs(dims_sz["height"] / dims_base["height"] - 1.5) < 0.02,
+            sprintf("--fig-size=+50%% scales PNG dimensions 1.5x (%dx%d -> %dx%d)",
+                    dims_base["width"], dims_base["height"], dims_sz["width"], dims_sz["height"]))
+
+# 10b. Vector PDF via --fig-format=pdf (auto-rewrites .png -> .pdf)
+tmp_pdf_stem <- tempfile(fileext = ".png")
+configure_plot_options(args = c("--fig-format=pdf", "--fig-size=80%"))
+plot_fig_cokrig_diagnostics(fit_lmc_full$cross_cov_df, fit_lmc_full$cv_compare_df, var_lbls_t, tmp_pdf_stem)
+tmp_pdf <- sub("\\.png$", ".pdf", tmp_pdf_stem)
+assert_true(file.exists(tmp_pdf) && file.info(tmp_pdf)$size > 2000, "Vector PDF figure created")
+pdf_hdr <- readLines(tmp_pdf, n = 1L, warn = FALSE)
+assert_true(grepl("^%PDF-", pdf_hdr), "PDF file has valid %PDF- magic header")
+
+# 10c. Vector SVG via --fig-format=svg (auto-rewrites .png -> .svg)
+tmp_svg_stem <- tempfile(fileext = ".png")
+configure_plot_options(args = c("--fig-format=svg", "--fig-size=120%"))
+plot_fig_cokrig_diagnostics(fit_lmc_full$cross_cov_df, fit_lmc_full$cv_compare_df, var_lbls_t, tmp_svg_stem)
+tmp_svg <- sub("\\.png$", ".svg", tmp_svg_stem)
+assert_true(file.exists(tmp_svg) && file.info(tmp_svg)$size > 2000, "Vector SVG figure created")
+svg_txt <- paste(readLines(tmp_svg, n = 10L, warn = FALSE), collapse = "\n")
+assert_true(grepl("<svg", svg_txt, fixed = TRUE), "SVG file contains valid <svg root element")
+
+# Reset global plot options & clean up temp files
+options(s3n.fig_format = "png", s3n.fig_dpi = NULL, s3n.fig_scale = 1.0)
+unlink(c(tmp_base, tmp_dpi, tmp_sz, tmp_pdf, tmp_svg))
+
+cat("  [PASS] Figure formats (png/pdf/svg), DPI, and percentage size scaling\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

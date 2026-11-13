@@ -79,6 +79,9 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | `--data-dir=<path>` (or `--data=<path>`) | `configs/directories.json` (`data`) | Custom path (relative or absolute) to the root data directory containing monitoring source folders and `processed/`. Overrides `configs/directories.json` / `S3N_DATA_DIR`. |
 | `--processed-dir=<path>` (or `--processed=<path>`) | `<data_dir>/processed` (or `S3N_PROCESSED_DIR`) | Custom path to the processed networks root folder (containing `<net>_<source>/`). Overrides `<data_dir>/processed` and `S3N_PROCESSED_DIR`. |
 | `--output-dir=<path>` (or `--out-dir=<path>`) | `configs/directories.json` (`output`) | Custom path (relative or absolute) to the root output directory where `results/`, `comparisons/`, and `station_snapping/` folders are written. Overrides `configs/directories.json` / `S3N_OUTPUT_DIR`. |
+| `--fig-format=<png\|pdf\|svg>` | `png` | Output figure file format across all plotting scripts (`png`, vector `pdf`, or vector `svg`). |
+| `--dpi=<N>` | `200` (per figure) | PNG raster resolution in DPI (36–2400). Pixel dimensions scale proportionally so text and margins keep identical physical layout. |
+| `--fig-size=<pct\|scale>` | `100%` (`1.0`) | Scale figure physical dimensions by percentage or multiplier (e.g. `--fig-size=150%`, `--fig-size=+25%`, `--fig-size=-20%`, or `--fig-scale=0.8`). |
 
 ---
 
@@ -687,9 +690,61 @@ res <- analyze_station_snapping(catchment = c("Thames", "Eden"), network = "orn"
 head(res$snap_table)
 ```
 
+---
+
+## 12. Regenerating & Customising Existing Plots (`scripts/03_generate_plots.R`)
+
+Because every model run saves its complete reach predictions, cross-validation tables, and parameter estimates as CSVs (`predictions_*.csv`, `cv_comparison_*.csv`, `parameters_*.csv`), you **never need to re-fit S3N models** just to change figure formats, resolution, physical dimensions, colour palettes, normalisations, or basin zooms. [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R) reads any existing results directory in seconds and re-renders `fig1`–`fig4` (plus `fig5+` custom basins, `fig_exceedance_*`, and temporal grid/trend figures if present).
+
+### Key Plot-Customisation Flags
+
+| Flag | Default | Purpose |
+| :--- | :--- | :--- |
+| `--dir=<path>` *(or `--out-dir=`)* | *(Required)* | Existing results folder (e.g. `output/results/det_0117_orn_rsn`, or a temporal batch folder like `output/results/det_0117_orn_rsn_st`). |
+| `--fig-format=<png\|pdf\|svg>` | `png` | Output file format: Cairo `png`, vector `cairo_pdf` (`pdf`), or vector `svg`. |
+| `--dpi=<N>` | `200` | Raster resolution in DPI for PNGs (`36`–`2400`). Pixel dimensions scale proportionally so fonts and margins keep exact proportions. |
+| `--fig-size=<pct\|scale>` | `100%` | Scale figure physical width & height (`150%`, `+25%`, `-20%`, or multiplier `1.25`). |
+| `--norm=<mode>` | `none` | Re-plot maps using `zscore`, `robust_zscore`, `minmax`, or `percentile` normalisation (computed on the fly if not already in CSV). |
+| `--reverse-color` / `--normal-color` | `FALSE` | Invert palette (`blue = high, red = low` for ecological scores) or restore standard (`blue = low, red = high`). |
+| `--vmin=<val>` / `--vmax=<val>` | Auto | Lock colorbar bounds (in raw units, or normalised units when `--norm=` is active). |
+| `--basin=<CatchID\|Name>` | *(None)* | Render an additional high-resolution basin map (`fig5+_<basin>_map.*`) from the saved national predictions. |
+
+### Practical Examples
+
+```bash
+# 1. Re-export an existing run as publication-ready vector PDFs (Cairo PDF, crisp Unicode & infinite zoom)
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-format=pdf
+
+# 2. Export vector SVGs scaled 20% larger for editing in Inkscape / Illustrator
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-format=svg --fig-size=+20%
+
+# 3. Generate high-resolution 300 DPI PNGs at 125% physical size for manuscripts/slides
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --dpi=300 --fig-size=125%
+
+# 4. Generate compact 80% thumbnails at 150 DPI
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --dpi=150 --fig-size=80%
+
+# 5. Re-plot an ecological index with reversed colour scale (blue = healthy, red = degraded) as PDF
+Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_aspt_orn_rsn --reverse-color --fig-format=pdf
+
+# 6. Render Z-score normalised maps with fixed symmetric colorbar bounds [-2.5, +2.5]
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --norm=zscore --vmin=-2.5 --vmax=2.5
+
+# 7. Add a custom River Eden & River Ribble map from already-fitted England predictions
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --basin=Eden,Ribble --dpi=300
+
+# 8. Regenerate all seasonal/yearly slices + fig5/fig6/fig7 in a temporal batch folder as vector PDFs
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn_st --fig-format=pdf
+```
+
+> [!TIP]
+> `--fig-format=`, `--dpi=`, and `--fig-size=` work identically in [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R), [`04_compare_model_runs.R`](../scripts/04_compare_model_runs.R), [`05_descriptive_stats.R`](../scripts/05_descriptive_stats.R), and [`06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R) too!
+
+---
+
 ### Standalone Script Shorthands (`02_fit_s3n_models.R` & `03_generate_plots.R`)
 - **`scripts/02_fit_s3n_models.R`**: Accepts `--source=`, `--range-mode=`, `--network=`, `--vars=`/`--covariates=`, `--transform=`, `--lambda=`, `--scale=`, `--boot=`/`--n-boot=`, `--omp=`, `--meas-error`/`--gam`, `--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`, plus `--list-sources`, `--list-networks`, `--list-vars`, `--list-transforms`. Saves flat results + `s3n_model_results.rds` to `output/results/<net>_<source>[_trans_<t>][_vars_<v>]/`.
-- **`scripts/03_generate_plots.R`**: Accepts `--dir=` (or `--out-dir=`/`--out=`), `--code=`, `--name=`, `--unit=`, `--transform=`, `--lambda=`, `--scale=`, `--norm=`, `--vmin=`, `--vmax=`, `--reverse-color`, `--normal-color` / `--no-reverse-color`, `--basin=`/`--catchid=`, `--data-dir=`, `--processed-dir=`, `--gis-dir=`.
+- **`scripts/03_generate_plots.R`**: Accepts `--dir=` (or `--out-dir=`/`--out=`), `--code=`, `--name=`, `--unit=`, `--transform=`, `--lambda=`, `--scale=`, `--norm=`, `--vmin=`, `--vmax=`, `--reverse-color`, `--normal-color` / `--no-reverse-color`, `--basin=`/`--catchid=`, `--fig-format=`, `--dpi=`, `--fig-size=`, `--data-dir=`, `--processed-dir=`, `--gis-dir=`.
 
 
 

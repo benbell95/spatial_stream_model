@@ -94,6 +94,9 @@ Rscript scripts/run_s3n_cokriging.R --targets=<t1>,<t2>[,<t3>,...] [OPTIONS]
 | `--source=<src>` | `rsn` | Monitoring source (`rsn`, `ssn`, `rss`, or custom profiles). |
 | `--year` / `--season` / `--month` | *(All)* | Restrict all targets to a matching survey year, season, or calendar month. |
 | `--omp=<N>` | `1` | OpenMP threads used by `C_s3n_multivariate_nngp`. |
+| `--fig-format=<png\|pdf\|svg>` | `png` | Output figure format (`png`, vector `pdf`, or vector `svg`). |
+| `--dpi=<N>` | `200` / `220` | Output PNG resolution in DPI (pixel dimensions scale proportionally). |
+| `--fig-size=<pct>` | `100%` | Scale figure physical dimensions (e.g. `125%`, `+25%`, `-20%`, or `1.25`). |
 
 ---
 

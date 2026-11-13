@@ -330,7 +330,7 @@ format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
     }
     eng_p <- unique(as.character(param_tab$Parameter[
       param_tab$Domain == ref_dom &
-      !(param_tab$Parameter %in% c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance"))
+      !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", param_tab$Parameter)
     ]))
     if (!has_cli_vars && (identical(eng_p, default_eng) || identical(eng_p, default_bas))) {
       return(NULL)

@@ -34,13 +34,131 @@ for (.mod in c("s3n_config.R", "s3n_transforms.R", "s3n_covariates.R")) {
 rm(.mod, .mod_p, .s3n_mod_dir)
 
 
-open_png_device <- function(out_file, width, height, res = 200) {
-  if (isTRUE(capabilities("cairo"))) {
-    png(out_file, width = width, height = height, res = res, type = "cairo")
-  } else {
-    png(out_file, width = width, height = height, res = res)
+parse_fig_size_scale <- function(val) {
+  if (is.null(val) || length(val) == 0L || is.na(val[1]) || !nzchar(trimws(val[1]))) return(1.0)
+  s <- trimws(as.character(val[1]))
+  has_pct <- grepl("%$", s)
+  is_rel  <- grepl("^[+-]", s) && has_pct
+  num_s   <- sub("%$", "", s)
+  num     <- suppressWarnings(as.numeric(num_s))
+  if (!is.finite(num)) {
+    stop(sprintf("Invalid --fig-size/--fig-scale value '%s'. Use e.g. '125%%', '+25%%', '-20%%', or '1.25'.", s))
   }
+  sc <- if (is_rel) {
+    1.0 + num / 100.0
+  } else if (has_pct || num > 5.0) {
+    num / 100.0
+  } else {
+    num
+  }
+  if (!is.finite(sc) || sc <= 0.0) {
+    stop(sprintf("Figure size scale must be positive (got '%s' -> %.3f).", s, sc))
+  }
+  max(0.25, min(4.0, sc))
 }
+
+configure_plot_options <- function(args = commandArgs(trailingOnly = TRUE),
+                                   format = NULL,
+                                   dpi = NULL,
+                                   size_pct = NULL,
+                                   scale = NULL) {
+  fmt <- format
+  if (is.null(fmt) && length(args) > 0L) {
+    f_arg <- grep("^--(fig-format|plot-format|format)=", args, value = TRUE)
+    if (length(f_arg) > 0L) fmt <- sub("^--(fig-format|plot-format|format)=", "", f_arg[1])
+  }
+  if (!is.null(fmt) && nzchar(trimws(fmt))) {
+    fmt_l <- tolower(trimws(fmt))
+    if (!(fmt_l %in% c("png", "pdf", "svg"))) {
+      stop(sprintf("Unsupported --fig-format='%s'. Choose from: png, pdf, svg.", fmt))
+    }
+    options(s3n.fig_format = fmt_l)
+  } else if (is.null(getOption("s3n.fig_format", NULL))) {
+    options(s3n.fig_format = "png")
+  }
+
+  dpi_v <- dpi
+  if (is.null(dpi_v) && length(args) > 0L) {
+    d_arg <- grep("^--(dpi|fig-dpi)=", args, value = TRUE)
+    if (length(d_arg) > 0L) dpi_v <- suppressWarnings(as.numeric(sub("^--(dpi|fig-dpi)=", "", d_arg[1])))
+  }
+  if (!is.null(dpi_v)) {
+    if (!is.finite(dpi_v) || dpi_v < 36 || dpi_v > 2400) {
+      stop(sprintf("Invalid --dpi=%s (must be between 36 and 2400).", as.character(dpi_v)))
+    }
+    options(s3n.fig_dpi = as.numeric(dpi_v))
+  }
+
+  sc_val <- scale
+  if (is.null(sc_val) && !is.null(size_pct)) sc_val <- parse_fig_size_scale(size_pct)
+  if (is.null(sc_val) && length(args) > 0L) {
+    s_arg <- grep("^--(fig-size|fig-scale|plot-size)=", args, value = TRUE)
+    if (length(s_arg) > 0L) {
+      sc_val <- parse_fig_size_scale(sub("^--(fig-size|fig-scale|plot-size)=", "", s_arg[1]))
+    }
+  }
+  if (!is.null(sc_val)) {
+    options(s3n.fig_scale = parse_fig_size_scale(sc_val))
+  } else if (is.null(getOption("s3n.fig_scale", NULL))) {
+    options(s3n.fig_scale = 1.0)
+  }
+
+  invisible(list(
+    format = getOption("s3n.fig_format", "png"),
+    dpi    = getOption("s3n.fig_dpi", NULL),
+    scale  = getOption("s3n.fig_scale", 1.0)
+  ))
+}
+
+resolve_plot_out_file <- function(out_file, fig_format = getOption("s3n.fig_format", "png")) {
+  fmt <- tolower(trimws(as.character(fig_format)))
+  if (grepl("\\.(pdf|svg|png)$", out_file, ignore.case = TRUE)) {
+    ext <- tolower(sub("^.*\\.([a-zA-Z0-9]+)$", "\\1", out_file))
+    if (ext %in% c("pdf", "svg")) return(list(path = out_file, format = ext))
+    if (fmt %in% c("pdf", "svg")) {
+      return(list(path = sub("\\.png$", paste0(".", fmt), out_file, ignore.case = TRUE), format = fmt))
+    }
+    return(list(path = out_file, format = "png"))
+  }
+  list(path = paste0(out_file, ".", fmt), format = fmt)
+}
+
+open_png_device <- function(out_file, width, height, res = 200) {
+  resolved <- resolve_plot_out_file(out_file)
+  target   <- resolved$path
+  fmt      <- resolved$format
+
+  dpi_opt  <- getOption("s3n.fig_dpi", NULL)
+  eff_res  <- if (!is.null(dpi_opt) && is.finite(dpi_opt) && dpi_opt > 0) as.numeric(dpi_opt) else as.numeric(res)
+  sc       <- as.numeric(getOption("s3n.fig_scale", 1.0))
+  if (!is.finite(sc) || sc <= 0) sc <- 1.0
+
+  # Preserve physical typography/margin proportions across DPI & size changes
+  w_in <- (as.numeric(width) / as.numeric(res)) * sc
+  h_in <- (as.numeric(height) / as.numeric(res)) * sc
+
+  if (fmt == "pdf") {
+    if (isTRUE(capabilities("cairo"))) {
+      cairo_pdf(target, width = w_in, height = h_in)
+    } else {
+      pdf(target, width = w_in, height = h_in, useDingbats = FALSE)
+    }
+  } else if (fmt == "svg") {
+    svg(target, width = w_in, height = h_in)
+  } else {
+    w_px <- max(200L, as.integer(round(w_in * eff_res)))
+    h_px <- max(200L, as.integer(round(h_in * eff_res)))
+    if (isTRUE(capabilities("cairo"))) {
+      png(target, width = w_px, height = h_px, res = eff_res, type = "cairo")
+    } else {
+      png(target, width = w_px, height = h_px, res = eff_res)
+    }
+  }
+  invisible(target)
+}
+
+open_plot_device <- open_png_device
+configure_plot_options()
 
 val_cols     <- colorRampPalette(c("#1b4f72", "#2874a6", "#1abc9c", "#f4d03f", "#e67e22", "#c0392b", "#641e16"))(256)
 val_cols_rev <- rev(val_cols)
@@ -422,15 +540,15 @@ get_banner_oma <- function(banner) {
   c(0, 0, if (n_b > 1) 3.2 else 2.2, 0)
 }
 
-draw_top_banner <- function(banner, cex = 0.88, col = "#2c3e50") {
+draw_top_banner <- function(banner, cex = 0.88, col = "#2c3e50", line_offset = 0) {
   if (is.null(banner) || !nzchar(banner)) return(invisible(NULL))
   b_splits <- strsplit(banner, "\n", fixed = TRUE)[[1]]
   n_b <- length(b_splits)
   if (n_b == 1) {
-    mtext(b_splits[1], side = 3, line = 0.6, outer = TRUE, cex = cex, font = 3, col = col)
+    mtext(b_splits[1], side = 3, line = 0.6 + line_offset, outer = TRUE, cex = cex, font = 3, col = col)
   } else {
     for (i in seq_len(n_b)) {
-      b_line <- 0.35 + (n_b - i) * 0.90
+      b_line <- 0.35 + line_offset + (n_b - i) * 0.90
       mtext(b_splits[i], side = 3, line = b_line, outer = TRUE, cex = cex * 0.95, font = 3, col = col)
     }
   }
@@ -452,7 +570,7 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, trans_
   banner   <- format_top_banner(network_label, vars_label, source_label)
   open_png_device(out_file, width = 2600, height = 1450, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   if (is.null(sc_val)) {
@@ -472,13 +590,8 @@ plot_fig1_england_map <- function(eng_pred, det_code, det_name, det_unit, trans_
   cbar_lbl  <- sprintf("%s\n(%s)", det_cbar, unit_disp)
   net_tag   <- if (has_net) sprintf(" [%s]", network_label) else ""
   src_tag   <- if (!is.null(source_label) && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
-  sub_a <- if (has_vars) {
-    sprintf("S3N across %d catchments%s | Covariates: %s",
-            length(unique(eng_pred$CatchID)), net_tag, vars_label)
-  } else {
-    sprintf("Scalable Spatial Stream Network (S3N) across %d catchments%s",
-            length(unique(eng_pred$CatchID)), net_tag)
-  }
+  sub_a <- sprintf("Scalable Spatial Stream Network (S3N) across %d catchments%s",
+                   length(unique(eng_pred$CatchID)), net_tag)
 
   plot_stream_network(
     eng_pred, nm$pred_col, vmin = sc_val$vmin, vmax = sc_val$vmax, pal = pal_use,
@@ -524,7 +637,7 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   banner     <- format_top_banner(network_label, vars_label, source_label)
   open_png_device(out_file, width = 2600, height = 1350, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   if (is.null(sc_se)) sc_se <- compute_se_scale(basin_pred$se_model_sc)
@@ -609,7 +722,7 @@ plot_fig3_thames_severn_map <- function(tha_pred, sev_pred, sc_val, det_code, de
   banner   <- format_top_banner(network_label, vars_label, source_label)
   open_png_device(out_file, width = 2600, height = 1250, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   det_short <- shorten_det_name(det_name)
@@ -795,9 +908,9 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   }
   non_cov_params <- c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance")
   eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
-                     !(Parameter %in% non_cov_params))
+                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter))
   eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
-                     !(Parameter %in% non_cov_params))
+                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter))
   if (nrow(eng_td_p) == 0) {
     eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
                        !(Parameter %in% setdiff(non_cov_params, "Intercept")))
@@ -829,7 +942,7 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   par(mar = c(4.5, 10.2, 3.8, 1.5))
   xr_ci <- range(c(eng_tu_p$CI_Lower, eng_tu_p$CI_Upper, eng_td_p$CI_Lower, eng_td_p$CI_Upper, -0.2, 0.2), na.rm = TRUE)
   xr_pad <- 0.12 * diff(xr_ci)
-  plot(NA, xlim = c(xr_ci[1] - xr_pad, xr_ci[2] + xr_pad), ylim = c(0.4, np + 0.6),
+  plot(NA, xlim = c(xr_ci[1] - xr_pad, xr_ci[2] + xr_pad), ylim = c(-0.45, np + 0.55),
        yaxt = "n", xlab = sprintf("Effect Size on %s [95%% Bootstrap CI]", sc_lbl), ylab = "",
        main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 60))
   grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
@@ -844,7 +957,8 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   points(eng_td_p$Estimate, y_pos - 0.14, pch = 17, col = "#2980b9", cex = 1.1)
 
   legend("bottomright", legend = c("S3N Tail-Up (95% Bootstrap CI)", "S3N Tail-Down (95% Bootstrap CI)"),
-         col = c("#27ae60", "#2980b9"), pch = c(16, 17), lwd = 2.2, bty = "n", cex = 0.80)
+         col = c("#27ae60", "#2980b9"), pch = c(16, 17), lwd = 2.2,
+         bg = rgb(1, 1, 1, 0.94), box.col = "#dddddd", cex = 0.78)
   par(mar = par_MAR_old)
 
   # Panel D: Distribution across All Reaches (Overall) and by Hydrogeology & Elevation Regime
@@ -868,9 +982,15 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   abline(v = 1.5, col = "#7f8c8d", lty = 2, lwd = 1.3)
   medians <- sapply(box_list, median, na.rm = TRUE)
   yr_d <- par("usr")[4] - par("usr")[3]
-  y_txt <- pmin(par("usr")[4] - 0.07 * yr_d, bp_d$stats[4, ] + 0.07 * yr_d)
-  text(1:4, y_txt, labels = sprintf("Median:\n%s %s", formatC(medians, format = "fg", digits = 3), det_unit),
-       font = 2, cex = 0.78, col = "#111111")
+  y_txt <- pmin(par("usr")[4] - 0.07 * yr_d, bp_d$stats[4, ] + 0.075 * yr_d)
+  med_labs <- sprintf("Median:\n%s %s", formatC(medians, format = "fg", digits = 3), det_unit)
+  for (bi in seq_len(4L)) {
+    w_box <- max(0.32, strwidth(med_labs[bi], cex = 0.78) * 0.58)
+    h_box <- strheight(med_labs[bi], cex = 0.78) * 0.68
+    rect(bi - w_box, y_txt[bi] - h_box, bi + w_box, y_txt[bi] + h_box,
+         col = rgb(1, 1, 1, 0.90), border = NA)
+  }
+  text(1:4, y_txt, labels = med_labs, font = 2, cex = 0.78, col = "#111111")
   draw_top_banner(banner)
 }
 
@@ -913,9 +1033,27 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
   cbar_lbl  <- sprintf("%s\n(%s)", det_short, unit_disp)
   mode_cap  <- paste0(toupper(substr(by_mode, 1, 1)), tolower(substr(by_mode, 2, nchar(by_mode))))
 
+  n_reaches_tot <- nrow(period_items[[1]]$eng_pred)
+  n_catch_tot   <- length(unique(period_items[[1]]$eng_pred$CatchID))
+  has_vars      <- !is.null(vars_label) && nzchar(vars_label)
+  has_net       <- !is.null(network_label) && nzchar(network_label)
+  has_src       <- !is.null(source_label) && nzchar(source_label)
+  src_tag       <- if (has_src) format_source_abbr(source_label) else ""
+  sub_outer <- sprintf("Unified color scale across all %d %s panels (%s reaches across %d catchments)%s%s%s",
+                       n_pan, tolower(by_mode), format(n_reaches_tot, big.mark = ","), n_catch_tot,
+                       if (has_src) paste0(" | Source: ", src_tag) else "",
+                       if (has_net) paste0(" | Network: ", network_label) else "",
+                       if (has_vars) paste0(" | Covariates: ", vars_label) else "")
+  main_w_txt <- wrap_title(sprintf("All England S3N Stream Network Comparison by %s: %s (%s)",
+                                   mode_cap, det_short, det_unit), 180)
+  sub_w_txt  <- wrap_title(sub_outer, 190)
+  n_main_l   <- length(strsplit(main_w_txt, "\n", fixed = TRUE)[[1]])
+  n_sub_l    <- length(strsplit(sub_w_txt, "\n", fixed = TRUE)[[1]])
+
   open_png_device(out_file, width = w_px, height = h_px, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(nrow_g, ncol_g), mar = c(1.0, 1.0, 3.6, 1.0), oma = c(0.5, 0.5, 3.8, 0.5), bg = "white")
+  oma_top <- 1.2 + 1.45 * n_main_l + 1.15 * n_sub_l
+  par(mfrow = c(nrow_g, ncol_g), mar = c(1.0, 1.0, 3.8, 1.0), oma = c(0.6, 0.6, oma_top, 0.6), bg = "white")
 
   month_names <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -977,21 +1115,8 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
     )
   }
 
-  n_reaches_tot <- nrow(period_items[[1]]$eng_pred)
-  n_catch_tot   <- length(unique(period_items[[1]]$eng_pred$CatchID))
-  has_vars      <- !is.null(vars_label) && nzchar(vars_label)
-  has_net       <- !is.null(network_label) && nzchar(network_label)
-  has_src       <- !is.null(source_label) && nzchar(source_label)
-  src_tag       <- if (has_src) format_source_abbr(source_label) else ""
-  sub_outer <- sprintf("Unified color scale across all %d %s panels (%s reaches across %d catchments)%s%s%s",
-                       n_pan, tolower(by_mode), format(n_reaches_tot, big.mark = ","), n_catch_tot,
-                       if (has_src) paste0(" | Source: ", src_tag) else "",
-                       if (has_net) paste0(" | Network: ", network_label) else "",
-                       if (has_vars) paste0(" | Covariates: ", vars_label) else "")
-  mtext(wrap_title(sprintf("All England S3N Stream Network Comparison by %s: %s (%s)",
-                           mode_cap, det_short, det_unit), 180),
-        side = 3, line = 1.6, outer = TRUE, cex = 1.20, font = 2, col = "#111111")
-  mtext(wrap_title(sub_outer, 190), side = 3, line = 0.2, outer = TRUE, cex = 0.90, col = "#444444")
+  mtext(main_w_txt, side = 3, line = 0.75 + 1.12 * n_sub_l, outer = TRUE, cex = 1.18, font = 2, col = "#111111")
+  mtext(sub_w_txt,  side = 3, line = 0.35, outer = TRUE, cex = 0.88, col = "#444444")
 }
 
 # ==============================================================================
@@ -1103,7 +1228,7 @@ plot_fig_exceedance_england <- function(eng_pred, det_code, det_name, det_unit, 
 
   open_png_device(out_file, width = 2600, height = 1350, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   plot_compliance_tier_network(
@@ -1148,7 +1273,7 @@ plot_fig_exceedance_basins <- function(hum_pred, tha_pred, sev_pred, det_code, d
 
   open_png_device(out_file, width = 3000, height = 1150, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, length(basins)), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, length(basins)), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   for (b in basins) {
@@ -1158,7 +1283,7 @@ plot_fig_exceedance_basins <- function(hum_pred, tha_pred, sev_pred, det_code, d
       sub_title  = sprintf("%s | %s reaches (n = %d obs)",
                            thresh_txt, format(nrow(b$df), big.mark = ","), sum(b$df$has_obs == 1)),
       base_lwd = 0.35, max_lwd = 2.4, show_obs = TRUE, show_legend = TRUE,
-      max_main_chars = 52, max_sub_chars = 68
+      max_main_chars = 72, max_sub_chars = 82
     )
   }
   draw_top_banner(banner)
@@ -1183,7 +1308,7 @@ plot_fig_exceedance_basin <- function(basin_pred, basin_title, det_code, det_nam
 
   open_png_device(out_file, width = 2600, height = 1350, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   plot_compliance_tier_network(
@@ -1255,7 +1380,7 @@ plot_fig6_spatiotemporal_trends <- function(trend_df, by_mode, period_labels, de
 
   open_png_device(out_file, width = 2600, height = 1350, res = 200)
   on.exit(dev.off(), add = TRUE)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.0, 1.2),
+  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2),
       oma = get_banner_oma(banner), bg = "white")
 
   plot_stream_network(
@@ -1326,8 +1451,8 @@ plot_fig7_spatiotemporal_transitions <- function(transitions, by_mode, det_code,
   open_png_device(out_file, width = w_px, height = h_px, res = 200)
   on.exit(dev.off(), add = TRUE)
   oma_b    <- get_banner_oma(banner)
-  oma_b[3] <- max(oma_b[3], 3.8)
-  par(mfrow = c(2L * n_blk, n_cols), mar = c(1.0, 1.0, 3.6, 1.0), oma = oma_b, bg = "white")
+  oma_b[3] <- oma_b[3] + 2.4
+  par(mfrow = c(2L * n_blk, n_cols), mar = c(1.0, 1.0, 4.0, 1.0), oma = oma_b, bg = "white")
 
   panel_lbl <- function(idx) {
     if (idx <= 26L) LETTERS[idx] else paste0("P", idx)
@@ -1389,9 +1514,10 @@ plot_fig7_spatiotemporal_transitions <- function(transitions, by_mode, det_code,
     }
   }
 
+  ban_h <- get_banner_oma(banner)[3]
   mtext(wrap_title(sprintf("All England %s-to-%s Transitions: %s (%s) — %s",
                            mode_cap, mode_cap, det_short, det_unit, st_tag), 180),
-        side = 3, line = 1.6, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
+        side = 3, line = ban_h + 0.35, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
   draw_top_banner(banner)
 }
 
@@ -1455,19 +1581,20 @@ plot_fig_cokrig_diagnostics <- function(cross_cov_df,
   }
 
   png_w <- max(2800L, 1900L + 220L * P)
-  open_png_device(out_file, width = png_w, height = 2100L, res = 220)
+  open_png_device(out_file, width = png_w, height = 2200L, res = 220)
   on.exit(dev.off(), add = TRUE)
   oma_v <- get_banner_oma(banner)
-  oma_v[3] <- oma_v[3] + 1.2
+  ban_h <- oma_v[3]
+  oma_v[3] <- ban_h + 2.4
   par(oma = oma_v, bg = "white")
-  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(1.0, 1.15))
+  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(1.0, 1.18))
 
   draw_corr_heatmap(build_corr_mat("Corr_TU"),     "A1. Tail-Up Network Correlation")
   draw_corr_heatmap(build_corr_mat("Corr_TD"),     "A2. Tail-Down Network Correlation")
   draw_corr_heatmap(build_corr_mat("Corr_Nugget"), "A3. Co-Located Nugget Correlation")
 
   # Panel B: Paired Grouped Bar Chart of Dual CV R2 vs Univariate S3N
-  par(mar = c(6.4, 5.2, 3.8, 1.8))
+  par(mar = c(6.8, 5.4, 4.8, 1.8))
   mod_levels <- c("Univariate S3N", "Co-Kriging (All-Holdout)", "Co-Kriging (Aux-Aided)")
   mod_cols   <- c("#7f8c8d", "#2b8cbe", "#d95f02")
   r2_mat   <- matrix(NA_real_, nrow = 3L, ncol = P)
@@ -1482,7 +1609,7 @@ plot_fig_cokrig_diagnostics <- function(cross_cov_df,
     }
   }
   r2_min <- min(0.0, min(r2_mat, na.rm = TRUE) - 0.08)
-  r2_max <- min(1.12, max(0.35, max(r2_mat, na.rm = TRUE) + 0.16))
+  r2_max <- min(1.25, max(0.40, max(r2_mat, na.rm = TRUE) + 0.24))
   bp <- barplot(
     r2_mat, beside = TRUE, col = mod_cols, border = "#333333",
     ylim = c(r2_min, r2_max), names.arg = rep("", P),
@@ -1512,15 +1639,15 @@ plot_fig_cokrig_diagnostics <- function(cross_cov_df,
       d_pct <- 100 * (r_uni - r_aux) / r_uni
       lbl_sub <- sprintf("%s\n(Aux RMSE %+.1f%%)", var_names[p], -d_pct)
     }
-    mtext(lbl_sub, side = 1, at = mean(bp[, p]), line = 1.0, cex = if (P <= 5L) 0.78 else 0.68)
+    mtext(lbl_sub, side = 1, at = mean(bp[, p]), line = 1.6, cex = if (P <= 5L) 0.80 else 0.70)
   }
   legend("topleft", legend = mod_levels, fill = mod_cols, border = "#333333",
-         horiz = TRUE, bty = "n", cex = 0.85, inset = c(0.01, -0.10), xpd = TRUE)
+         horiz = TRUE, bg = rgb(1, 1, 1, 0.92), box.col = NA, cex = 0.85, inset = c(0.01, 0.01))
   mtext("B. Dual Cross-Validation: Univariate S3N vs All-Holdout vs Aux-Aided Co-Kriging",
-        side = 3, line = 1.8, adj = 0, cex = 0.98, font = 2, col = "#222222")
+        side = 3, line = 1.4, adj = 0, cex = 0.98, font = 2, col = "#222222")
 
   dom_lbl <- if (nrow(cv_compare_df) > 0L) cv_compare_df$Domain[1] else "Domain"
   mtext(wrap_title(sprintf("Multivariate Stream Co-Kriging Diagnostics (%s) — %s", dom_lbl, method_label), 140),
-        side = 3, line = 1.3, outer = TRUE, cex = 1.12, font = 2, col = "#111111")
+        side = 3, line = ban_h + 0.35, outer = TRUE, cex = 1.12, font = 2, col = "#111111")
   draw_top_banner(banner)
 }
