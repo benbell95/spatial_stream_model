@@ -66,16 +66,15 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 ### 5. Directed River Tree Construction & Additive Function Values
 - Links each reach's downstream node `(CatchID, Tnode)` to the upstream node `(CatchID, Fnode)` of its immediate downstream reach (`parent_dn`).
-- Traverses each catchment tree from river mouth (`log_AFV = 0.0`) to headwaters via depth-first search (`topo_order`), accumulating log confluence weights proportional to upstream accumulated channel length (`US_Accum`):
-  `log_afv[p] = log_afv[u] + log(US_Accum[p] / sum(US_Accum[q] for q in parents[u]))`
+- Traverses each catchment tree from river mouth (`log_AFV = 0.0`) to headwaters via depth-first search (`topo_order`), accumulating log confluence weights `log_afv[p] = log_afv[u] + log(M[p] / sum(M[q] for q in parents[u]))` according to `--afv-scheme=length|shreve|hydro_yield` (default `length` = `US_Accum_km`; `shreve` = Shreve link magnitude; `hydro_yield` = upstream length weighted by elevation/orographic rainfall and Principal Aquifer baseflow). R modeling scripts can also recompute `log_AFV` on-the-fly in C++ (`C_compute_log_afv`) via `--afv=length|shreve|hydro_yield`.
 - Runs 3 forward/backward tree-neighbor imputation passes to copy covariates for short reaches (`< 100 m`) that lacked a 100 m sample point, leaving 0 missing values.
 - Writes canonical outputs into `data/processed/<net>_<source>/`: `england_rsn_reaches.csv` (using canonical `obs_mean`, `obs_median`, `trans_obs_mean`, `meas_uncertainty`, `meas_method`), `rsn_sites.csv` (also includes `obs_sd` and `mean_trans_obs`), `rsn_reach_periods.csv`, `rsn_catchments_lookup.csv`, and `network_metadata.json`.
 
 ---
 
-## Part II: OpenMP C++ Stream-Tree Neighbor Engine (`src/s3n_fast_neighbors.cpp`)
+## Part II: OpenMP C++ Stream-Tree Neighbor & NNGP Engine (`src/s3n_fast_neighbors.cpp`)
 
-[`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) replaces `SSN2::createDistMat()` and `S3N::s3n_neighbors()`, computing all exact stream distances, flow-connectedness flags, and NNGP neighbor structures across all 90,876 reaches in memory in **~0.88 seconds** on 4 OpenMP threads.
+[`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) replaces `SSN2::createDistMat()` and `S3N::s3n_neighbors()`, computing all exact stream distances, flow-connectedness flags, NNGP neighbor structures, multi-kernel NNGP likelihoods (`C_s3n_nngp_loglik`), and Joint Additive `TU + TD + Euclidean` kriging (`C_s3n_joint_nngp`) across all 90,876 reaches in memory in **~0.88 seconds** on 4 OpenMP threads.
 
 ### 1. O(1) Flow-Connectedness via Euler-Tour DFS Timestamps (`C_build_tree_tin_tout()` L27–70)
 - Runs a linear `O(q)` depth-first search from every river mouth root (`parent_dn < 0`), recording entry time `tin[u]` and exit time `tout[u]` for every reach `u`.
@@ -100,8 +99,10 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 ## Part III: R S3N Estimation, Prediction & Cross-Validation (`02_fit_s3n_models.R` & `run_s3n_determinand.R`)
 
 1. **Downstream-to-Upstream Vecchia Ordering**: Orders observed reaches by `CatchID` and increasing `obs_up_dist_km` (`1..n_obs`), followed by prediction reaches (`n_obs+1..q_tot`).
-2. **Maximum Likelihood Estimation (`BRISC_estimation_stream`)**: Fits both S3N Exponential Tail-Up (`model_type = 0`) and S3N Exponential Tail-Down (`model_type = 1`) via sparse NNGP L-BFGS-B optimization, plus parametric bootstrap 95% CIs (`BRISC_bootstrap`).
-3. **Variance-Weighted Combined Stream Kriging (`BRISC_prediction_stream`)**: Combines Tail-Up and Tail-Down predictions across all 90,876 reaches using spatial information-gain weights `info = pmax(1e-4, 1 - se^2 / (sigma.sq + tau.sq))`, seamlessly blending mainstem flow-connected kriging (`TU`) with cross-tributary headwater borrowing (`TD`).
+2. **Multi-Kernel Maximum Likelihood Estimation (`--kernel=exponential|spherical|mariah|linear|auto`)**: Fits both S3N Tail-Up (`model_type = 0`) and S3N Tail-Down (`model_type = 1`) via sparse NNGP profile maximum likelihood (`BRISC_estimation_stream` or `C_s3n_nngp_loglik`), supporting Exponential, Spherical, Mariah, Linear-with-Sill, and automatic AIC selection (`--kernel=auto`), plus 95% confidence intervals.
+3. **Joint Additive (`TU + TD + Euclidean`) & Variance-Weighted Stream Kriging (`--combine=joint|precision`)**:
+   - In **`joint` mode** (*default*, `--combine=joint`), estimates joint variance components $(\sigma^2_{\text{TU}}, \sigma^2_{\text{TD}}, \sigma^2_{\text{Euc}}, \tau^2)$ and solves a single unified Cholesky kriging system (`C_s3n_joint_nngp`) combining flow-connected `Tail-Up`, hydrologic-distance `Tail-Down`, and 2D overland `Euclidean` covariance across all 90,876 reaches.
+   - In **`precision` mode** (`--combine=precision`), combines separate `Tail-Up` and `Tail-Down` predictions using local spatial information-gain weights `info = pmax(1e-4, 1 - se^2 / (sigma.sq + tau.sq))`.
 4. **5-Fold Out-of-Sample Cross-Validation**: Reorders each fold's training reaches (`1..n_tr`) ahead of held-out test reaches (`n_tr+1..n_obs`) to evaluate out-of-sample `RMSE`, `MAE`, and `R^2` against non-spatial OLS.
 
 ---

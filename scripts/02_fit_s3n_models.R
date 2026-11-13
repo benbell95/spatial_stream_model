@@ -64,6 +64,20 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
   print_available_transforms()
   quit(save = "no", status = 0)
 }
+if ("--list-kernels" %in% args) {
+  print_available_kernels()
+  quit(save = "no", status = 0)
+}
+if ("--list-trends" %in% args) {
+  print_available_trends()
+  quit(save = "no", status = 0)
+}
+kernel_cli    <- parse_kernel_arg(args, default = "exponential")
+combine_cli   <- parse_combine_arg(args, default = "joint")
+afv_cli       <- parse_afv_arg(args, default = "length")
+trend_cli     <- parse_trend_arg(args, default = "linear")
+spline_df_cli <- parse_spline_df_arg(args, default = 3L)
+trees_cli     <- parse_trees_arg(args, default = 100L)
 net_arg_vec <- grep("^--network=", args, value = TRUE)
 network_cli <- if (length(net_arg_vec) > 0) sub("^--network=", "", net_arg_vec[1]) else "orn"
 PROC_DIR    <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
@@ -131,6 +145,18 @@ if (nzchar(trans_tag)) {
 if (nzchar(vars_tag)) {
   sub_tag <- paste0(sub_tag, "_", vars_tag)
 }
+if (kernel_cli != "exponential") {
+  sub_tag <- paste0(sub_tag, "_k", kernel_cli)
+}
+if (combine_cli != "joint") {
+  sub_tag <- paste0(sub_tag, "_c", combine_cli)
+}
+if (afv_cli != "length") {
+  sub_tag <- paste0(sub_tag, "_afv_", afv_cli)
+}
+if (trend_cli != "linear") {
+  sub_tag <- paste0(sub_tag, "_trend_", trend_cli)
+}
 OUT_ROOT <- rel_path(OUT_BASE, "results", sub_tag)
 dir.create(OUT_ROOT, recursive = TRUE, showWarnings = FALSE)
 
@@ -150,7 +176,13 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     n_omp = n_omp,
     use_meas_error = isTRUE(meas_error_arg),
     net_meta = net_meta,
-    obs_col = obs_col_name
+    obs_col = obs_col_name,
+    kernel = kernel_cli,
+    combine_mode = combine_cli,
+    afv_scheme = afv_cli,
+    trend = trend_cli,
+    spline_df = spline_df_cli,
+    n_trees = trees_cli
   )
 }
 

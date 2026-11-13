@@ -4,6 +4,9 @@
 # Unified modeling engine shared by run_s3n_determinand.R and 02_fit_s3n_models.R.
 # ==============================================================================
 
+.s3n_env <- new.env(parent = emptyenv())
+.s3n_env$has_s3n_pkg <- FALSE
+
 load_s3n_backend <- function(base_dir = ".") {
   cand_libs <- c(
     Sys.getenv("R_LIBS_USER"),
@@ -15,10 +18,12 @@ load_s3n_backend <- function(base_dir = ".") {
       .libPaths(c(cl, .libPaths()))
     }
   }
-  if (!requireNamespace("S3N", quietly = TRUE)) {
-    stop("Required R package 'S3N' could not be found in .libPaths() or R_LIBS_USER.")
+  if (requireNamespace("S3N", quietly = TRUE)) {
+    suppressPackageStartupMessages(library(S3N))
+    .s3n_env$has_s3n_pkg <- TRUE
+  } else {
+    .s3n_env$has_s3n_pkg <- FALSE
   }
-  suppressPackageStartupMessages(library(S3N))
 
   so_name <- paste0("s3n_fast_neighbors", .Platform$dynlib.ext)
   so_path <- rel_path(base_dir, "src", so_name)
@@ -30,6 +35,684 @@ load_s3n_backend <- function(base_dir = ".") {
     dyn.load(so_path)
   }
   invisible(TRUE)
+}
+
+S3N_KERNEL_SPECS <- list(
+  exponential = list(id = 0L, name = "exponential", label = "Exponential",      formula = "exp(-phi * d)"),
+  spherical   = list(id = 1L, name = "spherical",   label = "Spherical",        formula = "(1 - 1.5*(phi*d) + 0.5*(phi*d)^3) * I(phi*d < 1)"),
+  mariah      = list(id = 2L, name = "mariah",      label = "Mariah",           formula = "log(phi*d + 1) / (phi*d)"),
+  linear      = list(id = 3L, name = "linear",      label = "Linear-with-Sill", formula = "max(0, 1 - phi*d)")
+)
+
+normalize_kernel_name <- function(k_str, default = "exponential") {
+  if (is.null(k_str) || !nzchar(trimws(k_str))) return(default)
+  k <- tolower(trimws(k_str))
+  if (k %in% c("exp", "exponential")) return("exponential")
+  if (k %in% c("sph", "spherical"))   return("spherical")
+  if (k %in% c("mar", "mariah"))      return("mariah")
+  if (k %in% c("lin", "linear", "linear-with-sill")) return("linear")
+  if (k %in% c("auto", "best", "aic")) return("auto")
+  stop(sprintf("Unknown --kernel='%s'. Valid kernels: exponential, spherical, mariah, linear, auto", k_str))
+}
+
+parse_kernel_arg <- function(args = character(0), default = "exponential") {
+  k_arg <- grep("^--(kernel|cov-model)=", args, value = TRUE)
+  if (length(k_arg) > 0) {
+    val <- sub("^--(kernel|cov-model)=", "", k_arg[1])
+    return(normalize_kernel_name(val, default = default))
+  }
+  normalize_kernel_name(default, default = "exponential")
+}
+
+parse_combine_arg <- function(args = character(0), default = "joint") {
+  c_arg <- grep("^--(combine|combine-mode)=", args, value = TRUE)
+  val <- if (length(c_arg) > 0) tolower(trimws(sub("^--(combine|combine-mode)=", "", c_arg[1]))) else tolower(default)
+  if (val %in% c("joint", "additive", "joint-nngp", "full")) return("joint")
+  if (val %in% c("precision", "legacy", "weighted")) return("precision")
+  stop(sprintf("Unknown --combine='%s'. Valid modes: joint, precision", val))
+}
+
+parse_afv_arg <- function(args = character(0), default = "length") {
+  a_arg <- grep("^--(afv|afv-scheme)=", args, value = TRUE)
+  val <- if (length(a_arg) > 0) tolower(trimws(sub("^--(afv|afv-scheme)=", "", a_arg[1]))) else tolower(default)
+  if (val %in% c("length", "len", "us_accum", "default")) return("length")
+  if (val %in% c("shreve", "order", "magnitude")) return("shreve")
+  if (val %in% c("hydro_yield", "hydro-yield", "yield", "hydro")) return("hydro_yield")
+  stop(sprintf("Unknown --afv='%s'. Valid AFV schemes: length, shreve, hydro_yield", val))
+}
+
+S3N_TREND_SPECS <- list(
+  linear = list(name = "linear", label = "Linear Fixed Effects (GLS)",
+                desc = "Standard parametric linear fixed-effects design matrix X * Beta"),
+  spline = list(name = "spline", label = "Natural Cubic Splines + S3N",
+                desc = "GCV-penalized natural cubic B-spline basis expansion (splines::ns) + S3N kriging"),
+  gam    = list(name = "gam",    label = "Penalized GAM Smooths + S3N",
+                desc = "REML-penalized cubic regression splines (mgcv::gam) + S3N residual/GLS kriging"),
+  rf     = list(name = "rf",     label = "Random Forest Regression Kriging (RF + S3N)",
+                desc = "Out-of-Bag Random Forest / subspace tree ensemble + S3N residual kriging"),
+  gbm    = list(name = "gbm",    label = "Gradient Boosted Trees + S3N (GBM + S3N)",
+                desc = "Cross-fitted Stochastic Gradient Boosted Regression Trees + S3N residual kriging")
+)
+
+normalize_trend_name <- function(t_str, default = "linear") {
+  if (is.null(t_str) || !nzchar(trimws(t_str))) return(default)
+  t_val <- tolower(trimws(t_str))
+  if (t_val %in% c("linear", "ols", "gls", "default", "parametric")) return("linear")
+  if (t_val %in% c("spline", "splines", "ns", "bspline", "cubic")) return("spline")
+  if (t_val %in% c("gam", "gam-s3n", "gam_s3n", "mgcv", "smooth")) return("gam")
+  if (t_val %in% c("rf", "rf-s3n", "rf_s3n", "randomforest", "random-forest", "forest")) return("rf")
+  if (t_val %in% c("gbm", "gbm-s3n", "gbm_s3n", "boost", "boosted", "gbdt", "trees")) return("gbm")
+  stop(sprintf("Unknown --trend='%s'. Valid trend modes: linear, spline, gam, rf, gbm", t_str))
+}
+
+parse_trend_arg <- function(args = character(0), default = "linear") {
+  if ("--gam-s3n" %in% args) return("gam")
+  if (any(c("--spline", "--splines") %in% args)) return("spline")
+  if (any(c("--rf", "--rf-s3n", "--random-forest") %in% args)) return("rf")
+  if (any(c("--gbm", "--gbm-s3n", "--boosted") %in% args)) return("gbm")
+  t_arg <- grep("^--(trend|fixed-effects|mean-model)=", args, value = TRUE)
+  if (length(t_arg) > 0) {
+    val <- sub("^--(trend|fixed-effects|mean-model)=", "", t_arg[1])
+    return(normalize_trend_name(val, default = default))
+  }
+  normalize_trend_name(default, default = "linear")
+}
+
+parse_spline_df_arg <- function(args = character(0), default = 3L) {
+  s_arg <- grep("^--(spline-df|gam-k)=", args, value = TRUE)
+  if (length(s_arg) > 0) {
+    val <- suppressWarnings(as.integer(sub("^--(spline-df|gam-k)=", "", s_arg[1])))
+    if (is.finite(val) && val >= 2L && val <= 10L) return(val)
+  }
+  as.integer(default)
+}
+
+parse_trees_arg <- function(args = character(0), default = 100L) {
+  tr_arg <- grep("^--(trees|n-trees|rf-trees|gbm-trees)=", args, value = TRUE)
+  if (length(tr_arg) > 0) {
+    val <- suppressWarnings(as.integer(sub("^--(trees|n-trees|rf-trees|gbm-trees)=", "", tr_arg[1])))
+    if (is.finite(val) && val >= 10L && val <= 2000L) return(val)
+  }
+  as.integer(default)
+}
+
+print_available_trends <- function() {
+  cat("Available Fixed-Effect / Mean-Trend Engines (--trend=<mode>):\n")
+  for (sp in S3N_TREND_SPECS) {
+    cat(sprintf("  %-12s : %-44s  (%s)\n", sp$name, sp$label, sp$desc))
+  }
+  cat("\nOptional Trend Tuning Flags:\n")
+  cat("  --spline-df=<int> : Degrees of freedom per continuous covariate for --trend=spline|gam (default: 3)\n")
+  cat("  --trees=<int>     : Number of ensemble trees for --trend=rf|gbm (default: 100)\n")
+}
+
+print_available_kernels <- function() {
+  cat("Available S3N Stream Covariance Kernels (--kernel=<name>):\n")
+  for (sp in S3N_KERNEL_SPECS) {
+    cat(sprintf("  %-12s : %-18s  K(d; phi) = %s\n", sp$name, sp$label, sp$formula))
+  }
+  cat("  auto         : Automatic Selection  Selects best kernel per component by NNGP AIC\n\n")
+  cat("Available S3N Component Combination Modes (--combine=<mode>):\n")
+  cat("  joint        : Joint Additive NNGP (Tail-Up + Tail-Down + Euclidean in a single Cholesky system)\n")
+  cat("  precision    : Precision-weighted combination of separate Tail-Up and Tail-Down kriging predictions\n\n")
+  cat("Available Tail-Up AFV Confluence Weighting Schemes (--afv=<scheme>):\n")
+  cat("  length       : Cumulative upstream channel length (US_Accum_km)\n")
+  cat("  shreve       : Shreve hydrological link magnitude (number of upstream headwater sources)\n")
+  cat("  hydro_yield  : Elevation/orographic rainfall + Principal Aquifer baseflow hydrological yield proxy\n\n")
+  print_available_trends()
+}
+
+fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
+                                spline_df = 3L, n_trees = 100L, seed = 2026L) {
+  mode <- normalize_trend_name(trend_mode, default = "linear")
+  n_tr <- nrow(X_tr)
+  q_ev <- nrow(X_eval)
+  y_tr <- as.numeric(y_tr_vec)
+
+  solve_linear_ols <- function(X_m, y_m) {
+    tryCatch(
+      qr.solve(X_m, y_m),
+      error = function(e) {
+        b <- suppressWarnings(lm.fit(X_m, y_m)$coefficients)
+        b[!is.finite(b)] <- 0.0
+        b
+      }
+    )
+  }
+
+  beta_lin <- solve_linear_ols(X_tr, y_tr)
+  pred_lin_tr <- as.numeric(X_tr %*% beta_lin)
+  pred_lin_ev <- as.numeric(X_eval %*% beta_lin)
+
+  cov_cols <- setdiff(colnames(X_tr), "Intercept")
+  if (mode == "linear" || length(cov_cols) == 0L || n_tr < 12L) {
+    return(list(
+      mode        = "linear",
+      label       = S3N_TREND_SPECS$linear$label,
+      g_perp_tr   = numeric(n_tr),
+      g_perp_eval = numeric(q_ev),
+      pred_oof_tr = pred_lin_tr,
+      pred_eval   = pred_lin_ev,
+      info_df     = NULL
+    ))
+  }
+
+  # Identify continuous vs binary/discrete columns
+  is_cont <- vapply(cov_cols, function(cn) {
+    u <- unique(X_tr[, cn])
+    length(u[is.finite(u)]) > 4L
+  }, logical(1))
+  cont_cols <- cov_cols[is_cont]
+  disc_cols <- cov_cols[!is_cont]
+
+  pred_oof_tr <- pred_lin_tr
+  pred_eval   <- pred_lin_ev
+  info_rows   <- list()
+
+  if (mode == "spline") {
+    df_use <- max(2L, min(as.integer(spline_df), max(2L, floor(n_tr / max(3L, 2L * length(cont_cols))))))
+    basis_tr_list <- list(Intercept = rep(1.0, n_tr))
+    basis_ev_list <- list(Intercept = rep(1.0, q_ev))
+    pen_diag      <- c(0.0) # do not penalize intercept or linear terms
+
+    for (cn in cov_cols) {
+      x_t <- as.numeric(X_tr[, cn])
+      x_e <- as.numeric(X_eval[, cn])
+      basis_tr_list[[cn]] <- x_t
+      basis_ev_list[[cn]] <- x_e
+      pen_diag <- c(pen_diag, 0.0)
+
+      if (cn %in% cont_cols && df_use >= 2L && requireNamespace("splines", quietly = TRUE)) {
+        rng <- range(x_t, na.rm = TRUE)
+        x_e_clip <- pmin(rng[2], pmax(rng[1], x_e))
+        sp_tr <- tryCatch(splines::ns(x_t, df = df_use), error = function(e) NULL)
+        if (!is.null(sp_tr) && ncol(sp_tr) >= 2L) {
+          sp_ev <- predict(sp_tr, newx = x_e_clip)
+          # Orthogonalize nonlinear spline columns against [1, x_t] on training set
+          Z_lin <- cbind(1.0, x_t)
+          for (k_sp in seq_len(ncol(sp_tr))) {
+            z_k_tr <- as.numeric(sp_tr[, k_sp])
+            z_k_ev <- as.numeric(sp_ev[, k_sp])
+            coef_p <- solve_linear_ols(Z_lin, z_k_tr)
+            r_tr   <- z_k_tr - as.numeric(Z_lin %*% coef_p)
+            r_ev   <- z_k_ev - as.numeric(cbind(1.0, x_e_clip) %*% coef_p)
+            sd_r   <- sd(r_tr)
+            if (is.finite(sd_r) && sd_r > 1e-5) {
+              col_nm <- sprintf("%s_sp%d", cn, k_sp)
+              basis_tr_list[[col_nm]] <- r_tr / sd_r
+              basis_ev_list[[col_nm]] <- r_ev / sd_r
+              pen_diag <- c(pen_diag, 1.0)
+            }
+          }
+        }
+      }
+    }
+
+    Phi_tr <- do.call(cbind, basis_tr_list)
+    Phi_ev <- do.call(cbind, basis_ev_list)
+    p_phi  <- ncol(Phi_tr)
+    PtP    <- crossprod(Phi_tr)
+    Pty    <- crossprod(Phi_tr, y_tr)
+
+    # Select ridge penalty lambda on nonlinear spline columns via analytic GCV / LOO
+    lam_grid <- c(0.05, 0.2, 1.0, 5.0, 25.0, 100.0)
+    best_gcv <- Inf
+    best_oof <- pred_lin_tr
+    best_ev  <- pred_lin_ev
+    best_b   <- numeric(p_phi)
+    best_edf <- ncol(X_tr)
+
+    for (lam in lam_grid) {
+      P_mat <- PtP + diag(lam * pen_diag, nrow = p_phi)
+      P_inv <- tryCatch(chol2inv(chol(P_mat)), error = function(e) NULL)
+      if (is.null(P_inv)) next
+      b_hat <- as.numeric(P_inv %*% Pty)
+      f_in  <- as.numeric(Phi_tr %*% b_hat)
+      # Hat matrix diagonal h_ii = rowSums((Phi_tr %*% P_inv) * Phi_tr)
+      h_diag <- pmin(0.95, pmax(0.0, rowSums((Phi_tr %*% P_inv) * Phi_tr)))
+      loo_err <- (y_tr - f_in) / (1.0 - h_diag)
+      gcv_mse <- mean(loo_err^2)
+      if (is.finite(gcv_mse) && gcv_mse < best_gcv) {
+        best_gcv <- gcv_mse
+        best_oof <- y_tr - loo_err
+        best_ev  <- as.numeric(Phi_ev %*% b_hat)
+        best_b   <- b_hat
+        best_edf <- sum(h_diag)
+      }
+    }
+    pred_oof_tr <- best_oof
+    pred_eval   <- best_ev
+    names(best_b) <- colnames(Phi_tr)
+    for (cn in cont_cols) {
+      sp_cols <- grep(paste0("^", cn, "_sp"), names(best_b), value = TRUE)
+      nl_norm <- if (length(sp_cols) > 0) sqrt(sum(best_b[sp_cols]^2)) else 0.0
+      info_rows[[cn]] <- data.frame(
+        Parameter = paste0("Spline_NL:", cn),
+        Estimate  = round(nl_norm, 4),
+        CI_Lower  = NA_real_,
+        CI_Upper  = NA_real_
+      )
+    }
+    info_rows[["edf"]] <- data.frame(
+      Parameter = "Spline_Total_EDF",
+      Estimate  = round(best_edf, 3),
+      CI_Lower  = NA_real_,
+      CI_Upper  = NA_real_
+    )
+
+  } else if (mode == "gam") {
+    df_tr <- as.data.frame(X_tr[, cov_cols, drop = FALSE])
+    df_tr$y_resp <- y_tr
+    df_ev <- as.data.frame(X_eval[, cov_cols, drop = FALSE])
+
+    # Clamp evaluation continuous covariates to training range +/- 0.5 SD to prevent runaway cubic extrapolation
+    for (cn in cont_cols) {
+      rng <- range(df_tr[[cn]], na.rm = TRUE)
+      pad <- 0.25 * diff(rng)
+      df_ev[[cn]] <- pmin(rng[2] + pad, pmax(rng[1] - pad, df_ev[[cn]]))
+    }
+
+    gam_terms <- character(0)
+    for (cn in cont_cols) {
+      n_u <- length(unique(df_tr[[cn]]))
+      k_c <- max(3L, min(as.integer(spline_df) + 2L, n_u - 1L, floor(n_tr / max(3L, length(cont_cols) + 1L))))
+      if (k_c >= 3L) {
+        gam_terms <- c(gam_terms, sprintf("s(%s, bs='cr', k=%d)", cn, k_c))
+      } else {
+        gam_terms <- c(gam_terms, cn)
+      }
+    }
+    gam_terms <- c(gam_terms, disc_cols)
+    fml_str <- paste("y_resp ~", paste(gam_terms, collapse = " + "))
+
+    gam_fit <- if (requireNamespace("mgcv", quietly = TRUE)) {
+      tryCatch(
+        suppressWarnings(mgcv::gam(stats::as.formula(fml_str), data = df_tr, method = "REML")),
+        error = function(e) NULL
+      )
+    } else NULL
+
+    if (!is.null(gam_fit)) {
+      f_in   <- as.numeric(stats::fitted(gam_fit))
+      h_hat  <- pmin(0.92, pmax(0.0, as.numeric(gam_fit$hat)))
+      pred_oof_tr <- y_tr - (y_tr - f_in) / (1.0 - h_hat)
+      pred_eval   <- as.numeric(suppressWarnings(stats::predict(gam_fit, newdata = df_ev, type = "response")))
+
+      s_tab <- tryCatch(summary(gam_fit)$s.table, error = function(e) NULL)
+      if (!is.null(s_tab) && nrow(s_tab) > 0) {
+        for (r_i in seq_len(nrow(s_tab))) {
+          s_nm <- gsub("^s\\(|\\)$", "", rownames(s_tab)[r_i])
+          info_rows[[s_nm]] <- data.frame(
+            Parameter = paste0("GAM_EDF:", s_nm),
+            Estimate  = round(as.numeric(s_tab[r_i, "edf"]), 4),
+            CI_Lower  = NA_real_,
+            CI_Upper  = NA_real_
+          )
+        }
+      }
+    } else {
+      # Automatic fallback to GCV cubic spline basis if n_tr is too small for mgcv::gam REML
+      sp_fb <- fit_nonlinear_trend(X_tr, y_tr, X_eval, trend_mode = "spline", spline_df = spline_df)
+      pred_oof_tr <- sp_fb$pred_oof_tr
+      pred_eval   <- sp_fb$pred_eval
+      if (!is.null(sp_fb$info_df)) info_rows[["fb"]] <- sp_fb$info_df
+    }
+
+  } else if (mode == "rf") {
+    set.seed(seed)
+    df_tr <- as.data.frame(X_tr[, cov_cols, drop = FALSE])
+    df_ev <- as.data.frame(X_eval[, cov_cols, drop = FALSE])
+    p_cov <- length(cov_cols)
+    mtry  <- max(1L, floor(0.70 * p_cov))
+    ntree <- max(20L, as.integer(n_trees))
+
+    oob_sum <- numeric(n_tr)
+    oob_cnt <- integer(n_tr)
+    ev_sum  <- numeric(q_ev)
+    imp_vec <- setNames(numeric(p_cov), cov_cols)
+
+    min_sp <- max(6L, floor(n_tr / 12L))
+    for (b in seq_len(ntree)) {
+      idx_b  <- sample.int(n_tr, size = n_tr, replace = TRUE)
+      oob_b  <- setdiff(seq_len(n_tr), unique(idx_b))
+      cols_b <- if (p_cov > 1L) sample(cov_cols, size = mtry, replace = FALSE) else cov_cols
+      sub_df <- df_tr[idx_b, cols_b, drop = FALSE]
+      sub_df$y_resp <- y_tr[idx_b]
+
+      tr_b <- rpart::rpart(
+        y_resp ~ ., data = sub_df, method = "anova",
+        control = rpart::rpart.control(cp = 0.005, minsplit = min_sp, maxdepth = 6L, xval = 0L)
+      )
+      if (length(oob_b) > 0L) {
+        p_oob <- as.numeric(predict(tr_b, newdata = df_tr[oob_b, cols_b, drop = FALSE]))
+        oob_sum[oob_b] <- oob_sum[oob_b] + p_oob
+        oob_cnt[oob_b] <- oob_cnt[oob_b] + 1L
+      }
+      ev_sum <- ev_sum + as.numeric(predict(tr_b, newdata = df_ev[, cols_b, drop = FALSE]))
+      if (!is.null(tr_b$variable.importance)) {
+        for (vn in names(tr_b$variable.importance)) {
+          if (vn %in% names(imp_vec)) imp_vec[vn] <- imp_vec[vn] + as.numeric(tr_b$variable.importance[vn])
+        }
+      }
+    }
+
+    pred_eval   <- ev_sum / ntree
+    pred_oof_tr <- ifelse(oob_cnt > 0L, oob_sum / pmax(1L, oob_cnt), pred_eval[1:n_tr])
+    if (sum(imp_vec) > 0) imp_vec <- 100.0 * imp_vec / sum(imp_vec)
+    for (cn in cov_cols) {
+      info_rows[[cn]] <- data.frame(
+        Parameter = paste0("RF_VarImp(%):", cn),
+        Estimate  = round(unname(imp_vec[cn]), 2),
+        CI_Lower  = NA_real_,
+        CI_Upper  = NA_real_
+      )
+    }
+
+  } else if (mode == "gbm") {
+    set.seed(seed)
+    df_tr <- as.data.frame(X_tr[, cov_cols, drop = FALSE])
+    df_ev <- as.data.frame(X_eval[, cov_cols, drop = FALSE])
+    p_cov <- length(cov_cols)
+    ntree <- max(20L, min(250L, as.integer(n_trees)))
+    lr    <- 0.06
+    min_sp <- max(6L, floor(n_tr / 12L))
+
+    fit_gbm_seq <- function(df_fit, y_fit, df_pred_list, n_rounds) {
+      n_f  <- nrow(df_fit)
+      mu_0 <- mean(y_fit)
+      res  <- y_fit - mu_0
+      preds_hist <- lapply(df_pred_list, function(d) matrix(mu_0, nrow = nrow(d), ncol = n_rounds))
+      imp_acc <- setNames(numeric(p_cov), cov_cols)
+      cur_p   <- lapply(df_pred_list, function(d) rep(mu_0, nrow(d)))
+
+      for (m_i in seq_len(n_rounds)) {
+        sub_idx <- if (n_f >= 15L) sample.int(n_f, size = max(10L, floor(0.80 * n_f)), replace = FALSE) else seq_len(n_f)
+        sub_d   <- df_fit[sub_idx, , drop = FALSE]
+        sub_d$r_target <- res[sub_idx]
+        tr_m <- rpart::rpart(
+          r_target ~ ., data = sub_d, method = "anova",
+          control = rpart::rpart.control(cp = 0.002, minsplit = min_sp, maxdepth = 3L, xval = 0L)
+        )
+        step_f <- lr * as.numeric(predict(tr_m, newdata = df_fit))
+        res    <- res - step_f
+        if (!is.null(tr_m$variable.importance)) {
+          for (vn in names(tr_m$variable.importance)) {
+            if (vn %in% names(imp_acc)) imp_acc[vn] <- imp_acc[vn] + as.numeric(tr_m$variable.importance[vn])
+          }
+        }
+        for (k_l in seq_along(df_pred_list)) {
+          cur_p[[k_l]] <- cur_p[[k_l]] + lr * as.numeric(predict(tr_m, newdata = df_pred_list[[k_l]]))
+          preds_hist[[k_l]][, m_i] <- cur_p[[k_l]]
+        }
+      }
+      list(preds_hist = preds_hist, imp = imp_acc)
+    }
+
+    # 5-fold cross-fitting on training stations to select optimal boosting iteration & unbiased OOF predictions
+    k_oof <- min(5L, n_tr)
+    f_id  <- sample(rep(seq_len(k_oof), length.out = n_tr))
+    oof_mat <- matrix(mean(y_tr), nrow = n_tr, ncol = ntree)
+    for (kf in seq_len(k_oof)) {
+      val_i <- which(f_id == kf)
+      trn_i <- which(f_id != kf)
+      if (length(val_i) == 0L || length(trn_i) < 6L) next
+      g_kf <- fit_gbm_seq(df_tr[trn_i, , drop = FALSE], y_tr[trn_i], list(df_tr[val_i, , drop = FALSE]), ntree)
+      oof_mat[val_i, ] <- g_kf$preds_hist[[1]]
+    }
+    mse_by_iter <- colMeans((oof_mat - y_tr)^2)
+    best_iter   <- which.min(mse_by_iter)
+    pred_oof_tr <- as.numeric(oof_mat[, best_iter])
+
+    full_gbm  <- fit_gbm_seq(df_tr, y_tr, list(df_ev), best_iter)
+    pred_eval <- as.numeric(full_gbm$preds_hist[[1]][, best_iter])
+    imp_vec   <- full_gbm$imp
+    if (sum(imp_vec) > 0) imp_vec <- 100.0 * imp_vec / sum(imp_vec)
+    for (cn in cov_cols) {
+      info_rows[[cn]] <- data.frame(
+        Parameter = paste0("GBM_VarImp(%):", cn),
+        Estimate  = round(unname(imp_vec[cn]), 2),
+        CI_Lower  = NA_real_,
+        CI_Upper  = NA_real_
+      )
+    }
+    info_rows[["iter"]] <- data.frame(
+      Parameter = "GBM_Best_Trees",
+      Estimate  = as.numeric(best_iter),
+      CI_Lower  = NA_real_,
+      CI_Upper  = NA_real_
+    )
+  }
+
+  # Orthogonal decomposition: separate nonlinear/interaction surface g_perp orthogonal to linear X_tr
+  beta_proj_oof <- solve_linear_ols(X_tr, pred_oof_tr)
+  beta_proj_ev  <- solve_linear_ols(X_tr, pred_eval[1:n_tr])
+  g_perp_tr     <- as.numeric(pred_oof_tr - as.numeric(X_tr %*% beta_proj_oof))
+  g_perp_eval   <- as.numeric(pred_eval   - as.numeric(X_eval %*% beta_proj_ev))
+  # Use OOF nonlinear component at the observed reaches 1..n_tr to prevent residual overfitting
+  g_perp_eval[1:n_tr] <- g_perp_tr
+
+  info_df <- if (length(info_rows) > 0L) do.call(rbind, info_rows) else NULL
+  list(
+    mode        = mode,
+    label       = S3N_TREND_SPECS[[mode]]$label,
+    g_perp_tr   = g_perp_tr,
+    g_perp_eval = g_perp_eval,
+    pred_oof_tr = pred_oof_tr,
+    pred_eval   = pred_eval,
+    info_df     = info_df
+  )
+}
+
+compute_reach_log_afv <- function(df, afv_scheme = "length", parent_0 = NULL) {
+  scheme <- parse_afv_arg(paste0("--afv=", afv_scheme))
+  if (scheme == "length" && ("log_AFV" %in% names(df)) && all(is.finite(df$log_AFV))) {
+    return(as.double(df$log_AFV))
+  }
+  if (is.null(parent_0)) {
+    par_idx  <- match(df$parent_dn, df$RivID, nomatch = 0L)
+    parent_0 <- ifelse(df$parent_dn == 0 | par_idx == 0L, -1L, par_idx - 1L)
+  }
+  if (scheme == "length") {
+    w_vec <- if ("US_Accum_km" %in% names(df)) pmax(0.05, as.double(df$US_Accum_km)) else rep(1.0, nrow(df))
+    return(.Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 1L))
+  }
+  if (scheme == "shreve") {
+    w_vec <- if ("Shreve" %in% names(df)) pmax(1.0, as.double(df$Shreve)) else rep(1.0, nrow(df))
+    return(.Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 1L))
+  }
+  # hydro_yield: upstream length * orographic elevation factor * aquifer baseflow factor
+  us_km <- if ("US_Accum_km" %in% names(df)) pmax(0.05, as.double(df$US_Accum_km)) else rep(1.0, nrow(df))
+  elev  <- if ("Elevation" %in% names(df)) pmax(0.0, as.double(df$Elevation)) else rep(0.0, nrow(df))
+  aq    <- if ("Is_Aquifer" %in% names(df)) pmax(0.0, as.double(df$Is_Aquifer)) else rep(0.0, nrow(df))
+  elev[!is.finite(elev)] <- 0.0
+  aq[!is.finite(aq)]     <- 0.0
+  w_vec <- us_km * (1.0 + 0.002 * elev) * (1.0 + 0.50 * aq)
+  .Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 1L)
+}
+
+fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponential") {
+  if (kernel_name == "auto") {
+    cand_names <- names(S3N_KERNEL_SPECS)
+    fits <- lapply(cand_names, function(kn) fit_nngp_cpp(X_obs, y_vec_obs, obs_nb, vy, kernel_name = kn))
+    aics <- vapply(fits, function(f) f$aic, numeric(1))
+    best_idx <- which.min(aics)
+    best_fit <- fits[[best_idx]]
+    best_fit$auto_aic_table <- setNames(round(aics, 2), cand_names)
+    return(best_fit)
+  }
+  sp <- S3N_KERNEL_SPECS[[kernel_name]]
+  kernel_id <- as.integer(sp$id)
+  n_obs <- nrow(X_obs)
+  p_cov <- ncol(X_obs)
+  y_dbl <- as.double(y_vec_obs)
+
+  eval_obj <- function(par) {
+    eta <- exp(max(-12.0, min(6.0, par[1])))
+    phi <- exp(max(-9.0,  min(4.0, par[2])))
+    res <- .Call("C_s3n_nngp_loglik", X_obs, y_dbl, obs_nb, eta, phi, kernel_id)
+    if (!is.finite(res$neg2loglik)) return(1e30)
+    res$neg2loglik
+  }
+
+  grid_eta <- log(c(0.05, 0.25, 0.80))
+  grid_phi <- log(c(0.015, 0.06, 0.25))
+  best_val <- Inf
+  best_par <- c(log(0.15), log(0.05))
+  for (ge in grid_eta) {
+    for (gp in grid_phi) {
+      val <- eval_obj(c(ge, gp))
+      if (val < best_val) {
+        best_val <- val
+        best_par <- c(ge, gp)
+      }
+    }
+  }
+
+  opt <- tryCatch(
+    optim(best_par, eval_obj, method = "Nelder-Mead", control = list(maxit = 180L, reltol = 1e-6)),
+    error = function(e) list(par = best_par, value = best_val)
+  )
+  eta_hat <- exp(max(-12.0, min(6.0, opt$par[1])))
+  phi_hat <- exp(max(-9.0,  min(4.0, opt$par[2])))
+  final   <- .Call("C_s3n_nngp_loglik", X_obs, y_dbl, obs_nb, eta_hat, phi_hat, kernel_id)
+
+  theta <- c(sigma.sq = final$sigma.sq, tau.sq = final$tau.sq, phi = phi_hat)
+  names(theta) <- c("sigma.sq", "tau.sq", "phi")
+  beta <- as.numeric(final$Beta)
+  names(beta) <- colnames(X_obs)
+
+  list(
+    Beta        = beta,
+    Theta       = theta,
+    cov.beta    = final$cov.beta,
+    neg2loglik  = final$neg2loglik,
+    loglik      = -0.5 * final$neg2loglik,
+    aic         = final$neg2loglik + 2.0 * (p_cov + 3.0),
+    kernel_name = kernel_name,
+    kernel_id   = kernel_id,
+    engine      = "cpp_nngp"
+  )
+}
+
+bootstrap_nngp_cpp <- function(fit_obj, X_obs) {
+  se_beta <- sqrt(pmax(1e-12, diag(as.matrix(fit_obj$cov.beta))))
+  ci_beta_lo <- fit_obj$Beta - 1.959964 * se_beta
+  ci_beta_hi <- fit_obj$Beta + 1.959964 * se_beta
+  n_obs <- nrow(X_obs)
+  se_fac <- max(0.08, min(0.45, sqrt(2.0 / max(10.0, n_obs))))
+  th <- fit_obj$Theta
+  ci_th_lo <- th * exp(-1.959964 * se_fac)
+  ci_th_hi <- th * exp( 1.959964 * se_fac)
+  ci_mat <- rbind(c(ci_beta_lo, ci_th_lo), c(ci_beta_hi, ci_th_hi))
+  colnames(ci_mat) <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
+  list(confidence.interval = ci_mat)
+}
+
+fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
+                                      nb_tu, nb_td, mid_x, mid_y, m_use,
+                                      fit_tu, fit_td, kernel_id = 0L, estimate_only = FALSE) {
+  y_dbl <- as.double(y_vec_obs)
+  v_use <- if (has_me) as.double(v_meas) else numeric(0)
+  p_cov <- ncol(X_obs)
+  q_tot <- nrow(X_all)
+
+  phi_tu <- max(1e-5, as.numeric(fit_tu$Theta["phi"]))
+  phi_td <- max(1e-5, as.numeric(fit_td$Theta["phi"]))
+
+  # In Mode 0, C_s3n_joint_nngp profiles out overall variance scale when has_me == FALSE
+  # and uses exact variance components when has_me == TRUE.
+  vy <- max(1e-4, var(y_dbl))
+  sig_tu_0 <- max(1e-5, as.numeric(fit_tu$Theta["sigma.sq"]))
+  sig_td_0 <- max(1e-5, as.numeric(fit_td$Theta["sigma.sq"]))
+  tau_0    <- max(1e-5, 0.5 * (as.numeric(fit_tu$Theta["tau.sq"]) + as.numeric(fit_td$Theta["tau.sq"])) - (if (has_me) mean(v_use) else 0.0))
+
+  eval_joint <- function(par) {
+    r_td   <- exp(max(-8.0, min(8.0, par[1])))
+    r_euc  <- exp(max(-10.0, min(6.0, par[2])))
+    r_tau  <- exp(max(-10.0, min(6.0, par[3])))
+    phi_eu <- exp(max(-7.0, min(3.0, par[4])))
+    s_scale <- if (has_me) exp(max(-8.0, min(8.0, par[5]))) else 1.0
+    params_vec <- c(s_scale * 1.0, s_scale * r_td, s_scale * r_euc, s_scale * r_tau,
+                    phi_tu, phi_td, phi_eu, as.double(kernel_id))
+    res <- .Call("C_s3n_joint_nngp",
+                 X_obs, y_dbl, v_use, X_obs, numeric(p_cov),
+                 nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
+                 as.integer(m_use), as.double(params_vec), 0L)
+    val <- if (has_me) res$neg2loglik_exact else res$neg2loglik
+    if (!is.finite(val)) return(1e30)
+    val
+  }
+
+  r_td_init  <- log(max(0.05, min(20.0, sig_td_0 / sig_tu_0)))
+  r_tau_init <- log(max(0.02, min(10.0, tau_0 / sig_tu_0)))
+  s_init     <- log(max(1e-4, 0.5 * (sig_tu_0 + sig_td_0)))
+
+  starts <- list(
+    c(r_td_init,  log(0.10), r_tau_init, log(0.03), s_init),
+    c(log(0.02),  log(0.01), log(max(0.02, as.numeric(fit_tu$Theta["tau.sq"]) / sig_tu_0)), log(0.03), log(sig_tu_0)),
+    c(log(50.0),  log(0.01), log(max(0.02, as.numeric(fit_td$Theta["tau.sq"]) / max(1e-5, 0.02 * sig_td_0))), log(0.03), log(max(1e-5, 0.02 * sig_td_0))),
+    c(0.0,        log(0.25), r_tau_init, log(0.05), s_init)
+  )
+  best_par <- starts[[1]]
+  best_val <- Inf
+  for (st in starts) {
+    p_st <- if (has_me) st else st[1:4]
+    v_st <- eval_joint(p_st)
+    if (v_st < best_val) {
+      best_val <- v_st
+      best_par <- p_st
+    }
+  }
+
+  opt <- tryCatch(
+    optim(best_par, eval_joint, method = "Nelder-Mead", control = list(maxit = 140L, reltol = 1e-5)),
+    error = function(e) list(par = best_par, value = best_val)
+  )
+  par_hat <- opt$par
+  r_td   <- exp(max(-8.0, min(8.0, par_hat[1])))
+  r_euc  <- exp(max(-10.0, min(6.0, par_hat[2])))
+  r_tau  <- exp(max(-10.0, min(6.0, par_hat[3])))
+  phi_eu <- exp(max(-7.0, min(3.0, par_hat[4])))
+  s_scale <- if (has_me) exp(max(-8.0, min(8.0, par_hat[5]))) else 1.0
+
+  params_raw <- c(s_scale * 1.0, s_scale * r_td, s_scale * r_euc, s_scale * r_tau,
+                  phi_tu, phi_td, phi_eu, as.double(kernel_id))
+  fit_res <- .Call("C_s3n_joint_nngp",
+                   X_obs, y_dbl, v_use, X_obs, numeric(p_cov),
+                   nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
+                   as.integer(m_use), as.double(params_raw), 0L)
+
+  mult <- if (has_me) 1.0 else fit_res$scale
+  params_final <- c(
+    sigma.sq_tu  = params_raw[1] * mult,
+    sigma.sq_td  = params_raw[2] * mult,
+    sigma.sq_euc = params_raw[3] * mult,
+    tau.sq       = params_raw[4] * mult,
+    phi_tu       = phi_tu,
+    phi_td       = phi_td,
+    phi_euc      = phi_eu,
+    kernel_id    = as.double(kernel_id)
+  )
+  beta_hat <- as.numeric(fit_res$Beta)
+  names(beta_hat) <- colnames(X_obs)
+
+  if (estimate_only) {
+    return(list(Beta = beta_hat, params = params_final, neg2loglik = fit_res$neg2loglik))
+  }
+
+  pred_res <- .Call("C_s3n_joint_nngp",
+                    X_obs, y_dbl, v_use, X_all, beta_hat,
+                    nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
+                    as.integer(m_use), as.double(params_final), 1L)
+
+  list(
+    Beta       = beta_hat,
+    params     = params_final,
+    neg2loglik = fit_res$neg2loglik,
+    prediction = pred_res$prediction,
+    se         = pred_res$se,
+    ci         = pred_res$prediction.ci
+  )
 }
 
 parse_n_omp_arg <- function(args = character(0), default = 1L) {
@@ -51,7 +734,13 @@ fit_s3n_domain <- function(df,
                            n_omp = 1L,
                            use_meas_error = FALSE,
                            net_meta = NULL,
-                           obs_col = "obs_val") {
+                           obs_col = "obs_val",
+                           kernel = "exponential",
+                           combine_mode = "joint",
+                           afv_scheme = "length",
+                           trend = "linear",
+                           spline_df = 3L,
+                           n_trees = 100L) {
   obs_idx <- which(df$has_obs == 1L & !is.na(df[[obs_col]]))
   n_obs   <- length(obs_idx)
   if (n_obs < 15L) {
@@ -101,10 +790,29 @@ fit_s3n_domain <- function(df,
   parent_0 <- ifelse(df_ord$parent_dn == 0 | par_idx == 0L, -1L, par_idx - 1L)
   up_dist  <- ifelse(df_ord$has_obs == 1L, df_ord$obs_up_dist_km, df_ord$up_dist_mid_km)
 
+  kernel_req <- normalize_kernel_name(kernel, default = "exponential")
+  comb_mode  <- parse_combine_arg(paste0("--combine=", combine_mode))
+  afv_mode   <- parse_afv_arg(paste0("--afv=", afv_scheme))
+  trend_req  <- normalize_trend_name(trend, default = "linear")
+  df_ord$log_AFV <- compute_reach_log_afv(df_ord, afv_scheme = afv_mode, parent_0 = parent_0)
+  cat(sprintf("  Spatial configuration: kernel = %s | combine = %s | afv = %s | trend = %s\n",
+              kernel_req, comb_mode, afv_mode, trend_req))
+
   X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"), var_specs = var_specs)
   cat(sprintf("  Fixed-effect covariates (%d): %s\n", ncol(X_all), paste(colnames(X_all), collapse = ", ")))
   X_obs <- X_all[1:n_obs, , drop = FALSE]
-  vy    <- max(1e-4, var(y_vec_obs))
+
+  trend_fit <- fit_nonlinear_trend(
+    X_tr = X_obs, y_tr_vec = y_vec_obs, X_eval = X_all,
+    trend_mode = trend_req, spline_df = spline_df, n_trees = n_trees
+  )
+  if (trend_req != "linear") {
+    cat(sprintf("  [Non-Linear / Ensemble Trend: %s] Active (orthogonal nonlinear SD = %.4f)\n",
+                trend_fit$label, sd(trend_fit$g_perp_tr)))
+  }
+  y_vec_s3n <- y_vec_obs - trend_fit$g_perp_tr
+  y_obs_s3n <- as.matrix(y_vec_s3n)
+  vy        <- max(1e-4, var(y_vec_s3n))
 
   t0 <- proc.time()
   tt <- .Call("C_build_tree_tin_tout", as.integer(parent_0))
@@ -119,24 +827,41 @@ fit_s3n_domain <- function(df,
   nb_td <- build_neighbors(1L)
   t_nb  <- (proc.time() - t0)[3]
 
+  estimate_component <- function(X_m, y_m, obs_nb_m, vy_m, k_name) {
+    if (k_name == "exponential" && isTRUE(.s3n_env$has_s3n_pkg)) {
+      res_b <- BRISC_estimation_stream(
+        coords = as.matrix(seq_len(nrow(X_m))), y = as.matrix(y_m), x = X_m,
+        neighbor = obs_nb_m, sigma.sq = vy_m * 0.7, tau.sq = vy_m * 0.1, phi = 0.05,
+        cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
+      )
+      res_b$kernel_name <- "exponential"
+      res_b$kernel_id   <- 0L
+      res_b$engine      <- "brisc"
+      return(res_b)
+    }
+    fit_nngp_cpp(X_m, as.double(y_m), obs_nb_m, vy_m, kernel_name = k_name)
+  }
+
   t1 <- proc.time()
-  fit_tu <- BRISC_estimation_stream(
-    coords = as.matrix(1:n_obs), y = y_obs, x = X_obs,
-    neighbor = nb_tu$obs_neighbors, sigma.sq = vy * 0.7, tau.sq = vy * 0.1, phi = 0.05,
-    cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-  )
-  fit_td <- BRISC_estimation_stream(
-    coords = as.matrix(1:n_obs), y = y_obs, x = X_obs,
-    neighbor = nb_td$obs_neighbors, sigma.sq = vy * 0.7, tau.sq = vy * 0.1, phi = 0.05,
-    cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-  )
+  fit_tu <- estimate_component(X_obs, y_obs_s3n, nb_tu$obs_neighbors, vy, kernel_req)
+  fit_td <- estimate_component(X_obs, y_obs_s3n, nb_td$obs_neighbors, vy, kernel_req)
+  if (kernel_req == "auto") {
+    cat(sprintf("    [Auto-Kernel Selection] Tail-Up best = %s (%s)\n",
+                fit_tu$kernel_name,
+                paste(names(fit_tu$auto_aic_table), fit_tu$auto_aic_table, sep = "=", collapse = ", ")))
+    cat(sprintf("    [Auto-Kernel Selection] Tail-Down best = %s (%s)\n",
+                fit_td$kernel_name,
+                paste(names(fit_td$auto_aic_table), fit_td$auto_aic_table, sep = "=", collapse = ", ")))
+  }
+  kid_tu <- if (!is.null(fit_tu$kernel_id)) as.integer(fit_tu$kernel_id) else 0L
+  kid_td <- if (!is.null(fit_td$kernel_id)) as.integer(fit_td$kernel_id) else 0L
   t_est <- (proc.time() - t1)[3]
 
   if (has_me) {
     tau_micro_tu <- max(1e-6 * fit_tu$Theta["sigma.sq"], fit_tu$Theta["tau.sq"] - v_bar)
-    theta_tu_me  <- c(fit_tu$Theta["sigma.sq"], tau_micro_tu, fit_tu$Theta["phi"])
+    theta_tu_me  <- c(fit_tu$Theta["sigma.sq"], tau_micro_tu, fit_tu$Theta["phi"], kid_tu)
     tau_micro_td <- max(1e-6 * fit_td$Theta["sigma.sq"], fit_td$Theta["tau.sq"] - v_bar)
-    theta_td_me  <- c(fit_td$Theta["sigma.sq"], tau_micro_td, fit_td$Theta["phi"])
+    theta_td_me  <- c(fit_td$Theta["sigma.sq"], tau_micro_td, fit_td$Theta["phi"], kid_td)
     cat(sprintf("    Tail-Up Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
                 fit_tu$Theta["tau.sq"], tau_micro_tu, v_bar))
     cat(sprintf("    Tail-Down Decomposition: Total Nugget = %.4f -> Microscale = %.4f + Meas Error = %.4f\n",
@@ -144,30 +869,48 @@ fit_s3n_domain <- function(df,
   }
 
   t2 <- proc.time()
-  bs_tu <- BRISC_bootstrap(fit_tu, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
-  bs_td <- BRISC_bootstrap(fit_td, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
+  bootstrap_component <- function(fit_obj) {
+    if (identical(fit_obj$engine, "brisc") && isTRUE(.s3n_env$has_s3n_pkg)) {
+      BRISC_bootstrap(fit_obj, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
+    } else {
+      bootstrap_nngp_cpp(fit_obj, X_obs)
+    }
+  }
+  bs_tu <- bootstrap_component(fit_tu)
+  bs_td <- bootstrap_component(fit_td)
   t_bs  <- (proc.time() - t2)[3]
 
   t3 <- proc.time()
-  predict_component <- function(fit_obj, nb_obj, theta_me) {
+  predict_component <- function(fit_obj, nb_obj, theta_me, kid) {
     if (has_me) {
       .Call("C_s3n_predict_meas_error",
-            X_obs, y_obs, v_meas, X_all,
-            fit_obj$Beta, theta_me,
+            X_obs, y_obs_s3n, v_meas, X_all,
+            fit_obj$Beta, as.double(theta_me),
             as.integer(m_use),
             nb_obj$pred_neighbors$nnIndx, nb_obj$pred_neighbors$nnDist, nb_obj$pred_neighbors$nnWght,
             nb_obj$obsobs_dist, nb_obj$obsobs_wt)
-    } else {
+    } else if (identical(fit_obj$engine, "brisc") && kid == 0L && isTRUE(.s3n_env$has_s3n_pkg)) {
       BRISC_prediction_stream(
         BRISC_Out = fit_obj, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
         neighbor = nb_obj$pred_neighbors, obsobs_dist = nb_obj$obsobs_dist, obsobs_wt = nb_obj$obsobs_wt,
         n_omp = n_omp, verbose = FALSE
       )
+    } else {
+      th_vec <- c(fit_obj$Theta["sigma.sq"], fit_obj$Theta["tau.sq"], fit_obj$Theta["phi"], kid)
+      .Call("C_s3n_predict_meas_error",
+            X_obs, y_obs_s3n, numeric(0), X_all,
+            fit_obj$Beta, as.double(th_vec),
+            as.integer(m_use),
+            nb_obj$pred_neighbors$nnIndx, nb_obj$pred_neighbors$nnDist, nb_obj$pred_neighbors$nnWght,
+            nb_obj$obsobs_dist, nb_obj$obsobs_wt)
     }
   }
-  pr_tu  <- predict_component(fit_tu, nb_tu, if (has_me) theta_tu_me else NULL)
-  pr_td  <- predict_component(fit_td, nb_td, if (has_me) theta_td_me else NULL)
-  t_pred <- (proc.time() - t3)[3]
+  pr_tu  <- predict_component(fit_tu, nb_tu, if (has_me) theta_tu_me else NULL, kid_tu)
+  pr_td  <- predict_component(fit_td, nb_td, if (has_me) theta_td_me else NULL, kid_td)
+  pr_tu$prediction    <- pr_tu$prediction + trend_fit$g_perp_eval
+  pr_tu$prediction.ci <- pr_tu$prediction.ci + trend_fit$g_perp_eval
+  pr_td$prediction    <- pr_td$prediction + trend_fit$g_perp_eval
+  pr_td$prediction.ci <- pr_td$prediction.ci + trend_fit$g_perp_eval
 
   se_tu <- (pr_tu$prediction.ci[, 2] - pr_tu$prediction) / 1.959964
   se_td <- (pr_td$prediction.ci[, 2] - pr_td$prediction) / 1.959964
@@ -176,8 +919,26 @@ fit_s3n_domain <- function(df,
   info_tu <- pmax(1e-4, 1 - (se_tu^2) / sill_nug_tu)
   info_td <- pmax(1e-4, 1 - (se_td^2) / sill_nug_td)
 
-  pred_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
-  se_comb   <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
+  joint_fit <- NULL
+  if (comb_mode == "joint") {
+    joint_fit <- fit_and_predict_joint_s3n(
+      X_obs = X_obs, y_vec_obs = y_vec_s3n, v_meas = v_meas, has_me = has_me,
+      X_all = X_all, nb_tu = nb_tu, nb_td = nb_td,
+      mid_x = df_ord$mid_X, mid_y = df_ord$mid_Y, m_use = m_use,
+      fit_tu = fit_tu, fit_td = fit_td, kernel_id = kid_tu
+    )
+    joint_fit$prediction <- joint_fit$prediction + trend_fit$g_perp_eval
+    joint_fit$ci         <- joint_fit$ci + trend_fit$g_perp_eval
+    pred_comb <- joint_fit$prediction
+    se_comb   <- joint_fit$se
+    cat(sprintf("    [Joint Additive S3N (TU + TD + Euc)] sigma2_TU=%.4f, sigma2_TD=%.4f, sigma2_Euc=%.4f, tau2=%.4f\n",
+                joint_fit$params["sigma.sq_tu"], joint_fit$params["sigma.sq_td"],
+                joint_fit$params["sigma.sq_euc"], joint_fit$params["tau.sq"]))
+  } else {
+    pred_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
+    se_comb   <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
+  }
+  t_pred <- (proc.time() - t3)[3]
 
   obs_sc_full <- rep(NA_real_, q_tot)
   obs_sc_full[1:n_obs] <- round(y_vec_obs, 5)
@@ -215,15 +976,19 @@ fit_s3n_domain <- function(df,
   )
   if ("meas_uncertainty" %in% names(df_ord)) pred_df$meas_uncertainty <- df_ord$meas_uncertainty
   if ("meas_method" %in% names(df_ord))      pred_df$meas_method      <- df_ord$meas_method
+  if (trend_req != "linear") {
+    pred_df$pred_trend_sc <- round(as.numeric(X_all %*% fit_tu$Beta) + trend_fit$g_perp_eval, 5)
+  }
 
   # 5-Fold Cross-Validation (using topology vectors directly without copying df_ord)
   set.seed(2026)
-  folds   <- sample(rep(1:5, length.out = n_obs))
-  cv_ols  <- rep(NA_real_, n_obs)
-  cv_tu   <- rep(NA_real_, n_obs)
-  cv_td   <- rep(NA_real_, n_obs)
-  cv_comb <- rep(NA_real_, n_obs)
-  y_vec   <- y_vec_obs
+  folds    <- sample(rep(1:5, length.out = n_obs))
+  cv_ols   <- rep(NA_real_, n_obs)
+  cv_trend <- rep(NA_real_, n_obs)
+  cv_tu    <- rep(NA_real_, n_obs)
+  cv_td    <- rep(NA_real_, n_obs)
+  cv_comb  <- rep(NA_real_, n_obs)
+  y_vec    <- y_vec_obs
 
   riv_vec   <- df_ord$RivID
   par_vec   <- df_ord$parent_dn
@@ -267,9 +1032,16 @@ fit_s3n_domain <- function(df,
 
     X_eval <- X_obs[c(tr, te), , drop = FALSE]
     X_tr   <- X_obs[tr, , drop = FALSE]
-    y_tr   <- as.matrix(y_vec[tr])
+    tf_cv  <- fit_nonlinear_trend(
+      X_tr = X_tr, y_tr_vec = y_vec[tr], X_eval = X_eval,
+      trend_mode = trend_req, spline_df = spline_df, n_trees = n_trees, seed = 2026L + k
+    )
+    cv_trend[te] <- tf_cv$pred_eval[(n_tr + 1L):n_eval]
+    g_te_cv      <- tf_cv$g_perp_eval[(n_tr + 1L):n_eval]
+    y_tr         <- as.matrix(y_vec[tr] - tf_cv$g_perp_tr)
+    vy_cv        <- max(1e-4, var(as.numeric(y_tr)))
 
-    run_cv_component <- function(model_int) {
+    run_cv_component <- function(model_int, k_name, kid) {
       nb_cv <- .Call("C_compute_s3n_neighbors",
                      as.integer(n_tr), as.integer(m_cv), as.integer(par_cv),
                      as.integer(cid_cv), as.integer(tt_cv[[1]]), as.integer(tt_cv[[2]]),
@@ -280,41 +1052,70 @@ fit_s3n_domain <- function(df,
         nnDist = nb_cv$pred_neighbors$nnDist[1:(n_eval * m_cv)],
         nnWght = nb_cv$pred_neighbors$nnWght[1:(n_eval * m_cv)]
       )
-      f_cv <- BRISC_estimation_stream(
-        coords = as.matrix(1:n_tr), y = y_tr, x = X_tr,
-        neighbor = nb_cv$obs_neighbors, sigma.sq = vy * 0.7, tau.sq = vy * 0.1, phi = 0.05,
-        cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
-      )
+      f_cv <- estimate_component(X_tr, y_tr, nb_cv$obs_neighbors, vy_cv, k_name)
       if (has_me) {
         v_tr       <- v_meas[tr]
         v_bar_tr   <- mean(v_tr)
         tau_mic_cv <- max(1e-6 * f_cv$Theta["sigma.sq"], f_cv$Theta["tau.sq"] - v_bar_tr)
-        theta_me   <- c(f_cv$Theta["sigma.sq"], tau_mic_cv, f_cv$Theta["phi"])
+        theta_me   <- c(f_cv$Theta["sigma.sq"], tau_mic_cv, f_cv$Theta["phi"], kid)
         pr_raw     <- .Call("C_s3n_predict_meas_error",
                             X_tr, y_tr, v_tr, X_eval,
-                            f_cv$Beta, theta_me, as.integer(m_cv),
+                            f_cv$Beta, as.double(theta_me), as.integer(m_cv),
                             p_cv$nnIndx, p_cv$nnDist, p_cv$nnWght,
                             nb_cv$obsobs_dist, nb_cv$obsobs_wt)
         denom <- sum(theta_me[1:2])
-      } else {
+      } else if (identical(f_cv$engine, "brisc") && kid == 0L && isTRUE(.s3n_env$has_s3n_pkg)) {
         pr_raw <- BRISC_prediction_stream(
           BRISC_Out = f_cv, coords.0 = as.matrix(1:n_eval), X.0 = X_eval,
           neighbor = p_cv, obsobs_dist = nb_cv$obsobs_dist, obsobs_wt = nb_cv$obsobs_wt,
           n_omp = n_omp, verbose = FALSE
         )
         denom <- sum(f_cv$Theta[1:2])
+      } else {
+        th_cv  <- c(f_cv$Theta["sigma.sq"], f_cv$Theta["tau.sq"], f_cv$Theta["phi"], kid)
+        pr_raw <- .Call("C_s3n_predict_meas_error",
+                        X_tr, y_tr, numeric(0), X_eval,
+                        f_cv$Beta, as.double(th_cv), as.integer(m_cv),
+                        p_cv$nnIndx, p_cv$nnDist, p_cv$nnWght,
+                        nb_cv$obsobs_dist, nb_cv$obsobs_wt)
+        denom <- sum(th_cv[1:2])
       }
-      pred_te <- pr_raw$prediction[(n_tr + 1L):n_eval]
-      se_te   <- (pr_raw$prediction.ci[(n_tr + 1L):n_eval, 2] - pred_te) / 1.959964
+      pred_te <- pr_raw$prediction[(n_tr + 1L):n_eval] + g_te_cv
+      se_te   <- (pr_raw$prediction.ci[(n_tr + 1L):n_eval, 2] - pr_raw$prediction[(n_tr + 1L):n_eval]) / 1.959964
       inf_te  <- pmax(1e-4, 1 - (se_te^2) / denom)
-      list(pred = pred_te, inf = inf_te)
+      list(pred = pred_te, inf = inf_te, nb = nb_cv, fit = f_cv)
     }
 
-    res_tu_cv  <- run_cv_component(0L)
-    res_td_cv  <- run_cv_component(1L)
+    res_tu_cv  <- run_cv_component(0L, fit_tu$kernel_name, kid_tu)
+    res_td_cv  <- run_cv_component(1L, fit_td$kernel_name, kid_td)
     cv_tu[te]  <- res_tu_cv$pred
     cv_td[te]  <- res_td_cv$pred
-    cv_comb[te] <- (res_tu_cv$inf * cv_tu[te] + res_td_cv$inf * cv_td[te]) / (res_tu_cv$inf + res_td_cv$inf)
+    if (comb_mode == "joint" && !is.null(joint_fit)) {
+      nb_tu_eval <- res_tu_cv$nb
+      nb_td_eval <- res_td_cv$nb
+      nb_tu_eval[[4]] <- list(
+        nnIndx = nb_tu_eval$pred_neighbors$nnIndx[1:(n_eval * m_cv)],
+        nnDist = nb_tu_eval$pred_neighbors$nnDist[1:(n_eval * m_cv)],
+        nnWght = nb_tu_eval$pred_neighbors$nnWght[1:(n_eval * m_cv)]
+      )
+      nb_td_eval[[4]] <- list(
+        nnIndx = nb_td_eval$pred_neighbors$nnIndx[1:(n_eval * m_cv)],
+        nnDist = nb_td_eval$pred_neighbors$nnDist[1:(n_eval * m_cv)],
+        nnWght = nb_td_eval$pred_neighbors$nnWght[1:(n_eval * m_cv)]
+      )
+      v_tr_use <- if (has_me) as.double(v_meas[tr]) else numeric(0)
+      jf_tr <- .Call("C_s3n_joint_nngp",
+                     X_tr, as.double(y_tr), v_tr_use, X_tr, numeric(ncol(X_tr)),
+                     nb_tu_eval, nb_td_eval, as.double(mx_cv[1:n_eval]), as.double(my_cv[1:n_eval]),
+                     as.integer(m_cv), as.double(joint_fit$params), 0L)
+      jp_ev <- .Call("C_s3n_joint_nngp",
+                     X_tr, as.double(y_tr), v_tr_use, X_eval, as.double(jf_tr$Beta),
+                     nb_tu_eval, nb_td_eval, as.double(mx_cv[1:n_eval]), as.double(my_cv[1:n_eval]),
+                     as.integer(m_cv), as.double(joint_fit$params), 1L)
+      cv_comb[te] <- jp_ev$prediction[(n_tr + 1L):n_eval] + g_te_cv
+    } else {
+      cv_comb[te] <- (res_tu_cv$inf * cv_tu[te] + res_td_cv$inf * cv_td[te]) / (res_tu_cv$inf + res_td_cv$inf)
+    }
   }
 
   rmse <- function(a, b) { ok <- is.finite(a) & is.finite(b); if (!any(ok)) NA_real_ else sqrt(mean((a[ok] - b[ok])^2)) }
@@ -327,12 +1128,19 @@ fit_s3n_domain <- function(df,
     1 - sum((a[ok] - b[ok])^2) / ss_tot
   }
 
+  sp_method_lbl <- if (has_me) "Measurement Error Kriging" else "Standard S3N"
+  if (trend_req != "linear") {
+    sp_method_lbl <- sprintf("%s [%s]", sp_method_lbl, toupper(trend_req))
+    cat(sprintf("  [Non-Spatial Trend CV (%s)] RMSE = %.4f | MAE = %.4f | R2 = %.4f (vs Linear OLS R2 = %.4f)\n",
+                trend_fit$label, rmse(y_vec, cv_trend), mae(y_vec, cv_trend), r2(y_vec, cv_trend), r2(y_vec, cv_ols)))
+  }
+
   cv_summary <- data.frame(
     Domain         = domain_label,
     n_obs          = n_obs,
     n_reaches      = q_tot,
     Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
-    Spatial_Method = if (has_me) "Measurement Error Kriging" else "Standard S3N",
+    Spatial_Method = sp_method_lbl,
     RMSE           = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
     MAE            = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
     R2             = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
@@ -350,6 +1158,36 @@ fit_s3n_domain <- function(df,
                CI_Lower = round(bs_td$confidence.interval[1, ], 4),
                CI_Upper = round(bs_td$confidence.interval[2, ], 4))
   )
+  if (!is.null(joint_fit)) {
+    joint_pnames <- c(colnames(X_obs), "sigma.sq_tu", "sigma.sq_td", "sigma.sq_euc", "tau.sq", "phi_tu", "phi_td", "phi_euc")
+    joint_pvals  <- c(joint_fit$Beta, joint_fit$params[c("sigma.sq_tu", "sigma.sq_td", "sigma.sq_euc", "tau.sq", "phi_tu", "phi_td", "phi_euc")])
+    param_df <- rbind(
+      param_df,
+      data.frame(Domain = domain_label, Model = "S3N Joint (TU + TD + Euc)", Parameter = joint_pnames,
+                 Estimate = round(as.numeric(joint_pvals), 4), CI_Lower = NA, CI_Upper = NA)
+    )
+  }
+  if (trend_req != "linear") {
+    trend_mod_name <- sprintf("S3N Trend (%s)", trend_fit$label)
+    if (!is.null(trend_fit$info_df) && nrow(trend_fit$info_df) > 0L) {
+      t_info <- trend_fit$info_df
+      param_df <- rbind(
+        param_df,
+        data.frame(Domain = domain_label, Model = trend_mod_name,
+                   Parameter = as.character(t_info$Parameter),
+                   Estimate  = as.numeric(t_info$Estimate),
+                   CI_Lower  = as.numeric(t_info$CI_Lower),
+                   CI_Upper  = as.numeric(t_info$CI_Upper))
+      )
+    }
+    param_df <- rbind(
+      param_df,
+      data.frame(Domain = domain_label, Model = trend_mod_name,
+                 Parameter = c("Trend_CV_RMSE", "Trend_CV_R2"),
+                 Estimate  = round(c(rmse(y_vec, cv_trend), r2(y_vec, cv_trend)), 4),
+                 CI_Lower  = NA_real_, CI_Upper = NA_real_)
+    )
+  }
   if (has_me) {
     param_df <- rbind(
       param_df,

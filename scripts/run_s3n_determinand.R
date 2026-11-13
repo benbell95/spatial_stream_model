@@ -85,6 +85,20 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
   print_available_transforms()
   quit(save = "no", status = 0)
 }
+if ("--list-kernels" %in% args) {
+  print_available_kernels()
+  quit(save = "no", status = 0)
+}
+if ("--list-trends" %in% args) {
+  print_available_trends()
+  quit(save = "no", status = 0)
+}
+kernel_cli    <- parse_kernel_arg(args, default = "exponential")
+combine_cli   <- parse_combine_arg(args, default = "joint")
+afv_cli       <- parse_afv_arg(args, default = "length")
+trend_cli     <- parse_trend_arg(args, default = "linear")
+spline_df_cli <- parse_spline_df_arg(args, default = 3L)
+trees_cli     <- parse_trees_arg(args, default = 100L)
 
 PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
 net_meta       <- load_network_metadata(PROC_DIR)
@@ -678,6 +692,18 @@ if (nzchar(trans_tag)) {
 if (nzchar(vars_tag)) {
   out_folder_name <- paste0(out_folder_name, "_", vars_tag)
 }
+if (kernel_cli != "exponential") {
+  out_folder_name <- paste0(out_folder_name, "_k", kernel_cli)
+}
+if (combine_cli != "joint") {
+  out_folder_name <- paste0(out_folder_name, "_c", combine_cli)
+}
+if (afv_cli != "length") {
+  out_folder_name <- paste0(out_folder_name, "_afv_", afv_cli)
+}
+if (trend_cli != "linear") {
+  out_folder_name <- paste0(out_folder_name, "_trend_", trend_cli)
+}
 OUT_DIR <- rel_path(OUT_BASE, "results", out_folder_name)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -799,7 +825,13 @@ slice_ctx <- list(
   extra_basins   = extra_basins,
   det_code       = det_code,
   det_name       = det_name,
-  det_unit       = det_unit
+  det_unit       = det_unit,
+  kernel         = kernel_cli,
+  combine_mode   = combine_cli,
+  afv_scheme     = afv_cli,
+  trend          = trend_cli,
+  spline_df      = spline_df_cli,
+  n_trees        = trees_cli
 )
 
 fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
@@ -888,7 +920,13 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
       n_omp = ctx$n_omp,
       use_meas_error = active_meas_error,
       net_meta = ctx$net_meta,
-      obs_col = "obs_val"
+      obs_col = "obs_val",
+      kernel = ctx$kernel,
+      combine_mode = ctx$combine_mode,
+      afv_scheme = ctx$afv_scheme,
+      trend = ctx$trend,
+      spline_df = ctx$spline_df,
+      n_trees = ctx$n_trees
     )
   }
 

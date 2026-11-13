@@ -208,4 +208,167 @@ assert_true(all(is.finite(pr_me$prediction)), "ME predictions finite")
 assert_true(all(pr_me$prediction.ci[, 2] > pr_me$prediction.ci[, 1]), "ME prediction CI upper > lower")
 
 cat("  [PASS] C++ tree Euler tour, TU/TD neighbor builders, and ME kriging predictor\n")
+
+cat("=== 5. Testing New Core S3N Improvements (Multi-Kernel, Physical AFV, Joint TU+TD+Euc NNGP) ===\n")
+source("scripts/s3n_model_functions.R")
+assert_true(is.loaded("C_compute_log_afv"), "C_compute_log_afv loaded")
+assert_true(is.loaded("C_s3n_nngp_loglik"), "C_s3n_nngp_loglik loaded")
+assert_true(is.loaded("C_s3n_joint_nngp"), "C_s3n_joint_nngp loaded")
+
+# 5a. Physical AFV Confluence Weighting (C_compute_log_afv & compute_reach_log_afv)
+w_accum <- c(6.0, 4.0, 10.0, 3.0, 3.0, 4.0)
+afv_cpp <- .Call("C_compute_log_afv", as.integer(parent_0), as.double(w_accum), 1L)
+assert_near(afv_cpp[3], 0.0, tol = 1e-8, msg = "Outlet reach (index 2) has log_AFV == 0")
+assert_near(exp(afv_cpp[1]) + exp(afv_cpp[2]), 1.0, tol = 1e-8, msg = "Confluence child AFVs sum to 1.0 at mouth")
+assert_near(afv_cpp[1], log(0.6), tol = 1e-8, msg = "Child 0 log_AFV == log(0.6)")
+assert_near(afv_cpp[2], log(0.4), tol = 1e-8, msg = "Child 1 log_AFV == log(0.4)")
+assert_near(exp(afv_cpp[4]) + exp(afv_cpp[5]), exp(afv_cpp[1]), tol = 1e-8, msg = "Upstream split conserves parent AFV")
+
+df_toy <- data.frame(
+  RivID = 1:6,
+  parent_dn = c(3L, 3L, 0L, 1L, 1L, 2L),
+  US_Accum_km = w_accum,
+  Shreve = c(2L, 1L, 3L, 1L, 1L, 1L),
+  Elevation = c(120, 80, 20, 250, 220, 150),
+  Is_Aquifer = c(1L, 0L, 0L, 1L, 1L, 0L)
+)
+afv_len <- compute_reach_log_afv(df_toy, "length", parent_0 = parent_0)
+afv_shr <- compute_reach_log_afv(df_toy, "shreve", parent_0 = parent_0)
+afv_hyd <- compute_reach_log_afv(df_toy, "hydro_yield", parent_0 = parent_0)
+assert_near(afv_len[1], log(0.6), tol = 1e-6, msg = "length AFV scheme matches US_Accum_km split")
+assert_near(afv_shr[1], log(2.0 / 3.0), tol = 1e-6, msg = "shreve AFV scheme matches 2/(2+1) split")
+assert_true(afv_hyd[1] > afv_len[1], "hydro_yield AFV scheme boosts high-elevation aquifer tributary")
+
+# 5b. Multi-Kernel NNGP Log-Likelihood & Prediction (Exponential, Spherical, Mariah, Linear, Auto)
+for (kid in 0:3) {
+  ll_res <- .Call("C_s3n_nngp_loglik", X_obs, as.double(y_obs), nb_tu$obs_neighbors, 0.15, 0.25, as.integer(kid))
+  assert_true(is.finite(ll_res$neg2loglik), paste0("C_s3n_nngp_loglik finite for kernel_id=", kid))
+  assert_true(length(ll_res$Beta) == ncol(X_obs), paste0("GLS Beta length for kernel_id=", kid))
+  assert_true(ll_res$sigma.sq > 0, paste0("Positive sigma.sq for kernel_id=", kid))
+
+  pr_k <- .Call("C_s3n_predict_meas_error",
+                X_obs, y_obs, v_meas, X_all, beta, c(0.4, 0.05, 0.25, kid), as.integer(m_nbr),
+                nb_tu$pred_neighbors$nnIndx, nb_tu$pred_neighbors$nnDist, nb_tu$pred_neighbors$nnWght,
+                nb_tu$obsobs_dist, nb_tu$obsobs_wt)
+  assert_true(all(is.finite(pr_k$prediction)) && all(pr_k$se > 0), paste0("Prediction finite for kernel_id=", kid))
+}
+
+fit_auto <- fit_nngp_cpp(X_obs, as.double(y_obs), nb_tu$obs_neighbors, var(as.double(y_obs)), kernel_name = "auto")
+assert_true(fit_auto$kernel_name %in% c("exponential", "spherical", "mariah", "linear"), "Auto kernel selection valid")
+assert_true(length(fit_auto$auto_aic_table) == 4L, "Auto kernel AIC table has 4 kernels")
+
+# 5c. Joint Additive NNGP (Tail-Up + Tail-Down + Euclidean)
+params_joint <- c(0.25, 0.15, 0.05, 0.04, 0.20, 0.15, 0.10, 0.0)
+jl_res <- .Call("C_s3n_joint_nngp",
+                X_obs, as.double(y_obs), v_meas, X_obs, numeric(ncol(X_obs)),
+                nb_tu, nb_td, as.double(mx), as.double(my),
+                as.integer(m_nbr), as.double(params_joint), 0L)
+assert_true(is.finite(jl_res$neg2loglik) && is.finite(jl_res$neg2loglik_exact), "Joint NNGP log-likelihood finite")
+assert_true(all(is.finite(jl_res$Beta)), "Joint NNGP GLS Beta finite")
+
+jp_res <- .Call("C_s3n_joint_nngp",
+                X_obs, as.double(y_obs), v_meas, X_all, as.double(jl_res$Beta),
+                nb_tu, nb_td, as.double(mx), as.double(my),
+                as.integer(m_nbr), as.double(params_joint), 1L)
+assert_true(length(jp_res$prediction) == q_tot && all(is.finite(jp_res$prediction)), "Joint NNGP predictions finite")
+assert_true(all(jp_res$se > 0) && all(jp_res$prediction.ci[, 2] > jp_res$prediction.ci[, 1]), "Joint NNGP SE & CI valid")
+
+fit_td_toy <- fit_nngp_cpp(X_obs, as.double(y_obs), nb_td$obs_neighbors, var(as.double(y_obs)), kernel_name = "mariah")
+jf_full <- fit_and_predict_joint_s3n(
+  X_obs = X_obs, y_vec_obs = as.double(y_obs), v_meas = v_meas, has_me = TRUE,
+  X_all = X_all, nb_tu = nb_tu, nb_td = nb_td, mid_x = mx, mid_y = my,
+  m_use = m_nbr, fit_tu = fit_auto, fit_td = fit_td_toy, kernel_id = 2L
+)
+assert_true(all(is.finite(jf_full$prediction)) && length(jf_full$prediction) == q_tot, "fit_and_predict_joint_s3n complete")
+
+# 5d. End-to-end fit_s3n_domain with auto-kernel, joint TU+TD+Euc kriging, and hydro_yield AFV
+set.seed(42)
+n_syn <- 24L
+df_syn <- data.frame(
+  RivID             = seq_len(n_syn),
+  CatchID           = rep(c(1L, 2L), each = 12L),
+  parent_dn         = c(0L, 1L, 1L, 2L, 2L, 3L, 3L, 4L, 4L, 5L, 5L, 6L,
+                        0L, 13L, 13L, 14L, 14L, 15L, 15L, 16L, 16L, 17L, 17L, 18L),
+  Dist2Mth_km       = rep(c(0, 2, 2, 4, 4, 4, 4, 6, 6, 6, 6, 8), 2),
+  up_dist_mid_km    = rep(c(1, 3, 3, 5, 5, 5, 5, 7, 7, 7, 7, 9), 2),
+  obs_up_dist_km    = rep(c(1, 3, 3, 5, 5, 5, 5, 7, 7, 7, 7, 9), 2),
+  US_Accum_km       = rep(c(30, 14, 15, 6, 7, 7, 7, 2, 3, 3, 3, 1), 2),
+  log_AFV           = rep(0.0, n_syn),
+  Shreve            = rep(c(6L, 3L, 3L, 1L, 2L, 2L, 1L, 1L, 1L, 1L, 1L, 1L), 2),
+  Strahler          = rep(c(3L, 2L, 2L, 1L, 2L, 2L, 1L, 1L, 1L, 1L, 1L, 1L), 2),
+  start_X           = seq(400000, by = 500, length.out = n_syn),
+  start_Y           = seq(300000, by = 500, length.out = n_syn),
+  mid_X             = seq(400250, by = 500, length.out = n_syn),
+  mid_Y             = seq(300250, by = 500, length.out = n_syn),
+  end_X             = seq(400500, by = 500, length.out = n_syn),
+  end_Y             = seq(300500, by = 500, length.out = n_syn),
+  Elevation         = seq(20, 250, length.out = n_syn),
+  Slope             = rep(2.5, n_syn),
+  Sinuosity         = rep(1.15, n_syn),
+  SrcElevation      = seq(100, 330, length.out = n_syn),
+  Is_Chalk_Limestone = rep(c(0L, 1L), length.out = n_syn),
+  Is_Sandstone      = rep(c(1L, 0L), length.out = n_syn),
+  Is_Aquifer        = rep(c(1L, 0L), length.out = n_syn),
+  Is_Peat           = rep(0L, n_syn),
+  has_obs           = c(rep(1L, 18L), rep(0L, 6L)),
+  obs_val           = NA_real_
+)
+df_syn$obs_val[1:18] <- exp(1.5 - 0.003 * df_syn$Elevation[1:18] + 0.4 * df_syn$Is_Aquifer[1:18] + rnorm(18, 0, 0.1))
+
+sink(tempfile())
+dom_out <- fit_s3n_domain(
+  df = df_syn, domain_id = "test", domain_label = "Synthetic Basin",
+  trans_obj = build_transformer("log"), var_specs = c("Elevation", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+  kernel = "auto", combine_mode = "joint", afv_scheme = "hydro_yield"
+)
+sink()
+assert_true(!is.null(dom_out), "fit_s3n_domain returned non-null result")
+assert_true(nrow(dom_out$cv_summary) == 4L && all(is.finite(dom_out$cv_summary$RMSE)), "5-fold CV summary valid")
+assert_true("S3N Joint (TU + TD + Euc)" %in% dom_out$param_df$Model, "Joint model parameters recorded in param_df")
+
+cat("  [PASS] Multi-kernel NNGP, physical AFV confluence schemes, and Joint Additive TU+TD+Euc kriging\n")
+
+cat("=== 6. Testing Non-Linear / Spline Fixed Effects (GAM + S3N) & Tree-Ensemble Regression Kriging (RF / GBM + S3N) ===\n")
+assert_true(parse_trend_arg("--trend=gam") == "gam", "parse_trend_arg gam")
+assert_true(parse_trend_arg("--gam-s3n") == "gam", "parse_trend_arg --gam-s3n alias")
+assert_true(parse_trend_arg("--trend=spline") == "spline", "parse_trend_arg spline")
+assert_true(parse_trend_arg("--trend=rf") == "rf", "parse_trend_arg rf")
+assert_true(parse_trend_arg("--trend=gbm") == "gbm", "parse_trend_arg gbm")
+
+X_syn_all <- build_design_matrix(df_syn, include_peat = FALSE, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"))
+X_syn_obs <- X_syn_all[1:18, , drop = FALSE]
+y_syn_obs <- log(df_syn$obs_val[1:18]) + 0.35 * sin(X_syn_obs[, "Elevation_z"] * 1.5)
+
+for (t_mode in c("spline", "gam", "rf", "gbm")) {
+  tf_res <- fit_nonlinear_trend(
+    X_tr = X_syn_obs, y_tr_vec = y_syn_obs, X_eval = X_syn_all,
+    trend_mode = t_mode, spline_df = 3L, n_trees = 30L
+  )
+  assert_true(tf_res$mode == t_mode, paste0("fit_nonlinear_trend mode=", t_mode))
+  assert_true(length(tf_res$g_perp_tr) == 18L && all(is.finite(tf_res$g_perp_tr)), paste0("g_perp_tr finite for ", t_mode))
+  assert_true(length(tf_res$g_perp_eval) == n_syn && all(is.finite(tf_res$g_perp_eval)), paste0("g_perp_eval finite for ", t_mode))
+  # Verify orthogonality: X_syn_obs^T %*% g_perp_tr == 0
+  orth_max <- max(abs(crossprod(X_syn_obs, tf_res$g_perp_tr)))
+  assert_true(orth_max < 1e-6, paste0("g_perp_tr orthogonal to X_obs for ", t_mode))
+  assert_true(!is.null(tf_res$info_df) && nrow(tf_res$info_df) > 0L, paste0("info_df populated for ", t_mode))
+}
+
+for (t_mode in c("gam", "rf", "gbm")) {
+  sink(tempfile())
+  dom_t <- fit_s3n_domain(
+    df = df_syn, domain_id = "test", domain_label = "Synthetic Basin",
+    trans_obj = build_transformer("log"), var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
+    m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
+    kernel = "exponential", combine_mode = "joint", afv_scheme = "length",
+    trend = t_mode, spline_df = 3L, n_trees = 25L
+  )
+  sink()
+  assert_true(!is.null(dom_t), paste0("fit_s3n_domain succeeded for trend=", t_mode))
+  assert_true("pred_trend_sc" %in% names(dom_t$pred_df) && all(is.finite(dom_t$pred_df$pred_trend_sc)),
+              paste0("pred_trend_sc exported for trend=", t_mode))
+  assert_true(any(grepl("^S3N Trend", dom_t$param_df$Model)), paste0("S3N Trend recorded in param_df for trend=", t_mode))
+}
+
+cat("  [PASS] Spline, GAM + S3N, Random Forest + S3N, and Gradient Boosted Trees + S3N regression kriging\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

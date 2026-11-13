@@ -183,8 +183,13 @@ This is achieved via an **Additive Function Value (`AFV`)** constructed recursiv
 3. The Additive Function Value of reach `p` is the product of all confluence proportions along the unique directed path from the river mouth up to `p`:
    `AFV(p) = AFV(u) × π_p = Π_{k ∈ Path(mouth → p)} π_k`
 4. **Why We Store `log_AFV`**:
-   In a large river basin (such as the Humber or Thames), a first-order headwater stream may lie `40–70` bifurcations upstream of the estuary. Multiplying `60` fractions reduces `AFV(p)` to `10⁻¹⁵ – 10⁻²⁵`, risking floating-point precision loss. [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) therefore accumulates `log_AFV` additively in double precision:
-   `log_AFV(p) = log_AFV(u) + log(US_Accum(p)) - log(Σ_{q ∈ Children(u)} US_Accum(q))`
+   In a large river basin (such as the Humber or Thames), a first-order headwater stream may lie `40–70` bifurcations upstream of the estuary. Multiplying `60` fractions reduces `AFV(p)` to `10⁻¹⁵ – 10⁻²⁵`, risking floating-point precision loss. [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and `C_compute_log_afv()` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) therefore accumulate `log_AFV` additively in double precision:
+   `log_AFV(p) = log_AFV(u) + log(M(p)) - log(Σ_{q ∈ Children(u)} M(q))`
+5. **Physically Weighted `AFV` Confluence Schemes (`--afv=length|shreve|hydro_yield` / `--afv-scheme=`)**:
+   Instead of assuming that tributary confluence mixing is proportional solely to upstream channel length, the pipeline supports three physical hydrological mass proxies `M(p)` (selectable at preprocessing time via `--afv-scheme=` or dynamically at modeling time via `--afv=`):
+   - **`length` (Default)**: Cumulative upstream channel length `M(p) = US_Accum_km(p)`.
+   - **`shreve`**: Shreve hydrological link magnitude `M(p) = Shreve(p)` (the exact count of upstream 1st-order headwater sources draining through reach `p`).
+   - **`hydro_yield`**: Hydrological Yield Proxy `M(p) = US_Accum_km(p) × (1 + 0.002 × Elevation(p)) × (1 + 0.50 × Is_Aquifer(p))`, weighting confluence mixing by both upland orographic rainfall enhancement and Principal Aquifer baseflow contribution so high-baseflow chalk/sandstone or upland tributaries receive realistic mass-balance weights when joining lowland clay ditches.
 
 ---
 
@@ -205,6 +210,31 @@ At each reach `s_i`, the deterministic catchment trend is modeled via a fixed-ef
 | **`Northing_z`** (`northing`) | `scale(mid_Y)` (BNG m, z-score) | All domains | South-to-north climatic, temperature, and topographic gradient. |
 
 Optional hydromorphological covariates (`Sinuosity_z`, `SrcElevation_z`, `Dist2Mth_z`, `Length_z`, `log10_Shreve_z`, `Strahler_z`) can also be included via `--vars=+sinuosity,+strahler` etc. See [`./orn_variables_reference.md`](./orn_variables_reference.md) for the complete catalog.
+
+---
+
+### 3.6 Step 1.6: Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging (`--trend=linear|spline|gam|rf|gbm`)
+While standard spatial stream network models assume a strictly linear fixed-effect relationship $\mu(s_i) = x(s_i)^\top \beta$, real river networks often exhibit **non-linear environmental thresholds and high-order covariate interactions** (e.g., sharp agricultural transition below $120\text{ m}$ elevation, non-monotonic drainage-size dilution curves, or Elevation $\times$ Slope $\times$ Geology interactions).
+
+In [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`fit_nonlinear_trend()`), you can select among five fixed-effect / mean-trend engines via `--trend=<mode>` (listable via `--list-trends`):
+
+| Trend Mode (`--trend=`) | CLI Shorthand | Mathematical Specification | Out-of-Sample Regularization & Diagnostics in `model_parameters_*.csv` |
+| :--- | :--- | :--- | :--- |
+| **`linear`** *(default)* | — | Parametric linear fixed-effects design matrix $\mu(s) = x(s)^\top \beta$ estimated via spatial GLS. | Reports GLS $\hat{\beta}$ and 95% bootstrap CIs. |
+| **`spline`** | `--spline` | **Orthogonal Natural Cubic Regression Splines (`splines::ns`)**: Expands continuous covariates into natural cubic B-splines (`--spline-df=3`) orthogonalized against the linear columns $X$, with ridge penalty $\lambda$ selected by minimizing exact Leave-One-Out GCV error. | LOO hat-matrix regularization; reports `Spline_NL:<var>` curvature norms and `Spline_Total_EDF`. |
+| **`gam`** | `--gam-s3n` | **Penalized Generalized Additive Model + S3N (`mgcv::gam` REML)**: Fits penalized cubic regression splines $\sum_j s_j(x_j, \text{bs}=\text{'cr'}, k)$ for continuous covariates plus parametric binary geology terms. | REML smoothing penalty + LOO influence adjustment; reports each smooth's Effective Degrees of Freedom (`GAM_EDF:<var>`). |
+| **`rf`** | `--rf` / `--rf-s3n` | **Random Forest Regression Kriging (`RF + S3N`)**: Fits a Random-Subspace Bagged Regression Tree ensemble (`--trees=100`, `mtry = 0.7p`) capturing high-order non-linear interactions across topography, drainage scale, and geology. | Uses **Out-of-Bag (`OOB`) predictions** at monitored reaches so spatial residuals are never overfitted; reports normalized `RF_VarImp(%):<var>`. |
+| **`gbm`** | `--gbm` / `--gbm-s3n` | **Gradient Boosted Regression Trees + S3N (`GBM + S3N`)**: Fits a regularized Stochastic Gradient Boosted Decision Tree ensemble (`maxdepth = 3`, learning rate $\nu = 0.06$, subsampling `0.8`, `--trees=100`). | Uses **5-fold cross-fitted Out-of-Fold (`OOF`) predictions** with early stopping on monitored reaches; reports `GBM_VarImp(%):<var>` and `GBM_Best_Trees`. |
+
+#### Orthogonal Projection & Out-of-Fold Residual Kriging
+To combine non-linear / tree-ensemble trends $\hat{f}_{\text{trend}}(s)$ with S3N universal kriging **without spatial confounding or in-sample variance collapse**, `fit_nonlinear_trend()` performs an **Orthogonal Projection Decomposition**:
+1. **Out-of-Fold / Penalized Evaluation on Observed Reaches**: Computes out-of-bag / out-of-fold trend predictions $\hat{f}_{\text{OOF}}(s_{\text{obs}})$ on the $n_{\text{obs}}$ monitored reaches and full-model predictions $\hat{f}_{\text{eval}}(s)$ across all $q_{\text{tot}}$ reaches.
+2. **Orthogonal Decomposition against Linear Design Matrix $X$**: Projects $\hat{f}$ onto the column space of the linear design matrix $X_{\text{obs}}$ via $\hat{\beta}_{\text{proj}} = (X_{\text{obs}}^\top X_{\text{obs}})^{-1} X_{\text{obs}}^\top \hat{f}_{\text{OOF}}$ to isolate the **purely non-linear / interaction surface** $\hat{g}_{\perp}(s) = \hat{f}(s) - X(s)\hat{\beta}_{\text{proj}}$, satisfying $X_{\text{obs}}^\top \hat{g}_{\perp}(s_{\text{obs}}) = 0$.
+3. **Spatial GLS + S3N Kriging on $Y^*(s) = Y(s) - \hat{g}_{\perp}(s)$**: Fits the S3N `Tail-Up`, `Tail-Down`, and `Joint (TU + TD + Euc)` models to $Y^*(s_{\text{obs}})$ with design matrix $X_{\text{obs}}$, and adds $\hat{g}_{\perp}(s_0)$ back to the kriged predictions:
+   $$\hat{Y}(s_0) = \underbrace{x(s_0)^\top \hat{\beta}_{\text{GLS}} + \hat{g}_{\perp}(s_0)}_{\text{Non-Linear / Ensemble Trend } \hat{\mu}(s_0)} + \sum_{k=1}^m \lambda_k(s_0) \left( Y(s_{j_k}) - \hat{\mu}_{\text{OOF}}(s_{j_k}) \right)$$
+   This preserves spatial GLS inference and 95% CIs on all primary linear slopes $\hat{\beta}_{\text{GLS}}$, prevents tree ensembles from shrinking $\hat{\sigma}^2$ and $\hat{\tau}^2$, and exports `pred_trend_sc` in `predictions_*.csv`.
+
+> **Full Guide**: See [`./nonlinear_and_tree_ensemble_trend_guide.md`](./nonlinear_and_tree_ensemble_trend_guide.md) for package details (zero extra CRAN installs needed), compatibility with standard raw data vs. `meas_method="gam"`, tuning flags (`--spline-df=`, `--trees=`), and output interpretation.
 
 ---
 
@@ -264,6 +294,30 @@ Under the **Exponential Tail-Down model** (`cov.model = "exponential"`, where th
 
 > **Physical & Ecological Interpretation of `Tail-Down`**:
 > `Tail-Down` captures spatial processes that can move **both downstream and upstream across confluences** along the river corridor—such as swimming fish, macroinvertebrate aerial/larval dispersal (`WHPT ASPT`), or shared sub-catchment geology/microclimate among neighboring headwater tributaries joining a common valley floor. Crucially, during kriging, `Tail-Down` allows an **unmonitored headwater tributary** to borrow spatial residual information from a **monitored sibling tributary** across their shared confluence `s_LCA`.
+
+---
+
+### 4.4 Stream Covariance Kernel Families (`--kernel=exponential|spherical|mariah|linear|auto`)
+In addition to the standard Exponential covariance kernel, the C++ NNGP engine ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) `eval_stream_kernel()` & `C_s3n_nngp_loglik()`) supports four stream covariance kernels (Ver Hoef et al., 2006) plus automatic AIC-based kernel selection (`--kernel=auto`):
+
+| Kernel (`--kernel=`) | Correlation Function $\rho(d; \phi)$ ($u = \phi d \ge 0$) | Support / Tail Behavior | Best Physical & Ecological Use Cases |
+| :--- | :--- | :--- | :--- |
+| **`exponential`** *(default)* | $\exp(-u)$ | Infinite support; Markovian on trees | General water chemistry, conservative solutes, and baseline stream network kriging. |
+| **`spherical`** | $(1 - \frac{3}{2}u + \frac{1}{2}u^3) \cdot \mathbb{I}(u < 1)$ | **Compact support** ($\rho = 0$ for $d \ge 1/\phi$) | Point-source discharges, localized urban/agricultural plumes, and sharp sub-basin boundaries. |
+| **`mariah`** | $\frac{\ln(u + 1)}{u}$ for $u > 0$, $1$ for $u = 0$ | **Heavy-tailed** algebraic decay ($\sim \ln(u)/u$) | Long-range river continuum gradients (e.g. Nitrate `0117`, Alkalinity, Conductivity) that persist over $50\text{–}150\text{ km}$ of mainstem flow. |
+| **`linear`** | $\max(0, 1 - u)$ | **Compact support** (linear tent with sill at $d = 1/\phi$) | Rapidly mixing or reactive headwater processes with a strict cutoff range. |
+| **`auto`** | Selects best kernel per component (`TU`, `TD`) by NNGP $\text{AIC} = -2\ell + 2(p + 3)$ | Data-adaptive | Automatically tests all 4 kernels and reports the full AIC table in the console log. |
+
+---
+
+### 4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`, `--combine=joint`)
+Following the classical Ver Hoef & Peterson (2010) mixed spatial stream network specification, the pipeline supports **Joint Additive NNGP Estimation and Kriging** (`--combine=joint`, default) via `C_s3n_joint_nngp()` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp):
+
+$$C_{\text{joint}}(s_i, s_j) = \sigma^2_{\text{TU}} \, w_{\text{TU}}(s_i, s_j) \, \rho_k(d_{\text{TU}}; \phi_{\text{TU}}) + \sigma^2_{\text{TD}} \, w_{\text{TD}}(s_i, s_j) \, \rho_k(d_{\text{TD}}; \phi_{\text{TD}}) + \sigma^2_{\text{Euc}} \, \rho_k(d_{\text{Euc}}; \phi_{\text{Euc}}) + (\tau^2 + v_{\text{meas}, i}) \, \mathbb{I}(i = j)$$
+
+- **Simultaneous Variance Partitioning**: Estimates how much residual variance is driven by downstream advective flow ($\sigma^2_{\text{TU}}$), along-channel dispersal/shared valley corridors ($\sigma^2_{\text{TD}}$), 2D overland/atmospheric/cross-divide proximity ($\sigma^2_{\text{Euc}}$), and microscale nugget ($\tau^2$), recording all joint parameters under `Model = "S3N Joint (TU + TD + Euc)"` in `model_parameters_*.csv`.
+- **Single Cholesky Conditioning System**: Ranks candidate conditioning stations from the union of `Tail-Up`, `Tail-Down`, and `2D Euclidean` neighborhoods by composite covariance $c_{\text{joint}}(s_0, s_j)$ and solves a single $m \times m$ Cholesky system $C_{\text{joint}} \lambda = c_{\text{joint}}$ that accounts for the exact cross-covariance between upstream, sibling-tributary, and adjacent-catchment stations.
+- **Legacy Precision-Weighted Mode (`--combine=precision`)**: Users can also select `--combine=precision` to combine separate `Tail-Up` and `Tail-Down` kriging predictions via local spatial information-gain weights (`info_tu` and `info_td`).
 
 ---
 

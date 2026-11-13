@@ -236,6 +236,14 @@ class TestGeometryCensoringAndTransforms(unittest.TestCase):
             self.assertEqual(cfg.gis_dir, os.path.join(tmpd, "gis"))
             self.assertTrue(os.path.isdir(cfg.processed_dir))
 
+    def test_compute_afv_reach_weight(self):
+        w_len = u.compute_afv_reach_weight("length", us_accum_km=12.5, shreve=4, elevation=200.0, is_aquifer=1)
+        w_shr = u.compute_afv_reach_weight("shreve", us_accum_km=12.5, shreve=4, elevation=200.0, is_aquifer=1)
+        w_hyd = u.compute_afv_reach_weight("hydro_yield", us_accum_km=12.5, shreve=4, elevation=200.0, is_aquifer=1)
+        self.assertAlmostEqual(w_len, 12.5, places=5)
+        self.assertAlmostEqual(w_shr, 4.0, places=5)
+        self.assertAlmostEqual(w_hyd, 12.5 * (1.0 + 0.002 * 200.0) * 1.5, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

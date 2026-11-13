@@ -601,6 +601,19 @@ def parse_month_arg(m_str):
     raise ValueError(f"Invalid --month '{m_str}'. Specify 1-12 or month name (e.g. 'jan', 'july').")
 
 
+def compute_afv_reach_weight(afv_scheme, us_accum_km, shreve=1, elevation=0.0, is_aquifer=0):
+    """Compute positive accumulated hydrological mass proxy for Tail-Up AFV splitting."""
+    scheme = str(afv_scheme or "length").strip().lower().replace("-", "_")
+    us_km = max(1e-4, float(us_accum_km or 0.0))
+    if scheme in ("shreve", "order", "magnitude"):
+        return max(1.0, float(shreve or 1.0))
+    if scheme in ("hydro_yield", "yield", "hydro"):
+        elev = max(0.0, float(elevation or 0.0))
+        aq = max(0.0, float(is_aquifer or 0))
+        return max(1e-4, us_km * (1.0 + 0.002 * elev) * (1.0 + 0.50 * aq))
+    return us_km
+
+
 def parse_datetime_iso(date_str, time_str=None):
     """Normalizes arbitrary date and time strings into ISO-8601 'YYYY-MM-DDTHH:MM:SS'."""
     if not date_str:

@@ -129,6 +129,11 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | **Combining RSN + SSN monitoring networks** | `--source=rss` (or `--source=rsn+ssn`) | Includes both mainstem RSN and headwater SSN stations in one model. |
 | **Interval-censored custom data** (`<LOD` or `[lo, hi]`) | `--range-mode=ros_site` (default) or `midpoint` | `ros_site` uses Lognormal ROS when ≥ 3 uncensored samples (`< 80%` censored); `midpoint` uses `(lo+hi)/2`. |
 | **Testing predictor sensitivity** | `--vars=-chalk,-sand,+aquifer` | Modifies the default 6-covariate set without listing every variable manually. |
+| **Selecting stream covariance kernel** | `--kernel=auto` (or `exponential`, `spherical`, `mariah`, `linear`) | Fits compact-support (`spherical`, `linear`) or heavy-tailed (`mariah`) stream kernels, or selects the best kernel by NNGP AIC (`--list-kernels`). |
+| **Joint vs. precision-weighted `TU + TD` combination** | `--combine=joint` (default) or `--combine=precision` | `joint` solves a single unified `Tail-Up + Tail-Down + Euclidean` NNGP Cholesky system; `precision` uses legacy spatial information-gain averaging. |
+| **Physical confluence weighting (`AFV`)** | `--afv=hydro_yield` (or `length`, `shreve`) | Weights `Tail-Up` confluence splits by channel length (`length`), Shreve link magnitude (`shreve`), or elevation + aquifer hydrological yield (`hydro_yield`). |
+| **Non-linear / spline fixed effects (`GAM + S3N`)** | `--trend=gam` (or `--gam-s3n`, `--trend=spline`) | Fits REML-penalized cubic regression splines (`mgcv::gam`) or GCV natural splines (`splines::ns`) before S3N stream kriging (`--list-trends`). |
+| **Tree-ensemble regression kriging (`RF / GBM + S3N`)** | `--trend=rf` or `--trend=gbm` (`--trees=100`) | Fits Out-of-Bag Random Forest (`rf`) or 5-fold cross-fitted Gradient Boosted Trees (`gbm`) for high-order covariate interactions + S3N residual kriging. |
 
 ---
 
@@ -285,6 +290,26 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=rsn_gam_mean --basin=Thames
 Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error
 ```
 
+#### C2. Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging (`--trend=...`)
+```bash
+# 1. List all available fixed-effect / mean-trend engines and tuning flags
+Rscript scripts/run_s3n_determinand.R --list-trends
+
+# 2. Penalized GAM Smooths + S3N (mgcv::gam REML cubic regression splines + S3N kriging)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=gam
+
+# 3. Natural Cubic Regression Splines + S3N with 4 degrees of freedom per continuous covariate
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=spline --spline-df=4
+
+# 4. Random Forest Regression Kriging (Out-of-Bag RF trend + S3N stream kriging)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=rf --trees=150
+
+# 5. Gradient Boosted Regression Trees + S3N (Cross-fitted GBM trend + S3N stream kriging)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=gbm --trees=100
+```
+
+> **Full Guide**: See [`./nonlinear_and_tree_ensemble_trend_guide.md`](./nonlinear_and_tree_ensemble_trend_guide.md) for details on using `--trend=` on standard raw data vs. `--meas-error`, package requirements (base/recommended R only), and interpreting `pred_trend_sc`, `GAM_EDF`, and `VarImp(%)`.
+
 #### D. Modeling & Plotting Additional Custom Basins (`--basin=...`)
 ```bash
 # 1. Add the River Eden catchment (CatchID=3125, Solway Tweed RBD) by river name
@@ -404,6 +429,7 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 | `--network-config <PATH>` | `None` | Optional path to a custom network JSON configuration file. |
 | `--topology-mode <MODE>` | `auto` | Override how river reach connectivity is constructed: `auto` (uses profile), `nodes` (`Fnode`/`Tnode` pairs), `pointer` (`NEXTDOWNID`), or `geometry` (coordinate snapping). |
 | `--afv-col <COL>` | `None` | Override attribute column used for Additive Function Value (AFV) confluence weights (e.g. `UP_CELLS`, `CATCHMENT_AREA`). |
+| `--afv-scheme <SCHEME>` | `length` | Physical confluence weighting scheme for `log_AFV`: `length` (cumulative upstream channel length `US_Accum_km`), `shreve` (Shreve link magnitude), or `hydro_yield` (elevation/orographic + Principal Aquifer baseflow hydrological yield proxy). |
 | `--list-networks` | — | Lists all configured water network profiles and exits. |
 | `--convert-to-geoparquet <PATH>` | `None` | Converts the selected `--network` GeoPackage layer(s) into an OGC GeoParquet (`.parquet`) file and exits. |
 | `--gis-dir <DIR>` (or `--gis <DIR>`) | `gis` (or `$S3N_GIS_DIR`) | Custom directory containing input river network GeoPackage (`.gpkg`), GeoParquet (`.parquet`/`.geoparquet`), or `.zip` files. |

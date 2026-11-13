@@ -399,16 +399,45 @@ static bool solve_chol_stack(int m, const double* C, const double* b, double* x)
     return false;
 }
 
+// =============================================================================
+// Stream & Euclidean Covariance Kernel Evaluator
+// kernel_id:
+//   0 = exponential: exp(-phi * d)
+//   1 = spherical:   (1 - 1.5*(phi*d) + 0.5*(phi*d)^3) for phi*d < 1, else 0
+//   2 = mariah:      log(phi*d + 1) / (phi*d) for d > 0, 1 for d == 0
+//   3 = linear:      max(0, 1 - phi * d)
+// =============================================================================
+inline double eval_stream_kernel(double dist, double phi, int kernel_id) {
+    if (dist <= 0.0) return 1.0;
+    if (dist >= 1e5 || phi <= 0.0) return 0.0;
+    double u = phi * dist;
+    switch (kernel_id) {
+        case 1: // spherical
+            if (u >= 1.0) return 0.0;
+            return 1.0 - 1.5 * u + 0.5 * u * u * u;
+        case 2: // mariah
+            if (u < 1e-6) return 1.0 - 0.5 * u;
+            return std::log(u + 1.0) / u;
+        case 3: // linear-with-sill
+            if (u >= 1.0) return 0.0;
+            return 1.0 - u;
+        case 0: // exponential (default)
+        default:
+            return std::exp(-u);
+    }
+}
+
 // Fast NNGP Kriging Prediction with Heteroskedastic Measurement Error (Approach A)
 // Solves: [sigma^2 * R + tau_micro^2 * I + diag(v_meas)] * lambda = c
 // for each reach i in 0..q-1.
+// Theta_r: 3-vector (sigma.sq, tau.sq, phi) or 4-vector (..., kernel_id)
 SEXP C_s3n_predict_meas_error(
     SEXP X_r,            // n x p matrix of observed covariates
     SEXP y_r,            // n x 1 matrix of observed response
     SEXP v_meas_r,       // n vector of measurement error variances (>= 0)
     SEXP X0_r,           // q x p matrix of target reach covariates
     SEXP Beta_r,         // p vector of fixed effect coefficients
-    SEXP Theta_r,        // 3 vector: sigma.sq, tau.sq (microscale), phi
+    SEXP Theta_r,        // 3 or 4 vector: sigma.sq, tau.sq (microscale), phi, [kernel_id]
     SEXP m_r,            // integer scalar: number of neighbors m
     SEXP pred_nnIndx_r,  // (q * m) 0-based neighbor indices
     SEXP pred_nnDist_r,  // (q * m) target-to-neighbor distances
@@ -433,6 +462,7 @@ SEXP C_s3n_predict_meas_error(
     double sigma_sq = Theta[0];
     double tau_sq = Theta[1];
     double phi = Theta[2];
+    int kernel_id = (Rf_length(Theta_r) >= 4) ? (int)std::round(Theta[3]) : 0;
 
     const int* pred_nnIndx = INTEGER(pred_nnIndx_r);
     const double* pred_nnDist = REAL(pred_nnDist_r);
@@ -477,7 +507,9 @@ SEXP C_s3n_predict_meas_error(
 
             double d_ik = pred_nnDist[base_p + k];
             double w_ik = pred_nnWght[base_p + k];
-            c[k] = sigma_sq * w_ik * std::exp(-phi * d_ik);
+            c[k] = (w_ik > 0.0 && d_ik < 1e5)
+                   ? (sigma_sq * w_ik * eval_stream_kernel(d_ik, phi, kernel_id))
+                   : 0.0;
 
             double mu_k = 0.0;
             for (int b = 0; b < p; ++b) {
@@ -499,7 +531,9 @@ SEXP C_s3n_predict_meas_error(
 
                 double D_kl = obsobs_dist[idx_k + idx_l * n];
                 double W_kl = obsobs_wt[idx_k + idx_l * n];
-                double cov_val = sigma_sq * W_kl * std::exp(-phi * D_kl);
+                double cov_val = (W_kl > 0.0 && D_kl < 1e5)
+                                 ? (sigma_sq * W_kl * eval_stream_kernel(D_kl, phi, kernel_id))
+                                 : 0.0;
 
                 if (k == l) {
                     cov_val += tau_sq + (v_meas ? v_meas[idx_k] : 0.0);
@@ -542,6 +576,731 @@ SEXP C_s3n_predict_meas_error(
     return out;
 }
 
+// =============================================================================
+// C_compute_log_afv:
+// Fast O(N) C++ computation of log Additive Function Values (log_afv) for a
+// directed stream network using arbitrary physical reach weights (e.g. reach
+// length, Shreve magnitude, or hydrological yield proxy).
+//
+// Args:
+//   parent_dn_r : integer vector (length N), 0-based downstream parent index (-1 for outlet)
+//   local_w_r   : numeric vector (length N), positive local reach weight (or accumulated weight)
+//   is_accum_r  : integer scalar (1 if local_w_r is already accumulated upstream mass, 0 if local)
+// =============================================================================
+SEXP C_compute_log_afv(SEXP parent_dn_r, SEXP local_w_r, SEXP is_accum_r) {
+    int N = Rf_length(parent_dn_r);
+    const int* parent_dn = INTEGER(parent_dn_r);
+    const double* local_w = REAL(local_w_r);
+    int is_accum = Rf_asInteger(is_accum_r);
+
+    std::vector<int> head(N, -1);
+    std::vector<int> next_child(N, -1);
+    std::vector<int> roots;
+    roots.reserve(1024);
+
+    for (int i = 0; i < N; ++i) {
+        int p = parent_dn[i];
+        if (p >= 0 && p < N && p != i) {
+            next_child[i] = head[p];
+            head[p] = i;
+        } else {
+            roots.push_back(i);
+        }
+    }
+
+    std::vector<int> order;
+    order.reserve(N);
+    std::vector<int> stack = roots;
+    while (!stack.empty()) {
+        int u = stack.back();
+        stack.pop_back();
+        order.push_back(u);
+        for (int c = head[u]; c != -1; c = next_child[c]) {
+            stack.push_back(c);
+        }
+    }
+    if ((int)order.size() < N) {
+        std::vector<char> seen(N, 0);
+        for (int u : order) seen[u] = 1;
+        for (int i = 0; i < N; ++i) {
+            if (!seen[i]) order.push_back(i);
+        }
+    }
+
+    std::vector<double> mass(N, 0.0);
+    for (int i = 0; i < N; ++i) {
+        double w = local_w[i];
+        if (!std::isfinite(w) || w < 1e-4) w = 1e-4;
+        mass[i] = w;
+    }
+    if (!is_accum) {
+        for (int idx = (int)order.size() - 1; idx >= 0; --idx) {
+            int u = order[idx];
+            double sum_c = 0.0;
+            for (int c = head[u]; c != -1; c = next_child[c]) {
+                sum_c += mass[c];
+            }
+            mass[u] += sum_c;
+        }
+    }
+
+    SEXP log_afv_r = PROTECT(Rf_allocVector(REALSXP, N));
+    double* log_afv = REAL(log_afv_r);
+    for (int i = 0; i < N; ++i) log_afv[i] = 0.0;
+
+    for (int u : order) {
+        double sum_c = 0.0;
+        for (int c = head[u]; c != -1; c = next_child[c]) {
+            sum_c += mass[c];
+        }
+        if (sum_c > 0.0) {
+            for (int c = head[u]; c != -1; c = next_child[c]) {
+                double prop = mass[c] / sum_c;
+                if (prop < 1e-12) prop = 1e-12;
+                log_afv[c] = log_afv[u] + std::log(prop);
+            }
+        }
+    }
+
+    UNPROTECT(1);
+    return log_afv_r;
 }
+
+// =============================================================================
+// C_s3n_nngp_loglik:
+// Fast OpenMP NNGP profile log-likelihood and GLS solver for any stream kernel
+// (0 = exponential, 1 = spherical, 2 = mariah, 3 = linear).
+// =============================================================================
+SEXP C_s3n_nngp_loglik(
+    SEXP X_r, SEXP y_r, SEXP obs_nb_r,
+    SEXP eta_r, SEXP phi_r, SEXP kernel_id_r
+) {
+    int n = Rf_nrows(X_r);
+    int p = Rf_ncols(X_r);
+    const double* X = REAL(X_r);
+    const double* y = REAL(y_r);
+    double eta = std::max(0.0, Rf_asReal(eta_r));
+    double phi = std::max(1e-6, Rf_asReal(phi_r));
+    int kernel_id = Rf_asInteger(kernel_id_r);
+
+    const double* d        = REAL(VECTOR_ELT(obs_nb_r, 0));
+    const double* nnWt     = REAL(VECTOR_ELT(obs_nb_r, 1));
+    const int*    nnIndx   = INTEGER(VECTOR_ELT(obs_nb_r, 2));
+    const int*    nnIndxLU = INTEGER(VECTOR_ELT(obs_nb_r, 3));
+    const double* D        = REAL(VECTOR_ELT(obs_nb_r, 4));
+    const double* Dwt      = REAL(VECTOR_ELT(obs_nb_r, 5));
+    const int*    CIndx    = INTEGER(VECTOR_ELT(obs_nb_r, 6));
+
+    std::vector<double> y_tilde(n, 0.0);
+    std::vector<double> X_tilde((size_t)n * p, 0.0);
+    std::vector<double> log_f(n, 0.0);
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i) {
+        int start = nnIndxLU[i];
+        int k     = nnIndxLU[n + i];
+        if (k > 64) k = 64;
+        double diag_i = 1.0 + eta;
+
+        if (k <= 0) {
+            double f_i = std::max(1e-8, diag_i);
+            log_f[i] = std::log(f_i);
+            double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+            y_tilde[i] = y[i] * inv_sqrt_f;
+            for (int j = 0; j < p; ++j) {
+                X_tilde[i + j * n] = X[i + j * n] * inv_sqrt_f;
+            }
+            continue;
+        }
+
+        double c_vec[64];
+        double C_mat[64 * 64];
+        double b_vec[64];
+
+        int valid_k = 0;
+        for (int l = 0; l < k; ++l) {
+            double w_il = nnWt[start + l];
+            double d_il = d[start + l];
+            c_vec[l] = (w_il > 0.0 && d_il < 1e5)
+                       ? (w_il * eval_stream_kernel(d_il, phi, kernel_id))
+                       : 0.0;
+            if (c_vec[l] > 0.0) valid_k++;
+        }
+
+        if (valid_k == 0) {
+            double f_i = std::max(1e-8, diag_i);
+            log_f[i] = std::log(f_i);
+            double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+            y_tilde[i] = y[i] * inv_sqrt_f;
+            for (int j = 0; j < p; ++j) {
+                X_tilde[i + j * n] = X[i + j * n] * inv_sqrt_f;
+            }
+            continue;
+        }
+
+        int c_start = CIndx[i];
+        int k_full  = nnIndxLU[n + i];
+        for (int l1 = 0; l1 < k; ++l1) {
+            C_mat[l1 * k + l1] = 1.0 + eta;
+            for (int l2 = l1 + 1; l2 < k; ++l2) {
+                int idx = c_start + l1 * k_full + l2;
+                double w_12 = Dwt[idx];
+                double d_12 = D[idx];
+                double cov = (w_12 > 0.0 && d_12 < 1e5)
+                             ? (w_12 * eval_stream_kernel(d_12, phi, kernel_id))
+                             : 0.0;
+                C_mat[l1 * k + l2] = cov;
+                C_mat[l2 * k + l1] = cov;
+            }
+        }
+
+        solve_chol_stack(k, C_mat, c_vec, b_vec);
+
+        double c_dot_b = 0.0;
+        double y_hat_nb = 0.0;
+        for (int l = 0; l < k; ++l) {
+            int nb = nnIndx[start + l];
+            c_dot_b  += c_vec[l] * b_vec[l];
+            y_hat_nb += b_vec[l] * y[nb];
+        }
+        double f_i = std::max(1e-8, diag_i - c_dot_b);
+        log_f[i] = std::log(f_i);
+        double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+
+        y_tilde[i] = (y[i] - y_hat_nb) * inv_sqrt_f;
+        for (int j = 0; j < p; ++j) {
+            double x_hat_nb = 0.0;
+            for (int l = 0; l < k; ++l) {
+                int nb = nnIndx[start + l];
+                x_hat_nb += b_vec[l] * X[nb + j * n];
+            }
+            X_tilde[i + j * n] = (X[i + j * n] - x_hat_nb) * inv_sqrt_f;
+        }
+    }
+
+    std::vector<double> XtX(p * p, 0.0);
+    std::vector<double> Xty(p, 0.0);
+    for (int j1 = 0; j1 < p; ++j1) {
+        const double* col1 = &X_tilde[j1 * n];
+        double s_y = 0.0;
+        for (int i = 0; i < n; ++i) s_y += col1[i] * y_tilde[i];
+        Xty[j1] = s_y;
+        for (int j2 = j1; j2 < p; ++j2) {
+            const double* col2 = &X_tilde[j2 * n];
+            double s_xx = 0.0;
+            for (int i = 0; i < n; ++i) s_xx += col1[i] * col2[i];
+            XtX[j1 * p + j2] = s_xx;
+            XtX[j2 * p + j1] = s_xx;
+        }
+    }
+
+    SEXP beta_r = PROTECT(Rf_allocVector(REALSXP, p));
+    double* beta = REAL(beta_r);
+    solve_chol_stack(p, XtX.data(), Xty.data(), beta);
+
+    double rss = 0.0;
+    double sum_log_f = 0.0;
+    for (int i = 0; i < n; ++i) {
+        double mu_i = 0.0;
+        for (int j = 0; j < p; ++j) mu_i += X_tilde[i + j * n] * beta[j];
+        double res = y_tilde[i] - mu_i;
+        rss += res * res;
+        sum_log_f += log_f[i];
+    }
+
+    double sigma_sq = std::max(1e-10, rss / (double)n);
+    double tau_sq   = eta * sigma_sq;
+    double neg2ll   = (double)n * std::log(sigma_sq) + sum_log_f + (double)n;
+
+    SEXP cov_beta_r = PROTECT(Rf_allocMatrix(REALSXP, p, p));
+    double* cov_beta = REAL(cov_beta_r);
+    for (int j = 0; j < p; ++j) {
+        std::vector<double> e_j(p, 0.0);
+        std::vector<double> col_j(p, 0.0);
+        e_j[j] = 1.0;
+        solve_chol_stack(p, XtX.data(), e_j.data(), col_j.data());
+        for (int i = 0; i < p; ++i) {
+            cov_beta[i + j * p] = col_j[i] * sigma_sq;
+        }
+    }
+
+    SEXP out = PROTECT(Rf_allocVector(VECSXP, 5));
+    SET_VECTOR_ELT(out, 0, Rf_ScalarReal(neg2ll));
+    SET_VECTOR_ELT(out, 1, beta_r);
+    SET_VECTOR_ELT(out, 2, Rf_ScalarReal(sigma_sq));
+    SET_VECTOR_ELT(out, 3, Rf_ScalarReal(tau_sq));
+    SET_VECTOR_ELT(out, 4, cov_beta_r);
+
+    SEXP names = PROTECT(Rf_allocVector(STRSXP, 5));
+    SET_STRING_ELT(names, 0, Rf_mkChar("neg2loglik"));
+    SET_STRING_ELT(names, 1, Rf_mkChar("Beta"));
+    SET_STRING_ELT(names, 2, Rf_mkChar("sigma.sq"));
+    SET_STRING_ELT(names, 3, Rf_mkChar("tau.sq"));
+    SET_STRING_ELT(names, 4, Rf_mkChar("cov.beta"));
+    Rf_setAttrib(out, R_NamesSymbol, names);
+
+    UNPROTECT(4);
+    return out;
+}
+
+// =============================================================================
+// C_s3n_joint_nngp:
+// Joint Additive Spatial Stream Network Model (Ver Hoef & Peterson 2010):
+//   C_joint(i, j) = sigma^2_TU * w_TU(i,j) * K_k(d_TU; phi_TU)
+//                 + sigma^2_TD * w_TD(i,j) * K_k(d_TD; phi_TD)
+//                 + sigma^2_Euc * K_k(d_Euc; phi_Euc)
+//                 + (tau^2 + v_meas[i]) * I(i == j)
+//
+// Supports two modes via mode_r:
+//   mode = 0 : Joint NNGP profile log-likelihood + GLS Beta & Cov(Beta) on n obs
+//   mode = 1 : Joint NNGP universal kriging prediction across all q reaches
+//
+// Args:
+//   X_r          : n x p matrix of observed covariates
+//   y_r          : n vector of observed response
+//   v_meas_r     : n vector of measurement error variances (or empty)
+//   X0_r         : q x p matrix of target reach covariates (used in mode 1)
+//   Beta_r       : p vector of GLS fixed-effect coefficients (used in mode 1)
+//   nb_tu_r      : list from C_compute_s3n_neighbors(..., model_type = 0)
+//   nb_td_r      : list from C_compute_s3n_neighbors(..., model_type = 1)
+//   mid_x_r      : length q vector of reach midpoint X (meters)
+//   mid_y_r      : length q vector of reach midpoint Y (meters)
+//   m_r          : integer scalar number of NNGP neighbors m
+//   params_r     : 8-vector: (sigma_sq_tu, sigma_sq_td, sigma_sq_euc, tau_sq,
+//                             phi_tu, phi_td, phi_euc, kernel_id)
+//   mode_r       : integer scalar (0 = loglik/GLS fit, 1 = kriging prediction)
+// =============================================================================
+SEXP C_s3n_joint_nngp(
+    SEXP X_r, SEXP y_r, SEXP v_meas_r,
+    SEXP X0_r, SEXP Beta_r,
+    SEXP nb_tu_r, SEXP nb_td_r,
+    SEXP mid_x_r, SEXP mid_y_r,
+    SEXP m_r, SEXP params_r, SEXP mode_r
+) {
+    int n = Rf_nrows(X_r);
+    int p = Rf_ncols(X_r);
+    int m_stride = Rf_asInteger(m_r);
+    int m = m_stride;
+    if (m > 64) m = 64;
+    if (m > n) m = n;
+    int mode = Rf_asInteger(mode_r);
+
+    const double* X = REAL(X_r);
+    const double* y = REAL(y_r);
+    const double* v_meas = (Rf_length(v_meas_r) == n) ? REAL(v_meas_r) : nullptr;
+    const double* mid_x = REAL(mid_x_r);
+    const double* mid_y = REAL(mid_y_r);
+
+    const double* params = REAL(params_r);
+    double sig_tu  = std::max(0.0, params[0]);
+    double sig_td  = std::max(0.0, params[1]);
+    double sig_euc = std::max(0.0, params[2]);
+    double tau_sq  = std::max(0.0, params[3]);
+    double phi_tu  = std::max(1e-6, params[4]);
+    double phi_td  = std::max(1e-6, params[5]);
+    double phi_euc = std::max(1e-6, params[6]);
+    int kernel_id  = (Rf_length(params_r) >= 8) ? (int)std::round(params[7]) : 0;
+
+    double total_sill = sig_tu + sig_td + sig_euc + tau_sq;
+    if (total_sill < 1e-10) total_sill = 1e-10;
+
+    // Extract obs x obs pairwise distances & weights from nb_tu and nb_td
+    const double* tu_oo_dist = REAL(VECTOR_ELT(nb_tu_r, 0));
+    const double* tu_oo_wt   = REAL(VECTOR_ELT(nb_tu_r, 1));
+    const double* td_oo_dist = REAL(VECTOR_ELT(nb_td_r, 0));
+    const double* td_oo_wt   = REAL(VECTOR_ELT(nb_td_r, 1));
+
+    auto eval_obs_pair_cov = [&](int idx1, int idx2) -> double {
+        double cov = 0.0;
+        if (sig_tu > 0.0) {
+            double w = tu_oo_wt[idx1 + idx2 * n];
+            double d = tu_oo_dist[idx1 + idx2 * n];
+            if (w > 0.0 && d < 1e5) {
+                cov += sig_tu * w * eval_stream_kernel(d, phi_tu, kernel_id);
+            }
+        }
+        if (sig_td > 0.0) {
+            double w = td_oo_wt[idx1 + idx2 * n];
+            double d = td_oo_dist[idx1 + idx2 * n];
+            if (w > 0.0 && d < 1e5) {
+                cov += sig_td * w * eval_stream_kernel(d, phi_td, kernel_id);
+            }
+        }
+        if (sig_euc > 0.0) {
+            double dx = (mid_x[idx1] - mid_x[idx2]) * 0.001;
+            double dy = (mid_y[idx1] - mid_y[idx2]) * 0.001;
+            double d_euc = std::hypot(dx, dy);
+            cov += sig_euc * eval_stream_kernel(d_euc, phi_euc, kernel_id);
+        }
+        return cov;
+    };
+
+    if (mode == 0) {
+        // Mode 0: Joint NNGP log-likelihood and GLS Beta estimation on 0..n-1
+        std::vector<double> y_tilde(n, 0.0);
+        std::vector<double> X_tilde((size_t)n * p, 0.0);
+        std::vector<double> log_f(n, 0.0);
+
+        #pragma omp parallel for schedule(dynamic, 16)
+        for (int i = 0; i < n; ++i) {
+            double diag_i = total_sill + (v_meas ? v_meas[i] : 0.0);
+            if (i == 0 || m <= 0) {
+                double f_i = std::max(1e-8, diag_i);
+                log_f[i] = std::log(f_i);
+                double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+                y_tilde[i] = y[i] * inv_sqrt_f;
+                for (int j = 0; j < p; ++j) {
+                    X_tilde[i + j * n] = X[i + j * n] * inv_sqrt_f;
+                }
+                continue;
+            }
+
+            // Rank predecessor observations j < i by joint covariance with i
+            int k = (i < m) ? i : m;
+            std::vector<std::pair<double, int>> cands(i);
+            for (int j = 0; j < i; ++j) {
+                double c_ij = eval_obs_pair_cov(i, j);
+                cands[j] = {-c_ij, j}; // sort descending by covariance
+            }
+            if (i > k) {
+                std::partial_sort(cands.begin(), cands.begin() + k, cands.end());
+            } else {
+                std::sort(cands.begin(), cands.end());
+            }
+
+            double c_vec[64];
+            double C_mat[64 * 64];
+            double b_vec[64];
+            int nb_idx[64];
+            int valid_k = 0;
+
+            for (int l = 0; l < k; ++l) {
+                nb_idx[l] = cands[l].second;
+                c_vec[l]  = -cands[l].first;
+                if (c_vec[l] > 1e-12) valid_k++;
+            }
+
+            if (valid_k == 0) {
+                double f_i = std::max(1e-8, diag_i);
+                log_f[i] = std::log(f_i);
+                double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+                y_tilde[i] = y[i] * inv_sqrt_f;
+                for (int j = 0; j < p; ++j) {
+                    X_tilde[i + j * n] = X[i + j * n] * inv_sqrt_f;
+                }
+                continue;
+            }
+
+            for (int l1 = 0; l1 < k; ++l1) {
+                int j1 = nb_idx[l1];
+                C_mat[l1 * k + l1] = total_sill + (v_meas ? v_meas[j1] : 0.0);
+                for (int l2 = l1 + 1; l2 < k; ++l2) {
+                    int j2 = nb_idx[l2];
+                    double cov = eval_obs_pair_cov(j1, j2);
+                    C_mat[l1 * k + l2] = cov;
+                    C_mat[l2 * k + l1] = cov;
+                }
+            }
+
+            solve_chol_stack(k, C_mat, c_vec, b_vec);
+
+            double c_dot_b = 0.0;
+            double y_hat_nb = 0.0;
+            for (int l = 0; l < k; ++l) {
+                int nb = nb_idx[l];
+                c_dot_b  += c_vec[l] * b_vec[l];
+                y_hat_nb += b_vec[l] * y[nb];
+            }
+            double f_i = std::max(1e-8, diag_i - c_dot_b);
+            log_f[i] = std::log(f_i);
+            double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+
+            y_tilde[i] = (y[i] - y_hat_nb) * inv_sqrt_f;
+            for (int j = 0; j < p; ++j) {
+                double x_hat_nb = 0.0;
+                for (int l = 0; l < k; ++l) {
+                    int nb = nb_idx[l];
+                    x_hat_nb += b_vec[l] * X[nb + j * n];
+                }
+                X_tilde[i + j * n] = (X[i + j * n] - x_hat_nb) * inv_sqrt_f;
+            }
+        }
+
+        std::vector<double> XtX(p * p, 0.0);
+        std::vector<double> Xty(p, 0.0);
+        for (int j1 = 0; j1 < p; ++j1) {
+            const double* col1 = &X_tilde[j1 * n];
+            double s_y = 0.0;
+            for (int i = 0; i < n; ++i) s_y += col1[i] * y_tilde[i];
+            Xty[j1] = s_y;
+            for (int j2 = j1; j2 < p; ++j2) {
+                const double* col2 = &X_tilde[j2 * n];
+                double s_xx = 0.0;
+                for (int i = 0; i < n; ++i) s_xx += col1[i] * col2[i];
+                XtX[j1 * p + j2] = s_xx;
+                XtX[j2 * p + j1] = s_xx;
+            }
+        }
+
+        SEXP beta_r = PROTECT(Rf_allocVector(REALSXP, p));
+        double* beta = REAL(beta_r);
+        solve_chol_stack(p, XtX.data(), Xty.data(), beta);
+
+        double rss = 0.0;
+        double sum_log_f = 0.0;
+        for (int i = 0; i < n; ++i) {
+            double mu_i = 0.0;
+            for (int j = 0; j < p; ++j) mu_i += X_tilde[i + j * n] * beta[j];
+            double res = y_tilde[i] - mu_i;
+            rss += res * res;
+            sum_log_f += log_f[i];
+        }
+
+        // Exact NNGP -2*loglik for fixed variance components (or profiled scale factor)
+        double scale = std::max(1e-10, rss / (double)n);
+        double neg2ll_profiled = (double)n * std::log(scale) + sum_log_f + (double)n;
+        double neg2ll_exact    = rss + sum_log_f;
+
+        SEXP cov_beta_r = PROTECT(Rf_allocMatrix(REALSXP, p, p));
+        double* cov_beta = REAL(cov_beta_r);
+        for (int j = 0; j < p; ++j) {
+            std::vector<double> e_j(p, 0.0);
+            std::vector<double> col_j(p, 0.0);
+            e_j[j] = 1.0;
+            solve_chol_stack(p, XtX.data(), e_j.data(), col_j.data());
+            for (int i = 0; i < p; ++i) {
+                cov_beta[i + j * p] = col_j[i] * scale;
+            }
+        }
+
+        SEXP out = PROTECT(Rf_allocVector(VECSXP, 5));
+        SET_VECTOR_ELT(out, 0, Rf_ScalarReal(neg2ll_profiled));
+        SET_VECTOR_ELT(out, 1, Rf_ScalarReal(neg2ll_exact));
+        SET_VECTOR_ELT(out, 2, Rf_ScalarReal(scale));
+        SET_VECTOR_ELT(out, 3, beta_r);
+        SET_VECTOR_ELT(out, 4, cov_beta_r);
+
+        SEXP names = PROTECT(Rf_allocVector(STRSXP, 5));
+        SET_STRING_ELT(names, 0, Rf_mkChar("neg2loglik"));
+        SET_STRING_ELT(names, 1, Rf_mkChar("neg2loglik_exact"));
+        SET_STRING_ELT(names, 2, Rf_mkChar("scale"));
+        SET_STRING_ELT(names, 3, Rf_mkChar("Beta"));
+        SET_STRING_ELT(names, 4, Rf_mkChar("cov.beta"));
+        Rf_setAttrib(out, R_NamesSymbol, names);
+
+        UNPROTECT(4);
+        return out;
+    }
+
+    // Mode 1: Joint NNGP Kriging Prediction across all q reaches
+    int q = Rf_nrows(X0_r);
+    const double* X0 = REAL(X0_r);
+    const double* Beta = REAL(Beta_r);
+
+    SEXP pred_nb_tu = VECTOR_ELT(nb_tu_r, 3);
+    SEXP pred_nb_td = VECTOR_ELT(nb_td_r, 3);
+    const int*    tu_p_idx  = INTEGER(VECTOR_ELT(pred_nb_tu, 0));
+    const double* tu_p_dist = REAL(VECTOR_ELT(pred_nb_tu, 1));
+    const double* tu_p_wt   = REAL(VECTOR_ELT(pred_nb_tu, 2));
+    const int*    td_p_idx  = INTEGER(VECTOR_ELT(pred_nb_td, 0));
+    const double* td_p_dist = REAL(VECTOR_ELT(pred_nb_td, 1));
+    const double* td_p_wt   = REAL(VECTOR_ELT(pred_nb_td, 2));
+
+    // Precompute observed residuals r_j = y_j - X_j * Beta
+    std::vector<double> obs_resid(n, 0.0);
+    for (int j = 0; j < n; ++j) {
+        double mu_j = 0.0;
+        for (int b = 0; b < p; ++b) mu_j += X[j + b * n] * Beta[b];
+        obs_resid[j] = y[j] - mu_j;
+    }
+
+    SEXP pred_r = PROTECT(Rf_allocVector(REALSXP, q));
+    SEXP se_r   = PROTECT(Rf_allocVector(REALSXP, q));
+    SEXP ci_r   = PROTECT(Rf_allocMatrix(REALSXP, q, 2));
+    double* pred = REAL(pred_r);
+    double* se   = REAL(se_r);
+    double* ci   = REAL(ci_r);
+
+    struct JointCand {
+        int idx;
+        double c_joint;
+    };
+
+    #pragma omp parallel for schedule(dynamic, 64)
+    for (int i = 0; i < q; ++i) {
+        double mu_0 = 0.0;
+        for (int b = 0; b < p; ++b) {
+            mu_0 += X0[i + b * q] * Beta[b];
+        }
+
+        if (m <= 0 || n <= 0) {
+            double s_pred = std::sqrt(std::max(1e-8, total_sill));
+            pred[i] = mu_0;
+            se[i]   = s_pred;
+            ci[i]   = mu_0 - 1.959964 * s_pred;
+            ci[i + q] = mu_0 + 1.959964 * s_pred;
+            continue;
+        }
+
+        int base_p = i * m_stride;
+        // Collect unique candidate observations from TU neighbors, TD neighbors,
+        // and (when sig_euc > 0) top Euclidean neighbors
+        int cand_ids[192];
+        double cand_tu_d[192], cand_tu_w[192];
+        double cand_td_d[192], cand_td_w[192];
+        int n_cand = 0;
+
+        auto find_or_add = [&](int obs_j) -> int {
+            if (obs_j < 0 || obs_j >= n) return -1;
+            for (int c = 0; c < n_cand; ++c) {
+                if (cand_ids[c] == obs_j) return c;
+            }
+            if (n_cand >= 192) return -1;
+            int c = n_cand++;
+            cand_ids[c]  = obs_j;
+            cand_tu_d[c] = 1e6; cand_tu_w[c] = 0.0;
+            cand_td_d[c] = 1e6; cand_td_w[c] = 0.0;
+            return c;
+        };
+
+        for (int k = 0; k < m; ++k) {
+            int j_tu = tu_p_idx[base_p + k];
+            int c = find_or_add(j_tu);
+            if (c >= 0) {
+                cand_tu_d[c] = tu_p_dist[base_p + k];
+                cand_tu_w[c] = tu_p_wt[base_p + k];
+                if (cand_tu_w[c] > 0.0 && cand_tu_d[c] < 1e5) {
+                    cand_td_d[c] = cand_tu_d[c];
+                    cand_td_w[c] = 1.0;
+                }
+            }
+        }
+        for (int k = 0; k < m; ++k) {
+            int j_td = td_p_idx[base_p + k];
+            int c = find_or_add(j_td);
+            if (c >= 0) {
+                double d_td = td_p_dist[base_p + k];
+                double w_td = td_p_wt[base_p + k];
+                if (w_td > 0.0 && d_td < 1e5) {
+                    cand_td_d[c] = d_td;
+                    cand_td_w[c] = w_td;
+                }
+            }
+        }
+
+        if (sig_euc > 0.0) {
+            // Find up to m closest Euclidean observations to reach i
+            double best_d2[64];
+            int best_j[64];
+            int n_best = 0;
+            double xi = mid_x[i], yi = mid_y[i];
+            for (int j = 0; j < n; ++j) {
+                double dx = (xi - mid_x[j]) * 0.001;
+                double dy = (yi - mid_y[j]) * 0.001;
+                double d2 = dx * dx + dy * dy;
+                if (n_best < m) {
+                    int pos = n_best++;
+                    while (pos > 0 && best_d2[pos - 1] > d2) {
+                        best_d2[pos] = best_d2[pos - 1];
+                        best_j[pos]  = best_j[pos - 1];
+                        --pos;
+                    }
+                    best_d2[pos] = d2;
+                    best_j[pos]  = j;
+                } else if (d2 < best_d2[m - 1]) {
+                    int pos = m - 1;
+                    while (pos > 0 && best_d2[pos - 1] > d2) {
+                        best_d2[pos] = best_d2[pos - 1];
+                        best_j[pos]  = best_j[pos - 1];
+                        --pos;
+                    }
+                    best_d2[pos] = d2;
+                    best_j[pos]  = j;
+                }
+            }
+            for (int k = 0; k < n_best; ++k) {
+                find_or_add(best_j[k]);
+            }
+        }
+
+        // Compute joint target-to-candidate covariance for each unique candidate
+        JointCand ranked[192];
+        double xi = mid_x[i], yi = mid_y[i];
+        for (int c = 0; c < n_cand; ++c) {
+            int j = cand_ids[c];
+            double cov = 0.0;
+            if (sig_tu > 0.0 && cand_tu_w[c] > 0.0 && cand_tu_d[c] < 1e5) {
+                cov += sig_tu * cand_tu_w[c] * eval_stream_kernel(cand_tu_d[c], phi_tu, kernel_id);
+            }
+            if (sig_td > 0.0 && cand_td_w[c] > 0.0 && cand_td_d[c] < 1e5) {
+                cov += sig_td * cand_td_w[c] * eval_stream_kernel(cand_td_d[c], phi_td, kernel_id);
+            }
+            if (sig_euc > 0.0) {
+                double dx = (xi - mid_x[j]) * 0.001;
+                double dy = (yi - mid_y[j]) * 0.001;
+                double d_euc = std::hypot(dx, dy);
+                cov += sig_euc * eval_stream_kernel(d_euc, phi_euc, kernel_id);
+            }
+            ranked[c] = {j, cov};
+        }
+
+        std::sort(ranked, ranked + n_cand, [](const JointCand& a, const JointCand& b) {
+            if (a.c_joint != b.c_joint) return a.c_joint > b.c_joint;
+            return a.idx < b.idx;
+        });
+
+        int k_use = (n_cand < m) ? n_cand : m;
+        double C[64 * 64];
+        double c_vec[64];
+        double lambda[64];
+
+        for (int k = 0; k < k_use; ++k) {
+            c_vec[k] = ranked[k].c_joint;
+            int idx_k = ranked[k].idx;
+            for (int l = 0; l <= k; ++l) {
+                int idx_l = ranked[l].idx;
+                double cov_val = eval_obs_pair_cov(idx_k, idx_l);
+                if (k == l) {
+                    cov_val = total_sill + (v_meas ? v_meas[idx_k] : 0.0);
+                }
+                C[k * k_use + l] = cov_val;
+                C[l * k_use + k] = cov_val;
+            }
+        }
+
+        solve_chol_stack(k_use, C, c_vec, lambda);
+
+        double delta_y = 0.0;
+        double lambda_dot_c = 0.0;
+        for (int k = 0; k < k_use; ++k) {
+            int idx_k = ranked[k].idx;
+            delta_y      += lambda[k] * obs_resid[idx_k];
+            lambda_dot_c += lambda[k] * c_vec[k];
+        }
+
+        double y_pred = mu_0 + delta_y;
+        double v_pred = total_sill - lambda_dot_c;
+        if (v_pred < 1e-8) v_pred = 1e-8;
+        double s_pred = std::sqrt(v_pred);
+
+        pred[i]   = y_pred;
+        se[i]     = s_pred;
+        ci[i]     = y_pred - 1.959964 * s_pred;
+        ci[i + q] = y_pred + 1.959964 * s_pred;
+    }
+
+    SEXP out = PROTECT(Rf_allocVector(VECSXP, 3));
+    SEXP out_names = PROTECT(Rf_allocVector(STRSXP, 3));
+    SET_VECTOR_ELT(out, 0, pred_r); SET_STRING_ELT(out_names, 0, Rf_mkChar("prediction"));
+    SET_VECTOR_ELT(out, 1, ci_r);   SET_STRING_ELT(out_names, 1, Rf_mkChar("prediction.ci"));
+    SET_VECTOR_ELT(out, 2, se_r);   SET_STRING_ELT(out_names, 2, Rf_mkChar("se"));
+    Rf_setAttrib(out, R_NamesSymbol, out_names);
+
+    UNPROTECT(5);
+    return out;
+}
+
+}
+
 
 

@@ -73,6 +73,7 @@ from s3n_py_utils import (
     MONTH_TO_SEASON,
     MONTH_NAME_MAP,
     RuntimeConfig,
+    compute_afv_reach_weight,
     _rel_join,
     apply_forward_transform,
     apply_ros_to_records,
@@ -1927,6 +1928,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             u_info["us_accum_km"] = u_info["length_km"] + sum(reaches_by_id[p]["us_accum_km"] for p in ps)
 
     # Top-down pass: compute log_AFV and propagate headwater SrcElevation
+    afv_scheme = cfg.get("afv_scheme", "length")
     log_afv = {}
     for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
         log_afv[m_id] = 0.0
@@ -1935,9 +1937,19 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             u = stack.pop()
             ps = parents[u]
             if ps:
-                sum_us = sum(max(1e-4, reaches_by_id[p]["us_accum_km"]) for p in ps)
+                p_weights = {
+                    p: compute_afv_reach_weight(
+                        afv_scheme,
+                        reaches_by_id[p]["us_accum_km"],
+                        reaches_by_id[p].get("shreve", 1),
+                        reaches_by_id[p].get("elev", 0.0),
+                        reaches_by_id[p].get("is_aquifer", 0),
+                    )
+                    for p in ps
+                }
+                sum_us = sum(p_weights.values())
                 for p in ps:
-                    log_afv[p] = log_afv[u] + math.log(max(1e-4, reaches_by_id[p]["us_accum_km"]) / sum_us)
+                    log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
                     stack.append(p)
 
     # Transform reach (start, mid, end) coordinates to EPSG:27700 so all maps & Easting/Northing are in BNG
@@ -2280,6 +2292,18 @@ def main():
         help="List all supported data transformations and their mathematical properties, then exit.",
     )
     parser.add_argument(
+        "--afv-scheme",
+        dest="afv_scheme",
+        choices=["length", "shreve", "hydro_yield"],
+        default="length",
+        help=(
+            "Physical confluence weighting scheme for Tail-Up Additive Function Values (log_AFV): "
+            "'length' = cumulative upstream channel length US_Accum_km (default), "
+            "'shreve' = Shreve hydrological link magnitude, "
+            "'hydro_yield' = elevation/orographic + Principal Aquifer baseflow hydrological yield proxy."
+        ),
+    )
+    parser.add_argument(
         "--source",
         default="rsn",
         help=(
@@ -2384,6 +2408,7 @@ def main():
         return
 
     cfg = load_network_config(args.network, args.network_config)
+    cfg["afv_scheme"] = getattr(args, "afv_scheme", "length") or "length"
     net_abbr = cfg["abbr"]
 
     if not args.out_dir:
@@ -2678,11 +2703,9 @@ def main():
             topo_order.append(u)
             ps = [p for p in parents[u] if p not in visited]
             if ps:
-                sum_us = sum(max(0.0001, reaches[p][6] or 0.0) for p in ps)
                 for p in ps:
                     visited.add(p)
                     parent_dn[p] = u
-                    log_afv[p] = log_afv[u] + math.log(max(0.0001, reaches[p][6] or 0.0) / sum_us)
                     stack.append(p)
 
     for _ in range(3):
@@ -2697,6 +2720,27 @@ def main():
                     if p in reach_100m and reach_100m[p][0] is not None:
                         reach_100m[u] = reach_100m[p]
                         break
+
+    # Compute log_AFV using selected physical confluence weighting scheme (--afv-scheme)
+    afv_scheme = cfg.get("afv_scheme", "length")
+    for u in topo_order:
+        ps = [p for p in parents[u] if parent_dn.get(p) == u]
+        if ps:
+            p_weights = {}
+            for p in ps:
+                r100 = reach_100m.get(p)
+                elev_p = (r100[0] or 0.0) if r100 else 0.0
+                aq_p = (r100[6] or 0) if r100 else 0
+                p_weights[p] = compute_afv_reach_weight(
+                    afv_scheme,
+                    reaches[p][6] or 0.0,
+                    reaches[p][7] or 1,
+                    elev_p,
+                    aq_p,
+                )
+            sum_us = sum(p_weights.values())
+            for p in ps:
+                log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
 
     missing_cnt = sum(1 for u in topo_order if u not in reach_100m or reach_100m[u][0] is None)
     print(f"   Tree traversal complete ({len(topo_order)} reaches, {missing_cnt} missing covariates).")
