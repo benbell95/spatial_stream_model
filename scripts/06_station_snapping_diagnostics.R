@@ -111,9 +111,9 @@ build_station_snapping_table <- function(proc_dir, include_excluded = TRUE) {
     stop(sprintf("Processed reaches file not found: %s. Run scripts/01_preprocess_orn.py first.", reaches_csv))
   }
 
-  sites_df   <- read.csv(sites_csv, stringsAsFactors = FALSE)
-  reaches_df <- read.csv(reaches_csv, stringsAsFactors = FALSE)
-  catch_lu   <- if (file.exists(catch_csv)) read.csv(catch_csv, stringsAsFactors = FALSE) else NULL
+  sites_df   <- fast_read_csv(sites_csv)
+  reaches_df <- fast_read_csv(reaches_csv)
+  catch_lu   <- if (file.exists(catch_csv)) fast_read_csv(catch_csv) else NULL
 
   # Clean numeric fields in sites_df
   sites_df$easting        <- suppressWarnings(as.numeric(sites_df$easting))
@@ -157,11 +157,12 @@ build_station_snapping_table <- function(proc_dir, include_excluded = TRUE) {
 
   # Attach Catchment Name and RBD Name
   catch_name <- rep(NA_character_, nrow(sites_df))
-  rbd_name   <- rep(NA_character_, nrow(sites_df))
+  rbd_name   <- rep("", nrow(sites_df))
   if (!is.null(catch_lu) && nrow(catch_lu) > 0) {
     c_idx <- match(sites_df$CatchID, catch_lu$CatchID)
-    catch_name <- ifelse(is.na(c_idx), paste0("Catchment ", sites_df$CatchID), catch_lu$Main_River[c_idx])
-    rbd_name   <- ifelse(is.na(c_idx), "", catch_lu$RBD_Name[c_idx])
+    catch_name <- ifelse(is.na(c_idx) | is.na(catch_lu$Main_River[c_idx]), paste0("Catchment ", sites_df$CatchID), as.character(catch_lu$Main_River[c_idx]))
+    rbd_raw    <- if ("RBD_Name" %in% names(catch_lu)) as.character(catch_lu$RBD_Name[c_idx]) else rep("", nrow(sites_df))
+    rbd_name   <- ifelse(is.na(c_idx) | is.na(rbd_raw), "", rbd_raw)
   } else {
     catch_name <- paste0("Catchment ", sites_df$CatchID)
   }
@@ -236,11 +237,11 @@ compute_catchment_snapping_summary <- function(snap_df, reaches_df, catch_lu = N
     cid_str <- as.character(cids[i])
     s_idx   <- snap_groups[[cid_str]]
     if (!is.na(lu_idx[i])) {
-      c_names[i] <- catch_lu$Main_River[lu_idx[i]]
-      r_names[i] <- catch_lu$RBD_Name[lu_idx[i]]
-    } else if (!is.null(s_idx) && length(s_idx) > 0L && nzchar(snap_df$Catchment_Name[s_idx[1]])) {
+      c_names[i] <- if (!is.na(catch_lu$Main_River[lu_idx[i]])) as.character(catch_lu$Main_River[lu_idx[i]]) else c_names[i]
+      r_names[i] <- if ("RBD_Name" %in% names(catch_lu) && !is.na(catch_lu$RBD_Name[lu_idx[i]])) as.character(catch_lu$RBD_Name[lu_idx[i]]) else ""
+    } else if (!is.null(s_idx) && length(s_idx) > 0L && !is.na(snap_df$Catchment_Name[s_idx[1]]) && nzchar(snap_df$Catchment_Name[s_idx[1]])) {
       c_names[i] <- snap_df$Catchment_Name[s_idx[1]]
-      r_names[i] <- snap_df$RBD_Name[s_idx[1]]
+      r_names[i] <- if (!is.na(snap_df$RBD_Name[s_idx[1]])) snap_df$RBD_Name[s_idx[1]] else ""
     }
     if (is.null(s_idx) || length(s_idx) == 0L) next
 
@@ -310,24 +311,43 @@ resolve_snapping_catchments <- function(specs, catch_sum) {
   for (sp in specs) {
     sp_clean <- trimws(sp)
     if (!nzchar(sp_clean)) next
-    if (grepl("^[0-9]+$", sp_clean)) {
-      cid <- as.integer(sp_clean)
-      if (cid %in% catch_sum$CatchID) {
-        resolved <- c(resolved, cid)
+    sp_low <- tolower(sp_clean)
+    if (grepl("^rbd:", sp_low)) {
+      rest <- trimws(sub("^rbd:", "", sp_clean, ignore.case = TRUE))
+      if (grepl("^[0-9]+$", rest) && ("RBD_ID" %in% names(catch_sum))) {
+        rid <- as.integer(rest)
+        m_idx <- which(!is.na(catch_sum$RBD_ID) & catch_sum$RBD_ID == rid)
       } else {
-        warning(sprintf("CatchID %d not found in network.", cid))
+        m_idx <- which(!is.na(catch_sum$RBD_Name) & grepl(rest, catch_sum$RBD_Name, ignore.case = TRUE))
+      }
+      if (length(m_idx) > 0) {
+        resolved <- c(resolved, catch_sum$CatchID[m_idx])
+      } else {
+        warning(sprintf("No RBD matching '%s' found. Run with --list-catchments to see valid names.", sp_clean))
       }
     } else {
-      m_idx <- which(
-        grepl(sp_clean, catch_sum$Main_River, ignore.case = TRUE) |
-        grepl(sp_clean, catch_sum$RBD_Name, ignore.case = TRUE)
-      )
-      if (length(m_idx) > 0) {
-        # Take the top matching catchment with the most stations
-        best_cid <- catch_sum$CatchID[m_idx[1]]
-        resolved <- c(resolved, best_cid)
+      if (grepl("^catch(ment)?:", sp_low)) {
+        sp_clean <- trimws(sub("^catch(ment)?:", "", sp_clean, ignore.case = TRUE))
+      }
+      if (grepl("^[0-9]+$", sp_clean)) {
+        cid <- as.integer(sp_clean)
+        if (cid %in% catch_sum$CatchID) {
+          resolved <- c(resolved, cid)
+        } else {
+          warning(sprintf("CatchID %d not found in network.", cid))
+        }
       } else {
-        warning(sprintf("No catchment matching '%s' found. Run with --list-catchments to see valid names.", sp_clean))
+        m_idx <- which(
+          (!is.na(catch_sum$Main_River) & grepl(sp_clean, catch_sum$Main_River, ignore.case = TRUE)) |
+          (!is.na(catch_sum$RBD_Name)   & grepl(sp_clean, catch_sum$RBD_Name, ignore.case = TRUE))
+        )
+        if (length(m_idx) > 0) {
+          # Take the top matching catchment with the most stations
+          best_cid <- catch_sum$CatchID[m_idx[1]]
+          resolved <- c(resolved, best_cid)
+        } else {
+          warning(sprintf("No catchment matching '%s' found. Run with --list-catchments to see valid names.", sp_clean))
+        }
       }
     }
   }
@@ -370,8 +390,8 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   if (nrow(sub_r) == 0 || nrow(sub_s) == 0) return(invisible(NULL))
 
   cs_row <- catch_sum[catch_sum$CatchID == cid, ]
-  c_name <- if (nrow(cs_row) > 0) cs_row$Main_River[1] else paste0("Catchment ", cid)
-  r_name <- if (nrow(cs_row) > 0 && nzchar(cs_row$RBD_Name[1])) paste0(" (", cs_row$RBD_Name[1], " RBD)") else ""
+  c_name <- if (nrow(cs_row) > 0 && !is.na(cs_row$Main_River[1])) cs_row$Main_River[1] else paste0("Catchment ", cid)
+  r_name <- if (nrow(cs_row) > 0 && !is.na(cs_row$RBD_Name[1]) && nzchar(cs_row$RBD_Name[1])) paste0(" (", cs_row$RBD_Name[1], " RBD)") else ""
 
   open_png_device(out_png, width = 2500, height = 1750, res = 150)
   on.exit(dev.off(), add = TRUE)
@@ -766,8 +786,8 @@ analyze_station_snapping <- function(
   # Write full station snapping table and catchment summary table
   all_csv_path   <- file.path(out_dir, "station_snapping_all.csv")
   catch_csv_path <- file.path(out_dir, "catchment_snapping_summary.csv")
-  write.csv(snap_df, all_csv_path, row.names = FALSE)
-  write.csv(catch_sum, catch_csv_path, row.names = FALSE)
+  fast_write_csv(snap_df, all_csv_path)
+  fast_write_csv(catch_sum, catch_csv_path)
 
   # Render network-wide overview figure
   overview_png <- file.path(out_dir, sprintf("fig_snap_overview_%s.png", net_meta$abbr))
@@ -789,19 +809,20 @@ analyze_station_snapping <- function(
     c_csv <- file.path(out_dir, sprintf("station_snapping_catchment_%d_%s.csv", cid, r_slug))
     c_png <- file.path(out_dir, sprintf("fig_snap_catchment_%d_%s.png", cid, r_slug))
 
-    write.csv(sub_s, c_csv, row.names = FALSE)
+    fast_write_csv(sub_s, c_csv)
     plot_catchment_snapping(cid, snap_df, reaches_df, catch_sum, net_meta$short_label, c_png)
-    has_c_png <- file.exists(c_png)
+    c_plot <- resolve_plot_out_file(c_png)$path
+    has_c_png <- file.exists(c_plot)
 
     catch_outputs[[as.character(cid)]] <- list(
       CatchID    = cid,
       Main_River = if (nrow(cs_row) > 0) cs_row$Main_River[1] else paste0("Catchment ", cid),
       csv        = c_csv,
-      png        = if (has_c_png) c_png else NULL,
+      png        = if (has_c_png) c_plot else NULL,
       n_stations = nrow(sub_s)
     )
     if (verbose) {
-      plot_msg <- if (has_c_png) paste0(" & plot ", format_rel_display_path(c_png, BASE_DIR)) else " (no valid coords for plot)"
+      plot_msg <- if (has_c_png) paste0(" & plot ", format_rel_display_path(c_plot, BASE_DIR)) else " (no valid coords for plot)"
       cat(sprintf("  + Catchment %d (%s): wrote %d stations to %s%s\n",
                   cid, catch_outputs[[as.character(cid)]]$Main_River, nrow(sub_s),
                   format_rel_display_path(c_csv, BASE_DIR), plot_msg))

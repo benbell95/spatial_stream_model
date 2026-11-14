@@ -6,27 +6,39 @@
 # Automatically sourced by scripts/s3n_plot_functions.R.
 # ==============================================================================
 
+safe_zscale <- function(x) {
+  x <- as.numeric(x)
+  fin <- is.finite(x)
+  if (!any(fin)) return(rep(0.0, length(x)))
+  mu <- mean(x[fin])
+  s  <- stats::sd(x[fin])
+  if (!is.finite(s) || s < 1e-12) return(ifelse(fin, 0.0, 0.0))
+  out <- (x - mu) / s
+  out[!fin] <- 0.0
+  out
+}
+
 COVARIATE_CATALOG <- list(
   Elevation_z = list(
     aliases = c("elevation", "elev", "elevation_z"),
     col     = "Elevation",
     desc    = "Mean channel elevation (m AOD, z-score standardized)",
     default = "All domains",
-    eval_fn = function(df) as.numeric(scale(df$Elevation))
+    eval_fn = function(df) safe_zscale(df$Elevation)
   ),
   Slope_z = list(
     aliases = c("slope", "slope_z"),
     col     = "Slope",
     desc    = "Mean channel gradient (%, z-score standardized)",
     default = "All domains",
-    eval_fn = function(df) as.numeric(scale(df$Slope))
+    eval_fn = function(df) safe_zscale(df$Slope)
   ),
   log10_US_Accum_z = list(
     aliases = c("us_accum", "accum", "us_accum_km", "log10_us_accum", "log10_us_accum_z"),
     col     = "US_Accum_km",
     desc    = "log10 upstream accumulated channel length (km, z-score standardized)",
     default = "All domains",
-    eval_fn = function(df) as.numeric(scale(log10(pmax(1e-4, df$US_Accum_km))))
+    eval_fn = function(df) safe_zscale(log10(pmax(1e-4, df$US_Accum_km)))
   ),
   Is_Chalk_Limestone = list(
     aliases = c("chalk_limestone", "chalk", "limestone", "is_chalk_limestone"),
@@ -61,56 +73,56 @@ COVARIATE_CATALOG <- list(
     col     = "mid_X",
     desc    = "Reach midpoint BNG Easting coordinate (m, z-score standardized)",
     default = "All domains",
-    eval_fn = function(df) as.numeric(scale(df$mid_X))
+    eval_fn = function(df) safe_zscale(df$mid_X)
   ),
   Northing_z = list(
     aliases = c("northing", "mid_y", "northing_z"),
     col     = "mid_Y",
     desc    = "Reach midpoint BNG Northing coordinate (m, z-score standardized)",
     default = "All domains",
-    eval_fn = function(df) as.numeric(scale(df$mid_Y))
+    eval_fn = function(df) safe_zscale(df$mid_Y)
   ),
   Sinuosity_z = list(
     aliases = c("sinuosity", "sinuosity_z"),
     col     = "Sinuosity",
     desc    = "Mean channel sinuosity ratio (z-score standardized)",
     default = "Optional (--vars=+sinuosity)",
-    eval_fn = function(df) as.numeric(scale(df$Sinuosity))
+    eval_fn = function(df) safe_zscale(df$Sinuosity)
   ),
   SrcElevation_z = list(
     aliases = c("src_elevation", "srcelevation", "src_elev", "src_elevation_z"),
     col     = "SrcElevation",
     desc    = "Mean headwater source elevation (m AOD, z-score standardized)",
     default = "Optional (--vars=+src_elevation)",
-    eval_fn = function(df) as.numeric(scale(df$SrcElevation))
+    eval_fn = function(df) safe_zscale(df$SrcElevation)
   ),
   Dist2Mth_z = list(
     aliases = c("dist2mth", "dist2mth_km", "dist2mth_z"),
     col     = "Dist2Mth_km",
     desc    = "Hydrologic distance from upstream node to river mouth (km, z-score)",
     default = "Optional (--vars=+dist2mth)",
-    eval_fn = function(df) as.numeric(scale(df$Dist2Mth_km))
+    eval_fn = function(df) safe_zscale(df$Dist2Mth_km)
   ),
   Length_z = list(
     aliases = c("length", "length_km", "length_z"),
     col     = "length_km",
     desc    = "Reach polyline length (km, z-score standardized)",
     default = "Optional (--vars=+length)",
-    eval_fn = function(df) as.numeric(scale(df$length_km))
+    eval_fn = function(df) safe_zscale(df$length_km)
   ),
   log10_Shreve_z = list(
     aliases = c("shreve", "log10_shreve", "log10_shreve_z"),
     col     = "Shreve",
     desc    = "log10 Shreve stream magnitude (z-score standardized)",
     default = "Optional (--vars=+shreve)",
-    eval_fn = function(df) as.numeric(scale(log10(pmax(1, df$Shreve))))
+    eval_fn = function(df) safe_zscale(log10(pmax(1, df$Shreve)))
   ),
   Strahler_z = list(
     aliases = c("strahler", "strahler_z"),
     col     = "Strahler",
     desc    = "Strahler stream order (1..7, z-score standardized)",
     default = "Optional (--vars=+strahler)",
-    eval_fn = function(df) as.numeric(scale(df$Strahler))
+    eval_fn = function(df) safe_zscale(df$Strahler)
   )
 )
 
@@ -297,15 +309,16 @@ format_covariates_folder_tag <- function(var_specs = NULL) {
     return(paste0("vars_", paste(parts, collapse = "_")))
   }
 
-  terms <- character(0)
-  for (sp in specs) {
-    sp_clean <- sub("^\\+", "", sp)
-    if (tolower(sp_clean) %in% c("intercept", "none")) next
-    nm <- match_covariate_token(sp_clean)
-    if (!(nm %in% terms)) terms <- c(terms, nm)
-  }
+  terms <- apply_covariate_specs(specs, names(COVARIATE_SHORT_SLUG))
   if (length(terms) == 0) return("vars_none")
   slugs <- unname(COVARIATE_SHORT_SLUG[terms])
+  if (any(is_mod)) {
+    excl_parts <- vapply(specs[grepl("^-", specs)], function(sp) {
+      nm <- match_covariate_token(substr(sp, 2, nchar(sp)))
+      paste0("no_", unname(COVARIATE_SHORT_SLUG[nm]))
+    }, character(1))
+    slugs <- c(slugs, excl_parts)
+  }
   if (length(slugs) > 5) {
     slugs <- c(slugs[1:4], paste0("plus", length(slugs) - 4))
   }
@@ -328,10 +341,17 @@ format_covariates_subtitle <- function(var_specs = NULL, param_tab = NULL) {
     } else {
       param_tab$Domain[1]
     }
-    eng_p <- unique(as.character(param_tab$Parameter[
-      param_tab$Domain == ref_dom &
-      !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", param_tab$Parameter)
-    ]))
+    dom_rows <- param_tab[param_tab$Domain == ref_dom, , drop = FALSE]
+    if ("Model" %in% names(dom_rows)) {
+      spat_mask <- grepl("Tail-Up|Tail-Down", dom_rows$Model, ignore.case = TRUE)
+      if (any(spat_mask)) dom_rows <- dom_rows[spat_mask, , drop = FALSE]
+    }
+    diag_rx <- paste0(
+      "^(intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|mean_source_penalty_var|",
+      "gam_edf|spline_nl|rf_varimp|gbm_varimp|trend_cv|tobit_em)"
+    )
+    cand_p <- unique(as.character(dom_rows$Parameter[!grepl(diag_rx, dom_rows$Parameter, ignore.case = TRUE)]))
+    eng_p <- cand_p[cand_p %in% names(COVARIATE_CATALOG)]
     if (!has_cli_vars && (identical(eng_p, default_eng) || identical(eng_p, default_bas))) {
       return(NULL)
     }
@@ -411,7 +431,114 @@ resolve_core_basin <- function(df_reaches, catch_lookup = NULL, net_meta = NULL,
   }
 
   tab_c <- sort(table(df_reaches$CatchID), decreasing = TRUE)
-  cid <- as.integer(names(tab_c)[1])
+  rank_idx <- switch(target, humber = 1L, thames = min(2L, length(tab_c)), severn = min(3L, length(tab_c)), 1L)
+  cid <- as.integer(names(tab_c)[rank_idx])
   lbl <- sprintf("%s Basin (CatchID=%d)", paste0(toupper(substr(target, 1, 1)), substr(target, 2, nchar(target))), cid)
   list(catch_id = cid, domain_label = lbl)
+}
+
+resolve_basin_spec <- function(spec, c_lu) {
+  spec_trim <- trimws(as.character(spec))
+  spec_low  <- tolower(spec_trim)
+  if (!nzchar(spec_trim)) stop("Empty --basin specification.")
+
+  # 1. Explicit rbd:<id_or_name>
+  if (grepl("^rbd:", spec_low)) {
+    if (is.null(c_lu) || nrow(c_lu) == 0L) stop("Catchment lookup CSV not found; cannot resolve rbd: specification.")
+    rest <- trimws(sub("^rbd:", "", spec_trim, ignore.case = TRUE))
+    if (grepl("^[0-9]+$", rest)) {
+      rid  <- as.integer(rest)
+      rows <- which(!is.na(c_lu$RBD_ID) & c_lu$RBD_ID == rid)
+    } else {
+      rows <- which(!is.na(c_lu$RBD_Name) & tolower(c_lu$RBD_Name) == tolower(rest))
+      if (length(rows) == 0L) {
+        rows <- which(!is.na(c_lu$RBD_Name) & grepl(rest, c_lu$RBD_Name, ignore.case = TRUE))
+      }
+      rid <- if (length(rows) > 0L) c_lu$RBD_ID[rows[1]] else NA_integer_
+      if (!is.na(rid)) rows <- which(!is.na(c_lu$RBD_ID) & c_lu$RBD_ID == rid)
+    }
+    if (length(rows) == 0L) stop(sprintf("No River Basin District found for '%s'. Run --list-basins.", spec))
+    sub_r <- c_lu[rows, , drop = FALSE]
+    rname <- sub_r$RBD_Name[1]
+    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname)))
+    return(list(
+      slug         = gsub("^_|_$", "", slug),
+      short_title  = paste0(rname, " RBD"),
+      domain_label = sprintf("%s RBD (RBD=%d)", rname, as.integer(rid)),
+      catch_ids    = unique(sub_r$CatchID)
+    ))
+  }
+
+  # 2. Explicit catch:<id_or_name> or catchment:<id_or_name>
+  if (grepl("^catch(ment)?:", spec_low)) {
+    rest <- trimws(sub("^catch(ment)?:", "", spec_trim, ignore.case = TRUE))
+    return(resolve_basin_spec(rest, c_lu))
+  }
+
+  # 3. Integer CatchID
+  if (grepl("^[0-9]+$", spec_trim)) {
+    cid   <- as.integer(spec_trim)
+    sub_c <- if (!is.null(c_lu) && nrow(c_lu) > 0L) c_lu[which(!is.na(c_lu$CatchID) & c_lu$CatchID == cid), , drop = FALSE] else data.frame()
+    rname <- if (nrow(sub_c) > 0L) sub_c$Main_River[1] else paste0("Catchment ", cid)
+    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0(rname, "_", cid)))
+    return(list(
+      slug         = gsub("^_|_$", "", slug),
+      short_title  = rname,
+      domain_label = sprintf("%s (CatchID=%d)", rname, cid),
+      catch_ids    = cid
+    ))
+  }
+
+  if (is.null(c_lu) || nrow(c_lu) == 0L) stop("Catchment lookup CSV not found; specify numeric CatchID.")
+
+  # 4. Exact match on RBD_Name (unless matching a Main_River name directly)
+  rbd_exact <- which(!is.na(c_lu$RBD_Name) & tolower(c_lu$RBD_Name) == spec_low)
+  riv_exact <- which(!is.na(c_lu$Main_River) & tolower(c_lu$Main_River) == spec_low)
+  if (length(rbd_exact) > 0L && length(riv_exact) == 0L) {
+    rid   <- c_lu$RBD_ID[rbd_exact[1]]
+    rname <- c_lu$RBD_Name[rbd_exact[1]]
+    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname)))
+    return(list(
+      slug         = gsub("^_|_$", "", slug),
+      short_title  = paste0(rname, " RBD"),
+      domain_label = sprintf("%s RBD (RBD=%d)", rname, as.integer(rid)),
+      catch_ids    = unique(c_lu$CatchID[which(!is.na(c_lu$RBD_ID) & c_lu$RBD_ID == rid)])
+    ))
+  }
+
+  # 5. Match on Main_River (preferring highest n_obs_reaches, n_reaches)
+  m_idx <- which(!is.na(c_lu$Main_River) & grepl(spec_trim, c_lu$Main_River, ignore.case = TRUE))
+  if (length(m_idx) > 0L) {
+    sub_m <- c_lu[m_idx, , drop = FALSE]
+    sub_m <- sub_m[order(-sub_m$n_obs_reaches, -sub_m$n_reaches), , drop = FALSE]
+    if (nrow(sub_m) > 1L) {
+      cat(sprintf("  Note: '--basin=%s' matched %d catchments; selecting largest monitored: %s (CatchID=%d, %d obs reaches).\n",
+                  spec_trim, nrow(sub_m), sub_m$Main_River[1], sub_m$CatchID[1], sub_m$n_obs_reaches[1]))
+    }
+    cid   <- sub_m$CatchID[1]
+    rname <- sub_m$Main_River[1]
+    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0(rname, "_", cid)))
+    return(list(
+      slug         = gsub("^_|_$", "", slug),
+      short_title  = rname,
+      domain_label = sprintf("%s (CatchID=%d)", rname, cid),
+      catch_ids    = cid
+    ))
+  }
+
+  # 6. Substring match on RBD_Name
+  r_idx <- which(!is.na(c_lu$RBD_Name) & grepl(spec_trim, c_lu$RBD_Name, ignore.case = TRUE))
+  if (length(r_idx) > 0L) {
+    rid   <- c_lu$RBD_ID[r_idx[1]]
+    rname <- c_lu$RBD_Name[r_idx[1]]
+    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname)))
+    return(list(
+      slug         = gsub("^_|_$", "", slug),
+      short_title  = paste0(rname, " RBD"),
+      domain_label = sprintf("%s RBD (RBD=%d)", rname, as.integer(rid)),
+      catch_ids    = unique(c_lu$CatchID[which(!is.na(c_lu$RBD_ID) & c_lu$RBD_ID == rid)])
+    ))
+  }
+
+  stop(sprintf("Could not match '--basin=%s' to any CatchID, Main_River, or RBD_Name. Run with --list-basins to see options.", spec))
 }

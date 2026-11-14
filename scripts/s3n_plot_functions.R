@@ -202,14 +202,18 @@ compute_color_scale <- function(vals_model_sc, trans_obj, vmin_raw = NULL, vmax_
   if (has_vmax) {
     vmax <- tr$fwd(as.numeric(vmax_raw[1]))
   }
+  if (is.finite(vmin) && is.finite(vmax) && vmin > vmax) {
+    tmp_v <- vmin; vmin <- vmax; vmax <- tmp_v
+  }
   if (!is.finite(vmin) || !is.finite(vmax) || vmax - vmin < 1e-4) {
-    vmin <- ifelse(is.finite(vmin), vmin, 0.0) - 0.5
-    vmax <- ifelse(is.finite(vmax), vmax, 0.0) + 0.5
+    mid <- if (is.finite(vmin) && is.finite(vmax)) 0.5 * (vmin + vmax) else if (is.finite(vmin)) vmin else if (is.finite(vmax)) vmax else 0.0
+    vmin <- mid - 0.5
+    vmax <- mid + 0.5
   }
   if (tr$is_transformed) {
     raw_min <- tr$inv(vmin)
     raw_max <- tr$inv(vmax)
-    if (raw_max < raw_min) {
+    if (is.finite(raw_min) && is.finite(raw_max) && raw_max < raw_min) {
       tmp <- raw_min; raw_min <- raw_max; raw_max <- tmp
     }
     if (tr$type %in% c("log", "log10", "reciprocal") ||
@@ -219,6 +223,10 @@ compute_color_scale <- function(vals_model_sc, trans_obj, vmin_raw = NULL, vmax_
     } else {
       p_ticks <- pretty(c(raw_min, raw_max), n = 6)
       log_cands <- c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 20, 30, 50, 100, 200, 500, 1000)
+      if (tr$type == "logit") {
+        sc_hi <- if (!is.null(tr$scale) && is.finite(tr$scale)) tr$scale else 100
+        log_cands <- log_cands[log_cands > 0 & log_cands < sc_hi]
+      }
       cands <- sort(unique(c(p_ticks, log_cands)))
       cands <- cands[tr$valid_fn(cands)]
     }
@@ -457,8 +465,11 @@ plot_stream_network <- function(df, val_col, vmin, vmax, pal, main_title, sub_ti
                                 cbar_ticks, cbar_labels, cbar_title,
                                 show_obs = FALSE, obs_col = NULL, base_lwd = 0.35, max_lwd = 2.6,
                                 max_main_chars = 65, max_sub_chars = 90) {
-  ord <- order(df$Shreve)
-  d   <- df[ord, ]
+  sh_num <- suppressWarnings(as.numeric(df$Shreve))
+  ord <- order(sh_num, na.last = FALSE)
+  d   <- df[ord, , drop = FALSE]
+  sh_ord <- sh_num[ord]
+  sh_ord[!is.finite(sh_ord)] <- 1
 
   xr <- range(c(d$start_X, d$end_X), na.rm = TRUE)
   yr <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
@@ -470,7 +481,7 @@ plot_stream_network <- function(df, val_col, vmin, vmax, pal, main_title, sub_ti
        asp = 1, axes = FALSE, xlab = "", ylab = "")
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
 
-  lwds <- base_lwd + (max_lwd - base_lwd) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+  lwds <- base_lwd + (max_lwd - base_lwd) * pmin(1, log10(pmax(1, sh_ord)) / log10(max(10, max(sh_ord, na.rm = TRUE))))
   cols <- map_to_colors(d[[val_col]], vmin, vmax, pal)
   segments(d$start_X, d$start_Y, d$end_X, d$end_Y, col = cols, lwd = lwds)
 
@@ -785,21 +796,29 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   }
 
   # Panel A: Observed vs Predicted (5-Fold CV) on Humber, Custom Basin(s) & All England
+  has_eng_cv <- !is.null(eng_cv) && is.data.frame(eng_cv) && nrow(eng_cv) > 0L
   if (is.null(lims_a)) {
-    lims <- range(c(eng_cv$obs_y, eng_cv$cv_comb), na.rm = TRUE)
-    pad  <- 0.08 * diff(lims)
+    pool_y <- c(
+      if (has_eng_cv) c(eng_cv$obs_y, eng_cv$cv_comb) else numeric(0),
+      if (!is.null(hum_cv) && nrow(hum_cv) > 0L) c(hum_cv$obs_y, hum_cv$cv_comb) else numeric(0),
+      unlist(lapply(extra_cv_list, function(e) if (!is.null(e$cv_pts) && nrow(e$cv_pts) > 0L) c(e$cv_pts$obs_y, e$cv_pts$cv_comb) else numeric(0)))
+    )
+    pool_y <- pool_y[is.finite(pool_y)]
+    lims <- if (length(pool_y) > 0L) range(pool_y) else c(0, 1)
+    pad  <- max(1e-4, 0.08 * diff(lims))
     lims <- c(lims[1] - pad, lims[2] + pad)
   } else {
     lims <- lims_a
   }
 
-  plot(eng_cv$obs_y, eng_cv$cv_comb,
-       pch = 16, col = rgb(0.16, 0.45, 0.65, 0.38), cex = 0.85,
-       xlim = lims, ylim = lims,
+  plot(NA, xlim = lims, ylim = lims,
        xlab = paste("Observed", sc_lbl),
        ylab = paste("5-Fold CV Predicted", sc_lbl),
        main = wrap_title("A. Out-of-Sample 5-Fold Cross-Validation Accuracy", 60))
   grid(col = "#e0e0e0", lty = "dotted")
+  if (has_eng_cv) {
+    points(eng_cv$obs_y, eng_cv$cv_comb, pch = 16, col = rgb(0.16, 0.45, 0.65, 0.38), cex = 0.85)
+  }
   if (!is.null(hum_cv) && nrow(hum_cv) > 0) {
     points(hum_cv$obs_y, hum_cv$cv_comb, pch = 21, bg = rgb(0.90, 0.49, 0.13, 0.75), col = "#222222", cex = 0.95, lwd = 0.6)
   }
@@ -815,12 +834,20 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   }
   hum_row <- subset(cv_tab, grepl("^Humber Basin", Domain) & Model == "S3N Combined (Tail-Up + Tail-Down)")
 
-  leg_txt  <- sprintf("All England (n = %d): R2 = %.3f, RMSE = %.3f", nrow(eng_cv), eng_row$R2[1], eng_row$RMSE[1])
-  leg_pch  <- 16
-  leg_lty  <- NA
-  leg_lwd  <- NA
-  leg_ptbg <- NA
-  leg_col  <- rgb(0.16, 0.45, 0.65, 0.8)
+  leg_txt  <- character(0)
+  leg_pch  <- numeric(0)
+  leg_lty  <- numeric(0)
+  leg_lwd  <- numeric(0)
+  leg_ptbg <- character(0)
+  leg_col  <- character(0)
+  if (has_eng_cv && nrow(eng_row) > 0L) {
+    leg_txt  <- c(leg_txt, sprintf("All England (n = %d): R2 = %.3f, RMSE = %.3f", nrow(eng_cv), eng_row$R2[1], eng_row$RMSE[1]))
+    leg_pch  <- c(leg_pch, 16)
+    leg_lty  <- c(leg_lty, NA)
+    leg_lwd  <- c(leg_lwd, NA)
+    leg_ptbg <- c(leg_ptbg, NA)
+    leg_col  <- c(leg_col, rgb(0.16, 0.45, 0.65, 0.8))
+  }
 
   if (nrow(hum_row) > 0) {
     leg_txt  <- c(leg_txt, sprintf("Humber Basin (n = %d): R2 = %.3f, RMSE = %.3f", hum_row$n_obs[1], hum_row$R2[1], hum_row$RMSE[1]))
@@ -870,21 +897,22 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   avail_doms <- unique(cv_tab$Domain)
   model_order <- c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)",
                    "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)")
-  r2_mat <- vapply(avail_doms, function(d) {
+  r2_true <- vapply(avail_doms, function(d) {
     sub <- cv_tab[cv_tab$Domain == d, ]
     vals <- vapply(model_order, function(mn) {
       hit <- sub$R2[sub$Model == mn]
-      if (length(hit) > 0 && is.finite(hit[1])) max(0, hit[1]) else NA_real_
+      if (length(hit) > 0 && is.finite(hit[1])) hit[1] else NA_real_
     }, numeric(1))
     unname(vals)
   }, numeric(4))
-  if (is.null(dim(r2_mat))) r2_mat <- matrix(r2_mat, nrow = 4, ncol = length(avail_doms))
+  if (is.null(dim(r2_true))) r2_true <- matrix(r2_true, nrow = 4, ncol = length(avail_doms))
+  r2_mat <- pmax(0, r2_true)
   short_map <- c(
     "Humber Basin (CatchID=80)"   = "Humber Basin",
     "Severn Basin (CatchID=2786)" = "Severn Basin",
     "Thames Basin (CatchID=3055)" = "Thames Basin"
   )
-  short_map[eng_dom] <- sprintf("All England\n(n=%d)", eng_row$n_obs[1])
+  short_map[eng_dom] <- if (nrow(eng_row) > 0L) sprintf("All England\n(n=%d)", eng_row$n_obs[1]) else "All England"
   colnames(r2_mat) <- ifelse(avail_doms %in% names(short_map), short_map[avail_doms],
                              sub(" \\((CatchID|RBD)=.*\\)$", "", avail_doms))
   ymax_b <- max(0.88, max(r2_mat, na.rm = TRUE) * 1.18)
@@ -895,7 +923,8 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
                 border = "#222222", cex.names = cex_names_b, ylab = "5-Fold Cross-Validation R2",
                 main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 60))
   grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
-  text(bp, r2_mat + 0.03 * ymax_b, labels = sprintf("%.2f", r2_mat), cex = cex_txt_b, font = 2)
+  r2_lbls <- ifelse(is.finite(r2_true), sprintf("%.2f", r2_true), "")
+  text(bp, r2_mat + 0.03 * ymax_b, labels = r2_lbls, cex = cex_txt_b, font = 2)
   legend("topright",
          legend = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream)", "S3N Tail-Up (FC + AFV)", "S3N Combined (TU + TD)"),
          fill = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"), border = "#222222", bty = "n", cex = 0.80)
@@ -908,14 +937,19 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   }
   non_cov_params <- c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance")
   eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
-                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter))
+                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter, ignore.case = TRUE))
   eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
-                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter))
+                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter, ignore.case = TRUE))
   if (nrow(eng_td_p) == 0) {
     eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
-                       !(Parameter %in% setdiff(non_cov_params, "Intercept")))
+                       !(Parameter %in% setdiff(non_cov_params, "Intercept")) &
+                       !grepl("^gam_edf", Parameter, ignore.case = TRUE))
     eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
-                       !(Parameter %in% setdiff(non_cov_params, "Intercept")))
+                       !(Parameter %in% setdiff(non_cov_params, "Intercept")) &
+                       !grepl("^gam_edf", Parameter, ignore.case = TRUE))
+  }
+  if (nrow(eng_td_p) > 0L && nrow(eng_tu_p) > 0L) {
+    eng_tu_p <- eng_tu_p[match(eng_td_p$Parameter, eng_tu_p$Parameter), , drop = FALSE]
   }
 
   nice_labels <- c(
@@ -937,33 +971,41 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
     Northing_z         = "Northing (std)"
   )
   np <- nrow(eng_td_p)
-  y_pos <- rev(seq_len(np))
-  par_MAR_old <- par("mar")
-  par(mar = c(4.5, 10.2, 3.8, 1.5))
-  xr_ci <- range(c(eng_tu_p$CI_Lower, eng_tu_p$CI_Upper, eng_td_p$CI_Lower, eng_td_p$CI_Upper, -0.2, 0.2), na.rm = TRUE)
-  xr_pad <- 0.12 * diff(xr_ci)
-  plot(NA, xlim = c(xr_ci[1] - xr_pad, xr_ci[2] + xr_pad), ylim = c(-0.45, np + 0.55),
-       yaxt = "n", xlab = sprintf("Effect Size on %s [95%% Bootstrap CI]", sc_lbl), ylab = "",
-       main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 60))
-  grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
-  abline(v = 0, col = "#c0392b", lty = 2, lwd = 1.5)
-  lbls_c <- ifelse(eng_td_p$Parameter %in% names(nice_labels), nice_labels[eng_td_p$Parameter], eng_td_p$Parameter)
-  axis(2, at = y_pos, labels = lbls_c, las = 1, cex.axis = 0.85)
+  if (np == 0L) {
+    plot.new()
+    title(main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 60))
+    text(0.5, 0.5, "No fixed-effect parameter estimates available", col = "#666666", cex = 0.95)
+  } else {
+    y_pos <- rev(seq_len(np))
+    par_MAR_old <- par("mar")
+    par(mar = c(4.5, 10.2, 3.8, 1.5))
+    xr_ci <- range(c(eng_tu_p$CI_Lower, eng_tu_p$CI_Upper, eng_td_p$CI_Lower, eng_td_p$CI_Upper, -0.2, 0.2), na.rm = TRUE)
+    xr_pad <- 0.12 * diff(xr_ci)
+    plot(NA, xlim = c(xr_ci[1] - xr_pad, xr_ci[2] + xr_pad), ylim = c(-0.45, np + 0.55),
+         yaxt = "n", xlab = sprintf("Effect Size on %s [95%% Bootstrap CI]", sc_lbl), ylab = "",
+         main = wrap_title(sprintf("C. Environmental Drivers of %s (England S3N)", det_short), 60))
+    grid(nx = NULL, ny = NA, col = "#e0e0e0", lty = "dotted")
+    abline(v = 0, col = "#c0392b", lty = 2, lwd = 1.5)
+    lbls_c <- ifelse(eng_td_p$Parameter %in% names(nice_labels), nice_labels[eng_td_p$Parameter], eng_td_p$Parameter)
+    axis(2, at = y_pos, labels = lbls_c, las = 1, cex.axis = 0.85)
 
-  segments(eng_tu_p$CI_Lower, y_pos + 0.14, eng_tu_p$CI_Upper, y_pos + 0.14, col = "#27ae60", lwd = 2.2)
-  points(eng_tu_p$Estimate, y_pos + 0.14, pch = 16, col = "#27ae60", cex = 1.1)
+    if (nrow(eng_tu_p) == np) {
+      segments(eng_tu_p$CI_Lower, y_pos + 0.14, eng_tu_p$CI_Upper, y_pos + 0.14, col = "#27ae60", lwd = 2.2)
+      points(eng_tu_p$Estimate, y_pos + 0.14, pch = 16, col = "#27ae60", cex = 1.1)
+    }
 
-  segments(eng_td_p$CI_Lower, y_pos - 0.14, eng_td_p$CI_Upper, y_pos - 0.14, col = "#2980b9", lwd = 2.2)
-  points(eng_td_p$Estimate, y_pos - 0.14, pch = 17, col = "#2980b9", cex = 1.1)
+    segments(eng_td_p$CI_Lower, y_pos - 0.14, eng_td_p$CI_Upper, y_pos - 0.14, col = "#2980b9", lwd = 2.2)
+    points(eng_td_p$Estimate, y_pos - 0.14, pch = 17, col = "#2980b9", cex = 1.1)
 
-  legend("bottomright", legend = c("S3N Tail-Up (95% Bootstrap CI)", "S3N Tail-Down (95% Bootstrap CI)"),
-         col = c("#27ae60", "#2980b9"), pch = c(16, 17), lwd = 2.2,
-         bg = rgb(1, 1, 1, 0.94), box.col = "#dddddd", cex = 0.78)
-  par(mar = par_MAR_old)
+    legend("bottomright", legend = c("S3N Tail-Up (95% Bootstrap CI)", "S3N Tail-Down (95% Bootstrap CI)"),
+           col = c("#27ae60", "#2980b9"), pch = c(16, 17), lwd = 2.2,
+           bg = rgb(1, 1, 1, 0.94), box.col = "#dddddd", cex = 0.78)
+    par(mar = par_MAR_old)
+  }
 
   # Panel D: Distribution across All Reaches (Overall) and by Hydrogeology & Elevation Regime
-  reg_str <- ifelse(eng_pred$Elevation > 150, "Upland\n(>150m)",
-             ifelse(eng_pred$Is_Aquifer == 1, "Lowland Aquifer\n(Chalk/Limestone/Sand)", "Lowland\nNon-Aquifer"))
+  reg_str <- ifelse(!is.na(eng_pred$Elevation) & eng_pred$Elevation >= 150.0, "Upland\n(>150m)",
+             ifelse(!is.na(eng_pred$Is_Aquifer) & eng_pred$Is_Aquifer == 1, "Lowland Aquifer\n(Chalk/Limestone/Sand)", "Lowland\nNon-Aquifer"))
   box_list <- list(
     "All Reaches\n(Overall)"                  = eng_pred$pred_combined,
     "Upland\n(>150m)"                         = eng_pred$pred_combined[reg_str == "Upland\n(>150m)"],
@@ -1023,7 +1065,10 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
   } else if (n_pan <= 9) {
     nrow_g <- 3L; ncol_g <- 3L; w_px <- 3700L; h_px <- 3800L
   } else {
-    nrow_g <- 3L; ncol_g <- 4L; w_px <- 4600L; h_px <- 3700L
+    ncol_g <- 4L
+    nrow_g <- as.integer(ceiling(n_pan / ncol_g))
+    w_px <- 4600L
+    h_px <- max(3700L, 1250L * nrow_g)
   }
 
   nm        <- get_norm_meta(norm_mode)
@@ -1098,7 +1143,8 @@ plot_fig5_temporal_england_grid <- function(period_items, by_mode, sc_val, det_c
       }
     }
 
-    main_t <- sprintf("%s. %s — Predicted %s", LETTERS[i], pan_lbl, det_short)
+    pan_idx_lbl <- if (i <= 26L) LETTERS[i] else paste0("P", i)
+    main_t <- sprintf("%s. %s — Predicted %s", pan_idx_lbl, pan_lbl, det_short)
     sub_t  <- sprintf("n = %s obs reaches%s | Network Median = %s %s",
                       format(n_obs_i, big.mark = ","), r2_str,
                       formatC(med_raw, format = "fg", digits = 3), det_unit)
@@ -1145,8 +1191,11 @@ plot_compliance_tier_network <- function(df, main_title, sub_title,
                                          base_lwd = 0.35, max_lwd = 2.6,
                                          show_obs = TRUE, show_legend = TRUE,
                                          max_main_chars = 65, max_sub_chars = 90) {
-  ord <- order(df$Shreve)
-  d   <- df[ord, ]
+  sh_num <- suppressWarnings(as.numeric(df$Shreve))
+  ord <- order(sh_num, na.last = FALSE)
+  d   <- df[ord, , drop = FALSE]
+  sh_ord <- sh_num[ord]
+  sh_ord[!is.finite(sh_ord)] <- 1
 
   xr <- range(c(d$start_X, d$end_X), na.rm = TRUE)
   yr <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
@@ -1159,7 +1208,7 @@ plot_compliance_tier_network <- function(df, main_title, sub_title,
        asp = 1, axes = FALSE, xlab = "", ylab = "")
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
 
-  lwds <- base_lwd + (max_lwd - base_lwd) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+  lwds <- base_lwd + (max_lwd - base_lwd) * pmin(1, log10(pmax(1, sh_ord)) / log10(max(10, max(sh_ord, na.rm = TRUE))))
   tier_chr <- as.character(d$compliance_tier)
   cols <- unname(COMPLIANCE_TIER_COLORS[tier_chr])
   cols[is.na(cols)] <- "#cccccc"
@@ -1393,8 +1442,11 @@ plot_fig6_spatiotemporal_trends <- function(trend_df, by_mode, period_labels, de
   )
 
   # Panel B: Trend Significance Classification
-  ord <- order(trend_df$Shreve)
-  d   <- trend_df[ord, ]
+  sh_num <- suppressWarnings(as.numeric(trend_df$Shreve))
+  ord <- order(sh_num, na.last = FALSE)
+  d   <- trend_df[ord, , drop = FALSE]
+  sh_ord <- sh_num[ord]
+  sh_ord[!is.finite(sh_ord)] <- 1
   xr  <- range(c(d$start_X, d$end_X), na.rm = TRUE)
   yr  <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
   dx  <- diff(xr)
@@ -1403,7 +1455,7 @@ plot_fig6_spatiotemporal_trends <- function(trend_df, by_mode, period_labels, de
        ylim = c(yr[1] - 0.03 * dy, yr[2] + 0.06 * dy),
        asp = 1, axes = FALSE, xlab = "", ylab = "")
   rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
-  lwds <- 0.25 + (2.0 - 0.25) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+  lwds <- 0.25 + (2.0 - 0.25) * pmin(1, log10(pmax(1, sh_ord)) / log10(max(10, max(sh_ord, na.rm = TRUE))))
   tier_chr <- as.character(d$trend_tier)
   cols <- unname(TREND_TIER_COLORS[tier_chr])
   cols[is.na(cols)] <- "#cfd4da"
@@ -1483,7 +1535,11 @@ plot_fig7_spatiotemporal_transitions <- function(transitions, by_mode, det_code,
     # Row B of block: 5-tier Wald Z-test significance classification
     for (ti in idx_vec) {
       item <- transitions[[ti]]
-      d  <- item$df[order(item$df$Shreve), ]
+      sh_num <- suppressWarnings(as.numeric(item$df$Shreve))
+      ord_it <- order(sh_num, na.last = FALSE)
+      d  <- item$df[ord_it, , drop = FALSE]
+      sh_ord <- sh_num[ord_it]
+      sh_ord[!is.finite(sh_ord)] <- 1
       xr <- range(c(d$start_X, d$end_X), na.rm = TRUE)
       yr <- range(c(d$start_Y, d$end_Y), na.rm = TRUE)
       dx <- diff(xr); dy <- diff(yr)
@@ -1491,7 +1547,7 @@ plot_fig7_spatiotemporal_transitions <- function(transitions, by_mode, det_code,
            ylim = c(yr[1] - 0.03 * dy, yr[2] + 0.06 * dy),
            asp = 1, axes = FALSE, xlab = "", ylab = "")
       rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "#f8f9fa", border = "#d0d4d9", lwd = 1)
-      lwds <- 0.20 + (1.6 - 0.20) * pmin(1, log10(pmax(1, d$Shreve)) / log10(max(10, max(d$Shreve))))
+      lwds <- 0.20 + (1.6 - 0.20) * pmin(1, log10(pmax(1, sh_ord)) / log10(max(10, max(sh_ord, na.rm = TRUE))))
       tier_chr <- as.character(d$trend_tier)
       cols <- unname(TREND_TIER_COLORS[tier_chr])
       cols[is.na(cols)] <- "#cfd4da"
@@ -1675,7 +1731,7 @@ plot_fig_optimal_design <- function(pred_df, design_df, domain_label,
   d_sub <- d_sub[order(d_sub$Rank), , drop = FALSE]
   if (nrow(d_sub) == 0L) return(invisible(NULL))
 
-  tr <- if (!is.null(trans_obj)) trans_obj else build_transformer("log")
+  tr <- as_transformer(trans_obj)
   if (is.null(sc_se)) sc_se <- compute_se_scale(pred_df$se_model_sc)
 
   det_short    <- shorten_det_name(det_name)
@@ -1786,7 +1842,7 @@ plot_fig_optimal_design <- function(pred_df, design_df, domain_label,
   se_drop_pct <- 100 * (se_bef0 - se_end) / max(1e-9, se_bef0)
 
   y_max_cum <- max(1.0, max(cum_pct, na.rm = TRUE) * 1.18)
-  plot(ranks, cum_pct, type = "n", xlim = c(0.5, k_sel + 0.5), ylim = c(0, y_max_cum),
+  plot(ranks, cum_pct, type = "n", xlim = c(0, k_sel + 0.5), ylim = c(0, y_max_cum),
        xlab = "Added Monitoring Stations Ranked by Variance Gain (Rank 1..K)",
        ylab = "Cumulative Domain Variance Reduced (%)",
        las = 1, cex.axis = 0.86, cex.lab = 0.92)
@@ -1806,7 +1862,7 @@ plot_fig_optimal_design <- function(pred_df, design_df, domain_label,
   if (diff(se_rng) < 1e-6) se_rng <- se_rng + c(-0.02, 0.02)
   se_ylim <- c(se_rng[1] - 0.12 * diff(se_rng), se_rng[2] + 0.12 * diff(se_rng))
   plot(c(0, ranks), c(se_bef0, se_aft), type = "l", col = "#0f766e", lwd = 2.0, lty = 2,
-       axes = FALSE, xlab = "", ylab = "", xlim = c(0.5, k_sel + 0.5), ylim = se_ylim)
+       axes = FALSE, xlab = "", ylab = "", xlim = c(0, k_sel + 0.5), ylim = se_ylim)
   axis(4, las = 1, cex.axis = 0.84, col.axis = "#0f766e")
   mtext(sprintf("Mean Kriging SE (%s)", se_scale_txt), side = 4, line = 3.2, cex = 0.86, col = "#0f766e")
 

@@ -42,11 +42,14 @@ SEXP C_build_tree_tin_tout(SEXP parent_dn_r) {
     SEXP tout_r = PROTECT(Rf_allocVector(INTSXP, q));
     int* tin = INTEGER(tin_r);
     int* tout = INTEGER(tout_r);
+    std::fill(tin, tin + q, 0);
+    std::fill(tout, tout + q, 0);
 
     int timer = 0;
     struct Frame { int u; int child_idx; };
     std::vector<Frame> stack;
-    for (int r : roots) {
+    auto traverse_root = [&](int r) {
+        stack.clear();
         stack.push_back({r, 0});
         tin[r] = ++timer;
         while (!stack.empty()) {
@@ -54,13 +57,21 @@ SEXP C_build_tree_tin_tout(SEXP parent_dn_r) {
             int u = top.u;
             if (top.child_idx < (int)children[u].size()) {
                 int v = children[u][top.child_idx++];
-                tin[v] = ++timer;
-                stack.push_back({v, 0});
+                if (tin[v] == 0) {
+                    tin[v] = ++timer;
+                    stack.push_back({v, 0});
+                }
             } else {
                 tout[u] = timer;
                 stack.pop_back();
             }
         }
+    };
+    for (int r : roots) {
+        if (tin[r] == 0) traverse_root(r);
+    }
+    for (int i = 0; i < q; ++i) {
+        if (tin[i] == 0) traverse_root(i);
     }
 
     SEXP res = PROTECT(Rf_allocVector(VECSXP, 2));
@@ -86,6 +97,7 @@ SEXP C_compute_s3n_neighbors(
     int m = INTEGER(m_r)[0];
     int model_type = INTEGER(model_type_r)[0];
     int q = Rf_length(parent_dn_r);
+    int q_pred = (Rf_length(n_r) >= 2) ? std::min(q, std::max(0, INTEGER(n_r)[1])) : q;
 
     const int* parent_dn = INTEGER(parent_dn_r);
     const int* net_id = INTEGER(net_id_r);
@@ -246,22 +258,23 @@ SEXP C_compute_s3n_neighbors(
         obs_by_net[net_id[j]].push_back(j);
     }
 
-    SEXP pred_nnIndx_r = PROTECT(Rf_allocVector(INTSXP, q * m));
-    SEXP pred_nnDist_r = PROTECT(Rf_allocVector(REALSXP, q * m));
-    SEXP pred_nnWght_r = PROTECT(Rf_allocVector(REALSXP, q * m));
+    SEXP pred_nnIndx_r = PROTECT(Rf_allocVector(INTSXP, q_pred * m));
+    SEXP pred_nnDist_r = PROTECT(Rf_allocVector(REALSXP, q_pred * m));
+    SEXP pred_nnWght_r = PROTECT(Rf_allocVector(REALSXP, q_pred * m));
     int* pred_nnIndx = INTEGER(pred_nnIndx_r);
     double* pred_nnDist = REAL(pred_nnDist_r);
     double* pred_nnWght = REAL(pred_nnWght_r);
 
     int m_use_pred = (n < m) ? n : m;
 
-    #pragma omp parallel
-    {
-        std::vector<Cand> cands;
-        cands.reserve(n);
+    if (q_pred > 0) {
+        #pragma omp parallel
+        {
+            std::vector<Cand> cands;
+            cands.reserve(n);
 
-        #pragma omp for schedule(dynamic, 64)
-        for (int i = 0; i < q; ++i) {
+            #pragma omp for schedule(dynamic, 64)
+            for (int i = 0; i < q_pred; ++i) {
             auto it_net = obs_by_net.find(net_id[i]);
             bool use_same_net_only = (it_net != obs_by_net.end() && (int)it_net->second.size() >= m_use_pred && n > 0);
             cands.clear();
@@ -309,6 +322,7 @@ SEXP C_compute_s3n_neighbors(
                 }
             }
         }
+        }
     }
 
     // Package obs_neighbors list
@@ -348,52 +362,57 @@ SEXP C_compute_s3n_neighbors(
 // Solves C * x = b for an m x m symmetric positive definite matrix C using Cholesky.
 // If C has zero or negative pivots, adds progressive jitter to diagonal.
 static bool solve_chol_stack(int m, const double* C, const double* b, double* x) {
-    if (m <= 0 || m > 64) return false;
-    double L[64 * 64];
+    if (m <= 0) return false;
+    std::fill(x, x + m, 0.0);
+    double L_stack[64 * 64];
+    std::vector<double> L_heap;
+    double* L = L_stack;
+    if (m > 64) {
+        L_heap.resize((size_t)m * m);
+        L = L_heap.data();
+    }
     double jitter = 0.0;
     for (int attempt = 0; attempt < 5; ++attempt) {
         bool ok = true;
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j <= i; ++j) {
-                double s = C[i * m + j];
+                double s = C[(size_t)i * m + j];
                 if (i == j) s += jitter;
                 for (int k = 0; k < j; ++k) {
-                    s -= L[i * m + k] * L[j * m + k];
+                    s -= L[(size_t)i * m + k] * L[(size_t)j * m + k];
                 }
                 if (i == j) {
                     if (s <= 1e-12) {
                         ok = false;
                         break;
                     }
-                    L[i * m + j] = std::sqrt(s);
+                    L[(size_t)i * m + j] = std::sqrt(s);
                 } else {
-                    L[i * m + j] = s / L[j * m + j];
+                    L[(size_t)i * m + j] = s / L[(size_t)j * m + j];
                 }
             }
             if (!ok) break;
         }
         if (ok) {
-            double y[64];
+            std::vector<double> y_buf;
+            double y_stack[64];
+            double* y = (m <= 64) ? y_stack : (y_buf.resize(m), y_buf.data());
             for (int i = 0; i < m; ++i) {
                 double s = b[i];
-                for (int k = 0; k < i; ++k) {
-                    s -= L[i * m + k] * y[k];
-                }
-                y[i] = s / L[i * m + i];
+                for (int k = 0; k < i; ++k) s -= L[(size_t)i * m + k] * y[k];
+                y[i] = s / L[(size_t)i * m + i];
             }
             for (int i = m - 1; i >= 0; --i) {
                 double s = y[i];
-                for (int k = i + 1; k < m; ++k) {
-                    s -= L[k * m + i] * x[k];
-                }
-                x[i] = s / L[i * m + i];
+                for (int k = i + 1; k < m; ++k) s -= L[(size_t)k * m + i] * x[k];
+                x[i] = s / L[(size_t)i * m + i];
             }
             return true;
         }
-        jitter = (jitter == 0.0) ? 1e-6 : jitter * 10.0;
+        jitter = (attempt == 0) ? 1e-6 : jitter * 100.0;
     }
     for (int i = 0; i < m; ++i) {
-        double d = C[i * m + i] + 1e-4;
+        double d = std::max(1e-8, C[(size_t)i * m + i] + 1e-4);
         x[i] = b[i] / d;
     }
     return false;
@@ -899,7 +918,9 @@ SEXP C_s3n_joint_nngp(
     double phi_tu  = std::max(1e-6, params[4]);
     double phi_td  = std::max(1e-6, params[5]);
     double phi_euc = std::max(1e-6, params[6]);
-    int kernel_id  = (Rf_length(params_r) >= 8) ? (int)std::round(params[7]) : 0;
+    int kid_tu     = (Rf_length(params_r) >= 8)  ? (int)std::round(params[7]) : 0;
+    int kid_td     = (Rf_length(params_r) >= 9)  ? (int)std::round(params[8]) : kid_tu;
+    int kid_euc    = (Rf_length(params_r) >= 10) ? (int)std::round(params[9]) : kid_tu;
 
     double total_sill = sig_tu + sig_td + sig_euc + tau_sq;
     if (total_sill < 1e-10) total_sill = 1e-10;
@@ -916,21 +937,21 @@ SEXP C_s3n_joint_nngp(
             double w = tu_oo_wt[idx1 + idx2 * n];
             double d = tu_oo_dist[idx1 + idx2 * n];
             if (w > 0.0 && d < 1e5) {
-                cov += sig_tu * w * eval_stream_kernel(d, phi_tu, kernel_id);
+                cov += sig_tu * w * eval_stream_kernel(d, phi_tu, kid_tu);
             }
         }
         if (sig_td > 0.0) {
             double w = td_oo_wt[idx1 + idx2 * n];
             double d = td_oo_dist[idx1 + idx2 * n];
             if (w > 0.0 && d < 1e5) {
-                cov += sig_td * w * eval_stream_kernel(d, phi_td, kernel_id);
+                cov += sig_td * w * eval_stream_kernel(d, phi_td, kid_td);
             }
         }
         if (sig_euc > 0.0) {
             double dx = (mid_x[idx1] - mid_x[idx2]) * 0.001;
             double dy = (mid_y[idx1] - mid_y[idx2]) * 0.001;
             double d_euc = std::hypot(dx, dy);
-            cov += sig_euc * eval_stream_kernel(d_euc, phi_euc, kernel_id);
+            cov += sig_euc * eval_stream_kernel(d_euc, phi_euc, kid_euc);
         }
         return cov;
     };
@@ -1171,7 +1192,7 @@ SEXP C_s3n_joint_nngp(
                 cand_tu_w[c] = tu_p_wt[base_p + k];
                 if (cand_tu_w[c] > 0.0 && cand_tu_d[c] < 1e5) {
                     cand_td_d[c] = cand_tu_d[c];
-                    cand_td_w[c] = 1.0;
+                    cand_td_w[c] = std::min(1.0 - 1e-6, std::exp(-0.001 * cand_tu_d[c]));
                 }
             }
         }
@@ -1230,16 +1251,16 @@ SEXP C_s3n_joint_nngp(
             int j = cand_ids[c];
             double cov = 0.0;
             if (sig_tu > 0.0 && cand_tu_w[c] > 0.0 && cand_tu_d[c] < 1e5) {
-                cov += sig_tu * cand_tu_w[c] * eval_stream_kernel(cand_tu_d[c], phi_tu, kernel_id);
+                cov += sig_tu * cand_tu_w[c] * eval_stream_kernel(cand_tu_d[c], phi_tu, kid_tu);
             }
             if (sig_td > 0.0 && cand_td_w[c] > 0.0 && cand_td_d[c] < 1e5) {
-                cov += sig_td * cand_td_w[c] * eval_stream_kernel(cand_td_d[c], phi_td, kernel_id);
+                cov += sig_td * cand_td_w[c] * eval_stream_kernel(cand_td_d[c], phi_td, kid_td);
             }
             if (sig_euc > 0.0) {
                 double dx = (xi - mid_x[j]) * 0.001;
                 double dy = (yi - mid_y[j]) * 0.001;
                 double d_euc = std::hypot(dx, dy);
-                cov += sig_euc * eval_stream_kernel(d_euc, phi_euc, kernel_id);
+                cov += sig_euc * eval_stream_kernel(d_euc, phi_euc, kid_euc);
             }
             ranked[c] = {j, cov};
         }
@@ -1412,6 +1433,30 @@ SEXP C_s3n_optimal_design(
     double* cum_out   = REAL(cum_pct_r);
     double* se_bef    = REAL(se_before_r);
     double* se_aft    = REAL(se_after_r);
+    std::fill(sel_pos, sel_pos + K, 0);
+    std::fill(dv_out,  dv_out + K,  0.0);
+    std::fill(pct_out, pct_out + K, 0.0);
+    std::fill(cum_out, cum_out + K, 0.0);
+    std::fill(se_bef,  se_bef + K,  0.0);
+    std::fill(se_aft,  se_aft + K,  0.0);
+
+    // Precompute candidate x eval correlation matrix once when memory budget permits (<= 80 MB)
+    bool use_cache = ((size_t)n_cand * (size_t)n_eval <= 20000000ULL);
+    std::vector<float> R_ce;
+    if (use_cache && n_cand > 0 && n_eval > 0) {
+        R_ce.resize((size_t)n_cand * n_eval, 0.0f);
+        #pragma omp parallel for schedule(dynamic, 4)
+        for (int c = 0; c < n_cand; ++c) {
+            int u = cand_idx[c];
+            int net_u = net_id[u];
+            float* row_c = &R_ce[(size_t)c * n_eval];
+            for (int e = 0; e < n_eval; ++e) {
+                int ev = eval_idx[e];
+                if (w_euc == 0.0 && net_id[ev] != net_u) continue;
+                row_c[e] = (float)pair_corr(ev, u);
+            }
+        }
+    }
 
     double cum_dv = 0.0;
 
@@ -1425,12 +1470,14 @@ SEXP C_s3n_optimal_design(
         for (int c = 0; c < n_cand; ++c) {
             if (chosen[c] || v_cand[c] <= 1e-10) continue;
             int u = cand_idx[c];
+            int net_u = net_id[u];
             double vc = v_cand[c];
             double denom = vc + tau_sq;
             double total_dv = 0.0;
+            const float* row_c = use_cache ? &R_ce[(size_t)c * n_eval] : nullptr;
             for (int e = 0; e < n_eval; ++e) {
                 if (v_eval[e] <= 1e-10) continue;
-                double r = pair_corr(eval_idx[e], u);
+                double r = row_c ? (double)row_c[e] : ((w_euc == 0.0 && net_id[eval_idx[e]] != net_u) ? 0.0 : pair_corr(eval_idx[e], u));
                 if (r <= 1e-6) continue;
                 double cov_ec = std::sqrt(v_eval[e] * vc) * r;
                 double dv = (cov_ec * cov_ec) / denom;
@@ -1452,20 +1499,25 @@ SEXP C_s3n_optimal_design(
 
         chosen[best_c] = 1;
         int u_best = cand_idx[best_c];
+        int net_best = net_id[u_best];
         double vc_best = v_cand[best_c];
         double denom_best = vc_best + tau_sq;
 
-        // Update remaining evaluation and candidate variances
+        // Update remaining evaluation and candidate variances in parallel
+        const float* best_row = use_cache ? &R_ce[(size_t)best_c * n_eval] : nullptr;
+        #pragma omp parallel for schedule(static)
         for (int e = 0; e < n_eval; ++e) {
             if (v_eval[e] <= 1e-10) continue;
-            double r = pair_corr(eval_idx[e], u_best);
+            double r = best_row ? (double)best_row[e] : ((w_euc == 0.0 && net_id[eval_idx[e]] != net_best) ? 0.0 : pair_corr(eval_idx[e], u_best));
             if (r <= 1e-6) continue;
             double cov_ec = std::sqrt(v_eval[e] * vc_best) * r;
             double dv = (cov_ec * cov_ec) / denom_best;
             v_eval[e] = std::max(0.0, v_eval[e] - dv);
         }
+        #pragma omp parallel for schedule(static)
         for (int c = 0; c < n_cand; ++c) {
             if (chosen[c] || v_cand[c] <= 1e-10) continue;
+            if (w_euc == 0.0 && net_id[cand_idx[c]] != net_best) continue;
             double r = pair_corr(cand_idx[c], u_best);
             if (r <= 1e-6) continue;
             double cov_cc = std::sqrt(v_cand[c] * vc_best) * r;
@@ -1679,7 +1731,7 @@ static SEXP s3n_multivariate_nngp_impl(
                 int di = (int)obs_b.size();
                 if (di == 0) continue;
 
-                // Gather up to m predecessor reaches j < i
+                // Gather sorted predecessor reaches j < i so sparse heterotopic targets get up to m neighbors
                 std::vector<std::pair<double, int>> cands;
                 if (i > 0) {
                     cands.reserve(i);
@@ -1689,31 +1741,31 @@ static SEXP s3n_multivariate_nngp_impl(
                         double score = wtu_k + wtd_k + weuc_k;
                         if (score > 1e-10) cands.push_back({-score, j});
                     }
-                    int k_use = std::min(m, (int)cands.size());
-                    if ((int)cands.size() > k_use) {
-                        std::partial_sort(cands.begin(), cands.begin() + k_use, cands.end());
-                        cands.resize(k_use);
-                    } else {
-                        std::sort(cands.begin(), cands.end());
-                    }
+                    std::sort(cands.begin(), cands.end());
                 }
 
-                // Flatten observed neighbor entries (u, a)
-                std::vector<int> nb_u, nb_a;
+                // Flatten observed neighbor entries (u, a) capping each target a at m observations
+                std::vector<int> nb_u, nb_a, var_cnt(P, 0);
                 std::vector<double> nb_wtu, nb_wtd, nb_weuc;
                 for (size_t c = 0; c < cands.size(); ++c) {
                     int u = cands[c].second;
                     double wtu_k, wtd_k, weuc_k;
                     obs_spatial_weights(i, u, wtu_k, wtd_k, weuc_k);
+                    bool all_full = true;
                     for (int a = 0; a < P; ++a) {
-                        if (R_FINITE(Y_obs[u + a * n])) {
-                            nb_u.push_back(u);
-                            nb_a.push_back(a);
-                            nb_wtu.push_back(wtu_k);
-                            nb_wtd.push_back(wtd_k);
-                            nb_weuc.push_back(weuc_k);
+                        if (var_cnt[a] < m) {
+                            all_full = false;
+                            if (R_FINITE(Y_obs[u + a * n])) {
+                                nb_u.push_back(u);
+                                nb_a.push_back(a);
+                                nb_wtu.push_back(wtu_k);
+                                nb_wtd.push_back(wtd_k);
+                                nb_weuc.push_back(weuc_k);
+                                var_cnt[a]++;
+                            }
                         }
                     }
+                    if (all_full) break;
                 }
                 int K = (int)nb_u.size();
 
@@ -1767,38 +1819,30 @@ static SEXP s3n_multivariate_nngp_impl(
                     }
                     chol_factor_dyn(K, C_NN.data(), L_N);
 
-                    std::vector<double> tmp(K), col_U(K);
-                    std::vector<double> B_i((size_t)K * di, 0.0); // B_i[s, r]
+                    std::vector<double> tmp(K), U_i((size_t)K * di, 0.0);
                     std::vector<double> c_col(K);
                     for (int r = 0; r < di; ++r) {
                         int br = obs_b[r];
                         for (int s = 0; s < K; ++s) {
                             c_col[s] = obs_scalar_cov(nb_u[s], nb_a[s], i, br, nb_wtu[s], nb_wtd[s], nb_weuc[s]);
                         }
-                        chol_forward_sub(K, L_N.data(), c_col.data(), col_U.data());
-                        chol_back_sub(K, L_N.data(), col_U.data(), tmp.data());
+                        double* col_Ur = &U_i[(size_t)r * K];
+                        chol_forward_sub(K, L_N.data(), c_col.data(), col_Ur);
+                        chol_back_sub(K, L_N.data(), col_Ur, tmp.data());
                         for (int s = 0; s < K; ++s) {
-                            B_i[(size_t)s * di + r] = tmp[s];
                             dy[r] -= tmp[s] * Y_obs[nb_u[s] + nb_a[s] * n];
                             for (int pc = 0; pc < p_cov; ++pc) {
                                 dX[r + (nb_a[s] * p_cov + pc) * di] -= tmp[s] * X_obs[nb_u[s] + pc * n];
                             }
                         }
                     }
-                    // D_i = C_ii - B_i^T * C_Ni
+                    // D_i = C_ii - B_i^T * C_Ni = C_ii - U_i^T * U_i
                     for (int r1 = 0; r1 < di; ++r1) {
-                        int br1 = obs_b[r1];
+                        const double* u1_ptr = &U_i[(size_t)r1 * K];
                         for (int r2 = r1; r2 < di; ++r2) {
+                            const double* u2_ptr = &U_i[(size_t)r2 * K];
                             double dot = 0.0;
-                            for (int s = 0; s < K; ++s) {
-                                double c_sr2 = obs_scalar_cov(nb_u[s], nb_a[s], i, br1, nb_wtu[s], nb_wtd[s], nb_weuc[s]);
-                                if (r1 == r2) {
-                                    dot += B_i[(size_t)s * di + r2] * c_sr2;
-                                } else {
-                                    double c_sr = obs_scalar_cov(nb_u[s], nb_a[s], i, obs_b[r2], nb_wtu[s], nb_wtd[s], nb_weuc[s]);
-                                    dot += B_i[(size_t)s * di + r1] * c_sr;
-                                }
-                            }
+                            for (int s = 0; s < K; ++s) dot += u1_ptr[s] * u2_ptr[s];
                             D_i[r1 * di + r2] -= dot;
                             D_i[r2 * di + r1] = D_i[r1 * di + r2];
                         }
@@ -1852,10 +1896,15 @@ static SEXP s3n_multivariate_nngp_impl(
         chol_forward_sub(P_beta, L_B.data(), Xty.data(), y_b.data());
         chol_back_sub(P_beta, L_B.data(), y_b.data(), beta_vec.data());
 
-        // Exact GLS RSS = ||y_tilde||^2 - beta^T Xty
-        double quad_fit = 0.0;
-        for (int b = 0; b < P_beta; ++b) quad_fit += beta_vec[b] * Xty[b];
-        double rss = std::max(1e-10, yt_sum2 - quad_fit);
+        // Exact GLS RSS = ||y_tilde - X_tilde * beta||^2 = yt_sum2 - 2 * beta^T Xty + beta^T XtX beta
+        double beta_Xty = 0.0, beta_XtX_beta = 0.0;
+        for (int b1 = 0; b1 < P_beta; ++b1) {
+            beta_Xty += beta_vec[b1] * Xty[b1];
+            for (int b2 = 0; b2 < P_beta; ++b2) {
+                beta_XtX_beta += beta_vec[b1] * XtX[(size_t)b1 * P_beta + b2] * beta_vec[b2];
+            }
+        }
+        double rss = std::max(1e-10, yt_sum2 - 2.0 * beta_Xty + beta_XtX_beta);
         double neg2ll = rss + sum_logd;
 
         SEXP beta_mat_r = PROTECT(Rf_allocMatrix(REALSXP, p_cov, P));
@@ -1936,7 +1985,10 @@ static SEXP s3n_multivariate_nngp_impl(
                     if (c >= 0) {
                         double d = tu_p_dist[base_p + k], w = tu_p_wt[base_p + k];
                         if (w > 0.0 && d < 1e5 && has_tu) cand_wtu[c] = w * eval_stream_kernel(d, phi_tu, kernel_id);
-                        if (w > 0.0 && d < 1e5 && has_td) cand_wtd[c] = eval_stream_kernel(d, phi_td, kernel_id);
+                        if (w > 0.0 && d < 1e5 && has_td) {
+                            double w_td_raw = std::min(1.0 - 1e-6, std::exp(-0.001 * d));
+                            cand_wtd[c] = w_td_raw * eval_stream_kernel(d, phi_td, kernel_id);
+                        }
                     }
                 }
                 for (int k = 0; k < m_stride; ++k) {
@@ -1981,25 +2033,27 @@ static SEXP s3n_multivariate_nngp_impl(
                     cand_sc[c] = cand_wtu[c] + cand_wtd[c] + cand_weuc[c];
                     if (cand_sc[c] > 1e-10) ranked.push_back({-cand_sc[c], c});
                 }
-                int k_use = std::min(m, (int)ranked.size());
-                if (k_use > 0) {
-                    std::partial_sort(ranked.begin(), ranked.begin() + k_use, ranked.end());
-                    ranked.resize(k_use);
-                }
+                std::sort(ranked.begin(), ranked.end());
 
-                std::vector<int> nb_u, nb_a;
+                std::vector<int> nb_u, nb_a, var_cnt(P, 0);
                 std::vector<double> nb_wtu, nb_wtd, nb_weuc, r_vec;
-                for (int r = 0; r < k_use; ++r) {
+                for (size_t r = 0; r < ranked.size(); ++r) {
                     int c = ranked[r].second;
                     int u = cand_ids[c];
+                    bool all_full = true;
                     for (int a = 0; a < P; ++a) {
-                        double rv = r_obs[u + a * n];
-                        if (R_FINITE(rv)) {
-                            nb_u.push_back(u); nb_a.push_back(a);
-                            nb_wtu.push_back(cand_wtu[c]); nb_wtd.push_back(cand_wtd[c]); nb_weuc.push_back(cand_weuc[c]);
-                            r_vec.push_back(rv);
+                        if (var_cnt[a] < m) {
+                            all_full = false;
+                            double rv = r_obs[u + a * n];
+                            if (R_FINITE(rv)) {
+                                nb_u.push_back(u); nb_a.push_back(a);
+                                nb_wtu.push_back(cand_wtu[c]); nb_wtd.push_back(cand_wtd[c]); nb_weuc.push_back(cand_weuc[c]);
+                                r_vec.push_back(rv);
+                                var_cnt[a]++;
+                            }
                         }
                     }
+                    if (all_full) break;
                 }
 
                 int K = (int)nb_u.size();
@@ -2045,7 +2099,7 @@ static SEXP s3n_multivariate_nngp_impl(
                             if (has_tu  && w_tu_s  > 0.0) cov += w_tu_s  * A_tu[idx];
                             if (has_td  && w_td_s  > 0.0) cov += w_td_s  * A_td[idx];
                             if (has_euc && w_euc_s > 0.0) cov += w_euc_s * A_euc[idx];
-                            if (nb_u[s] == i) cov += Psi[idx];
+                            if (nb_u[s] == i && nb_a[s] != b) cov += Psi[idx];
                             c_b[s] = cov;
                             shift += cov * alpha[s];
                         }
@@ -2093,17 +2147,11 @@ static SEXP s3n_multivariate_nngp_impl(
                 double sc = w1 + w2 + w3;
                 if (sc > 1e-10) cands.push_back({-sc, j});
             }
-            int k_use = std::min(m, (int)cands.size());
-            if ((int)cands.size() > k_use) {
-                std::partial_sort(cands.begin(), cands.begin() + k_use, cands.end());
-                cands.resize(k_use);
-            } else {
-                std::sort(cands.begin(), cands.end());
-            }
+            std::sort(cands.begin(), cands.end());
 
             for (int b = 0; b < P; ++b) {
                 if (!R_FINITE(Y_obs[i + b * n])) continue;
-                std::vector<int> nb_u, nb_a;
+                std::vector<int> nb_u, nb_a, var_cnt(P, 0);
                 std::vector<double> nb_w1, nb_w2, nb_w3, r_vec;
 
                 // Co-located auxiliary observations at reach i itself (a != b)
@@ -2115,19 +2163,25 @@ static SEXP s3n_multivariate_nngp_impl(
                     nb_w3.push_back(has_euc ? 1.0 : 0.0);
                     r_vec.push_back(r_obs[i + a * n]);
                 }
-                // Neighboring station observations (u != i)
-                for (int c = 0; c < k_use; ++c) {
+                // Neighboring station observations (u != i), capped at m per target a
+                for (size_t c = 0; c < cands.size(); ++c) {
                     int u = cands[c].second;
                     double w1, w2, w3;
                     obs_spatial_weights(i, u, w1, w2, w3);
+                    bool all_full = true;
                     for (int a = 0; a < P; ++a) {
-                        double rv = r_obs[u + a * n];
-                        if (R_FINITE(rv)) {
-                            nb_u.push_back(u); nb_a.push_back(a);
-                            nb_w1.push_back(w1); nb_w2.push_back(w2); nb_w3.push_back(w3);
-                            r_vec.push_back(rv);
+                        if (var_cnt[a] < m) {
+                            all_full = false;
+                            double rv = r_obs[u + a * n];
+                            if (R_FINITE(rv)) {
+                                nb_u.push_back(u); nb_a.push_back(a);
+                                nb_w1.push_back(w1); nb_w2.push_back(w2); nb_w3.push_back(w3);
+                                r_vec.push_back(rv);
+                                var_cnt[a]++;
+                            }
                         }
                     }
+                    if (all_full) break;
                 }
 
                 double mu_b = 0.0;

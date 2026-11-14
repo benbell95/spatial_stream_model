@@ -56,6 +56,7 @@ import sys
 import time
 import zipfile
 from collections import Counter, defaultdict
+from functools import lru_cache
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_SCRIPT_DIR)
@@ -196,7 +197,10 @@ def _opt_float(v):
         return None
 
 
+@lru_cache(maxsize=16384)
 def _extract_year_month(raw_dt):
+    if raw_dt and len(raw_dt) >= 7 and raw_dt[4] == "-" and raw_dt[0:4].isdigit() and raw_dt[5:7].isdigit():
+        return int(raw_dt[0:4]), int(raw_dt[5:7])
     dt_iso = parse_datetime_iso(raw_dt) if raw_dt else ""
     if len(dt_iso) >= 7 and dt_iso[0:4].isdigit() and dt_iso[5:7].isdigit():
         return int(dt_iso[0:4]), int(dt_iso[5:7])
@@ -284,8 +288,9 @@ def load_monitoring_stations_and_records(
             if samples_p and os.path.exists(samples_p):
                 print(f"   Loading custom samples from: {samples_p}")
                 with open(samples_p, "r", encoding="utf-8-sig") as f:
-                    s_reader = csv.DictReader(f)
-                    s_fnames = s_reader.fieldnames or []
+                    s_reader = csv.reader(f)
+                    s_fnames = next(s_reader, None) or []
+                    s_col_idx = {h: i for i, h in enumerate(s_fnames)}
                     s_id_col = find_col(s_fnames, ["site_id", "network_id", "station_id", "id", "location_id", "site"])
                     dt_col = find_col(s_fnames, ["sample_datetime", "datetime", "date_time", "date", "survey_date", "timestamp"])
                     val_col = find_col(s_fnames, ["meas_result", "result", "value", "val", "reading", "score", "concentration"])
@@ -296,29 +301,41 @@ def load_monitoring_stations_and_records(
                     if not (s_id_col and val_col):
                         raise ValueError(f"Could not find site ID and measurement value columns in {samples_p}. Found: {s_fnames}")
 
+                    i_sid = s_col_idx[s_id_col]
+                    i_val = s_col_idx[val_col]
+                    i_dt = s_col_idx[dt_col] if dt_col else None
+                    i_unc = s_col_idx[unc_col] if unc_col else None
+                    i_meth = s_col_idx[meth_col] if meth_col else None
+                    i_det = s_col_idx[det_col_cand] if det_col_cand else None
+                    i_sign = s_col_idx[sign_col] if sign_col else None
+                    det_low = det_code.lower() if det_code else ""
+                    cens_tokens = ("<", "yes", "true", "1")
+                    n_scols = len(s_fnames)
+
                     for r in s_reader:
-                        s_nid = r.get(s_id_col, "").strip()
+                        if not r:
+                            continue
+                        if len(r) < n_scols:
+                            r = r + [""] * (n_scols - len(r))
+                        s_nid = r[i_sid].strip()
                         if not s_nid:
                             continue
-                        if det_col_cand and det_code:
-                            row_det = r.get(det_col_cand, "").strip()
-                            if row_det and row_det.lower() != det_code.lower():
+                        if i_det is not None and det_low:
+                            row_det = r[i_det].strip()
+                            if row_det and row_det.lower() != det_low:
                                 continue
-                        raw_val_str = r.get(val_col, "").strip()
+                        raw_val_str = r[i_val].strip()
                         if not raw_val_str:
                             continue
                         try:
                             val = float(raw_val_str)
                         except ValueError:
                             continue
-                        is_cens = False
-                        if sign_col:
-                            s_sign = r.get(sign_col, "").strip().lower()
-                            is_cens = (s_sign in ("<", "yes", "true", "1"))
-                        yr, mo = _extract_year_month(r.get(dt_col, "").strip() if dt_col else "")
+                        is_cens = (r[i_sign].strip().lower() in cens_tokens) if i_sign is not None else False
+                        yr, mo = _extract_year_month(r[i_dt].strip() if i_dt is not None else "")
                         seas = MONTH_TO_SEASON.get(mo, "summer")
-                        unc_val = _opt_float(r.get(unc_col, "").strip()) if unc_col else None
-                        meth_val = r.get(meth_col, "").strip().lower() if meth_col else ""
+                        unc_val = _opt_float(r[i_unc].strip()) if i_unc is not None else None
+                        meth_val = r[i_meth].strip().lower() if i_meth is not None else ""
                         all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
 
@@ -373,47 +390,78 @@ def load_monitoring_stations_and_records(
                     core_wq_sites.add(raw_id)
 
             # Check samples dataset in registry
-            ds_cfg = cfg_s.get("datasets", {}).get(dataset, {})
+            ds_dict = cfg_s.get("datasets")
+            if isinstance(ds_dict, dict) and dataset not in ds_dict:
+                continue
+            ds_cfg = ds_dict.get(dataset, {}) if isinstance(ds_dict, dict) else {}
             samp_f = ds_cfg.get("file", "samples.csv")
             samp_p = os.path.join(s_dir, samp_f)
             if os.path.exists(samp_p):
                 with open(samp_p, "r", encoding="utf-8-sig") as f:
-                    s_reader = csv.DictReader(f)
-                    s_fnames = s_reader.fieldnames or []
-                    s_id_col = ds_cfg.get("id_col") or find_col(s_fnames, ["network_id", "site_id", "station_id", "id"])
-                    dt_col = ds_cfg.get("datetime_col") or find_col(s_fnames, ["sample_datetime", "datetime", "date", "survey_date"])
-                    val_col = ds_cfg.get("val_col") or find_col(s_fnames, ["meas_result", "result", "value", "val"])
-                    det_col_c = ds_cfg.get("det_col") or find_col(s_fnames, ["det_code", "determinand_code", "determinand", "code"])
-                    cens_col_c = ds_cfg.get("cens_col") or find_col(s_fnames, ["meas_sign", "less_than_flag", "is_censored"])
+                    s_reader = csv.reader(f)
+                    s_fnames = next(s_reader, None) or []
+                    s_col_idx = {h: i for i, h in enumerate(s_fnames)}
+                    s_id_col = ds_cfg.get("id_col")
+                    if not s_id_col or s_id_col not in s_col_idx:
+                        s_id_col = find_col(s_fnames, ["network_id", "site_id", "station_id", "id"])
+                    dt_col = ds_cfg.get("datetime_col")
+                    if not dt_col or dt_col not in s_col_idx:
+                        dt_col = find_col(s_fnames, ["sample_datetime", "datetime", "date", "survey_date"])
+                    val_col = ds_cfg.get("val_col")
+                    if not val_col or val_col not in s_col_idx:
+                        val_col = find_col(s_fnames, ["meas_result", "result", "value", "val"])
+                    det_col_c = ds_cfg.get("det_col")
+                    if not det_col_c or det_col_c not in s_col_idx:
+                        det_col_c = find_col(s_fnames, ["det_code", "determinand_code", "determinand", "code"])
+                    cens_col_c = ds_cfg.get("cens_col")
+                    if not cens_col_c or cens_col_c not in s_col_idx:
+                        cens_col_c = find_col(s_fnames, ["meas_sign", "less_than_flag", "is_censored"])
                     cens_flg = ds_cfg.get("cens_flag", "<").lower()
-                    unc_col = ds_cfg.get("unc_col") or find_col(s_fnames, ["meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"])
-                    meth_col = ds_cfg.get("meth_col") or find_col(s_fnames, ["meas_method", "method", "model_type", "type"])
+                    unc_col = ds_cfg.get("unc_col")
+                    if not unc_col or unc_col not in s_col_idx:
+                        unc_col = find_col(s_fnames, ["meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"])
+                    meth_col = ds_cfg.get("meth_col")
+                    if not meth_col or meth_col not in s_col_idx:
+                        meth_col = find_col(s_fnames, ["meas_method", "method", "model_type", "type"])
                     if not (s_id_col and val_col):
                         raise ValueError(f"Could not find site ID and measurement value columns in {samp_p}. Found: {s_fnames}")
 
+                    i_sid = s_col_idx[s_id_col]
+                    i_val = s_col_idx[val_col]
+                    i_dt = s_col_idx.get(dt_col) if dt_col else None
+                    i_det = s_col_idx.get(det_col_c) if det_col_c else None
+                    i_cens = s_col_idx.get(cens_col_c) if cens_col_c else None
+                    i_unc = s_col_idx.get(unc_col) if unc_col else None
+                    i_meth = s_col_idx.get(meth_col) if meth_col else None
+                    det_low = det_code.lower() if det_code else ""
+                    default_meth = str(cfg_s.get("meas_method", "")).lower()
+                    cens_tokens = (cens_flg, "<", "yes", "true", "1")
+                    n_scols = len(s_fnames)
+
                     for r in s_reader:
-                        s_nid = r.get(s_id_col, "").strip()
+                        if not r:
+                            continue
+                        if len(r) < n_scols:
+                            r = r + [""] * (n_scols - len(r))
+                        s_nid = r[i_sid].strip()
                         if not s_nid:
                             continue
-                        if det_col_c and det_code:
-                            row_det = r.get(det_col_c, "").strip()
-                            if row_det and row_det.lower() != det_code.lower():
+                        if i_det is not None and det_low:
+                            row_det = r[i_det].strip()
+                            if row_det and row_det.lower() != det_low:
                                 continue
-                        raw_v = r.get(val_col, "").strip()
+                        raw_v = r[i_val].strip()
                         if not raw_v:
                             continue
                         try:
                             val = float(raw_v)
                         except ValueError:
                             continue
-                        is_cens = False
-                        if cens_col_c:
-                            s_sign = r.get(cens_col_c, "").strip().lower()
-                            is_cens = (s_sign == cens_flg or s_sign in ("<", "yes", "true", "1"))
-                        yr, mo = _extract_year_month(r.get(dt_col, "").strip() if dt_col else "")
+                        is_cens = (r[i_cens].strip().lower() in cens_tokens) if i_cens is not None else False
+                        yr, mo = _extract_year_month(r[i_dt].strip() if i_dt is not None else "")
                         seas = MONTH_TO_SEASON.get(mo, "summer")
-                        unc_val = _opt_float(r.get(unc_col, "").strip()) if unc_col else None
-                        meth_val = r.get(meth_col, "").strip().lower() if meth_col else str(cfg_s.get("meas_method", "")).lower()
+                        unc_val = _opt_float(r[i_unc].strip()) if i_unc is not None else None
+                        meth_val = r[i_meth].strip().lower() if i_meth is not None else default_meth
                         all_records.append((s_nid, val, is_cens, yr, mo, seas, unc_val, meth_val))
             continue
 
@@ -454,27 +502,34 @@ def load_monitoring_stations_and_records(
         if dataset == "wq":
             if os.path.exists(wq_samples_path):
                 with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
-                    for r in csv.DictReader(f):
-                        r_det = r.get("det_code")
-                        if r_det == det_code:
-                            core_wq_sites.add(r["network_id"])
-                            try:
-                                val = float(r["meas_result"])
-                            except (ValueError, TypeError):
-                                continue
-                            is_cens = (r.get("meas_sign") == "<")
-                            dt = r.get("sample_datetime", "")
-                            if len(dt) >= 7:
-                                yr = int(dt[0:4])
-                                mo = int(dt[5:7])
-                                seas = MONTH_TO_SEASON[mo]
-                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
+                    s_reader = csv.reader(f)
+                    hdr = next(s_reader, None) or []
+                    c_idx = {h: i for i, h in enumerate(hdr)}
+                    i_det = c_idx["det_code"]
+                    i_nid = c_idx["network_id"]
+                    i_val = c_idx["meas_result"]
+                    i_sign = c_idx.get("meas_sign")
+                    i_dt = c_idx.get("sample_datetime")
+                    n_wcols = len(hdr)
+                    for r in s_reader:
+                        if not r:
+                            continue
+                        if len(r) < n_wcols:
+                            r = r + [""] * (n_wcols - len(r))
+                        if r[i_det] != det_code:
+                            continue
+                        nid = r[i_nid]
+                        core_wq_sites.add(nid)
+                        try:
+                            val = float(r[i_val])
+                        except (ValueError, TypeError):
+                            continue
+                        is_cens = (r[i_sign] == "<") if i_sign is not None else False
+                        yr, mo = _extract_year_month(r[i_dt].strip() if i_dt is not None else "")
+                        if yr is not None and mo is not None:
+                            seas = MONTH_TO_SEASON.get(mo, "summer")
+                            all_records.append((nid, val, is_cens, yr, mo, seas, None, ""))
         else:
-            if os.path.exists(wq_samples_path):
-                with open(wq_samples_path, "r", encoding="utf-8-sig") as f:
-                    for r in csv.DictReader(f):
-                        if r.get("det_code") == "0117":
-                            core_wq_sites.add(r["network_id"])
             if dataset == "lcms":
                 lcms_path = os.path.join(s_dir, f"{prefix} LCMS GCMS Samples.csv")
                 if not os.path.exists(lcms_path):
@@ -482,22 +537,38 @@ def load_monitoring_stations_and_records(
                         raise ValueError("LCMS/GCMS data is only monitored on RSN and is not available in Small Streams Network (SSN).")
                     continue
                 with open(lcms_path, "r", encoding="utf-8-sig") as f:
-                    for r in csv.DictReader(f):
-                        if r.get("cas_number") == det_code or (r.get("compound_name") and det_code.lower() in r["compound_name"].lower()):
-                            if not r.get("meas_result"):
-                                continue
-                            try:
-                                val = float(r["meas_result"])
-                            except (ValueError, TypeError):
-                                continue
-                            is_cens = (r.get("less_than_flag", "").strip().lower() == "yes")
-                            dt = r.get("sample_datetime", "")
-                            if len(dt) >= 7:
-                                yr = int(dt[0:4])
-                                mo = int(dt[5:7])
-                                seas = MONTH_TO_SEASON[mo]
-                                all_records.append((r["network_id"], val, is_cens, yr, mo, seas, None, ""))
-                                core_wq_sites.add(r["network_id"])
+                    s_reader = csv.reader(f)
+                    hdr = next(s_reader, None) or []
+                    c_idx = {h: i for i, h in enumerate(hdr)}
+                    i_cas = c_idx.get("cas_number")
+                    i_cmp = c_idx.get("compound_name")
+                    i_val = c_idx["meas_result"]
+                    i_nid = c_idx["network_id"]
+                    i_lt = c_idx.get("less_than_flag")
+                    i_dt = c_idx.get("sample_datetime")
+                    det_low = det_code.lower()
+                    n_lcols = len(hdr)
+                    for r in s_reader:
+                        if not r:
+                            continue
+                        if len(r) < n_lcols:
+                            r = r + [""] * (n_lcols - len(r))
+                        matched = (i_cas is not None and r[i_cas] == det_code) or (
+                            i_cmp is not None and r[i_cmp] and det_low in r[i_cmp].lower()
+                        )
+                        if not matched or not r[i_val]:
+                            continue
+                        try:
+                            val = float(r[i_val])
+                        except (ValueError, TypeError):
+                            continue
+                        is_cens = (r[i_lt].strip().lower() == "yes") if i_lt is not None else False
+                        yr, mo = _extract_year_month(r[i_dt].strip() if i_dt is not None else "")
+                        if yr is not None and mo is not None:
+                            seas = MONTH_TO_SEASON.get(mo, "summer")
+                            nid = r[i_nid]
+                            all_records.append((nid, val, is_cens, yr, mo, seas, None, ""))
+                            core_wq_sites.add(nid)
             else:
                 ds_files = {
                     "inverts": (f"{prefix} Macroinvertebrate Samples.csv", "sample_datetime"),
@@ -513,23 +584,33 @@ def load_monitoring_stations_and_records(
                     continue
                 col_key = "whpt_aspt" if (dataset == "inverts" and det_code == "0117") else det_code
                 with open(csv_path, "r", encoding="utf-8-sig") as f:
-                    reader = csv.DictReader(f)
-                    if col_key not in reader.fieldnames:
-                        raise ValueError(f"Column '{col_key}' not found in {csv_name}. Available: {reader.fieldnames}")
-                    for r in reader:
-                        raw_s = r.get(col_key, "").strip()
-                        dt = r.get(dt_col, "").strip()
-                        if not raw_s or not dt or len(dt) < 7:
+                    s_reader = csv.reader(f)
+                    hdr = next(s_reader, None) or []
+                    if col_key not in hdr:
+                        raise ValueError(f"Column '{col_key}' not found in {csv_name}. Available: {hdr}")
+                    c_idx = {h: i for i, h in enumerate(hdr)}
+                    i_val = c_idx[col_key]
+                    i_nid = c_idx["network_id"]
+                    i_dt = c_idx.get(dt_col)
+                    n_ecols = len(hdr)
+                    for r in s_reader:
+                        if not r:
+                            continue
+                        if len(r) < n_ecols:
+                            r = r + [""] * (n_ecols - len(r))
+                        raw_s = r[i_val].strip()
+                        if not raw_s:
                             continue
                         try:
                             val = float(raw_s)
                         except (ValueError, TypeError):
                             continue
-                        yr = int(dt[0:4])
-                        mo = int(dt[5:7])
-                        seas = MONTH_TO_SEASON[mo]
-                        all_records.append((r["network_id"], val, False, yr, mo, seas, None, ""))
-                        core_wq_sites.add(r["network_id"])
+                        yr, mo = _extract_year_month(r[i_dt].strip() if i_dt is not None else "")
+                        if yr is not None and mo is not None:
+                            seas = MONTH_TO_SEASON.get(mo, "summer")
+                            nid = r[i_nid]
+                            all_records.append((nid, val, False, yr, mo, seas, None, ""))
+                            core_wq_sites.add(nid)
 
     return pts, pts_source, core_wq_sites, all_records
 
@@ -948,13 +1029,15 @@ def iter_geoparquet_rows(parquet_path, geom_col_hint=None):
                     if cand and cand in schema_names:
                         gcol = cand
                         break
+            row_num = 0
             for batch in pf.iter_batches(batch_size=8192):
                 cols_py = {name: batch.column(i).to_pylist() for i, name in enumerate(batch.schema.names)}
                 nrows = batch.num_rows
                 for r_idx in range(nrows):
+                    row_num += 1
                     rdict = {k: v[r_idx] for k, v in cols_py.items()}
                     if "FID" not in rdict:
-                        rdict["FID"] = r_idx + 1
+                        rdict["FID"] = row_num
                     blob = rdict.get(gcol) if gcol else None
                     yield rdict, blob
             return
@@ -1045,16 +1128,18 @@ def convert_gpkg_to_geoparquet(src_gpkg_path, dst_parquet_path, layers=None):
         elif layers and len(layers) > 1:
             # Inspect columns across layers and build a column-aligned UNION ALL query
             conn = sqlite3.connect(src_gpkg_path)
-            c = conn.cursor()
-            layer_cols = []
-            all_cols_ordered = []
-            for lyr in layers:
-                c_list = [r[1] for r in c.execute(f'PRAGMA table_info("{lyr}")').fetchall()]
-                layer_cols.append((lyr, set(c_list)))
-                for cn in c_list:
-                    if cn not in all_cols_ordered:
-                        all_cols_ordered.append(cn)
-            conn.close()
+            try:
+                c = conn.cursor()
+                layer_cols = []
+                all_cols_ordered = []
+                for lyr in layers:
+                    c_list = [r[1] for r in c.execute(f'PRAGMA table_info("{lyr}")').fetchall()]
+                    layer_cols.append((lyr, set(c_list)))
+                    for cn in c_list:
+                        if cn not in all_cols_ordered:
+                            all_cols_ordered.append(cn)
+            finally:
+                conn.close()
             sql_parts = []
             for lyr, c_set in layer_cols:
                 sel_exprs = [f'"{cn}"' if cn in c_set else f'NULL AS "{cn}"' for cn in all_cols_ordered]
@@ -1196,11 +1281,13 @@ def load_network_config(network_arg, config_path=None):
             )
         if cand_p.lower().endswith(".gpkg"):
             conn = sqlite3.connect(cand_p)
-            c = conn.cursor()
-            row = c.execute("SELECT table_name, srs_id FROM gpkg_contents WHERE data_type='features' LIMIT 1").fetchone()
-            layer, srs_id = row[0], row[1]
-            cols = {r[1].lower(): r[1] for r in c.execute(f'PRAGMA table_info("{layer}")').fetchall()}
-            conn.close()
+            try:
+                c = conn.cursor()
+                row = c.execute("SELECT table_name, srs_id FROM gpkg_contents WHERE data_type='features' LIMIT 1").fetchone()
+                layer, srs_id = row[0], row[1]
+                cols = {r[1].lower(): r[1] for r in c.execute(f'PRAGMA table_info("{layer}")').fetchall()}
+            finally:
+                conn.close()
             geom_col = cols.get("shape", cols.get("geom", cols.get("geometry", "Shape")))
             return _build_auto_network_config(
                 file_path=cand_p,
@@ -1303,20 +1390,42 @@ REACH_OBS_HEADER_COLS = [
 ]
 
 
-def summarize_reach_site_obs(s_list, d2m_km, trans_type="log", eff_lambda=None):
+def _pick_reach_meas_method(m_set):
+    non_pt = sorted(m for m in m_set if m and m != "exact_point")
+    if non_pt:
+        return non_pt[0]
+    all_m = sorted(m for m in m_set if m)
+    return all_m[0] if all_m else ""
+
+
+def summarize_reach_site_obs(s_list, d2m_km, trans_type="log", eff_lambda=None, eff_scale=1.0, trans_cache=None):
     """Computes reach-level observed summary fields for `england_rsn_reaches.csv`."""
     all_vals = [v for s in s_list for v in s[3]]
-    all_uncs = [u for s in s_list for u in s[4]]
+    all_uncs = [u for s in s_list for u in s[4] if u is not None]
     all_meths = {m for s in s_list for m in s[5] if m}
-    along_m = statistics.mean(s[2] for s in s_list)
+    n_tot = sum(len(s[3]) for s in s_list)
+    along_m = (sum(s[2] * len(s[3]) for s in s_list) / n_tot) if n_tot > 0 else statistics.mean(s[2] for s in s_list)
     snap_d = min(s[1] for s in s_list)
     obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
     m_val = statistics.mean(all_vals)
     med_val = statistics.median(all_vals)
-    trans_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
-    trans_str = round(trans_val, 5) if trans_val is not None else ""
-    r_unc = round(math.sqrt(sum(u * u for u in all_uncs) / len(all_uncs)), 6) if all_uncs else ""
-    r_meth = sorted(all_meths)[0] if all_meths else ""
+    if trans_cache is not None:
+        trans_clean = []
+        for v in all_vals:
+            tv = trans_cache.get(v)
+            if tv is None and v not in trans_cache:
+                tv = apply_forward_transform(v, ttype=trans_type, lam=eff_lambda, scale=eff_scale)
+                trans_cache[v] = tv
+            if tv is not None:
+                trans_clean.append(tv)
+    else:
+        trans_clean = [
+            tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda, scale=eff_scale) for v in all_vals)
+            if tv is not None
+        ]
+    trans_str = round(statistics.mean(trans_clean), 5) if trans_clean else ""
+    r_unc = round(math.sqrt(sum(u * u for u in all_uncs)) / n_tot, 6) if (all_uncs and n_tot > 0) else ""
+    r_meth = _pick_reach_meas_method(all_meths)
     return [
         1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
         round(m_val, 4), round(med_val, 4), trans_str,
@@ -1336,8 +1445,12 @@ def write_snapped_sites_and_periods(
     meth_by_site,
     trans_type="log",
     eff_lambda=None,
+    eff_scale=1.0,
+    trans_cache=None,
 ):
     """Writes `rsn_sites.csv` and `rsn_reach_periods.csv` and returns `(site_by_reach, sites_csv_path, periods_csv_path)`."""
+    if trans_cache is None:
+        trans_cache = {}
     site_by_reach = defaultdict(list)
     sites_csv_path = os.path.join(out_dir, "rsn_sites.csv")
     with open(sites_csv_path, "w", newline="") as f:
@@ -1358,20 +1471,22 @@ def write_snapped_sites_and_periods(
             obs_up_km = max(0.0, d2m_km - (along_m / 1000.0))
             src_str = pts_source.get(nid, "RSN")
             vals = obs_by_site.get(nid, [])
-            u_vals = unc_by_site.get(nid, [])
+            u_vals = [u for u in unc_by_site.get(nid, []) if u is not None]
             m_set = meth_by_site.get(nid, set())
-            site_u = round(math.sqrt(sum(u * u for u in u_vals) / len(u_vals)), 6) if u_vals else ""
-            site_m = sorted(m_set)[0] if m_set else ""
+            site_u = round(math.sqrt(sum(u * u for u in u_vals)) / len(vals), 6) if (u_vals and vals) else ""
+            site_m = _pick_reach_meas_method(m_set)
             if vals:
                 m_val = statistics.mean(vals)
                 med_val = statistics.median(vals)
                 sd_val = statistics.stdev(vals) if len(vals) > 1 else 0.0
-                trans_m_val = apply_forward_transform(m_val, ttype=trans_type, lam=eff_lambda)
-                trans_m = round(trans_m_val, 5) if trans_m_val is not None else ""
-                trans_clean = [
-                    tv for tv in (apply_forward_transform(v, ttype=trans_type, lam=eff_lambda) for v in vals)
-                    if tv is not None
-                ]
+                trans_clean = []
+                for v in vals:
+                    tv = trans_cache.get(v)
+                    if tv is None and v not in trans_cache:
+                        tv = apply_forward_transform(v, ttype=trans_type, lam=eff_lambda, scale=eff_scale)
+                        trans_cache[v] = tv
+                    if tv is not None:
+                        trans_clean.append(tv)
                 m_trans = round(statistics.mean(trans_clean), 5) if trans_clean else ""
                 if inc:
                     site_by_reach[riv_id].append((nid, d, along_m, vals, u_vals, m_set))
@@ -1379,7 +1494,7 @@ def write_snapped_sites_and_periods(
                     nid, meta["wims_id"], meta["wims_region_code"],
                     px, py, round(d, 3), riv_id, catch_id,
                     round(obs_up_km, 5), len(vals), round(m_val, 4), round(med_val, 4),
-                    round(sd_val, 4), trans_m, m_trans, site_u, site_m, inc, src_str,
+                    round(sd_val, 4), m_trans, m_trans, site_u, site_m, inc, src_str,
                 ])
             else:
                 w.writerow([
@@ -1430,12 +1545,19 @@ def write_snapped_sites_and_periods(
             obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
             m_v = statistics.mean(vals)
             med_v = statistics.median(vals)
-            trans_mv_val = apply_forward_transform(m_v, ttype=trans_type, lam=eff_lambda)
-            trans_mv = round(trans_mv_val, 5) if trans_mv_val is not None else ""
-            u_list = reach_period_unc.get((riv_id, p_type, p_val), [])
+            trans_clean = []
+            for v in vals:
+                tv = trans_cache.get(v)
+                if tv is None and v not in trans_cache:
+                    tv = apply_forward_transform(v, ttype=trans_type, lam=eff_lambda, scale=eff_scale)
+                    trans_cache[v] = tv
+                if tv is not None:
+                    trans_clean.append(tv)
+            trans_mv = round(statistics.mean(trans_clean), 5) if trans_clean else ""
+            u_list = [u for u in reach_period_unc.get((riv_id, p_type, p_val), []) if u is not None]
             m_set = reach_period_meth.get((riv_id, p_type, p_val), set())
-            p_unc = round(math.sqrt(sum(u * u for u in u_list) / len(u_list)), 6) if u_list else ""
-            p_meth = sorted(m_set)[0] if m_set else ""
+            p_unc = round(math.sqrt(sum(u * u for u in u_list)) / len(vals), 6) if (u_list and vals) else ""
+            p_meth = _pick_reach_meas_method(m_set)
             w.writerow([
                 riv_id, catch_id, p_type, p_val,
                 round(obs_up_km, 5), len(vals), round(m_v, 4), round(med_v, 4), trans_mv,
@@ -1481,8 +1603,8 @@ def write_reaches_and_finalize(
 
 
 def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
-                               trans_type="log", eff_lambda=None, pts_source=None, source_key="rsn", range_mode=None,
-                               runtime_cfg=None, out_dir=None):
+                               trans_type="log", eff_lambda=None, eff_scale=1.0, pts_source=None, source_key="rsn",
+                               range_mode=None, runtime_cfg=None, out_dir=None):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
@@ -1629,26 +1751,31 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
                 _ingest_reach_row(file_idx, rdict, blob)
         else:
             conn = sqlite3.connect(gpkg_p)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
+            try:
+                conn.execute("PRAGMA temp_store = MEMORY")
+                conn.execute("PRAGMA mmap_size = 268435456")
+                conn.execute("PRAGMA cache_size = -64000")
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
 
-            if isinstance(nodes_cfg, dict):
-                ntbl = nodes_cfg.get("table", "Nodes")
-                nid_c = nodes_cfg.get("id_col", "OBJECT_ID")
-                nel_c = nodes_cfg.get("elev_col", "ELEV")
-                nlt_c = nodes_cfg.get("dist_to_mouth_col", "LEN_TOM")
-                try:
-                    for nr in c.execute(f'SELECT "{nid_c}", "{nel_c}", "{nlt_c}" FROM "{ntbl}"'):
-                        node_lookup[(file_idx, str(nr[0]))] = (nr[1], nr[2])
-                except sqlite3.Error:
-                    pass
+                if isinstance(nodes_cfg, dict):
+                    ntbl = nodes_cfg.get("table", "Nodes")
+                    nid_c = nodes_cfg.get("id_col", "OBJECT_ID")
+                    nel_c = nodes_cfg.get("elev_col", "ELEV")
+                    nlt_c = nodes_cfg.get("dist_to_mouth_col", "LEN_TOM")
+                    try:
+                        for nr in c.execute(f'SELECT "{nid_c}", "{nel_c}", "{nlt_c}" FROM "{ntbl}"'):
+                            node_lookup[(file_idx, str(nr[0]))] = (nr[1], nr[2])
+                    except sqlite3.Error:
+                        pass
 
-            for layer in layers:
-                for row in c.execute(f'SELECT * FROM "{layer}"'):
-                    rdict = dict(row)
-                    blob = rdict.get(geom_col)
-                    _ingest_reach_row(file_idx, rdict, blob)
-            conn.close()
+                for layer in layers:
+                    for row in c.execute(f'SELECT * FROM "{layer}"'):
+                        rdict = dict(row)
+                        blob = rdict.pop(geom_col, None)
+                        _ingest_reach_row(file_idx, rdict, blob)
+            finally:
+                conn.close()
 
     # Determine monitored catchments (or keep all if network has <= 5 catchments)
     monitored_cid_keys = {
@@ -1707,6 +1834,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             "zs": zs,
             "row": rdict,
         }
+    n_raw_total = len(raw_reaches)
+    filtered_reaches.clear()
+    raw_reaches.clear()
 
     src_fmt_label = (
         "GeoParquet"
@@ -1715,7 +1845,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
     )
     print(
         f"   Loaded {len(reaches_by_id)} reaches across {len(monitored_cid_keys)} monitored catchments "
-        f"(from {len(raw_reaches)} total reaches in {src_fmt_label})."
+        f"(from {n_raw_total} total reaches in {src_fmt_label})."
     )
 
     # 3. Build directed river tree topology (supporting pointer, nodes, or geometry)
@@ -1869,11 +1999,13 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             if d_start_to_dn + 10.0 < d_end_to_dn:
                 poly = list(reversed(poly))
                 info["poly"] = poly
+                info["flipped"] = True
                 if info["zs"]:
                     info["zs"] = list(reversed(info["zs"]))
                 flipped_cnt += 1
 
         tot_m, sinu, coords_net = compute_polyline_metrics(poly)
+        info["tot_m"] = tot_m
         info["length_km"] = max(1e-4, tot_m / 1000.0)
         info["sinuosity"] = sinu
         info["coords_net"] = coords_net
@@ -1926,31 +2058,6 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             u_info["us_accum_km"] = max(1e-4, raw_afv * afv_scale)
         else:
             u_info["us_accum_km"] = u_info["length_km"] + sum(reaches_by_id[p]["us_accum_km"] for p in ps)
-
-    # Top-down pass: compute log_AFV and propagate headwater SrcElevation
-    afv_scheme = cfg.get("afv_scheme", "length")
-    log_afv = {}
-    for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
-        log_afv[m_id] = 0.0
-        stack = [m_id]
-        while stack:
-            u = stack.pop()
-            ps = parents[u]
-            if ps:
-                p_weights = {
-                    p: compute_afv_reach_weight(
-                        afv_scheme,
-                        reaches_by_id[p]["us_accum_km"],
-                        reaches_by_id[p].get("shreve", 1),
-                        reaches_by_id[p].get("elev", 0.0),
-                        reaches_by_id[p].get("is_aquifer", 0),
-                    )
-                    for p in ps
-                }
-                sum_us = sum(p_weights.values())
-                for p in ps:
-                    log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
-                    stack.append(p)
 
     # Transform reach (start, mid, end) coordinates to EPSG:27700 so all maps & Easting/Northing are in BNG
     if crs_epsg != 27700:
@@ -2020,6 +2127,34 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             u_info["is_sand"] = 0
             u_info["is_aq"] = 0
             u_info["is_peat"] = 0
+        # Release raw polyline vertices and Z arrays once elevation & slope are computed
+        u_info["poly"] = None
+        u_info["zs"] = None
+
+    # Top-down pass: compute log_AFV AFTER elevation & aquifer extraction so hydro_yield scheme uses true reach attributes
+    afv_scheme = cfg.get("afv_scheme", "length")
+    log_afv = {}
+    for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
+        log_afv[m_id] = 0.0
+        stack = [m_id]
+        while stack:
+            u = stack.pop()
+            ps = parents[u]
+            if ps:
+                p_weights = {
+                    p: compute_afv_reach_weight(
+                        afv_scheme,
+                        reaches_by_id[p]["us_accum_km"],
+                        reaches_by_id[p].get("shreve", 1),
+                        reaches_by_id[p].get("elevation", 0.0),
+                        reaches_by_id[p].get("is_aq", 0),
+                    )
+                    for p in ps
+                }
+                sum_us = sum(p_weights.values())
+                for p in ps:
+                    log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
+                    stack.append(p)
 
     # Write station-level snapping summary (rsn_sites.csv) and multi-period reach table (rsn_reach_periods.csv)
     unc_by_site = defaultdict(list)
@@ -2040,8 +2175,10 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             continue
         riv_id = key_to_rivid[r_key]
         u_info = reaches_by_id[riv_id]
-        snap_info[nid] = (d, riv_id, u_info["catch_id"], along_m, u_info["d2m_km"], 1 if d <= max_snap_m else 0)
+        eff_along_m = max(0.0, u_info["tot_m"] - along_m) if u_info.get("flipped") else along_m
+        snap_info[nid] = (d, riv_id, u_info["catch_id"], eff_along_m, u_info["d2m_km"], 1 if d <= max_snap_m else 0)
 
+    trans_cache = {}
     site_by_reach, sites_csv_path, periods_csv_path = write_snapped_sites_and_periods(
         out_dir=eff_out_dir,
         all_station_ids=all_station_ids,
@@ -2054,6 +2191,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         meth_by_site=meth_by_site,
         trans_type=trans_type,
         eff_lambda=eff_lambda,
+        eff_scale=eff_scale,
+        trans_cache=trans_cache,
     )
 
     # Build catchment lookup table (rsn_catchments_lookup.csv)
@@ -2118,7 +2257,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             u_info["is_chalk_lime"], u_info["is_sand"], u_info["is_aq"], u_info["is_peat"],
         ]
         if riv_id in site_by_reach:
-            obs_cols = summarize_reach_site_obs(site_by_reach[riv_id], d2m_km, trans_type=trans_type, eff_lambda=eff_lambda)
+            obs_cols = summarize_reach_site_obs(site_by_reach[riv_id], d2m_km, trans_type=trans_type, eff_lambda=eff_lambda, eff_scale=eff_scale, trans_cache=trans_cache)
         else:
             obs_cols = [0, "", "", round(up_mid_km, 5), "", "", "", "", "", 0]
         reaches_rows.append(base_cols + obs_cols + extra_vals)
@@ -2146,6 +2285,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         "extra_numeric_cols": extra_num_cols,
         "transform_type": trans_type,
         "transform_lambda": eff_lambda,
+        "transform_scale": eff_scale,
     }
     write_reaches_and_finalize(
         out_dir=eff_out_dir,
@@ -2527,11 +2667,15 @@ def main():
         print(f"   Estimated Profile Maximum Likelihood lambda = {eff_lambda:.4f} for Yeo-Johnson transformation.")
     else:
         eff_lambda = args.transform_lambda
+    eff_scale = 100.0 if (
+        trans_type in ("asin", "arcsin", "arcsine", "asin_sqrt", "logit")
+        and max(all_sample_vals, default=1.0) > 1.0
+    ) else 1.0
 
     # Dispatch to generic network pipeline if not using standard ORN fast path
     if cfg.get("covariates", {}).get("mode") != "orn_100m_table" or args.topology_mode != "auto" or args.afv_col:
         preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
-                                   trans_type=trans_type, eff_lambda=eff_lambda,
+                                   trans_type=trans_type, eff_lambda=eff_lambda, eff_scale=eff_scale,
                                    pts_source=pts_source, source_key=source_key,
                                    range_mode=active_range_mode,
                                    runtime_cfg=runtime_cfg, out_dir=out_dir)
@@ -2542,127 +2686,136 @@ def main():
     gpkg_path = ensure_gpkg_paths(cfg)[0]
     print(f"2. Scanning {os.path.basename(gpkg_path)} geometry to snap {source_abbr} stations (<= {max_snap_m:.0f}m)...")
     conn = sqlite3.connect(gpkg_path)
-    c = conn.cursor()
+    try:
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA mmap_size = 268435456")
+        conn.execute("PRAGMA cache_size = -64000")
+        c = conn.cursor()
 
-    all_station_ids = sorted(pts.keys())
-    site_grid = defaultdict(list)
-    for nid in all_station_ids:
-        px, py, _ = pts[nid]
-        site_grid[(int(px // 2000), int(py // 2000))].append((nid, px, py))
+        all_station_ids = sorted(pts.keys())
+        site_grid = defaultdict(list)
+        for nid in all_station_ids:
+            px, py, _ = pts[nid]
+            site_grid[(int(px // 2000), int(py // 2000))].append((nid, px, py))
 
-    best_snap = {nid: (1e18, None, None, 0.0, 0.0) for nid in all_station_ids}
+        best_snap = {nid: (1e18, None, None, 0.0, 0.0) for nid in all_station_ids}
 
-    for row in c.execute("SELECT RivID, CatchID, Dist2Mth, Shape FROM ORN"):
-        riv_id, catch_id, d2m, blob = row
-        env = parse_gpkg_envelope(blob)
-        if env is not None:
-            minx, maxx, miny, maxy = env
-        else:
-            poly = parse_gpkg_multilinestring(blob)
-            if not poly:
+        for row in c.execute("SELECT RivID, CatchID, Dist2Mth, Shape FROM ORN"):
+            riv_id, catch_id, d2m, blob = row
+            env = parse_gpkg_envelope(blob)
+            if env is not None:
+                minx, maxx, miny, maxy = env
+            else:
+                poly = parse_gpkg_multilinestring(blob)
+                if not poly:
+                    continue
+                xs = [p[0] for p in poly]
+                ys = [p[1] for p in poly]
+                minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+
+            snap_pad_orn = max(1500.0, max_snap_m + 500.0)
+            gx0, gx1 = int((minx - snap_pad_orn) // 2000), int((maxx + snap_pad_orn) // 2000)
+            gy0, gy1 = int((miny - snap_pad_orn) // 2000), int((maxy + snap_pad_orn) // 2000)
+            cand_sites = []
+            for gx in range(gx0, gx1 + 1):
+                for gy in range(gy0, gy1 + 1):
+                    if (gx, gy) in site_grid:
+                        cand_sites.extend(site_grid[(gx, gy)])
+            if not cand_sites:
                 continue
-            xs = [p[0] for p in poly]
-            ys = [p[1] for p in poly]
-            minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
 
-        snap_pad_orn = max(1500.0, max_snap_m + 500.0)
-        gx0, gx1 = int((minx - snap_pad_orn) // 2000), int((maxx + snap_pad_orn) // 2000)
-        gy0, gy1 = int((miny - snap_pad_orn) // 2000), int((maxy + snap_pad_orn) // 2000)
-        cand_sites = []
-        for gx in range(gx0, gx1 + 1):
-            for gy in range(gy0, gy1 + 1):
-                if (gx, gy) in site_grid:
-                    cand_sites.extend(site_grid[(gx, gy)])
-        if not cand_sites:
-            continue
+            poly = parse_gpkg_multilinestring(blob)
+            for nid, px, py in cand_sites:
+                d, along = point_to_polyline(px, py, poly)
+                if d < best_snap[nid][0]:
+                    best_snap[nid] = (d, riv_id, catch_id, along, d2m)
 
-        poly = parse_gpkg_multilinestring(blob)
-        for nid, px, py in cand_sites:
-            d, along = point_to_polyline(px, py, poly)
-            if d < best_snap[nid][0]:
-                best_snap[nid] = (d, riv_id, catch_id, along, d2m)
+        active_monitored_sites = set(obs_by_site.keys()) | core_wq_sites
+        monitored_catchments = {
+            best_snap[nid][2]
+            for nid in active_monitored_sites
+            if nid in best_snap and best_snap[nid][0] <= max_snap_m
+        }
+        snap_info = {}
+        for nid in all_station_ids:
+            d, riv_id, catch_id, along, d2m = best_snap[nid]
+            if catch_id is None or (catch_id not in monitored_catchments and nid not in core_wq_sites):
+                continue
+            inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
+            snap_info[nid] = (d, riv_id, catch_id, along, d2m / 1000.0, inc)
 
-    active_monitored_sites = set(obs_by_site.keys()) | core_wq_sites
-    monitored_catchments = {
-        best_snap[nid][2]
-        for nid in active_monitored_sites
-        if nid in best_snap and best_snap[nid][0] <= max_snap_m
-    }
-    snap_info = {}
-    for nid in all_station_ids:
-        d, riv_id, catch_id, along, d2m = best_snap[nid]
-        if catch_id is None or (catch_id not in monitored_catchments and nid not in core_wq_sites):
-            continue
-        inc = 1 if (d <= max_snap_m and catch_id in monitored_catchments) else 0
-        snap_info[nid] = (d, riv_id, catch_id, along, d2m / 1000.0, inc)
+        trans_cache = {}
+        site_by_reach, sites_csv_path, periods_csv_path = write_snapped_sites_and_periods(
+            out_dir=out_dir,
+            all_station_ids=all_station_ids,
+            pts=pts,
+            pts_source=pts_source,
+            snap_info=snap_info,
+            imputed_records=imputed_records,
+            obs_by_site=obs_by_site,
+            unc_by_site=unc_by_site,
+            meth_by_site=meth_by_site,
+            trans_type=trans_type,
+            eff_lambda=eff_lambda,
+            eff_scale=eff_scale,
+            trans_cache=trans_cache,
+        )
 
-    site_by_reach, sites_csv_path, periods_csv_path = write_snapped_sites_and_periods(
-        out_dir=out_dir,
-        all_station_ids=all_station_ids,
-        pts=pts,
-        pts_source=pts_source,
-        snap_info=snap_info,
-        imputed_records=imputed_records,
-        obs_by_site=obs_by_site,
-        unc_by_site=unc_by_site,
-        meth_by_site=meth_by_site,
-        trans_type=trans_type,
-        eff_lambda=eff_lambda,
-    )
+        print(
+            f"   Snapped {sum(1 for nid in best_snap if best_snap[nid][0] <= max_snap_m)} sites (<={max_snap_m:.0f}m) "
+            f"({len(site_by_reach)} active reaches in period '{period_label}') across {len(monitored_catchments)} catchments."
+        )
 
-    print(
-        f"   Snapped {sum(1 for nid in best_snap if best_snap[nid][0] <= max_snap_m)} sites (<={max_snap_m:.0f}m) "
-        f"({len(site_by_reach)} active reaches in period '{period_label}') across {len(monitored_catchments)} catchments."
-    )
+        print("3. Loading ORN reaches and ORN_Sampled_100m covariates for all monitored catchments...")
+        bedrock_lu = {r[1]: (r[5] or "") for r in c.execute("SELECT * FROM tblBedrockGeologyLookUp")}
+        superficial_lu = {r[1]: (r[5] or "") for r in c.execute("SELECT * FROM tblSuperficialGeologyLookUp")}
+        rbd_lu = {r[1]: (r[2] or "") for r in c.execute("SELECT * FROM tblRiverBasinLookUp")}
 
-    print("3. Loading ORN reaches and ORN_Sampled_100m covariates for all monitored catchments...")
-    bedrock_lu = {r[1]: (r[5] or "") for r in c.execute("SELECT * FROM tblBedrockGeologyLookUp")}
-    superficial_lu = {r[1]: (r[5] or "") for r in c.execute("SELECT * FROM tblSuperficialGeologyLookUp")}
-    rbd_lu = {r[1]: (r[2] or "") for r in c.execute("SELECT * FROM tblRiverBasinLookUp")}
+        catch_list_sql = ",".join(str(cid) for cid in sorted(monitored_catchments))
 
-    catch_list_sql = ",".join(str(cid) for cid in sorted(monitored_catchments))
+        reach_100m = {}
+        for r in c.execute(f"""
+            SELECT PolylineID,
+                   AVG(OS_T50_Ele),
+                   AVG(Slope),
+                   AVG(Sinuosity),
+                   MAX(LEX_RCS_BEDROCK),
+                   MAX(LEX_RCS_SUPERFICIAL),
+                   AVG(OS_T50_SrcEle)
+            FROM ORN_Sampled_100m
+            WHERE CatchID IN ({catch_list_sql})
+            GROUP BY PolylineID
+        """):
+            reach_100m[r[0]] = r[1:]
 
-    reach_100m = {}
-    for r in c.execute(f"""
-        SELECT PolylineID,
-               AVG(OS_T50_Ele),
-               AVG(Slope),
-               AVG(Sinuosity),
-               MAX(LEX_RCS_BEDROCK),
-               MAX(LEX_RCS_SUPERFICIAL),
-               AVG(OS_T50_SrcEle)
-        FROM ORN_Sampled_100m
-        WHERE CatchID IN ({catch_list_sql})
-        GROUP BY PolylineID
-    """):
-        reach_100m[r[0]] = r[1:]
+        reaches = {}
+        reach_len = {}
+        reach_coords = {}
+        fnode_map = {}
+        catch_main_river = {}
+        catch_reach_cnt = defaultdict(int)
 
-    reaches = {}
-    reach_len = {}
-    reach_coords = {}
-    fnode_map = {}
-    catch_main_river = {}
-    catch_reach_cnt = defaultdict(int)
-
-    for row in c.execute(f"""
-        SELECT RivID, Fnode, Tnode, CatchID, RBD_ID, Dist2Mth, US_Accum, Shreve, Strahler, Hack, Shape, name1
-        FROM ORN
-        WHERE CatchID IN ({catch_list_sql})
-    """):
-        riv_id = row[0]
-        catch_id = row[3]
-        rbd_id = row[4]
-        shreve = row[7] or 0
-        nm1 = (row[11] or "").strip()
-        catch_reach_cnt[catch_id] += 1
-        if nm1 and (catch_id not in catch_main_river or shreve > catch_main_river[catch_id][0]):
-            catch_main_river[catch_id] = (shreve, nm1, rbd_id)
-        reaches[riv_id] = row[:10]
-        fnode_map[(catch_id, row[1])] = riv_id
-        poly = parse_gpkg_multilinestring(row[10])
-        tot, _, coords_tup = compute_polyline_metrics(poly)
-        reach_len[riv_id] = tot
-        reach_coords[riv_id] = coords_tup
+        for row in c.execute(f"""
+            SELECT RivID, Fnode, Tnode, CatchID, RBD_ID, Dist2Mth, US_Accum, Shreve, Strahler, Hack, Shape, name1
+            FROM ORN
+            WHERE CatchID IN ({catch_list_sql})
+        """):
+            riv_id = row[0]
+            catch_id = row[3]
+            rbd_id = row[4]
+            shreve = row[7] or 0
+            nm1 = (row[11] or "").strip()
+            catch_reach_cnt[catch_id] += 1
+            if nm1 and (catch_id not in catch_main_river or shreve > catch_main_river[catch_id][0]):
+                catch_main_river[catch_id] = (shreve, nm1, rbd_id)
+            reaches[riv_id] = row[:10]
+            fnode_map[(catch_id, row[1])] = riv_id
+            poly = parse_gpkg_multilinestring(row[10])
+            tot, _, coords_tup = compute_polyline_metrics(poly)
+            reach_len[riv_id] = tot
+            reach_coords[riv_id] = coords_tup
+    finally:
+        conn.close()
 
     catch_obs_cnt = defaultdict(int)
     for riv_id in site_by_reach:
@@ -2683,7 +2836,7 @@ def main():
     for riv_id, r in reaches.items():
         catch_id = r[3]
         dn = fnode_map.get((catch_id, r[2]))
-        if dn is None:
+        if dn is None or dn == riv_id or dn not in reaches:
             mouths.append(riv_id)
         else:
             parents[dn].append(riv_id)
@@ -2692,9 +2845,10 @@ def main():
     log_afv = {}
     topo_order = []
     visited = set()
-    for m_id in sorted(mouths, key=lambda x: reaches[x][3]):
+
+    def _traverse_from_mouth(m_id):
         if m_id in visited:
-            continue
+            return
         visited.add(m_id)
         log_afv[m_id] = 0.0
         stack = [m_id]
@@ -2707,6 +2861,15 @@ def main():
                     visited.add(p)
                     parent_dn[p] = u
                     stack.append(p)
+
+    for m_id in sorted(mouths, key=lambda x: (reaches[x][3], x)):
+        _traverse_from_mouth(m_id)
+
+    # Break any disconnected cycles not reachable from existing mouths
+    for r_id in sorted(reaches.keys(), key=lambda x: (reaches[x][3], x)):
+        if r_id not in visited:
+            mouths.append(r_id)
+            _traverse_from_mouth(r_id)
 
     for _ in range(3):
         for u in topo_order:
@@ -2726,6 +2889,9 @@ def main():
         is_sd = 1 if ("SANDSTONE" in b_desc and "MUDSTONE" not in b_desc and "SILTSTONE" not in b_desc) else 0
         return is_cl, is_sd, (1 if (is_cl or is_sd) else 0)
 
+    bedrock_flags_lu = {code: _classify_bedrock(desc) for code, desc in bedrock_lu.items()}
+    superficial_peat_lu = {code: (1 if "PEAT" in desc else 0) for code, desc in superficial_lu.items()}
+
     # Compute log_AFV using selected physical confluence weighting scheme (--afv-scheme)
     afv_scheme = cfg.get("afv_scheme", "length")
     for u in topo_order:
@@ -2735,11 +2901,10 @@ def main():
             for p in ps:
                 r100 = reach_100m.get(p)
                 elev_p = (r100[0] or 0.0) if r100 else 0.0
-                b_desc_p = bedrock_lu.get(r100[3], "") if (r100 and len(r100) > 3) else ""
-                _, _, aq_p = _classify_bedrock(b_desc_p)
+                aq_p = bedrock_flags_lu.get(r100[3], (0, 0, 0))[2] if (r100 and len(r100) > 3) else 0
                 p_weights[p] = compute_afv_reach_weight(
                     afv_scheme,
-                    reaches[p][6] or 0.0,
+                    (reaches[p][6] or 0.0) / 1000.0,
                     reaches[p][7] or 1,
                     elev_p,
                     aq_p,
@@ -2766,10 +2931,8 @@ def main():
     for riv_id in topo_order:
         r = reaches[riv_id]
         rc = reach_100m.get(riv_id, (50.0, 0.5, 1.05, 0, 0, 100.0))
-        b_desc = bedrock_lu.get(rc[3], "")
-        s_desc = superficial_lu.get(rc[4], "")
-        is_chalk_lime, is_sand, is_aq = _classify_bedrock(b_desc)
-        is_peat = 1 if "PEAT" in s_desc else 0
+        is_chalk_lime, is_sand, is_aq = bedrock_flags_lu.get(rc[3], (0, 0, 0))
+        is_peat = superficial_peat_lu.get(rc[4], 0)
 
         d2m_km = r[5] / 1000.0
         l_km = reach_len[riv_id] / 1000.0
@@ -2785,7 +2948,7 @@ def main():
             is_chalk_lime, is_sand, is_aq, is_peat,
         ]
         if riv_id in site_by_reach:
-            obs_cols = summarize_reach_site_obs(site_by_reach[riv_id], d2m_km, trans_type=trans_type, eff_lambda=eff_lambda)
+            obs_cols = summarize_reach_site_obs(site_by_reach[riv_id], d2m_km, trans_type=trans_type, eff_lambda=eff_lambda, eff_scale=eff_scale, trans_cache=trans_cache)
         else:
             obs_cols = [0, "", "", round(up_mid_km, 5), "", "", "", "", "", 0]
         reaches_rows.append(base_cols + obs_cols)
@@ -2813,6 +2976,7 @@ def main():
         "extra_numeric_cols": [],
         "transform_type": trans_type,
         "transform_lambda": eff_lambda,
+        "transform_scale": eff_scale,
     }
     write_reaches_and_finalize(
         out_dir=out_dir,

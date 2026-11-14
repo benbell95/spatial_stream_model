@@ -257,14 +257,16 @@ fit_multivariate_s3n_domain <- function(df_reaches,
     yp   <- Y_std[ok_p, p]
     vy_p <- max(1e-4, var(yp))
 
-    nb_p_tu <- .Call("C_compute_s3n_neighbors", as.integer(n_p), as.integer(m_p), as.integer(p0_p),
+    n_pred_tu <- 0L
+    nb_p_tu <- .Call("C_compute_s3n_neighbors", as.integer(c(n_p, n_pred_tu)), as.integer(m_p), as.integer(p0_p),
                      as.integer(df_p$CatchID), as.integer(tt_p[[1]]), as.integer(tt_p[[2]]),
                      as.double(df_p$Dist2Mth_km), as.double(up_p), as.double(df_p$log_AFV),
                      as.double(df_p$mid_X), as.double(df_p$mid_Y), 0L)
     f_tu <- fit_nngp_cpp(Xp, yp, nb_p_tu$obs_neighbors, vy_p, kernel_name = kernel_req)
     rm(nb_p_tu); gc(FALSE)
 
-    nb_p_td <- .Call("C_compute_s3n_neighbors", as.integer(n_p), as.integer(m_p), as.integer(p0_p),
+    n_pred_td <- if (keep_coloc_nb) q_tot else 0L
+    nb_p_td <- .Call("C_compute_s3n_neighbors", as.integer(c(n_p, n_pred_td)), as.integer(m_p), as.integer(p0_p),
                      as.integer(df_p$CatchID), as.integer(tt_p[[1]]), as.integer(tt_p[[2]]),
                      as.double(df_p$Dist2Mth_km), as.double(up_p), as.double(df_p$log_AFV),
                      as.double(df_p$mid_X), as.double(df_p$mid_Y), 1L)
@@ -420,7 +422,6 @@ fit_multivariate_s3n_domain <- function(df_reaches,
       w_aux   <- r2_aux * 0.65
       pred_std[, p] <- (1.0 - w_aux) * uni_pred_std[, p] + w_aux * (as.numeric(X_all %*% Beta_fin[, p]) + adj_all)
       se_std[, p]   <- uni_se_std[, p] * sqrt(max(0.25, 1.0 - r2_aux * 0.5))
-      aux_cv_std[ok_p, p] <- pred_std[ok_p, p]
     }
     pars_fin <- unpack_lmc_params(theta_init, P, K_use, full_psi = full_psi, fit_euc = fit_euc)
   } else {
@@ -464,6 +465,10 @@ fit_multivariate_s3n_domain <- function(df_reaches,
   se_sc   <- sweep(se_std, 2L, y_sds, "*")
   aux_cv_sc <- sweep(sweep(aux_cv_std, 2L, y_sds, "*"), 2L, y_means, "+")
 
+  # Save lightweight univariate Theta seeds for CV warm-starts before freeing full fits/neighbors
+  uni_init_tu <- lapply(uni_fits, function(u) if (!is.null(u) && !is.null(u$f_tu)) u$f_tu$Theta else NULL)
+  uni_init_td <- lapply(uni_fits, function(u) if (!is.null(u) && !is.null(u$f_td)) u$f_td$Theta else NULL)
+
   # Free large dense observation-observation neighbor matrices before 5-fold CV
   suppressWarnings(rm(nb_tu, nb_td, pr_full, pr_aux, uni_fits))
   gc(FALSE)
@@ -475,78 +480,213 @@ fit_multivariate_s3n_domain <- function(df_reaches,
 
   cv_uni_sc <- matrix(NA_real_, nrow = n_obs, ncol = P)
   cv_all_sc <- matrix(NA_real_, nrow = n_obs, ncol = P)
+  cv_aux_sc <- if (method_req == "colocated") matrix(NA_real_, nrow = n_obs, ncol = P) else aux_cv_sc
 
   for (k in fold_ids) {
     te <- which(folds == k)
     tr <- which(!is.na(folds) & folds != k)
     if (length(te) == 0L || length(tr) < p_cov) next
 
-    # Univariate S3N CV on identical split (freeing TU matrix before allocating TD matrix)
-    for (p in seq_len(P)) {
+    # Univariate S3N CV on identical split preserving full river network topology
+    coloc_uni_tr_sc <- if (method_req == "colocated") matrix(NA_real_, nrow = length(tr), ncol = P) else NULL
+    coloc_beta_tr   <- if (method_req == "colocated") matrix(0.0, nrow = p_cov, ncol = P) else NULL
+    coloc_tau_tr    <- if (method_req == "colocated") numeric(P) else NULL
+
+    # Precompute target train/test mask signatures within this fold so targets with identical masks share topology/neighbors
+    p_masks <- lapply(seq_len(P), function(p) {
       tr_p <- tr[is.finite(Y_obs_sc[tr, p])]
       te_p <- te[is.finite(Y_obs_sc[te, p])]
-      if (length(tr_p) < p_cov || length(te_p) == 0L) next
-      ord_k <- c(tr_p, te_p)
-      par_k <- match(df_ord$parent_dn[ord_k], df_ord$RivID[ord_k], nomatch = 0L)
-      p0_k  <- ifelse(df_ord$parent_dn[ord_k] == 0 | par_k == 0L, -1L, par_k - 1L)
-      tt_k  <- .Call("C_build_tree_tin_tout", as.integer(p0_k))
-      m_k   <- min(as.integer(m_use), max(2L, length(tr_p) - 2L))
+      if (length(tr_p) < p_cov || length(te_p) == 0L) return(NULL)
+      list(tr_p = tr_p, te_p = te_p, key = paste(c(tr_p, -1L, te_p), collapse = ","))
+    })
+    valid_keys <- vapply(p_masks, function(pm) if (is.null(pm)) "" else pm$key, character(1))
+    key_counts <- table(valid_keys[nzchar(valid_keys)])
+    key_rem    <- as.list(as.integer(key_counts))
+    names(key_rem) <- names(key_counts)
+    fold_nb_cache <- list()
+
+    for (p in seq_len(P)) {
+      pm <- p_masks[[p]]
+      if (is.null(pm)) next
+      tr_p <- pm$tr_p
+      te_p <- pm$te_p
+      pk   <- pm$key
+      is_shared <- isTRUE(key_rem[[pk]] > 1L) || !is.null(fold_nb_cache[[pk]])
+      if (!is.null(fold_nb_cache[[pk]])) {
+        cached  <- fold_nb_cache[[pk]]
+        m_k     <- cached$m_k
+        nb_k_tu <- cached$nb_tu
+        nb_k_td <- cached$nb_td
+      } else {
+        unobs_k <- setdiff(seq_len(q_tot), c(tr_p, te_p))
+        ord_k   <- c(tr_p, te_p, unobs_k)
+        par_k <- match(df_ord$parent_dn[ord_k], df_ord$RivID[ord_k], nomatch = 0L)
+        p0_k  <- ifelse(df_ord$parent_dn[ord_k] == 0 | par_k == 0L, -1L, par_k - 1L)
+        tt_k  <- .Call("C_build_tree_tin_tout", as.integer(p0_k))
+        m_k   <- min(as.integer(m_use), max(2L, length(tr_p) - 2L))
+        ne_tmp <- length(tr_p) + length(te_p)
+        nb_k_tu <- .Call("C_compute_s3n_neighbors", as.integer(c(length(tr_p), ne_tmp)), as.integer(m_k), as.integer(p0_k),
+                         as.integer(df_ord$CatchID[ord_k]), as.integer(tt_k[[1]]), as.integer(tt_k[[2]]),
+                         as.double(df_ord$Dist2Mth_km[ord_k]), as.double(up_dist[ord_k]), as.double(df_ord$log_AFV[ord_k]),
+                         as.double(df_ord$mid_X[ord_k]), as.double(df_ord$mid_Y[ord_k]), 0L)
+        nb_k_td <- NULL
+        if (is_shared) {
+          nb_k_td <- .Call("C_compute_s3n_neighbors", as.integer(c(length(tr_p), ne_tmp)), as.integer(m_k), as.integer(p0_k),
+                           as.integer(df_ord$CatchID[ord_k]), as.integer(tt_k[[1]]), as.integer(tt_k[[2]]),
+                           as.double(df_ord$Dist2Mth_km[ord_k]), as.double(up_dist[ord_k]), as.double(df_ord$log_AFV[ord_k]),
+                           as.double(df_ord$mid_X[ord_k]), as.double(df_ord$mid_Y[ord_k]), 1L)
+          fold_nb_cache[[pk]] <- list(m_k = m_k, nb_tu = nb_k_tu, nb_td = nb_k_td)
+        }
+      }
+
+      need_tr_pred <- (method_req == "colocated")
       Xp_tr <- X_obs[tr_p, , drop = FALSE]
-      Xp_ev <- X_obs[ord_k, , drop = FALSE]
+      Xp_ev <- if (need_tr_pred) X_obs[c(tr_p, te_p), , drop = FALSE] else X_obs[te_p, , drop = FALSE]
       yp_tr <- Y_obs_sc[tr_p, p]
-      ne <- length(ord_k)
+      ne <- length(tr_p) + length(te_p)
       v_tr_p <- if (has_v_eff) as.double(V_eff[tr_p, p] * (y_sds[p]^2)) else numeric(0)
+      v_bar_p <- if (has_v_eff) mean(v_tr_p) else 0.0
       tl <- (length(tr_p) + 1L):ne
+      pred_sl <- if (need_tr_pred) seq_len(ne * m_k) else (length(tr_p) * m_k + 1L):(ne * m_k)
 
-      nb_k_tu <- .Call("C_compute_s3n_neighbors", as.integer(length(tr_p)), as.integer(m_k), as.integer(p0_k),
-                       as.integer(df_ord$CatchID[ord_k]), as.integer(tt_k[[1]]), as.integer(tt_k[[2]]),
-                       as.double(df_ord$Dist2Mth_km[ord_k]), as.double(up_dist[ord_k]), as.double(df_ord$log_AFV[ord_k]),
-                       as.double(df_ord$mid_X[ord_k]), as.double(df_ord$mid_Y[ord_k]), 0L)
-      f_k_tu <- fit_nngp_cpp(Xp_tr, yp_tr, nb_k_tu$obs_neighbors, max(1e-4, var(yp_tr)), kernel_name = kernel_req)
+      init_th_tu <- if (!is.null(uni_init_tu[[p]])) {
+        c(uni_init_tu[[p]]["sigma.sq"] * (y_sds[p]^2),
+          uni_init_tu[[p]]["tau.sq"] * (y_sds[p]^2),
+          uni_init_tu[[p]]["phi"])
+      } else NULL
+      f_k_tu <- fit_nngp_cpp(Xp_tr, yp_tr, nb_k_tu$obs_neighbors, max(1e-4, var(yp_tr)),
+                             kernel_name = kernel_req, init_theta = init_th_tu)
+      tau_rem_tu <- max(1e-4, f_k_tu$Theta["tau.sq"] - v_bar_p)
       p1 <- .Call("C_s3n_predict_meas_error", Xp_tr, as.matrix(yp_tr), v_tr_p, Xp_ev, f_k_tu$Beta,
-                  as.double(c(f_k_tu$Theta, kid)), as.integer(m_k),
-                  nb_k_tu$pred_neighbors$nnIndx[1:(ne * m_k)], nb_k_tu$pred_neighbors$nnDist[1:(ne * m_k)], nb_k_tu$pred_neighbors$nnWght[1:(ne * m_k)],
+                  as.double(c(f_k_tu$Theta["sigma.sq"], tau_rem_tu, f_k_tu$Theta["phi"], kid)), as.integer(m_k),
+                  nb_k_tu$pred_neighbors$nnIndx[pred_sl], nb_k_tu$pred_neighbors$nnDist[pred_sl], nb_k_tu$pred_neighbors$nnWght[pred_sl],
                   nb_k_tu$obsobs_dist, nb_k_tu$obsobs_wt)
-      pred_tu_k <- p1$prediction[tl]
-      rm(nb_k_tu, f_k_tu, p1); gc(FALSE)
+      pred_tu_all <- p1$prediction
+      se_tu_k     <- (p1$prediction.ci[, 2] - p1$prediction) / 1.959964
+      inf_tu_k    <- pmax(1e-4, 1.0 - (se_tu_k^2) / max(1e-6, f_k_tu$Theta["sigma.sq"] + tau_rem_tu))
+      beta_tu_k   <- f_k_tu$Beta
+      rm(nb_k_tu, f_k_tu, p1)
 
-      nb_k_td <- .Call("C_compute_s3n_neighbors", as.integer(length(tr_p)), as.integer(m_k), as.integer(p0_k),
-                       as.integer(df_ord$CatchID[ord_k]), as.integer(tt_k[[1]]), as.integer(tt_k[[2]]),
-                       as.double(df_ord$Dist2Mth_km[ord_k]), as.double(up_dist[ord_k]), as.double(df_ord$log_AFV[ord_k]),
-                       as.double(df_ord$mid_X[ord_k]), as.double(df_ord$mid_Y[ord_k]), 1L)
-      f_k_td <- fit_nngp_cpp(Xp_tr, yp_tr, nb_k_td$obs_neighbors, max(1e-4, var(yp_tr)), kernel_name = kernel_req)
+      if (is.null(nb_k_td)) {
+        nb_k_td <- .Call("C_compute_s3n_neighbors", as.integer(c(length(tr_p), ne)), as.integer(m_k), as.integer(p0_k),
+                         as.integer(df_ord$CatchID[ord_k]), as.integer(tt_k[[1]]), as.integer(tt_k[[2]]),
+                         as.double(df_ord$Dist2Mth_km[ord_k]), as.double(up_dist[ord_k]), as.double(df_ord$log_AFV[ord_k]),
+                         as.double(df_ord$mid_X[ord_k]), as.double(df_ord$mid_Y[ord_k]), 1L)
+      }
+      init_th_td <- if (!is.null(uni_init_td[[p]])) {
+        c(uni_init_td[[p]]["sigma.sq"] * (y_sds[p]^2),
+          uni_init_td[[p]]["tau.sq"] * (y_sds[p]^2),
+          uni_init_td[[p]]["phi"])
+      } else NULL
+      f_k_td <- fit_nngp_cpp(Xp_tr, yp_tr, nb_k_td$obs_neighbors, max(1e-4, var(yp_tr)),
+                             kernel_name = kernel_req, init_theta = init_th_td)
+      tau_rem_td <- max(1e-4, f_k_td$Theta["tau.sq"] - v_bar_p)
       p2 <- .Call("C_s3n_predict_meas_error", Xp_tr, as.matrix(yp_tr), v_tr_p, Xp_ev, f_k_td$Beta,
-                  as.double(c(f_k_td$Theta, kid)), as.integer(m_k),
-                  nb_k_td$pred_neighbors$nnIndx[1:(ne * m_k)], nb_k_td$pred_neighbors$nnDist[1:(ne * m_k)], nb_k_td$pred_neighbors$nnWght[1:(ne * m_k)],
+                  as.double(c(f_k_td$Theta["sigma.sq"], tau_rem_td, f_k_td$Theta["phi"], kid)), as.integer(m_k),
+                  nb_k_td$pred_neighbors$nnIndx[pred_sl], nb_k_td$pred_neighbors$nnDist[pred_sl], nb_k_td$pred_neighbors$nnWght[pred_sl],
                   nb_k_td$obsobs_dist, nb_k_td$obsobs_wt)
-      cv_uni_sc[te_p, p] <- 0.5 * (pred_tu_k + p2$prediction[tl])
-      rm(nb_k_td, f_k_td, p2, pred_tu_k, tt_k); gc(FALSE)
-    }
+      pred_td_all <- p2$prediction
+      se_td_k     <- (p2$prediction.ci[, 2] - p2$prediction) / 1.959964
+      inf_td_k    <- pmax(1e-4, 1.0 - (se_td_k^2) / max(1e-6, f_k_td$Theta["sigma.sq"] + tau_rem_td))
+      pred_uni_all <- (inf_tu_k * pred_tu_all + inf_td_k * pred_td_all) / (inf_tu_k + inf_td_k)
+      cv_uni_sc[te_p, p] <- if (need_tr_pred) pred_uni_all[tl] else pred_uni_all
 
-    # Multivariate All-Holdout Co-Kriging CV on identical split
-    ord_mv <- c(tr, te)
-    par_mv <- match(df_ord$parent_dn[ord_mv], df_ord$RivID[ord_mv], nomatch = 0L)
-    p0_mv  <- ifelse(df_ord$parent_dn[ord_mv] == 0 | par_mv == 0L, -1L, par_mv - 1L)
-    tt_mv  <- .Call("C_build_tree_tin_tout", as.integer(p0_mv))
-    m_mv   <- min(as.integer(m_use), max(2L, length(tr) - 2L))
-    nb_mv_tu <- .Call("C_compute_s3n_neighbors", as.integer(length(tr)), as.integer(m_mv), as.integer(p0_mv),
-                      as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
-                      as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
-                      as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 0L)
-    nb_mv_td <- .Call("C_compute_s3n_neighbors", as.integer(length(tr)), as.integer(m_mv), as.integer(p0_mv),
-                      as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
-                      as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
-                      as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 1L)
-    pr_cv <- call_mv_nngp(
-      X_obs[tr, , drop = FALSE], Y_std[tr, , drop = FALSE],
-      X_obs[ord_mv, , drop = FALSE], Beta_fin,
-      nb_mv_tu, nb_mv_td, df_ord$mid_X[ord_mv], df_ord$mid_Y[ord_mv], m_mv,
-      pars_fin, 1L, V_m = if (has_v_eff) V_eff[tr, , drop = FALSE] else NULL
-    )
-    tl_mv <- (length(tr) + 1L):length(ord_mv)
-    pr_cv_sc <- sweep(sweep(pr_cv$prediction[tl_mv, , drop = FALSE], 2L, y_sds, "*"), 2L, y_means, "+")
-    cv_all_sc[te, ] <- pr_cv_sc
-    rm(nb_mv_tu, nb_mv_td, pr_cv, pr_cv_sc, tt_mv); gc(FALSE)
+      if (need_tr_pred) {
+        coloc_uni_tr_sc[match(tr_p, tr), p] <- pred_uni_all[seq_len(length(tr_p))]
+        coloc_beta_tr[, p] <- 0.5 * (beta_tu_k + f_k_td$Beta)
+        coloc_tau_tr[p]    <- 0.5 * (tau_rem_tu + tau_rem_td)
+      }
+      key_rem[[pk]] <- key_rem[[pk]] - 1L
+      if (key_rem[[pk]] <= 0L && !is.null(fold_nb_cache[[pk]])) fold_nb_cache[[pk]] <- NULL
+      rm(nb_k_td, f_k_td, p2, pred_tu_all, pred_td_all, pred_uni_all); gc(FALSE)
+    }
+    rm(fold_nb_cache); gc(FALSE)
+
+    if (method_req == "colocated") {
+      # Out-of-fold colocated regression CV (All-Holdout & Aux-Aided)
+      coloc_beta_std <- sweep(coloc_beta_tr, 2L, y_sds, "/")
+      coloc_beta_std[1L, ] <- coloc_beta_std[1L, ] - y_means / y_sds
+      for (p in seq_len(P)) {
+        tr_pos <- which(is.finite(Y_std[tr, p]))
+        te_pos <- which(is.finite(Y_std[te, p]))
+        if (length(tr_pos) < p_cov || length(te_pos) == 0L) next
+        tr_p <- tr[tr_pos]
+        te_p <- te[te_pos]
+        aux_idx <- setdiff(seq_len(P), p)
+        R_tr <- matrix(0.0, nrow = length(tr_p), ncol = length(aux_idx))
+        R_te_all <- matrix(0.0, nrow = length(te_p), ncol = length(aux_idx))
+        R_te_aux <- matrix(0.0, nrow = length(te_p), ncol = length(aux_idx))
+        for (ai in seq_along(aux_idx)) {
+          q_idx <- aux_idx[ai]
+          xb_tr <- as.numeric(X_obs[tr_p, , drop = FALSE] %*% coloc_beta_std[, q_idx])
+          uni_tr_q_std <- (coloc_uni_tr_sc[tr_pos, q_idx] - y_means[q_idx]) / y_sds[q_idx]
+          r_tr_q <- ifelse(is.finite(Y_std[tr_p, q_idx]), Y_std[tr_p, q_idx] - xb_tr,
+                           ifelse(is.finite(uni_tr_q_std), uni_tr_q_std - xb_tr, 0.0))
+          R_tr[, ai] <- r_tr_q
+
+          xb_te <- as.numeric(X_obs[te_p, , drop = FALSE] %*% coloc_beta_std[, q_idx])
+          uni_te_q_std <- (cv_uni_sc[te_p, q_idx] - y_means[q_idx]) / y_sds[q_idx]
+          r_te_uni <- ifelse(is.finite(uni_te_q_std), uni_te_q_std - xb_te, 0.0)
+          R_te_all[, ai] <- r_te_uni
+          R_te_aux[, ai] <- ifelse(is.finite(Y_std[te_p, q_idx]), Y_std[te_p, q_idx] - xb_te, r_te_uni)
+        }
+        xb_p_tr <- as.numeric(X_obs[tr_p, , drop = FALSE] %*% coloc_beta_std[, p])
+        r_p_tr  <- Y_std[tr_p, p] - xb_p_tr
+        tau_p_std <- max(1e-4, coloc_tau_tr[p] / (y_sds[p]^2))
+        w_co_tr <- 1.0 / (1.0 + V_eff[tr_p, p] / tau_p_std)
+        fit_co_tr <- lm.wfit(cbind(1, R_tr), r_p_tr, w = w_co_tr)
+        gam_tr <- fit_co_tr$coefficients
+        gam_tr[!is.finite(gam_tr)] <- 0.0
+        r2_tr <- max(0.0, 1.0 - var(fit_co_tr$residuals) / max(1e-6, var(r_p_tr)))
+        w_aux_tr <- r2_tr * 0.65
+
+        xb_p_te <- as.numeric(X_obs[te_p, , drop = FALSE] %*% coloc_beta_std[, p])
+        uni_te_p_std <- (cv_uni_sc[te_p, p] - y_means[p]) / y_sds[p]
+        adj_all_te <- xb_p_te + as.numeric(cbind(1, R_te_all) %*% gam_tr)
+        adj_aux_te <- xb_p_te + as.numeric(cbind(1, R_te_aux) %*% gam_tr)
+        cv_all_sc[te_p, p] <- ((1.0 - w_aux_tr) * uni_te_p_std + w_aux_tr * adj_all_te) * y_sds[p] + y_means[p]
+        cv_aux_sc[te_p, p] <- ((1.0 - w_aux_tr) * uni_te_p_std + w_aux_tr * adj_aux_te) * y_sds[p] + y_means[p]
+      }
+    } else {
+      # Multivariate All-Holdout Co-Kriging CV on identical split preserving full topology
+      unobs_mv <- setdiff(seq_len(q_tot), c(tr, te))
+      ord_mv   <- c(tr, te, unobs_mv)
+      ne_mv    <- length(tr) + length(te)
+      par_mv   <- match(df_ord$parent_dn[ord_mv], df_ord$RivID[ord_mv], nomatch = 0L)
+      p0_mv    <- ifelse(df_ord$parent_dn[ord_mv] == 0 | par_mv == 0L, -1L, par_mv - 1L)
+      tt_mv    <- .Call("C_build_tree_tin_tout", as.integer(p0_mv))
+      m_mv     <- min(as.integer(m_use), max(2L, length(tr) - 2L))
+      nb_mv_tu <- .Call("C_compute_s3n_neighbors", as.integer(c(length(tr), ne_mv)), as.integer(m_mv), as.integer(p0_mv),
+                        as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
+                        as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
+                        as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 0L)
+      nb_mv_td <- .Call("C_compute_s3n_neighbors", as.integer(c(length(tr), ne_mv)), as.integer(m_mv), as.integer(p0_mv),
+                        as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
+                        as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
+                        as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 1L)
+      # Estimate fixed-effect Beta purely on training fold tr (no Beta_fin leakage)
+      fit_mv_tr <- call_mv_nngp(
+        X_obs[tr, , drop = FALSE], Y_std[tr, , drop = FALSE],
+        X_obs[tr, , drop = FALSE], matrix(0.0, p_cov, P),
+        nb_mv_tu, nb_mv_td, df_ord$mid_X[tr], df_ord$mid_Y[tr], m_mv,
+        pars_fin, 0L, V_m = if (has_v_eff) V_eff[tr, , drop = FALSE] else NULL
+      )
+      pr_cv <- call_mv_nngp(
+        X_obs[tr, , drop = FALSE], Y_std[tr, , drop = FALSE],
+        X_obs[c(tr, te), , drop = FALSE], fit_mv_tr$Beta,
+        nb_mv_tu, nb_mv_td, df_ord$mid_X[c(tr, te)], df_ord$mid_Y[c(tr, te)], m_mv,
+        pars_fin, 1L, V_m = if (has_v_eff) V_eff[tr, , drop = FALSE] else NULL
+      )
+      tl_mv <- (length(tr) + 1L):ne_mv
+      pr_cv_sc <- sweep(sweep(pr_cv$prediction[tl_mv, , drop = FALSE], 2L, y_sds, "*"), 2L, y_means, "+")
+      cv_all_sc[te, ] <- pr_cv_sc
+      rm(nb_mv_tu, nb_mv_td, fit_mv_tr, pr_cv, pr_cv_sc, tt_mv); gc(FALSE)
+    }
+  }
+  aux_cv_sc <- cv_aux_sc
+  if (cv_info$actual_mode != "random") {
+    un_eval <- which(is.na(folds) | folds <= 0L)
+    if (length(un_eval) > 0L) aux_cv_sc[un_eval, ] <- NA_real_
   }
 
   # Metric helpers

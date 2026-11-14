@@ -11,7 +11,9 @@ Shared Python utilities for the S3N Stream Network Modeling toolkit:
 """
 
 from dataclasses import dataclass
+import bisect
 import csv
+from functools import lru_cache
 import glob
 import json
 import math
@@ -546,11 +548,18 @@ def transform_coords_batch(xy_list, from_epsg, to_epsg):
 # 3. String, Column, Date, and Source Registry Helpers
 # ==============================================================================
 
+_RE_NORM_NAME = re.compile(r"[^a-z0-9]")
+_RE_TIME_PART = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?", re.IGNORECASE)
+_RE_TIME_STRIP = re.compile(r"\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?.*$", re.IGNORECASE)
+_RE_DATE_ISO = re.compile(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})")
+_RE_DATE_SLASH = re.compile(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})")
+
+
 def normalize_name(s):
     """Strips punctuation, underscores, and extra spaces for resilient matching."""
     if not s:
         return ""
-    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+    return _RE_NORM_NAME.sub("", str(s).lower())
 
 
 def find_col(fieldnames, candidate_names):
@@ -614,37 +623,40 @@ def compute_afv_reach_weight(afv_scheme, us_accum_km, shreve=1, elevation=0.0, i
     return us_km
 
 
-def parse_datetime_iso(date_str, time_str=None):
-    """Normalizes arbitrary date and time strings into ISO-8601 'YYYY-MM-DDTHH:MM:SS'."""
-    if not date_str:
-        return "2023-06-01T12:00:00"
-    ds = str(date_str).strip()
-    ts = str(time_str).strip() if time_str else ""
+@lru_cache(maxsize=16384)
+def _parse_datetime_iso_cached(ds, ts):
+    # Fast path for standard ISO-8601 strings: YYYY-MM-DD[T| ]HH:MM:SS
+    if not ts and len(ds) >= 10 and ds[4] == "-" and ds[7] == "-" and ds[0:4].isdigit() and ds[5:7].isdigit() and ds[8:10].isdigit():
+        if len(ds) == 10:
+            return f"{ds}T12:00:00"
+        if len(ds) >= 19 and (len(ds) == 19 or ds[19] in "Zz.+-") and ds[10] in ("T", " ") and ds[13] == ":" and ds[16] == ":" and ds[11:13].isdigit() and ds[14:16].isdigit() and ds[17:19].isdigit():
+            return f"{ds[:10]}T{ds[11:19]}"
 
     time_part = None
     for src_t in (ts, ds):
         if time_part:
             break
         if src_t and src_t.lower() not in ("none", "null", "na", "n/a", ""):
-            m_t = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?", src_t, re.IGNORECASE)
+            m_t = _RE_TIME_PART.search(src_t)
             if m_t:
                 hr, mn, sc, ampm = m_t.groups()
                 hr, mn = int(hr), int(mn)
                 sc = int(sc) if sc else 0
                 if ampm:
-                    if ampm.lower() == "pm" and hr < 12:
+                    ampm_low = ampm.lower()
+                    if ampm_low == "pm" and hr < 12:
                         hr += 12
-                    elif ampm.lower() == "am" and hr == 12:
+                    elif ampm_low == "am" and hr == 12:
                         hr = 0
                 time_part = f"{hr:02d}:{mn:02d}:{sc:02d}"
 
-    date_clean = re.sub(r"\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?.*$", "", ds, flags=re.IGNORECASE).strip()
-    m_iso = re.match(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", date_clean)
+    date_clean = _RE_TIME_STRIP.sub("", ds).strip()
+    m_iso = _RE_DATE_ISO.match(date_clean)
     if m_iso:
         y, m, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
         return f"{y:04d}-{m:02d}-{d:02d}T{time_part or '12:00:00'}"
 
-    m_slash = re.match(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})", date_clean)
+    m_slash = _RE_DATE_SLASH.match(date_clean)
     if m_slash:
         p1, p2, y = int(m_slash.group(1)), int(m_slash.group(2)), int(m_slash.group(3))
         if p1 > 12:
@@ -655,9 +667,20 @@ def parse_datetime_iso(date_str, time_str=None):
             d, m = p1, p2
         return f"{y:04d}-{m:02d}-{d:02d}T{time_part or '12:00:00'}"
 
-    if re.match(r"^\d{4}-\d{2}-\d{2}", ds):
+    if len(ds) >= 10 and ds[4] == "-" and ds[7] == "-" and ds[0:4].isdigit() and ds[5:7].isdigit() and ds[8:10].isdigit():
         return ds.replace(" ", "T")
     return ds
+
+
+def parse_datetime_iso(date_str, time_str=None):
+    """Normalizes arbitrary date and time strings into ISO-8601 'YYYY-MM-DDTHH:MM:SS'."""
+    if not date_str:
+        return "2023-06-01T12:00:00"
+    ds = str(date_str).strip()
+    if not ds:
+        return "2023-06-01T12:00:00"
+    ts = str(time_str).strip() if time_str else ""
+    return _parse_datetime_iso_cached(ds, ts)
 
 
 def load_source_registry(base_dir=DEFAULT_BASE_DIR, data_dir=None):
@@ -775,13 +798,16 @@ def resolve_source_tag(source="rsn", registry=None, data_dir=None, base_dir=DEFA
     for rm in ("tobit", "geometric", "midpoint", "lower", "upper"):
         if s.endswith(f"_{rm}"):
             base_s = s[: -len(rm) - 1]
+            has_s_dir = os.path.isdir(os.path.join(eff_data_dir, "custom", s))
             if base_s in sources_reg:
                 b_info = sources_reg[base_s]
                 b_label = b_info.get("label", base_s.title())
                 if f"[{rm.title()}]" not in b_label:
                     b_label = f"{b_label} [{rm.title()}]"
                 b_abbr = f"{b_info.get('abbr', base_s.upper())}_{rm.upper()[:3]}"
-                return s, [s], b_abbr, b_label
+                return s, ([s] if has_s_dir else [base_s]), b_abbr, b_label
+            if not has_s_dir and base_s and os.path.isdir(os.path.join(eff_data_dir, "custom", base_s)):
+                return s, [base_s], f"{base_s.upper()}_{rm.upper()[:3]}", f"Custom Source: {base_s} [{rm.title()}]"
 
     clean_tag = re.sub(r"[^a-z0-9_]+", "_", s)
     return clean_tag, [clean_tag], clean_tag.upper(), f"Custom Source: {clean_tag}"
@@ -864,15 +890,30 @@ def normal_pdf(x):
     return (1.0 / math.sqrt(2.0 * math.pi)) * math.exp(-0.5 * x * x)
 
 
+_RE_CENS = re.compile(r"^(<|<=|>|>=)\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$")
+_RE_RANGE = re.compile(r"^([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(?:-|–|—|\bto\b)\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$", re.IGNORECASE)
+_RE_EMBEDDED = re.compile(r"^([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*[a-zA-Z/%_]+$")
+_MISSING_TOKENS = frozenset(("none", "null", "na", "n/a", "nan", "no_water_available", "-", ".", ""))
+
+
 def parse_raw_measurement_token(raw_val):
     """Categorizes a measurement string into 'point', 'interval', 'left', 'right', or None."""
     if raw_val is None:
         return None
     s = str(raw_val).strip()
-    if not s or s.lower() in ("none", "null", "na", "n/a", "nan", "no_water_available", "-", ".", ""):
+    if not s or s.lower() in _MISSING_TOKENS:
         return None
 
-    m_cens = re.match(r"^(<|<=|>|>=)\s*([+-]?\d+(?:\.\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$", s)
+    # Fast path for plain numeric strings (avoids running regexes on the majority of cells)
+    if s[0] in "0123456789+-.":
+        try:
+            val = float(s)
+            if not math.isnan(val) and not math.isinf(val):
+                return {"type": "point", "a": val, "b": val, "val": val, "sign": "=", "raw": s}
+        except ValueError:
+            pass
+
+    m_cens = _RE_CENS.match(s)
     if m_cens:
         op, num = m_cens.groups()
         try:
@@ -883,7 +924,7 @@ def parse_raw_measurement_token(raw_val):
         except ValueError:
             return None
 
-    m_range = re.match(r"^([+-]?\d+(?:\.\d+)?)\s*(?:-|–|—|\bto\b)\s*([+-]?\d+(?:\.\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$", s, re.IGNORECASE)
+    m_range = _RE_RANGE.match(s)
     if m_range:
         try:
             a, b = float(m_range.group(1)), float(m_range.group(2))
@@ -893,13 +934,7 @@ def parse_raw_measurement_token(raw_val):
         except ValueError:
             return None
 
-    try:
-        val = float(s)
-        return {"type": "point", "a": val, "b": val, "val": val, "sign": "=", "raw": s}
-    except ValueError:
-        pass
-
-    m_embedded = re.match(r"^([+-]?\d+(?:\.\d+)?)\s*[a-zA-Z/%_]+$", s)
+    m_embedded = _RE_EMBEDDED.match(s)
     if m_embedded:
         try:
             val = float(m_embedded.group(1))
@@ -936,7 +971,9 @@ class IntervalTobitModel:
                     sample_log_vals.extend([math.log(a)] * min(cnt, 200))
             elif rec_type == "interval":
                 self.n_intervals += cnt
-                if a and b and a > 0 and b > 0:
+                if a is not None and a <= 0 and b and b > 0:
+                    sample_log_vals.extend([math.log(b) - 0.5] * min(cnt, 200))
+                elif a and b and a > 0 and b > 0:
                     sample_log_vals.extend([0.5 * (math.log(a) + math.log(b))] * min(cnt, 200))
             elif rec_type == "left":
                 self.n_left += cnt
@@ -959,24 +996,33 @@ class IntervalTobitModel:
         init_s = max(0.15, (q75 - q25) / 1.349) if q75 > q25 else 1.0
 
         half_log_2pi = 0.5 * math.log(2.0 * math.pi)
+        # Precompute log-bounds once outside the ~700-iteration grid/pattern search
+        precomp_terms = []
+        for (rec_type, a, b), cnt in token_counts.items():
+            if rec_type == "point" and a and a > 0:
+                precomp_terms.append((0, math.log(a), 0.0, cnt))
+            elif (rec_type == "left" or (rec_type == "interval" and (a is None or a <= 0))) and b and b > 0:
+                precomp_terms.append((1, 0.0, math.log(b), cnt))
+            elif rec_type == "right" and a and a > 0:
+                precomp_terms.append((2, math.log(a), 0.0, cnt))
+            elif rec_type == "interval" and a and b and a > 0 and b > 0:
+                precomp_terms.append((3, math.log(a), math.log(b), cnt))
 
         def log_likelihood(m, s):
             s = max(0.05, s)
+            inv_s = 1.0 / s
+            const_pt = -half_log_2pi - math.log(s)
             total = 0.0
-            for (rec_type, a, b), cnt in token_counts.items():
-                if rec_type == "point" and a and a > 0:
-                    z = (math.log(a) - m) / s
-                    total += cnt * (-half_log_2pi - math.log(s) - math.log(a) - 0.5 * z * z)
-                elif rec_type == "left" and b and b > 0:
-                    zb = (math.log(b) - m) / s
-                    total += cnt * math.log(max(1e-12, normal_cdf(zb)))
-                elif rec_type == "right" and a and a > 0:
-                    za = (math.log(a) - m) / s
-                    total += cnt * math.log(max(1e-12, 1.0 - normal_cdf(za)))
-                elif rec_type == "interval" and a and b and a > 0 and b > 0:
-                    za = (math.log(a) - m) / s
-                    zb = (math.log(b) - m) / s
-                    total += cnt * math.log(max(1e-12, normal_cdf(zb) - normal_cdf(za)))
+            for kind, la, lb, cnt in precomp_terms:
+                if kind == 0:
+                    z = (la - m) * inv_s
+                    total += cnt * (const_pt - la - 0.5 * z * z)
+                elif kind == 1:
+                    total += cnt * math.log(max(1e-12, normal_cdf((lb - m) * inv_s)))
+                elif kind == 2:
+                    total += cnt * math.log(max(1e-12, 1.0 - normal_cdf((la - m) * inv_s)))
+                else:
+                    total += cnt * math.log(max(1e-12, normal_cdf((lb - m) * inv_s) - normal_cdf((la - m) * inv_s)))
             return total
 
         best_ll = -1e20
@@ -991,7 +1037,7 @@ class IntervalTobitModel:
                     best_ll, best_m, best_s = ll, mc, sc
 
         step_m = (m_cands[1] - m_cands[0]) * 0.5
-        step_s = (s_cands[1] - s_cands[0]) * 0.5 if len(s_cands) > 1 else 0.1
+        step_s = max(0.02, best_s * 0.075)
         for _ in range(12):
             improved = False
             for dm in (-step_m, step_m):
@@ -1029,17 +1075,23 @@ class IntervalTobitModel:
             exp_log_y = m + s * (normal_pdf(alpha) / max(1e-12, 1.0 - normal_cdf(alpha)))
             res = (round(math.exp(exp_log_y), 5), ">", a, None, round(s / math.sqrt(12.0), 4), "tobit_interval")
         elif rec_type == "interval":
-            a_pos = max(1e-6, a) if a is not None else 1e-6
-            b_pos = max(a_pos + 1e-9, b) if b is not None else a_pos + 1e-6
-            alpha = (math.log(a_pos) - m) / s
-            beta = (math.log(b_pos) - m) / s
-            denom = normal_cdf(beta) - normal_cdf(alpha)
-            unc = (math.log(b_pos) - math.log(a_pos)) / math.sqrt(12.0)
-            if denom < 1e-10:
-                res = (round(math.sqrt(a_pos * b_pos), 5), "=", a, b, round(unc, 4), "geometric_midpoint")
+            if a is None or a <= 0:
+                b_pos = max(1e-6, b) if b is not None else 1e-6
+                beta = (math.log(b_pos) - m) / s
+                exp_log_y = m - s * (normal_pdf(beta) / max(1e-12, normal_cdf(beta)))
+                res = (round(math.exp(exp_log_y), 5), "=", a if a is not None else 0.0, b, round(s / math.sqrt(12.0), 4), "tobit_interval")
             else:
-                exp_log_y = m + s * ((normal_pdf(alpha) - normal_pdf(beta)) / denom)
-                res = (round(math.exp(exp_log_y), 5), "=", a, b, round(unc, 4), "tobit_interval")
+                a_pos = max(1e-6, a)
+                b_pos = max(a_pos + 1e-9, b) if b is not None else a_pos + 1e-6
+                alpha = (math.log(a_pos) - m) / s
+                beta = (math.log(b_pos) - m) / s
+                denom = normal_cdf(beta) - normal_cdf(alpha)
+                unc = (math.log(b_pos) - math.log(a_pos)) / math.sqrt(12.0)
+                if denom < 1e-10:
+                    res = (round(math.sqrt(a_pos * b_pos), 5), "=", a, b, round(unc, 4), "geometric_midpoint")
+                else:
+                    exp_log_y = m + s * ((normal_pdf(alpha) - normal_pdf(beta)) / denom)
+                    res = (round(math.exp(exp_log_y), 5), "=", a, b, round(unc, 4), "tobit_interval")
         else:
             res = (val or 0.0, "=", a or 0.0, b or 0.0, 0.0, "unknown")
         self.cache[cache_key] = res
@@ -1085,20 +1137,33 @@ def estimate_boxcox_lambda(vals, lower=-2.0, upper=2.0):
     sum_log = sum(log_vals)
 
     def ll(lam):
-        z = log_vals if abs(lam) < 1e-4 else [(math.pow(v, lam) - 1.0) / lam for v in pos]
-        mz = statistics.mean(z)
-        vz = statistics.mean([(x - mz) ** 2 for x in z])
+        if abs(lam) < 1e-4:
+            z = log_vals
+        else:
+            inv_lam = 1.0 / lam
+            z = [(math.pow(v, lam) - 1.0) * inv_lam for v in pos]
+        mz = sum(z) / n
+        vz = sum((x - mz) ** 2 for x in z) / n
         return -1e12 if vz < 1e-12 else (-0.5 * n * math.log(vz) + (lam - 1.0) * sum_log)
 
     gr = (math.sqrt(5.0) - 1.0) / 2.0
     a, b = lower, upper
-    c, d = b - gr * (b - a), a + gr * (b - a)
+    c = b - gr * (b - a)
+    d = a + gr * (b - a)
+    fc, fd = ll(c), ll(d)
     while abs(b - a) > 1e-4:
-        if ll(c) > ll(d):
+        if fc > fd:
             b = d
+            d = c
+            fd = fc
+            c = b - gr * (b - a)
+            fc = ll(c)
         else:
             a = c
-        c, d = b - gr * (b - a), a + gr * (b - a)
+            c = d
+            fc = fd
+            d = a + gr * (b - a)
+            fd = ll(d)
     return round((b + a) / 2.0, 4)
 
 
@@ -1107,30 +1172,47 @@ def estimate_yeojohnson_lambda(vals, lower=-2.0, upper=2.0):
     n = len(clean)
     if n < 10:
         return 0.5
+    pos_vals = [v + 1.0 for v in clean if v >= 0]
+    neg_vals = [-v + 1.0 for v in clean if v < 0]
+    sum_log_pos = sum(math.log(v) for v in pos_vals)
+    sum_log_neg = sum(math.log(v) for v in neg_vals)
 
     def ll(lam):
-        z, jac = [], 0.0
-        for y in clean:
-            if y >= 0:
-                zv = math.log(y + 1.0) if abs(lam) < 1e-4 else (math.pow(y + 1.0, lam) - 1.0) / lam
-                jac += (lam - 1.0) * math.log(y + 1.0)
-            else:
-                zv = -math.log(-y + 1.0) if abs(2.0 - lam) < 1e-4 else -((math.pow(-y + 1.0, 2.0 - lam) - 1.0) / (2.0 - lam))
-                jac += (1.0 - lam) * -math.log(-y + 1.0)
-            z.append(zv)
-        mz = statistics.mean(z)
-        vz = statistics.mean([(x - mz) ** 2 for x in z])
+        z = []
+        if abs(lam) < 1e-4:
+            z.extend(math.log(v) for v in pos_vals)
+        else:
+            inv_lam = 1.0 / lam
+            z.extend((math.pow(v, lam) - 1.0) * inv_lam for v in pos_vals)
+        lam2 = 2.0 - lam
+        if abs(lam2) < 1e-4:
+            z.extend(-math.log(v) for v in neg_vals)
+        else:
+            inv_lam2 = 1.0 / lam2
+            z.extend(-((math.pow(v, lam2) - 1.0) * inv_lam2) for v in neg_vals)
+        jac = (lam - 1.0) * sum_log_pos + (1.0 - lam) * sum_log_neg
+        mz = sum(z) / n
+        vz = sum((x - mz) ** 2 for x in z) / n
         return -1e12 if vz < 1e-12 else (-0.5 * n * math.log(vz) + jac)
 
     gr = (math.sqrt(5.0) - 1.0) / 2.0
     a, b = lower, upper
-    c, d = b - gr * (b - a), a + gr * (b - a)
+    c = b - gr * (b - a)
+    d = a + gr * (b - a)
+    fc, fd = ll(c), ll(d)
     while abs(b - a) > 1e-4:
-        if ll(c) > ll(d):
+        if fc > fd:
             b = d
+            d = c
+            fd = fc
+            c = b - gr * (b - a)
+            fc = ll(c)
         else:
             a = c
-        c, d = b - gr * (b - a), a + gr * (b - a)
+            c = d
+            fc = fd
+            d = a + gr * (b - a)
+            fd = ll(d)
     return round((b + a) / 2.0, 4)
 
 
@@ -1200,7 +1282,6 @@ def compute_ros_plotting_positions(records):
             pp[i] = r_idx / (n + 1.0)
         return pp
 
-    thresholds = [0.0] + c_limits + [float("inf")]
     J = len(c_limits)
     A = [[] for _ in range(J + 1)]
     C = [[] for _ in range(J + 1)]
@@ -1210,23 +1291,25 @@ def compute_ros_plotting_positions(records):
         if is_c:
             C[limit_to_j[v]].append(idx)
         else:
-            placed = False
-            for j in range(J, -1, -1):
-                if v >= thresholds[j]:
-                    A[j].append(idx)
-                    placed = True
-                    break
-            if not placed:
-                A[0].append(idx)
+            # Find largest j in 1..J with c_limits[j - 1] <= v (or 0 if v < c_limits[0])
+            j = bisect.bisect_right(c_limits, v)
+            A[j].append(idx)
 
     for j in range(J + 1):
         A[j].sort(key=lambda i: records[i][0])
 
+    # Exact O(J) computation of B_j = #{censored <= d_j} + #{uncensored < d_j}
+    # Note: A[k] for k < j contains all uncensored v < d_j; C[k] for k <= j contains all censored v <= d_j.
+    pref_A = [0] * (J + 2)
+    pref_C = [0] * (J + 2)
+    for k in range(J + 1):
+        pref_A[k + 1] = pref_A[k] + len(A[k])
+        pref_C[k + 1] = pref_C[k] + len(C[k])
+
     p = [0.0] * (J + 2)
     for j in range(J, 0, -1):
-        d_j = thresholds[j]
         A_j = len(A[j])
-        B_j = sum(1 for v, is_c in records if (is_c and v <= d_j) or (not is_c and v < d_j))
+        B_j = pref_A[j] + pref_C[j + 1]
         p[j] = p[j + 1] + (1.0 - p[j + 1]) * (A_j / (A_j + B_j)) if (A_j + B_j > 0) else p[j + 1]
     p[0] = 1.0 if len(A[0]) > 0 else p[1]
 
@@ -1371,22 +1454,28 @@ def parse_gpkg_geometry(blob):
             offset += g_hdr + 4
             coords = struct.unpack_from(g_bo + f"{g_dim * npts}d", blob, offset)
             offset += 8 * g_dim * npts
-            for i in range(0, g_dim * npts, g_dim):
-                pts.append((coords[i], coords[i + 1]))
-                if g_z:
-                    zv = coords[i + 2]
-                    if not math.isnan(zv) and -500.0 < zv < 9000.0:
-                        zs.append(zv)
+            if g_dim == 2:
+                pts.extend(zip(coords[0::2], coords[1::2]))
+            else:
+                for i in range(0, g_dim * npts, g_dim):
+                    pts.append((coords[i], coords[i + 1]))
+                    if g_z:
+                        zv = coords[i + 2]
+                        if not math.isnan(zv) and -500.0 < zv < 9000.0:
+                            zs.append(zv)
     elif base_type == 2:
         npts = struct.unpack_from(bo + "I", blob, offset + hdr_len)[0]
         offset += hdr_len + 4
         coords = struct.unpack_from(bo + f"{ndim * npts}d", blob, offset)
-        for i in range(0, ndim * npts, ndim):
-            pts.append((coords[i], coords[i + 1]))
-            if has_z:
-                zv = coords[i + 2]
-                if not math.isnan(zv) and -500.0 < zv < 9000.0:
-                    zs.append(zv)
+        if ndim == 2:
+            pts.extend(zip(coords[0::2], coords[1::2]))
+        else:
+            for i in range(0, ndim * npts, ndim):
+                pts.append((coords[i], coords[i + 1]))
+                if has_z:
+                    zv = coords[i + 2]
+                    if not math.isnan(zv) and -500.0 < zv < 9000.0:
+                        zs.append(zv)
     return pts, zs
 
 
@@ -1423,16 +1512,21 @@ def compute_polyline_metrics(poly):
     if len(poly) == 1:
         x0, y0 = poly[0]
         return 0.0, 1.0, (x0, y0, x0, y0, x0, y0)
-    tot, segs = 0.0, []
-    for i in range(len(poly) - 1):
-        d = math.hypot(poly[i + 1][0] - poly[i][0], poly[i + 1][1] - poly[i][1])
-        segs.append((d, poly[i], poly[i + 1]))
+    n_seg = len(poly) - 1
+    seg_lens = [0.0] * n_seg
+    tot = 0.0
+    for i in range(n_seg):
+        p1 = poly[i]
+        p2 = poly[i + 1]
+        d = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+        seg_lens[i] = d
         tot += d
     half, cur = tot * 0.5, 0.0
     mx, my = poly[0]
-    for d, p1, p2 in segs:
+    for i, d in enumerate(seg_lens):
         if cur + d >= half and d > 0:
             t = (half - cur) / d
+            p1, p2 = poly[i], poly[i + 1]
             mx, my = p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1])
             break
         cur += d

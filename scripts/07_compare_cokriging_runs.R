@@ -32,8 +32,8 @@ cat("  Output Directory          :", out_dir, "\n")
 # ------------------------------------------------------------------------------
 # 1. Reconstruct per-reach source membership from rsn_sites.csv
 # ------------------------------------------------------------------------------
-sites_df <- read.csv(sites_csv, stringsAsFactors = FALSE)
-sites_df <- sites_df[sites_df$included_250m == 1, , drop = FALSE]
+sites_df <- fast_read_csv(sites_csv)
+sites_df <- sites_df[!is.na(sites_df$included_250m) & sites_df$included_250m == 1, , drop = FALSE]
 sites_df$src_low <- tolower(trimws(as.character(sites_df$source)))
 sites_df$is_rsn <- grepl("river surveillance|rsn", sites_df$src_low)
 sites_df$is_ssn <- grepl("small streams|ssn", sites_df$src_low)
@@ -49,8 +49,8 @@ cat(sprintf("  Reach tiers: %d statutory (RSN/SSN), %d WaterBlitz, %d co-located
 # 2. Export vector SVGs of fig_cokrig_cross_correlation for both runs
 # ------------------------------------------------------------------------------
 export_cokrig_svg <- function(r_dir, label_txt) {
-  cv_d <- read.csv(file.path(r_dir, "cv_univariate_vs_cokriging.csv"), stringsAsFactors = FALSE)
-  cc_d <- read.csv(file.path(r_dir, "cokriging_cross_covariance.csv"), stringsAsFactors = FALSE)
+  cv_d <- fast_read_csv(file.path(r_dir, "cv_univariate_vs_cokriging.csv"))
+  cc_d <- fast_read_csv(file.path(r_dir, "cokriging_cross_covariance.csv"))
   cv_e <- cv_d[grepl("^All England", cv_d$Domain), , drop = FALSE]
   cc_e <- cc_d[grepl("^All England", cc_d$Domain), , drop = FALSE]
   configure_plot_options(format = "svg")
@@ -72,25 +72,27 @@ export_cokrig_svg(wt_dir, "RSN + SSN + WaterBlitz [Prefer RSN,SSN | w_WB=0.25]")
 # ------------------------------------------------------------------------------
 # 3. CV, Cross-Covariance & Management Tier Comparison Table
 # ------------------------------------------------------------------------------
-cv_eq <- read.csv(file.path(eq_dir, "cv_univariate_vs_cokriging.csv"), stringsAsFactors = FALSE, colClasses = c(Target_Code = "character"))
-cv_wt <- read.csv(file.path(wt_dir, "cv_univariate_vs_cokriging.csv"), stringsAsFactors = FALSE, colClasses = c(Target_Code = "character"))
-cc_eq <- read.csv(file.path(eq_dir, "cokriging_cross_covariance.csv"), stringsAsFactors = FALSE)
-cc_wt <- read.csv(file.path(wt_dir, "cokriging_cross_covariance.csv"), stringsAsFactors = FALSE)
-ex_eq <- read.csv(file.path(eq_dir, "exceedance_summary_cokriging.csv"), stringsAsFactors = FALSE)
-ex_wt <- read.csv(file.path(wt_dir, "exceedance_summary_cokriging.csv"), stringsAsFactors = FALSE)
+cv_eq <- fast_read_csv(file.path(eq_dir, "cv_univariate_vs_cokriging.csv"), colClasses = c(Target_Code = "character"))
+cv_wt <- fast_read_csv(file.path(wt_dir, "cv_univariate_vs_cokriging.csv"), colClasses = c(Target_Code = "character"))
+cc_eq <- fast_read_csv(file.path(eq_dir, "cokriging_cross_covariance.csv"))
+cc_wt <- fast_read_csv(file.path(wt_dir, "cokriging_cross_covariance.csv"))
+ex_eq_f <- file.path(eq_dir, "exceedance_summary_cokriging.csv")
+ex_wt_f <- file.path(wt_dir, "exceedance_summary_cokriging.csv")
+ex_eq <- if (file.exists(ex_eq_f)) fast_read_csv(ex_eq_f) else data.frame()
+ex_wt <- if (file.exists(ex_wt_f)) fast_read_csv(ex_wt_f) else data.frame()
 
 m_cv <- merge(cv_eq, cv_wt, by = c("Domain", "Target", "Target_Code", "Dataset", "CV_Mode", "Method", "n_obs", "Model"),
               suffixes = c("_Equal", "_Favoured"), sort = FALSE)
 m_cv$Domain_Short <- sub(" \\(CatchID=.*\\)$", "", sub(" RSN\\+SSN\\+WATERB_TOB Network$", "", m_cv$Domain))
 m_cv$R2_Diff   <- round(m_cv$R2_Favoured - m_cv$R2_Equal, 4)
 m_cv$RMSE_Diff <- round(m_cv$RMSE_Favoured - m_cv$RMSE_Equal, 4)
-write.csv(m_cv, file.path(out_dir, "cs6_cv_comparison.csv"), row.names = FALSE)
+fast_write_csv(m_cv, file.path(out_dir, "cs6_cv_comparison.csv"))
 
 cc_pair_eq <- cc_eq[cc_eq$Var_A != cc_eq$Var_B, ]
 cc_pair_wt <- cc_wt[cc_wt$Var_A != cc_wt$Var_B, ]
 m_cc <- merge(cc_pair_eq, cc_pair_wt, by = c("Domain", "Var_A", "Var_B"), suffixes = c("_Equal", "_Favoured"), sort = FALSE)
 m_cc$Domain_Short <- sub(" \\(CatchID=.*\\)$", "", sub(" RSN\\+SSN\\+WATERB_TOB Network$", "", m_cc$Domain))
-write.csv(m_cc, file.path(out_dir, "cs6_cross_covariance_comparison.csv"), row.names = FALSE)
+fast_write_csv(m_cc, file.path(out_dir, "cs6_cross_covariance_comparison.csv"))
 
 # ------------------------------------------------------------------------------
 # 4. Reach-by-Reach Stratified Comparison & 300-DPI Signed Difference Maps
@@ -99,10 +101,12 @@ div_pal <- colorRampPalette(c("#08306b", "#2171b5", "#6baed6", "#f7f7f7", "#f4a5
 se_div  <- colorRampPalette(c("#00441b", "#1b7837", "#a6dba0", "#f7f7f7", "#c2a5cf", "#762a83", "#40004b"))(255)
 
 analyze_det <- function(det_code, det_label, unit_lbl) {
-  p1 <- read.csv(file.path(eq_dir, sprintf("predictions_england_%s.csv", det_code)), stringsAsFactors = FALSE)
-  p2 <- read.csv(file.path(wt_dir, sprintf("predictions_england_%s.csv", det_code)), stringsAsFactors = FALSE)
+  p1 <- fast_read_csv(file.path(eq_dir, sprintf("predictions_england_%s.csv", det_code)))
+  p2 <- fast_read_csv(file.path(wt_dir, sprintf("predictions_england_%s.csv", det_code)))
   ix <- match(p1$RivID, p2$RivID)
-  p2 <- p2[ix, , drop = FALSE]
+  ok_ix <- !is.na(ix)
+  p1 <- p1[ok_ix, , drop = FALSE]
+  p2 <- p2[ix[ok_ix], , drop = FALSE]
 
   p1$diff_raw      <- p2$pred_combined - p1$pred_combined
   p1$diff_model_sc <- p2$pred_model_sc - p1$pred_model_sc
@@ -126,7 +130,11 @@ analyze_det <- function(det_code, det_label, unit_lbl) {
     mk <- st$mask
     n_s <- sum(mk)
     pr_r <- suppressWarnings(cor(p1$pred_model_sc[mk], p2$pred_model_sc[mk], use = "complete.obs"))
-    tier_ag <- 100.0 * mean(p1$compliance_tier[mk] == p2$compliance_tier[mk], na.rm = TRUE)
+    tier_ag <- if ("compliance_tier" %in% names(p1) && "compliance_tier" %in% names(p2)) {
+      100.0 * mean(p1$compliance_tier[mk] == p2$compliance_tier[mk], na.rm = TRUE)
+    } else {
+      NA_real_
+    }
     # Prediction drift from local observation where observed (especially co-located where Equal mixed WB into RSN/SSN)
     obs_ok <- mk & (p1$has_obs == 1) & is.finite(p1$obs_model_sc) & is.finite(p2$obs_model_sc)
     rmse_eq_obs <- if (sum(obs_ok) > 0) sqrt(mean((p1$pred_model_sc[obs_ok] - p1$obs_model_sc[obs_ok])^2)) else NA_real_
@@ -157,36 +165,41 @@ analyze_det <- function(det_code, det_label, unit_lbl) {
   configure_plot_options(format = "png", dpi = 300)
   out_png <- file.path(out_dir, sprintf("fig_cs6_diff_maps_%s.png", det_code))
   open_png_device(out_png, width = 2600, height = 1450, res = 300)
-  par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2), oma = c(0.6, 0.6, 2.8, 0.6), bg = "white")
+  tryCatch({
+    par(mfrow = c(1, 2), mar = c(1.2, 1.2, 4.6, 1.2), oma = c(0.6, 0.6, 2.8, 0.6), bg = "white")
 
-  lim_p <- as.numeric(quantile(abs(p1$diff_model_sc), 0.985, na.rm = TRUE))
-  lim_p <- max(0.15, ceiling(lim_p * 10) / 10)
-  ticks_p <- seq(-lim_p, lim_p, length.out = 5)
-  plot_stream_network(
-    p1, "diff_model_sc", vmin = -lim_p, vmax = lim_p, pal = div_pal,
-    main_title = sprintf("A. %s Prediction Shift (Favoured RSN+SSN - Equal)", det_label),
-    sub_title  = sprintf("Model-scale delta across %s reaches (r = %.4f; Red = Favoured higher)",
-                         format(nrow(p1), big.mark = ","), cor(p1$pred_model_sc, p2$pred_model_sc)),
-    cbar_ticks = ticks_p, cbar_labels = sprintf("%+.2f", ticks_p),
-    cbar_title = sprintf("Delta log(%s)", det_code),
-    show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
-  )
+    lim_p <- as.numeric(quantile(abs(p1$diff_model_sc), 0.985, na.rm = TRUE))
+    lim_p <- max(0.15, ceiling(lim_p * 10) / 10)
+    ticks_p <- seq(-lim_p, lim_p, length.out = 5)
+    plot_stream_network(
+      p1, "diff_model_sc", vmin = -lim_p, vmax = lim_p, pal = div_pal,
+      main_title = sprintf("A. %s Prediction Shift (Favoured RSN+SSN - Equal)", det_label),
+      sub_title  = sprintf("Model-scale delta across %s reaches (r = %.4f; Red = Favoured higher)",
+                           format(nrow(p1), big.mark = ","), cor(p1$pred_model_sc, p2$pred_model_sc, use = "complete.obs")),
+      cbar_ticks = ticks_p, cbar_labels = sprintf("%+.2f", ticks_p),
+      cbar_title = sprintf("Delta log(%s)", det_code),
+      show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
+    )
 
-  lim_s <- as.numeric(quantile(abs(p1$diff_se_sc), 0.985, na.rm = TRUE))
-  lim_s <- max(0.10, ceiling(lim_s * 10) / 10)
-  ticks_s <- seq(-lim_s, lim_s, length.out = 5)
-  plot_stream_network(
-    p1, "diff_se_sc", vmin = -lim_s, vmax = lim_s, pal = se_div,
-    main_title = sprintf("B. %s Kriging Uncertainty Shift (SE_Favoured - SE_Equal)", det_label),
-    sub_title  = sprintf("Green = lower uncertainty when prioritizing RSN+SSN (mean SE %+.1f%%)",
-                         100 * (mean(p2$se_model_sc) - mean(p1$se_model_sc)) / mean(p1$se_model_sc)),
-    cbar_ticks = ticks_s, cbar_labels = sprintf("%+.2f", ticks_s),
-    cbar_title = "Delta SE\n(log scale)",
-    show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
-  )
-  mtext(sprintf("Case Study 6: Co-Kriging Equal Sources vs. Favouring RSN+SSN over WaterBlitz (%s, ORN v2)", det_label),
-        side = 3, line = 1.1, outer = TRUE, cex = 1.05, font = 2, col = "#1b2631")
-  dev.off()
+    lim_s <- as.numeric(quantile(abs(p1$diff_se_sc), 0.985, na.rm = TRUE))
+    lim_s <- max(0.10, ceiling(lim_s * 10) / 10)
+    ticks_s <- seq(-lim_s, lim_s, length.out = 5)
+    m_se1 <- mean(p1$se_model_sc, na.rm = TRUE)
+    m_se2 <- mean(p2$se_model_sc, na.rm = TRUE)
+    plot_stream_network(
+      p1, "diff_se_sc", vmin = -lim_s, vmax = lim_s, pal = se_div,
+      main_title = sprintf("B. %s Kriging Uncertainty Shift (SE_Favoured - SE_Equal)", det_label),
+      sub_title  = sprintf("Green = lower uncertainty when prioritizing RSN+SSN (mean SE %+.1f%%)",
+                           100 * (m_se2 - m_se1) / max(1e-8, m_se1)),
+      cbar_ticks = ticks_s, cbar_labels = sprintf("%+.2f", ticks_s),
+      cbar_title = "Delta SE\n(log scale)",
+      show_obs = FALSE, base_lwd = 0.18, max_lwd = 1.6
+    )
+    mtext(sprintf("Case Study 6: Co-Kriging Equal Sources vs. Favouring RSN+SSN over WaterBlitz (%s, ORN v2)", det_label),
+          side = 3, line = 1.1, outer = TRUE, cex = 1.05, font = 2, col = "#1b2631")
+  }, finally = {
+    if (dev.cur() > 1L) dev.off()
+  })
   cat("  + Rendered 300-DPI diff map:", out_png, "\n")
 
   rm(p1, p2); gc(FALSE)
@@ -197,7 +210,7 @@ reach_sum <- rbind(
   analyze_det("0117", "Nitrate as N", "mg/L"),
   analyze_det("0180", "Orthophosphate", "mg/L")
 )
-write.csv(reach_sum, file.path(out_dir, "cs6_reach_comparison_summary.csv"), row.names = FALSE)
+fast_write_csv(reach_sum, file.path(out_dir, "cs6_reach_comparison_summary.csv"))
 
 # ------------------------------------------------------------------------------
 # 5. Render Vector SVG Comparison Chart (CV, Cross-Correlation & Tier Uncertainty)
@@ -205,11 +218,15 @@ write.csv(reach_sum, file.path(out_dir, "cs6_reach_comparison_summary.csv"), row
 out_svg <- file.path(out_dir, "fig_cs6_equal_vs_favoured_comparison.svg")
 configure_plot_options(format = "svg")
 open_png_device(out_svg, width = 2000, height = 1150, res = 150)
-par(mfrow = c(2, 2), mar = c(4.2, 4.5, 3.2, 1.5), oma = c(0.8, 0.8, 2.8, 0.8), bg = "white")
+tryCatch({
+  par(mfrow = c(2, 2), mar = c(4.2, 4.5, 3.2, 1.5), oma = c(0.8, 0.8, 2.8, 0.8), bg = "white")
 
-# Panel A: England Mean Kriging SE
-se_eq <- c(reach_sum$Equal_Mean_SE[1], reach_sum$Equal_Mean_SE[6])
-se_wt <- c(reach_sum$Favoured_Mean_SE[1], reach_sum$Favoured_Mean_SE[6])
+  # Panel A: England Mean Kriging SE
+  rs_all <- reach_sum[reach_sum$Stratum == "All England Reaches", , drop = FALSE]
+  r_0117 <- rs_all[rs_all$Target_Code == "0117", , drop = FALSE][1, ]
+  r_0180 <- rs_all[rs_all$Target_Code == "0180", , drop = FALSE][1, ]
+  se_eq <- c(r_0117$Equal_Mean_SE, r_0180$Equal_Mean_SE)
+  se_wt <- c(r_0117$Favoured_Mean_SE, r_0180$Favoured_Mean_SE)
 mat_se <- rbind(se_eq, se_wt)
 bp1 <- barplot(mat_se, beside = TRUE, names.arg = c("Nitrate (0117)", "Orthophosphate (0180)"),
                col = c("#3b82f6", "#10b981"), ylim = c(0, max(mat_se) * 1.25),
@@ -256,8 +273,10 @@ bp4 <- barplot(mat_r2, beside = TRUE, names.arg = ax_m$Tag, col = c("#8b5cf6", "
 legend("topright", legend = c("Equal Sources", "Favoured RSN+SSN"), fill = c("#8b5cf6", "#ec4899"), bty = "n", cex = 0.85)
 text(bp4, mat_r2 + 0.02, labels = sprintf("%.2f", mat_r2), cex = 0.72, font = 2)
 
-mtext("RSN + SSN + WaterBlitz Co-Kriging: Equal Sources vs. Prioritizing Statutory RSN+SSN",
-      side = 3, line = 0.8, outer = TRUE, cex = 1.15, font = 2, col = "#1b2631")
-dev.off()
+  mtext("RSN + SSN + WaterBlitz Co-Kriging: Equal Sources vs. Prioritizing Statutory RSN+SSN",
+        side = 3, line = 0.8, outer = TRUE, cex = 1.15, font = 2, col = "#1b2631")
+}, finally = {
+  if (dev.cur() > 1L) dev.off()
+})
 cat("  + Exported comparison SVG:", out_svg, "\n")
 print(reach_sum)

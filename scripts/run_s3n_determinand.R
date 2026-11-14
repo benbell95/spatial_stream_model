@@ -113,7 +113,10 @@ threshold_dir_cli <- parse_threshold_dir_arg(args, default = "above")
 design_sites_cli  <- parse_design_sites_arg(args, default = 0L)
 st_borrow_cli     <- parse_st_borrow_arg(args)
 
-PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
+PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
+                                                source = source_cli, processed_dir = dir_cfg$processed_dir,
+                                                custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
+                                                custom_sites = custom_sites_cli)
 net_meta       <- load_network_metadata(PROC_DIR)
 REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
 SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
@@ -122,7 +125,7 @@ CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
 if ("--list-basins" %in% args) {
   cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s), Source: %s]:\n\n",
               net_meta$label, net_meta$abbr, source_abbr))
-  c_lu <- read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
+  c_lu <- fast_read_csv(CATCHMENTS_CSV)
   rbd_tab <- aggregate(cbind(n_reaches, n_obs_reaches) ~ RBD_ID + RBD_Name, data = c_lu, FUN = sum)
   rbd_tab <- rbd_tab[order(-rbd_tab$n_obs_reaches), ]
   cat("=== 1. River Basin Districts (specify via --basin=\"<RBD_Name>\" or --basin=rbd:<RBD_ID>) ===\n")
@@ -157,23 +160,53 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
 
   if (list_ds == "wq") {
     dfs <- list()
+    find_col_ci <- function(cols, cands) {
+      hits <- which(tolower(trimws(cols)) %in% tolower(cands))
+      if (length(hits) > 0L) cols[hits[1]] else NULL
+    }
     for (s_name in names(targets)) {
-      f_path <- file.path(targets[[s_name]], paste0(toupper(s_name), " Water Quality Samples.csv"))
+      s_dir  <- targets[[s_name]]
+      f_path <- file.path(s_dir, paste0(toupper(s_name), " Water Quality Samples.csv"))
+      if (!file.exists(f_path)) f_path <- file.path(s_dir, "samples.csv")
+      if (!file.exists(f_path)) f_path <- file.path(s_dir, "Water Quality Samples.csv")
+      if (!file.exists(f_path) && !is.null(custom_samples_cli) && file.exists(custom_samples_cli)) {
+        f_path <- custom_samples_cli
+      }
+      if (!file.exists(f_path) && dir.exists(s_dir)) {
+        cands <- list.files(s_dir, pattern = "(sample|wq).*\\.csv$", ignore.case = TRUE, full.names = TRUE)
+        if (length(cands) > 0) f_path <- cands[1]
+      }
       if (file.exists(f_path)) {
-        raw <- read.csv(f_path, stringsAsFactors = FALSE, colClasses = c(det_code = "character"), fileEncoding = "UTF-8-BOM")
-        dfs[[s_name]] <- aggregate(network_id ~ det_code + det_desc + unit_short_desc, data = raw, FUN = length)
+        raw <- fast_read_csv(f_path, fileEncoding = "UTF-8-BOM")
+        cn  <- colnames(raw)
+        dc  <- find_col_ci(cn, c("det_code", "determinand_code", "param_code", "cas_number", "determinand", "code"))
+        dsc <- find_col_ci(cn, c("det_desc", "det_name", "compound_name", "description"))
+        uc  <- find_col_ci(cn, c("unit_short_desc", "unit", "units"))
+        if (!is.null(dc)) {
+          df_tmp <- data.frame(
+            det_code        = as.character(raw[[dc]]),
+            det_desc        = if (!is.null(dsc)) as.character(raw[[dsc]]) else as.character(raw[[dc]]),
+            unit_short_desc = if (!is.null(uc)) as.character(raw[[uc]]) else "",
+            cnt             = 1L,
+            stringsAsFactors = FALSE
+          )
+          dfs[[s_name]] <- aggregate(cnt ~ det_code + det_desc + unit_short_desc, data = df_tmp, FUN = sum)
+        }
         rm(raw)
       }
     }
-    tab_all <- do.call(rbind, dfs)
-    tab <- aggregate(network_id ~ det_code + det_desc + unit_short_desc, data = tab_all, FUN = sum)
-    tab <- tab[order(-tab$network_id), ]
-    tab <- head(tab, 25)
-    cat(sprintf("%-8s | %-10s | %-44s | %-10s\n", "det_code", "Samples", "Determinand Description", "Units"))
-    cat(strrep("-", 82), "\n")
-    for (i in seq_len(nrow(tab))) {
-      cat(sprintf("%-8s | %-10d | %-44s | %-10s\n",
-                  tab$det_code[i], tab$network_id[i], substr(tab$det_desc[i], 1, 44), tab$unit_short_desc[i]))
+    if (length(dfs) > 0L) {
+      tab_all <- do.call(rbind, dfs)
+      tab <- aggregate(cnt ~ det_code + det_desc + unit_short_desc, data = tab_all, FUN = sum)
+      tab <- head(tab[order(-tab$cnt), ], 25)
+      cat(sprintf("%-8s | %-10s | %-44s | %-10s\n", "det_code", "Samples", "Determinand Description", "Units"))
+      cat(strrep("-", 82), "\n")
+      for (i in seq_len(nrow(tab))) {
+        cat(sprintf("%-8s | %-10d | %-44s | %-10s\n",
+                    tab$det_code[i], tab$cnt[i], substr(tab$det_desc[i], 1, 44), tab$unit_short_desc[i]))
+      }
+    } else {
+      cat("No Water Quality sample CSVs found under active source directories.\n")
     }
   } else if (list_ds == "lcms") {
     if (source_cli == "ssn") {
@@ -181,7 +214,7 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
       quit(save = "no", status = 0)
     }
     csv_p <- file.path(RSN_DIR, "RSN LCMS GCMS Samples.csv")
-    raw <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
+    raw <- fast_read_csv(csv_p, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
     tab <- aggregate(network_id ~ cas_number + compound_name + unit_short_desc, data = raw, FUN = length)
     tab <- tab[order(-tab$network_id), ]
     tab <- head(tab, 25)
@@ -196,7 +229,7 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
     for (s_name in names(targets)) {
       f_path <- file.path(targets[[s_name]], paste0(toupper(s_name), " ", ds_info$file))
       if (file.exists(f_path)) {
-        raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+        raw <- fast_read_csv(f_path, fileEncoding = "UTF-8-BOM")
         skip_c <- c("network_id", "biosys_id", "ecosys_id", "sample_id", "survey_id",
                     "sample_version", "analysis_id", "survey_format")
         cand_c <- setdiff(colnames(raw), skip_c)
@@ -233,7 +266,10 @@ cat("Usage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq
   quit(save = "no", status = 0)
 }
 
-pos_args <- args[!grepl("^--", args)]
+skip_idx <- integer(0)
+src_sp_idx <- which(args == "--source")
+if (length(src_sp_idx) > 0L) skip_idx <- c(skip_idx, src_sp_idx + 1L)
+pos_args <- args[setdiff(which(!grepl("^--", args)), skip_idx)]
 if (length(pos_args) == 0) {
   stop("Please provide a determinand code or variable name (e.g. 0117 or whpt_aspt). Run with --list to see options.")
 }
@@ -243,6 +279,8 @@ det_code <- pos_args[1]
 if (is.na(ds_mode)) {
   if (grepl("^[0-9]{4}$", det_code)) {
     ds_mode <- "wq"
+  } else if (grepl("^[0-9]{2,7}-[0-9]{2}-[0-9]$", det_code)) {
+    ds_mode <- "lcms"
   } else {
     found_ds <- NA_character_
     for (cand_ds in c("inverts", "diatoms", "macrophytes", "rhs")) {
@@ -251,7 +289,7 @@ if (is.na(ds_mode)) {
         cand_p <- file.path(s_dir, paste0(toupper(s_name), " ", DATASET_FILES[[cand_ds]]$file))
         if (!file.exists(cand_p)) cand_p <- file.path(s_dir, DATASET_FILES[[cand_ds]]$file)
         if (file.exists(cand_p)) {
-          hdr <- colnames(read.csv(cand_p, nrows = 1, fileEncoding = "UTF-8-BOM"))
+          hdr <- colnames(fast_read_csv(cand_p, nrows = 1L, fileEncoding = "UTF-8-BOM"))
           if (det_code %in% hdr) {
             found_ds <- cand_ds
             break
@@ -277,6 +315,9 @@ lambda_cli <- if (length(lambda_arg) > 0) as.numeric(sub("^--(lambda|transform-l
 scale_arg  <- grep("^--(scale|transform-scale)=", args, value = TRUE)
 scale_cli  <- if (length(scale_arg) > 0) as.numeric(sub("^--(scale|transform-scale)=", "", scale_arg[1])) else NULL
 
+if (is.na(trans_cli) && any(args %in% c("--raw", "--untransformed"))) {
+  trans_cli <- "none"
+}
 if (is.na(trans_cli)) {
   trans_cli <- if (ds_mode %in% c("wq", "lcms")) "log" else "none"
 }
@@ -380,9 +421,9 @@ if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
     }
     if (!is.null(cand_smp) && file.exists(cand_smp)) {
       tryCatch({
-        samp_hdr <- colnames(read.csv(cand_smp, nrows = 1, fileEncoding = "UTF-8-BOM"))
+        samp_hdr <- colnames(fast_read_csv(cand_smp, nrows = 1L, fileEncoding = "UTF-8-BOM"))
         if ("meas_method" %in% samp_hdr) {
-          samp_preview <- read.csv(cand_smp, nrows = 200, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+          samp_preview <- fast_read_csv(cand_smp, nrows = 200L, fileEncoding = "UTF-8-BOM")
           mm_vals <- tolower(unique(as.character(samp_preview$meas_method)))
           mm_vals <- mm_vals[!is.na(mm_vals) & nzchar(mm_vals)]
           if (any(grepl("tobit", mm_vals))) detected_range_mode <- "tobit"
@@ -399,18 +440,29 @@ if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
 if (!is.na(detected_range_mode)) {
   has_token_mode <- any(grepl(paste0("_", detected_range_mode, "$"), src_tokens_init))
   if (!has_token_mode) {
-    if (nzchar(source_tag) && !grepl(paste0("_", detected_range_mode, "$"), source_tag)) {
-      source_tag <- paste0(source_tag, "_", detected_range_mode)
-    } else if (!nzchar(source_tag)) {
+    base_st <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", source_tag)
+    if (nzchar(base_st)) {
+      source_tag <- paste0(base_st, "_", detected_range_mode)
+    } else {
       source_tag <- detected_range_mode
     }
-    if (!grepl("[+,]", source_cli) && !grepl(paste0("_", detected_range_mode, "$"), source_cli)) {
-      source_cli <- paste0(source_cli, "_", detected_range_mode)
+    if (!grepl("[+,]", source_cli)) {
+      base_sc <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", source_cli)
+      source_cli <- paste0(base_sc, "_", detected_range_mode)
     }
   }
   source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
   source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
-  PROC_DIR_NEW <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR, source = source_cli, processed_dir = dir_cfg$processed_dir)
+  src_dirs     <- resolve_data_source_dirs(DATA_DIR, source = source_cli, base_dir = BASE_DIR,
+                                           custom_dir = custom_dir_cli,
+                                           custom_samples = custom_samples_cli,
+                                           custom_sites = custom_sites_cli)
+  RSN_DIR      <- src_dirs$rsn_dir
+  SSN_DIR      <- src_dirs$ssn_dir
+  PROC_DIR_NEW <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
+                                                source = source_cli, processed_dir = dir_cfg$processed_dir,
+                                                custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
+                                                custom_sites = custom_sites_cli)
   if (!identical(PROC_DIR_NEW, PROC_DIR)) {
     PROC_DIR       <- PROC_DIR_NEW
     net_meta       <- load_network_metadata(PROC_DIR)
@@ -429,72 +481,7 @@ if (!is.na(detected_range_mode)) {
 # DATA LOADING & MULTI-DOMAIN S3N ESTIMATION + 5-FOLD CV
 # ==============================================================================
 
-# Robust Lognormal Regression on Order Statistics (ROS, Helsel & Cohn 1988) in Base R
-impute_censored_ros <- function(vals, is_cens) {
-  if (!any(is_cens)) return(vals)
-  n <- length(vals)
-  c_limits <- sort(unique(vals[is_cens]))
-  J <- length(c_limits)
-  min_thr <- min(0.0, min(vals, na.rm = TRUE) - 1.0, na.rm = TRUE)
-  thresholds <- c(min_thr, c_limits, Inf)
-
-  A <- vector("list", J + 1)
-  C <- vector("list", J + 1)
-  for (i in seq_len(n)) {
-    if (is_cens[i]) {
-      j <- match(vals[i], c_limits) + 1L
-      C[[j]] <- c(C[[j]], i)
-    } else {
-      j_find <- max(which(thresholds[1:(J + 1)] <= vals[i]))
-      A[[j_find]] <- c(A[[j_find]], i)
-    }
-  }
-  for (j in seq_len(J + 1)) {
-    if (length(A[[j]]) > 1) A[[j]] <- A[[j]][order(vals[A[[j]]])]
-  }
-
-  p <- numeric(J + 2)
-  p[J + 2] <- 0.0
-  for (j in seq(J + 1, 2, by = -1)) {
-    d_j <- thresholds[j]
-    A_j <- length(A[[j]])
-    B_j <- sum((is_cens & vals <= d_j) | (!is_cens & vals < d_j))
-    p[j] <- if (A_j + B_j > 0) p[j + 1] + (1.0 - p[j + 1]) * (A_j / (A_j + B_j)) else p[j + 1]
-  }
-  p[1] <- if (length(A[[1]]) > 0) 1.0 else p[2]
-
-  pp <- numeric(n)
-  for (j in seq_len(J + 1)) {
-    A_j <- length(A[[j]])
-    if (A_j > 0) {
-      # Average plotting positions across exact ties so tie order never affects ROS fit
-      ranks_a <- ave(seq_len(A_j), vals[A[[j]]], FUN = mean)
-      pp[A[[j]]] <- (1.0 - p[j]) + (p[j] - p[j + 1]) * (ranks_a / (A_j + 1.0))
-    }
-  }
-  for (j in 2:(J + 1)) {
-    C_j <- length(C[[j]])
-    if (C_j > 0) {
-      pp[C[[j]]] <- (1.0 - p[j]) * ((seq_len(C_j)) / (C_j + 1.0))
-    }
-  }
-  pp <- pmin(1.0 - 1e-6, pmax(1e-6, pp))
-
-  unc_idx <- which(!is_cens & vals > 0)
-  if (length(unc_idx) < 3) {
-    warning("Fewer than 3 positive uncensored samples for ROS; falling back to 0.5 * LOD.")
-    return(ifelse(is_cens, 0.5 * vals, vals))
-  }
-  z_unc <- qnorm(pp[unc_idx])
-  l_unc <- log(vals[unc_idx])
-  slope <- max(0.05, cov(z_unc, l_unc) / max(1e-9, var(z_unc)))
-  inter <- mean(l_unc) - slope * mean(z_unc)
-
-  out <- vals
-  c_idx <- which(is_cens)
-  out[c_idx] <- pmin(vals[c_idx], pmax(1e-6, exp(inter + slope * qnorm(pp[c_idx]))))
-  out
-}
+# impute_censored_ros() is provided by scripts/s3n_transforms.R (sourced via s3n_plot_functions.R)
 
 cat(sprintf("======================================================================\n"))
 cat(sprintf("  Running S3N Pipeline: dataset = '%s', variable = '%s' (transform = %s, censor = %s)\n",
@@ -514,8 +501,9 @@ find_first_col <- function(cols, candidates) {
 
 read_wq_samples_file <- function(f_path, source_label_tag, det_code, allow_substr_det = FALSE) {
   if (!file.exists(f_path)) return(NULL)
-  raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
-  fnames <- colnames(raw)
+  hdr_df <- fast_read_csv(f_path, nrows = 1L, fileEncoding = "UTF-8-BOM")
+  fnames <- colnames(hdr_df)
+  if (length(fnames) == 0L) return(NULL)
   id_c   <- find_first_col(fnames, c("network_id", "site_id", "station_id", "id", "location_id", "site"))
   dt_c   <- find_first_col(fnames, c("sample_datetime", "datetime", "date_time", "date", "survey_date", "timestamp"))
   val_c  <- find_first_col(fnames, c("meas_result", "result", "value", "val", "reading", "score", "concentration"))
@@ -523,20 +511,26 @@ read_wq_samples_file <- function(f_path, source_label_tag, det_code, allow_subst
   desc_c <- find_first_col(fnames, c("det_desc", "det_name", "compound_name", "description", "determinand"))
   sign_c <- find_first_col(fnames, c("meas_sign", "less_than_flag", "censored", "is_censored", "qualifier"))
   unit_c <- find_first_col(fnames, c("unit_short_desc", "unit", "units"))
+  unc_c  <- find_first_col(fnames, c("meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"))
+  meth_c <- find_first_col(fnames, c("meas_method", "method", "model_type", "type"))
 
   if (is.null(id_c)) id_c <- fnames[1]
+  if (is.null(det_c) && (det_code %in% fnames)) val_c <- det_code
+
+  keep_cols <- unique(unlist(Filter(Negate(is.null), list(id_c, dt_c, val_c, det_c, desc_c, sign_c, unit_c, unc_c, meth_c))))
+  raw <- fast_read_csv(f_path, select = keep_cols, fileEncoding = "UTF-8-BOM")
+
   keep_rows <- rep(FALSE, nrow(raw))
   if (!is.null(det_c)) {
     det_vals  <- as.character(raw[[det_c]])
     det_clean <- sub("^0+", "", det_vals)
     tgt_clean <- sub("^0+", "", det_code)
-    keep_rows <- (det_vals == det_code) | (det_clean == tgt_clean) |
-      grepl(paste0("^", det_code, "$"), det_vals, ignore.case = TRUE)
+    keep_rows <- !is.na(det_vals) & ((det_vals == det_code) | (det_clean == tgt_clean) |
+      grepl(paste0("^", det_code, "$"), det_vals, ignore.case = TRUE))
     if (allow_substr_det) {
-      keep_rows <- keep_rows | grepl(det_code, det_vals, fixed = TRUE)
+      keep_rows <- keep_rows | (!is.na(det_vals) & grepl(det_code, det_vals, fixed = TRUE))
     }
   } else if (det_code %in% fnames) {
-    val_c <- det_code
     keep_rows <- !is.na(raw[[det_code]])
   } else if (!is.null(val_c)) {
     keep_rows <- !is.na(raw[[val_c]])
@@ -545,8 +539,6 @@ read_wq_samples_file <- function(f_path, source_label_tag, det_code, allow_subst
   sub_raw <- raw[keep_rows, , drop = FALSE]
   rm(raw)
   if (nrow(sub_raw) == 0) return(NULL)
-  unc_c  <- find_first_col(fnames, c("meas_uncertainty", "uncertainty", "se", "std_err", "standard_error", "sigma_error"))
-  meth_c <- find_first_col(fnames, c("meas_method", "method", "model_type", "type"))
   data.frame(
     network_id       = as.character(sub_raw[[id_c]]),
     sample_datetime  = if (!is.null(dt_c)) as.character(sub_raw[[dt_c]]) else rep("2023-06-01", nrow(sub_raw)),
@@ -599,8 +591,9 @@ if (ds_mode == "wq") {
     stop("LCMS/GCMS Organic Pollutants are only monitored on RSN and are not available in Small Streams Network (SSN). Use --source=rsn or --source=rss.")
   }
   csv_p <- file.path(RSN_DIR, "RSN LCMS GCMS Samples.csv")
-  all_samples <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
-  keep_m      <- (all_samples$cas_number == det_code) | grepl(det_code, all_samples$compound_name, ignore.case = TRUE)
+  all_samples <- fast_read_csv(csv_p, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
+  keep_m      <- (!is.na(all_samples$cas_number) & all_samples$cas_number == det_code) |
+                 (!is.na(all_samples$compound_name) & grepl(det_code, all_samples$compound_name, ignore.case = TRUE))
   det_samples <- all_samples[keep_m, c("network_id", "sample_datetime", "compound_name", "less_than_flag", "meas_result", "unit_short_desc")]
   rm(all_samples)
   if (nrow(det_samples) == 0) {
@@ -612,7 +605,7 @@ if (ds_mode == "wq") {
   det_name <- det_samples$compound_name[1]
   det_unit <- det_samples$unit_short_desc[1]
   raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
-  is_cens  <- (tolower(trimws(det_samples$less_than_flag)) == "yes")
+  is_cens  <- !is.na(det_samples$less_than_flag) & (tolower(trimws(det_samples$less_than_flag)) == "yes")
 } else {
   if (ds_mode == "rhs" && source_cli == "ssn") {
     stop("River Habitat Surveys (RHS) are only surveyed on RSN and are not available in Small Streams Network (SSN). Use --source=rsn or --source=rss.")
@@ -628,7 +621,7 @@ if (ds_mode == "wq") {
     }
 
     if (file.exists(f_path)) {
-      raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+      raw <- fast_read_csv(f_path, fileEncoding = "UTF-8-BOM")
       fnames <- colnames(raw)
       id_c   <- find_first_col(fnames, c("network_id", "site_id", "station_id", "id"))
       dt_c   <- find_first_col(fnames, c(ds_info$dt_col, "sample_datetime", "datetime", "date_time", "date", "survey_date"))
@@ -748,96 +741,19 @@ cat(sprintf("Extracted %d total valid samples (%d censored '<' [%.2f%%] via '%s'
             nrow(det_samples), sum(is_cens), 100 * mean(is_cens), censor_m,
             det_name, det_unit, length(unique(det_samples$network_id))))
 
-sites_lu   <- read.csv(SITES_CSV, stringsAsFactors = FALSE)
-sites_lu   <- sites_lu[sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
-df_reaches <- read.csv(REACHES_CSV, stringsAsFactors = FALSE)
+sites_lu   <- fast_read_csv(SITES_CSV)
+sites_lu   <- sites_lu[!is.na(sites_lu$included_250m) & sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
+df_reaches <- fast_read_csv(REACHES_CSV)
 
 # Fitting/CV engine (load_s3n_backend, parse_n_omp_arg, fit_s3n_domain) lives in scripts/s3n_model_functions.R
 
 catch_lookup <- if (file.exists(CATCHMENTS_CSV)) {
-  read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
+  fast_read_csv(CATCHMENTS_CSV)
 } else {
   NULL
 }
 
-resolve_basin_spec <- function(spec, c_lu) {
-  spec_trim <- trimws(spec)
-  # 1. Explicit rbd:<id>
-  if (grepl("^rbd:", tolower(spec_trim))) {
-    rid <- suppressWarnings(as.integer(sub("^rbd:", "", tolower(spec_trim))))
-    sub_r <- c_lu[c_lu$RBD_ID == rid, ]
-    if (nrow(sub_r) == 0) stop(sprintf("No River Basin District found for '%s'. Run --list-basins.", spec))
-    rname <- sub_r$RBD_Name[1]
-    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname)))
-    return(list(
-      slug         = gsub("^_|_$", "", slug),
-      short_title  = paste0(rname, " RBD"),
-      domain_label = sprintf("%s RBD (RBD=%d)", rname, rid),
-      catch_ids    = unique(sub_r$CatchID)
-    ))
-  }
-  # 2. Integer CatchID
-  if (grepl("^[0-9]+$", spec_trim)) {
-    cid <- as.integer(spec_trim)
-    sub_c <- if (!is.null(c_lu)) c_lu[c_lu$CatchID == cid, ] else data.frame()
-    rname <- if (nrow(sub_c) > 0) sub_c$Main_River[1] else paste0("Catchment ", cid)
-    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0(rname, "_", cid)))
-    return(list(
-      slug         = gsub("^_|_$", "", slug),
-      short_title  = rname,
-      domain_label = sprintf("%s (CatchID=%d)", rname, cid),
-      catch_ids    = cid
-    ))
-  }
-  if (is.null(c_lu)) stop("Catchment lookup CSV not found; specify numeric CatchID.")
-  # 3. Exact or substring match on RBD_Name (if not matching a specific river first, or if exact RBD match)
-  rbd_exact <- which(tolower(c_lu$RBD_Name) == tolower(spec_trim))
-  if (length(rbd_exact) > 0 && !any(tolower(c_lu$Main_River) == tolower(spec_trim))) {
-    rid   <- c_lu$RBD_ID[rbd_exact[1]]
-    rname <- c_lu$RBD_Name[rbd_exact[1]]
-    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname)))
-    return(list(
-      slug         = gsub("^_|_$", "", slug),
-      short_title  = paste0(rname, " RBD"),
-      domain_label = sprintf("%s RBD (RBD=%d)", rname, rid),
-      catch_ids    = unique(c_lu$CatchID[c_lu$RBD_ID == rid])
-    ))
-  }
-  # 4. Substring match on Main_River (preferring highest n_obs_reaches)
-  m_idx <- grep(spec_trim, c_lu$Main_River, ignore.case = TRUE)
-  if (length(m_idx) > 0) {
-    sub_m <- c_lu[m_idx, ]
-    sub_m <- sub_m[order(-sub_m$n_obs_reaches, -sub_m$n_reaches), ]
-    if (nrow(sub_m) > 1) {
-      cat(sprintf("  Note: '--basin=%s' matched %d catchments; selecting largest monitored: %s (CatchID=%d, %d obs reaches).\n",
-                  spec_trim, nrow(sub_m), sub_m$Main_River[1], sub_m$CatchID[1], sub_m$n_obs_reaches[1]))
-    }
-    cid   <- sub_m$CatchID[1]
-    rname <- sub_m$Main_River[1]
-    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0(rname, "_", cid)))
-    return(list(
-      slug         = gsub("^_|_$", "", slug),
-      short_title  = rname,
-      domain_label = sprintf("%s (CatchID=%d)", rname, cid),
-      catch_ids    = cid
-    ))
-  }
-  # 5. Substring match on RBD_Name
-  r_idx <- grep(spec_trim, c_lu$RBD_Name, ignore.case = TRUE)
-  if (length(r_idx) > 0) {
-    rid   <- c_lu$RBD_ID[r_idx[1]]
-    rname <- c_lu$RBD_Name[r_idx[1]]
-    slug  <- gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname)))
-    return(list(
-      slug         = gsub("^_|_$", "", slug),
-      short_title  = paste0(rname, " RBD"),
-      domain_label = sprintf("%s RBD (RBD=%d)", rname, rid),
-      catch_ids    = unique(c_lu$CatchID[c_lu$RBD_ID == rid])
-    ))
-  }
-  stop(sprintf("Could not match '--basin=%s' to any CatchID, Main_River, or RBD_Name. Run with --list-basins to see options.", spec))
-}
-
+# resolve_basin_spec() is shared via scripts/s3n_covariates.R
 extra_basins <- lapply(basin_specs, resolve_basin_spec, c_lu = catch_lookup)
 
 slice_ctx <- list(
@@ -880,7 +796,13 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
               period_tag, nrow(sub_samples), length(unique(sub_samples$network_id))))
   cat(sprintf("======================================================================\n"))
 
-  det_WithRiv <- merge(sub_samples, ctx$sites_lu, by.x = "network_id", by.y = "site_id")
+  idx_site <- match(sub_samples$network_id, ctx$sites_lu$site_id)
+  ok_site  <- !is.na(idx_site)
+  det_WithRiv <- sub_samples[ok_site, , drop = FALSE]
+  if (nrow(det_WithRiv) > 0L) {
+    det_WithRiv$RivID          <- ctx$sites_lu$RivID[idx_site[ok_site]]
+    det_WithRiv$obs_up_dist_km <- ctx$sites_lu$obs_up_dist_km[idx_site[ok_site]]
+  }
   if (nrow(det_WithRiv) == 0) {
     cat(sprintf("  No snapped samples found for period '%s'; skipping.\n", period_tag))
     return(NULL)
@@ -900,7 +822,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
     src_se      = ctx$src_se
   )
   has_samp_unc  <- any(!is.na(reach_agg$meas_uncertainty))
-  has_samp_meth <- any(nzchar(reach_agg$meas_method))
+  has_samp_meth <- any(!is.na(reach_agg$meas_method) & nzchar(reach_agg$meas_method))
 
   df_full <- ctx$df_reaches
   idx_match   <- match(df_full$RivID, reach_agg$RivID)
@@ -928,10 +850,11 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   mm[is.na(mm)] <- ""
   df_full$meas_method[has_obs_idx] <- mm
 
+  unc_methods <- c("gam", "tobit_interval", "tobit_raw_sd", "geometric_midpoint", "source_se")
   active_meas_error <- isTRUE(ctx$meas_error_arg) ||
     (length(ctx$src_se) > 0L) ||
-    (has_samp_meth && isTRUE(any(tolower(det_WithRiv$meas_method) == "gam", na.rm = TRUE))) ||
-    ("meas_method" %in% names(df_full) && isTRUE(any(tolower(df_full$meas_method[df_full$has_obs == 1L]) == "gam", na.rm = TRUE))) ||
+    (has_samp_meth && isTRUE(any(tolower(trimws(det_WithRiv$meas_method)) %in% unc_methods, na.rm = TRUE))) ||
+    ("meas_method" %in% names(df_full) && isTRUE(any(tolower(trimws(df_full$meas_method[df_full$has_obs == 1L])) %in% unc_methods, na.rm = TRUE))) ||
     (!is.null(ctx$net_meta$meas_method) && identical(tolower(ctx$net_meta$meas_method), "gam"))
   active_meas_error <- isTRUE(active_meas_error)
 
@@ -1004,55 +927,71 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
   all_cv$Scale            <- if (ctx$trans_obj$is_transformed) ctx$trans_obj$short_label else "raw"
   all_cv$Transform_Type   <- ctx$trans_obj$type
   all_cv$Transform_Lambda <- ifelse(is.na(ctx$trans_obj$lambda), "", as.character(round(ctx$trans_obj$lambda, 4)))
+  all_cv$Transform_Scale  <- ifelse(is.null(ctx$trans_obj$scale) || is.na(ctx$trans_obj$scale), "", as.character(ctx$trans_obj$scale))
   all_cv$Transform_Label  <- ctx$trans_obj$label
   all_cv$Network_Abbr     <- ctx$net_meta$abbr
   all_cv$Network_Label    <- ctx$net_meta$short_label
-  all_cv$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
-  all_cv$Meas_Method      <- if (active_meas_error) "gam" else "standard"
+  if (!("Spatial_Method" %in% names(all_cv)) || all(is.na(all_cv$Spatial_Method) | !nzchar(all_cv$Spatial_Method))) {
+    all_cv$Spatial_Method <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
+  }
+  obs_m_vals <- unique(tolower(trimws(df_full$meas_method[has_obs_idx])))
+  obs_m_vals <- obs_m_vals[!is.na(obs_m_vals) & nzchar(obs_m_vals)]
+  meas_method_lbl <- if (length(obs_m_vals) > 0L) {
+    paste(obs_m_vals, collapse = "+")
+  } else if (length(ctx$src_se) > 0L) {
+    "source_se"
+  } else if (active_meas_error) {
+    "gam"
+  } else {
+    "standard"
+  }
+  all_cv$Meas_Method          <- meas_method_lbl
   all_params$Source           <- ctx$source_abbr
   all_params$Source_Desc      <- ctx$source_label
   all_params$Period           <- period_tag
   all_params$Transform_Type   <- ctx$trans_obj$type
   all_params$Transform_Lambda <- ifelse(is.na(ctx$trans_obj$lambda), "", as.character(round(ctx$trans_obj$lambda, 4)))
+  all_params$Transform_Scale  <- ifelse(is.null(ctx$trans_obj$scale) || is.na(ctx$trans_obj$scale), "", as.character(ctx$trans_obj$scale))
   all_params$Transform_Label  <- ctx$trans_obj$label
   all_params$Network_Abbr     <- ctx$net_meta$abbr
   all_params$Network_Label    <- ctx$net_meta$short_label
   all_params$Spatial_Method   <- if (active_meas_error) "Measurement Error Kriging" else "Standard S3N"
-  all_params$Meas_Method      <- if (active_meas_error) "gam" else "standard"
+  all_params$Meas_Method      <- meas_method_lbl
 
   # Compute normalised results (Z-score, Robust Z-score, Min-Max, Percentile) using England-wide reference stats
-  eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred)
-  hum_pred <- add_normalised_columns(hum_pred, ref_df = eng_pred)
-  tha_pred <- add_normalised_columns(tha_pred, ref_df = eng_pred)
-  sev_pred <- add_normalised_columns(sev_pred, ref_df = eng_pred)
+  eng_norm_stats <- compute_norm_ref_stats(eng_pred)
+  eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred, ref_stats = eng_norm_stats)
+  hum_pred <- add_normalised_columns(hum_pred, ref_df = eng_pred, ref_stats = eng_norm_stats)
+  tha_pred <- add_normalised_columns(tha_pred, ref_df = eng_pred, ref_stats = eng_norm_stats)
+  sev_pred <- add_normalised_columns(sev_pred, ref_df = eng_pred, ref_stats = eng_norm_stats)
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
-      extra_fits[[k]]$pred_df <- add_normalised_columns(extra_fits[[k]]$pred_df, ref_df = eng_pred)
+      extra_fits[[k]]$pred_df <- add_normalised_columns(extra_fits[[k]]$pred_df, ref_df = eng_pred, ref_stats = eng_norm_stats)
     }
   }
 
-  write.csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", ctx$det_code)), row.names = FALSE)
-  write.csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", ctx$det_code)), row.names = FALSE)
-  write.csv(tha_pred,   file.path(out_subdir, sprintf("predictions_thames_%s.csv", ctx$det_code)), row.names = FALSE)
-  write.csv(sev_pred,   file.path(out_subdir, sprintf("predictions_severn_%s.csv", ctx$det_code)), row.names = FALSE)
+  fast_write_csv(eng_pred,   file.path(out_subdir, sprintf("predictions_%s.csv", ctx$det_code)))
+  fast_write_csv(hum_pred,   file.path(out_subdir, sprintf("predictions_humber_%s.csv", ctx$det_code)))
+  fast_write_csv(tha_pred,   file.path(out_subdir, sprintf("predictions_thames_%s.csv", ctx$det_code)))
+  fast_write_csv(sev_pred,   file.path(out_subdir, sprintf("predictions_severn_%s.csv", ctx$det_code)))
   if (!is.null(res_eng$cv_pts)) {
-    write.csv(res_eng$cv_pts, file.path(out_subdir, sprintf("cv_predictions_england_%s.csv", ctx$det_code)), row.names = FALSE)
+    fast_write_csv(res_eng$cv_pts, file.path(out_subdir, sprintf("cv_predictions_england_%s.csv", ctx$det_code)))
   }
   if (!is.null(res_hum) && !is.null(res_hum$cv_pts)) {
-    write.csv(res_hum$cv_pts, file.path(out_subdir, sprintf("cv_predictions_humber_%s.csv", ctx$det_code)), row.names = FALSE)
+    fast_write_csv(res_hum$cv_pts, file.path(out_subdir, sprintf("cv_predictions_humber_%s.csv", ctx$det_code)))
   }
-  write.csv(all_params, file.path(out_subdir, sprintf("parameters_%s.csv", ctx$det_code)),  row.names = FALSE)
-  write.csv(all_cv,     file.path(out_subdir, sprintf("cv_comparison_%s.csv", ctx$det_code)), row.names = FALSE)
+  fast_write_csv(all_params, file.path(out_subdir, sprintf("parameters_%s.csv", ctx$det_code)))
+  fast_write_csv(all_cv,     file.path(out_subdir, sprintf("cv_comparison_%s.csv", ctx$det_code)))
   exceed_list <- Filter(Negate(is.null), c(
     list(res_eng$exceed_summary),
     if (!is.null(res_hum)) list(res_hum$exceed_summary) else NULL,
     if (!is.null(res_tha)) list(res_tha$exceed_summary) else NULL,
     if (!is.null(res_sev)) list(res_sev$exceed_summary) else NULL,
-    lapply(extra_fits, function(ef) ef$exceed_summary)
+    lapply(extra_fits, function(ef) if (!is.null(ef$fit)) ef$fit$exceed_summary else NULL)
   ))
   if (length(exceed_list) > 0L) {
-    write.csv(do.call(rbind, exceed_list),
-              file.path(out_subdir, sprintf("exceedance_summary_%s.csv", ctx$det_code)), row.names = FALSE)
+    fast_write_csv(do.call(rbind, exceed_list),
+                   file.path(out_subdir, sprintf("exceedance_summary_%s.csv", ctx$det_code)))
   }
   design_list <- Filter(Negate(is.null), c(
     list(res_eng$design_df),
@@ -1062,16 +1001,23 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
     lapply(extra_fits, function(ef) if (!is.null(ef$fit)) ef$fit$design_df else NULL)
   ))
   if (length(design_list) > 0L) {
-    write.csv(do.call(rbind, design_list),
-              file.path(out_subdir, sprintf("optimal_monitoring_design_%s.csv", ctx$det_code)), row.names = FALSE)
+    fast_write_csv(do.call(rbind, design_list),
+                   file.path(out_subdir, sprintf("optimal_monitoring_design_%s.csv", ctx$det_code)))
   }
   if (length(extra_fits) > 0) {
     for (k in seq_along(extra_fits)) {
       ef <- extra_fits[[k]]
       pred_csv_k <- file.path(out_subdir, sprintf("predictions_basin_%s_%s.csv", ef$info$slug, ctx$det_code))
-      write.csv(ef$pred_df, pred_csv_k, row.names = FALSE)
+      fast_write_csv(ef$pred_df, pred_csv_k)
+      if (!is.null(extra_fits[[k]]$fit)) extra_fits[[k]]$fit$pred_df <- NULL
     }
   }
+
+  # Release duplicate pre-normalised prediction data frames from fit objects to save slice memory
+  if (!is.null(res_eng)) res_eng$pred_df <- NULL
+  if (!is.null(res_hum)) res_hum$pred_df <- NULL
+  if (!is.null(res_tha)) res_tha$pred_df <- NULL
+  if (!is.null(res_sev)) res_sev$pred_df <- NULL
 
   list(
     out_subdir     = out_subdir,
@@ -1150,7 +1096,7 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
       fig_k_path <- file.path(out_subdir, sprintf("fig%d_%s_basin_%s_map%s.png", 4L + k, ef$info$slug, det_code, ftag))
       plot_basin_map(ef$pred_df, ef$info$short_title, ef$info$domain_label,
                      all_cv, sc_val, det_code, det_title_name, det_unit, trans_obj, fig_k_path,
-                     reverse_color = reverse_color, sc_se = sc_se_hum,
+                     reverse_color = reverse_color, sc_se = NULL,
                      vars_label = vars_sub, network_label = net_lbl, source_label = source_label,
                      norm_mode = norm_cli)
       cat(sprintf("  + Saved custom basin map for '%s': %s\n", ef$info$domain_label, fig_k_path))
@@ -1304,11 +1250,46 @@ if (!is.na(by_mode)) {
     rho_temporal <- st_res$rho_temporal
     cat(sprintf("\n  [Spatio-Temporal Dynamic Borrowing] Precision-weighted smoothing across %d periods (rho_t = %.3f)\n",
                 length(Filter(Negate(is.null), batch_res)), rho_temporal))
-    for (sl in Filter(Negate(is.null), batch_res)) {
-      write.csv(sl$eng_pred, file.path(sl$out_subdir, sprintf("predictions_%s.csv", det_code)), row.names = FALSE)
-      if (!is.null(sl$hum_pred)) write.csv(sl$hum_pred, file.path(sl$out_subdir, sprintf("predictions_humber_%s.csv", det_code)), row.names = FALSE)
-      if (!is.null(sl$tha_pred)) write.csv(sl$tha_pred, file.path(sl$out_subdir, sprintf("predictions_thames_%s.csv", det_code)), row.names = FALSE)
-      if (!is.null(sl$sev_pred)) write.csv(sl$sev_pred, file.path(sl$out_subdir, sprintf("predictions_severn_%s.csv", det_code)), row.names = FALSE)
+    tier_levels <- c("Confidently Compliant", "Likely Compliant", "Uncertain / Priority Monitoring",
+                     "Likely Exceeding", "Confidently Exceeding")
+    thresh_dir_use <- if (tolower(as.character(threshold_dir_cli)) == "below") "below" else "above"
+    for (bi in seq_along(batch_res)) {
+      sl <- batch_res[[bi]]
+      if (is.null(sl)) next
+      sl_norm_stats <- compute_norm_ref_stats(sl$eng_pred)
+      sl$eng_pred <- add_normalised_columns(sl$eng_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
+      if (!is.null(sl$hum_pred)) sl$hum_pred <- add_normalised_columns(sl$hum_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
+      if (!is.null(sl$tha_pred)) sl$tha_pred <- add_normalised_columns(sl$tha_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
+      if (!is.null(sl$sev_pred)) sl$sev_pred <- add_normalised_columns(sl$sev_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
+      batch_res[[bi]] <- sl
+      fast_write_csv(sl$eng_pred, file.path(sl$out_subdir, sprintf("predictions_%s.csv", det_code)))
+      if (!is.null(sl$hum_pred)) fast_write_csv(sl$hum_pred, file.path(sl$out_subdir, sprintf("predictions_humber_%s.csv", det_code)))
+      if (!is.null(sl$tha_pred)) fast_write_csv(sl$tha_pred, file.path(sl$out_subdir, sprintf("predictions_thames_%s.csv", det_code)))
+      if (!is.null(sl$sev_pred)) fast_write_csv(sl$sev_pred, file.path(sl$out_subdir, sprintf("predictions_severn_%s.csv", det_code)))
+      if (!is.na(threshold_cli) && is.finite(threshold_cli) && ("compliance_tier" %in% names(sl$eng_pred))) {
+        mk_ex <- function(df_p, dom_lbl) {
+          if (is.null(df_p) || !("compliance_tier" %in% names(df_p))) return(NULL)
+          tab <- table(factor(df_p$compliance_tier, levels = tier_levels))
+          data.frame(
+            Domain = dom_lbl, Threshold_Raw = threshold_cli,
+            Threshold_Sc = round(trans_obj$fwd(threshold_cli), 5),
+            Direction = thresh_dir_use, Tier = names(tab),
+            Reach_Count = as.integer(tab),
+            Reach_Pct = round(100 * as.numeric(tab) / nrow(df_p), 2),
+            stringsAsFactors = FALSE
+          )
+        }
+        ex_list <- Filter(Negate(is.null), list(
+          mk_ex(sl$eng_pred, sl$cv$Domain[1]),
+          if (!is.null(sl$hum_pred) && !is.null(sl$res_hum)) mk_ex(sl$hum_pred, sl$res_hum$cv_summary$Domain[1]) else NULL,
+          if (!is.null(sl$tha_pred) && !is.null(sl$res_tha)) mk_ex(sl$tha_pred, sl$res_tha$cv_summary$Domain[1]) else NULL,
+          if (!is.null(sl$sev_pred) && !is.null(sl$res_sev)) mk_ex(sl$sev_pred, sl$res_sev$cv_summary$Domain[1]) else NULL
+        ))
+        if (length(ex_list) > 0L) {
+          fast_write_csv(do.call(rbind, ex_list),
+                         file.path(sl$out_subdir, sprintf("exceedance_summary_%s.csv", det_code)))
+        }
+      }
     }
   }
 
@@ -1331,13 +1312,13 @@ if (!is.na(by_mode)) {
                                   fig5_grid_path, reverse_color = reverse_color,
                                   vars_label = vars_sub_grid, network_label = net_meta$short_label,
                                   source_label = source_label, norm_mode = norm_cli)
-  write.csv(comb_cv, file.path(slice_root, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
-  write.csv(comb_pa, file.path(slice_root, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)), row.names = FALSE)
+  fast_write_csv(comb_cv, file.path(slice_root, sprintf("cv_summary_by_%s_%s.csv", by_mode, det_code)))
+  fast_write_csv(comb_pa, file.path(slice_root, sprintf("parameters_by_%s_%s.csv", by_mode, det_code)))
 
   st_trend_df <- compute_spatiotemporal_trends(batch_res, trans_obj)
   if (!is.null(st_trend_df)) {
     trend_csv <- file.path(slice_root, sprintf("spatiotemporal_trends_by_%s_%s.csv", by_mode, det_code))
-    write.csv(st_trend_df, trend_csv, row.names = FALSE)
+    fast_write_csv(st_trend_df, trend_csv)
     fig6_path <- file.path(slice_root, sprintf("fig6_spatiotemporal_trends_by_%s_%s.png", by_mode, det_code))
     p_labels  <- vapply(Filter(Negate(is.null), batch_res), function(s) s$period_tag, character(1))
     plot_fig6_spatiotemporal_trends(
@@ -1354,7 +1335,7 @@ if (!is.na(by_mode)) {
   st_trans <- compute_spatiotemporal_transitions(batch_res, p_labels_all, trans_obj, cyclic = is_cyclic_tr)
   if (!is.null(st_trans)) {
     trans_csv <- file.path(slice_root, sprintf("spatiotemporal_transitions_by_%s_%s.csv", by_mode, det_code))
-    write.csv(st_trans$transitions_df, trans_csv, row.names = FALSE)
+    fast_write_csv(st_trans$transitions_df, trans_csv)
     fig7_path <- file.path(slice_root, sprintf("fig7_spatiotemporal_transitions_by_%s_%s.png", by_mode, det_code))
     plot_fig7_spatiotemporal_transitions(
       st_trans$items, by_mode, det_code, det_name, det_unit, trans_obj,
@@ -1381,7 +1362,7 @@ if (!is.na(by_mode)) {
     sib_se_h <- sl_one$hum_pred$se_model_sc
     if (length(sib_files) > 0) {
       for (sf in sib_files) {
-        sdf <- tryCatch(read.csv(sf, stringsAsFactors = FALSE), error = function(e) NULL)
+        sdf <- tryCatch(fast_read_csv(sf), error = function(e) NULL)
         if (!is.null(sdf)) {
           if (norm_meta$mode != "none" && !(norm_meta$pred_col %in% names(sdf))) {
             sdf <- add_normalised_columns(sdf)
@@ -1391,7 +1372,7 @@ if (!is.na(by_mode)) {
         }
         hf <- file.path(dirname(sf), sprintf("predictions_humber_%s.csv", det_code))
         if (file.exists(hf)) {
-          hdf <- tryCatch(read.csv(hf, stringsAsFactors = FALSE), error = function(e) NULL)
+          hdf <- tryCatch(fast_read_csv(hf), error = function(e) NULL)
           if (!is.null(hdf) && "se_model_sc" %in% names(hdf)) {
             sib_se_h <- c(sib_se_h, hdf$se_model_sc)
           }

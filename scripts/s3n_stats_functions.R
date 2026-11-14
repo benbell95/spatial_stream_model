@@ -27,21 +27,23 @@ sig_stars <- function(p) {
 }
 
 safe_paired_ttest <- function(x, y) {
-  d <- x - y
-  d <- d[!is.na(d)]
-  if (length(d) < 3 || sd(d) < 1e-12) {
+  ok <- is.finite(x) & is.finite(y)
+  d <- x[ok] - y[ok]
+  d <- d[is.finite(d)]
+  if (length(d) < 3L || sd(d) < 1e-12) {
     return(list(statistic = 0.0, p.value = 1.0))
   }
-  suppressWarnings(t.test(x, y, paired = TRUE))
+  suppressWarnings(t.test(x[ok], y[ok], paired = TRUE))
 }
 
 safe_paired_wilcox <- function(x, y) {
-  d <- x - y
-  d <- d[!is.na(d) & abs(d) > 1e-12]
-  if (length(d) < 3) {
+  ok <- is.finite(x) & is.finite(y)
+  d <- x[ok] - y[ok]
+  d <- d[is.finite(d) & abs(d) > 1e-12]
+  if (length(d) < 3L) {
     return(list(statistic = 0.0, p.value = 1.0))
   }
-  suppressWarnings(wilcox.test(x, y, paired = TRUE))
+  suppressWarnings(wilcox.test(x[ok], y[ok], paired = TRUE))
 }
 
 canonical_domain <- function(dom_vec) {
@@ -74,19 +76,21 @@ find_first_file <- function(dir_path, pattern, exclude_pattern = NULL) {
 calc_sample_skewness <- function(x) {
   x <- x[!is.na(x) & is.finite(x)]
   n <- length(x)
-  if (n < 3) return(NA_real_)
-  s <- sd(x)
-  if (s < 1e-12) return(0.0)
-  mean(((x - mean(x)) / s)^3)
+  if (n < 3L) return(NA_real_)
+  dx <- x - mean(x)
+  m2 <- mean(dx^2)
+  if (!is.finite(m2) || m2 < 1e-24) return(0.0)
+  mean(dx^3) / (m2^1.5)
 }
 
 calc_sample_kurtosis <- function(x) {
   x <- x[!is.na(x) & is.finite(x)]
   n <- length(x)
-  if (n < 4) return(NA_real_)
-  s <- sd(x)
-  if (s < 1e-12) return(0.0)
-  mean(((x - mean(x)) / s)^4) - 3.0
+  if (n < 4L) return(NA_real_)
+  dx <- x - mean(x)
+  m2 <- mean(dx^2)
+  if (!is.finite(m2) || m2 < 1e-24) return(0.0)
+  mean(dx^4) / (m2^2) - 3.0
 }
 
 calc_geom_mean <- function(x) {
@@ -135,7 +139,7 @@ summarize_numeric_vector <- function(x) {
 
 read_basin_catch_id <- function(file_path, fallback_id = NA_integer_) {
   if (!is.null(file_path) && file.exists(file_path)) {
-    r1 <- tryCatch(read.csv(file_path, nrows = 1, stringsAsFactors = FALSE), error = function(e) NULL)
+    r1 <- tryCatch(fast_read_csv(file_path, nrows = 1L), error = function(e) NULL)
     if (!is.null(r1) && ("CatchID" %in% names(r1)) && nrow(r1) > 0) {
       return(as.integer(r1$CatchID[1]))
     }
@@ -173,7 +177,7 @@ resolve_run_dir_path <- function(dir_path, out_root = NULL, base_dir = BASE_DIR)
 # ------------------------------------------------------------------------------
 # Helper: Load a single model run bundle from an output directory
 # ------------------------------------------------------------------------------
-load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL) {
+load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL, norm_mode = "none") {
   if (is.null(out_root) || !nzchar(out_root)) {
     out_root <- load_directory_config(BASE_DIR)$output_dir
   }
@@ -196,14 +200,15 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     stop(sprintf("Directory '%s' does not contain required predictions_*.csv and cv_comparison_*.csv files.", dir_p))
   }
 
-  eng_pred  <- read.csv(eng_file, stringsAsFactors = FALSE)
-  if (!all(c("pred_zscore", "pred_robust_zscore", "pred_minmax", "pred_percentile") %in% names(eng_pred))) {
+  eng_pred  <- fast_read_csv(eng_file)
+  norm_meta <- if (exists("get_norm_meta", mode = "function")) get_norm_meta(norm_mode) else list(mode = "none", pred_col = "pred_combined")
+  if (norm_meta$mode != "none" && !(norm_meta$pred_col %in% names(eng_pred))) {
     eng_pred <- add_normalised_columns(eng_pred, ref_df = eng_pred)
   }
-  cv_tab    <- read.csv(cv_t_file, stringsAsFactors = FALSE)
-  param_tab <- if (!is.null(par_file) && file.exists(par_file)) read.csv(par_file, stringsAsFactors = FALSE) else NULL
-  eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) read.csv(cv_e_file, stringsAsFactors = FALSE) else NULL
-  hum_cv    <- if (!is.null(cv_h_file) && file.exists(cv_h_file)) read.csv(cv_h_file, stringsAsFactors = FALSE) else NULL
+  cv_tab    <- fast_read_csv(cv_t_file)
+  param_tab <- if (!is.null(par_file) && file.exists(par_file)) fast_read_csv(par_file) else NULL
+  eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) fast_read_csv(cv_e_file) else NULL
+  hum_cv    <- if (!is.null(cv_h_file) && file.exists(cv_h_file)) fast_read_csv(cv_h_file) else NULL
 
   hum_cid <- read_basin_catch_id(hum_file, 80L)
   tha_cid <- read_basin_catch_id(tha_file, 3055L)
@@ -218,30 +223,33 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   }
 
   # Extract metadata
+  has_col_val <- function(tbl, col) {
+    col %in% names(tbl) && nrow(tbl) > 0L && !is.na(tbl[[col]][1]) && nzchar(trimws(as.character(tbl[[col]][1])))
+  }
   net_lbl  <- extract_network_label_from_tables(cv_tab, param_tab, dir_p)
-  net_abbr <- if ("Network_Abbr" %in% names(cv_tab)) as.character(cv_tab$Network_Abbr[1]) else {
+  net_abbr <- if (has_col_val(cv_tab, "Network_Abbr")) as.character(cv_tab$Network_Abbr[1]) else {
     if (grepl("euhydro_thames", dir_p)) "euhydro_thames"
     else if (grepl("euhydro_tweed", dir_p)) "euhydro_tweed"
     else if (grepl("euhydro", dir_p)) "euhydro"
     else "orn"
   }
-  period_lbl <- if ("Period" %in% names(cv_tab) && !is.na(cv_tab$Period[1])) as.character(cv_tab$Period[1]) else {
+  period_lbl <- if (has_col_val(cv_tab, "Period")) as.character(cv_tab$Period[1]) else {
     bname <- basename(dir_p)
     if (grepl("^(year|season|month)_", bname)) bname else "all"
   }
-  det_code <- if ("Determinand_Code" %in% names(cv_tab)) {
+  det_code <- if (has_col_val(cv_tab, "Determinand_Code")) {
     c0 <- as.character(cv_tab$Determinand_Code[1])
     if (nchar(c0) < 4 && grepl("^[0-9]+$", c0)) sprintf("%04d", as.integer(c0)) else c0
   } else {
     sub("^predictions_(.*)\\.csv$", "\\1", basename(eng_file))
   }
   det_meta_row <- get_determinand_meta(det_code, BASE_DIR, default_unit = "mg/L")
-  det_name <- if ("Determinand_Name" %in% names(cv_tab)) {
+  det_name <- if (has_col_val(cv_tab, "Determinand_Name")) {
     as.character(cv_tab$Determinand_Name[1])
   } else {
     unname(det_meta_row["name"])
   }
-  det_unit <- if ("Unit" %in% names(cv_tab)) {
+  det_unit <- if (has_col_val(cv_tab, "Unit")) {
     as.character(cv_tab$Unit[1])
   } else if (nzchar(det_meta_row["unit"])) {
     unname(det_meta_row["unit"])
@@ -249,22 +257,22 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     "mg/L"
   }
 
-  trans_type <- if ("Transform_Type" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Type[1]))) {
+  trans_type <- if (has_col_val(cv_tab, "Transform_Type")) {
     as.character(cv_tab$Transform_Type[1])
   } else {
     "log"
   }
-  trans_lambda <- if ("Transform_Lambda" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Lambda[1]))) {
-    as.numeric(cv_tab$Transform_Lambda[1])
+  trans_lambda <- if (has_col_val(cv_tab, "Transform_Lambda")) {
+    suppressWarnings(as.numeric(cv_tab$Transform_Lambda[1]))
   } else {
     NA_real_
   }
-  trans_scale <- if ("Transform_Scale" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Scale[1]))) {
-    as.numeric(cv_tab$Transform_Scale[1])
+  trans_scale <- if (has_col_val(cv_tab, "Transform_Scale")) {
+    suppressWarnings(as.numeric(cv_tab$Transform_Scale[1]))
   } else {
     NA_real_
   }
-  trans_label <- if ("Transform_Label" %in% names(cv_tab) && nzchar(as.character(cv_tab$Transform_Label[1]))) {
+  trans_label <- if (has_col_val(cv_tab, "Transform_Label")) {
     as.character(cv_tab$Transform_Label[1])
   } else if (trans_type == "log") {
     "Natural Logarithm ln(y)"
@@ -273,7 +281,7 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
                       scale = if (is.na(trans_scale)) NULL else trans_scale)$label
   }
 
-  source_abbr <- if ("Source" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source[1]))) {
+  source_abbr <- if (has_col_val(cv_tab, "Source")) {
     as.character(cv_tab$Source[1])
   } else {
     bname <- basename(dir_p)
@@ -290,7 +298,7 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
     }
     if (!is.na(hit_s)) format_source_abbr(hit_s, base_dir = BASE_DIR) else "RSN"
   }
-  source_label <- if ("Source_Desc" %in% names(cv_tab) && nzchar(as.character(cv_tab$Source_Desc[1]))) {
+  source_label <- if (has_col_val(cv_tab, "Source_Desc")) {
     as.character(cv_tab$Source_Desc[1])
   } else {
     format_source_label(source_abbr, base_dir = BASE_DIR)
@@ -380,17 +388,17 @@ list_available_model_runs <- function(out_root = NULL) {
       rel_d <- format_rel_display_path(d, BASE_DIR)
       cv_f  <- cv_det_files[1]
       info <- tryCatch({
-        cv_t <- read.csv(cv_f, stringsAsFactors = FALSE)
+        cv_t <- fast_read_csv(cv_f)
         cv_t$Canon_Domain <- canonical_domain(cv_t$Domain)
         cv_t$Canon_Model  <- canonical_model(cv_t$Model)
         r_all <- subset(cv_t, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
         if (nrow(r_all) == 0L) r_all <- cv_t[1, , drop = FALSE]
-        net_lbl <- if ("Network_Label" %in% names(cv_t) && nzchar(as.character(cv_t$Network_Label[1]))) {
+        net_lbl <- if ("Network_Label" %in% names(cv_t) && !is.na(cv_t$Network_Label[1]) && nzchar(trimws(as.character(cv_t$Network_Label[1])))) {
           as.character(cv_t$Network_Label[1])
         } else {
           extract_network_label_from_tables(cv_t, NULL, d)
         }
-        d_name <- if ("Determinand_Name" %in% names(cv_t) && nzchar(as.character(cv_t$Determinand_Name[1]))) {
+        d_name <- if ("Determinand_Name" %in% names(cv_t) && !is.na(cv_t$Determinand_Name[1]) && nzchar(trimws(as.character(cv_t$Determinand_Name[1])))) {
           as.character(cv_t$Determinand_Name[1])
         } else {
           basename(d)
@@ -593,11 +601,12 @@ compute_stratified_descriptives <- function(bundles) {
     # 3. Combined Landscape Typology
     if (("Elevation" %in% names(ep)) && ("Is_Aquifer" %in% names(ep))) {
       m_up   <- !is.na(ep$Elevation) & ep$Elevation >= 150.0
-      m_lnaq <- !is.na(ep$Elevation) & ep$Elevation < 150.0 & ep$Is_Aquifer == 0
-      m_laq  <- !is.na(ep$Elevation) & ep$Elevation < 150.0 & ep$Is_Aquifer == 1
-      grp_l  <- ifelse(m_up, "Upland", ifelse(m_laq, "Low_Aq", "Low_NonAq"))
-      p_kw_l <- if (length(unique(grp_l)) >= 2) {
-        suppressWarnings(kruskal.test(ep$pred_model_sc ~ as.factor(grp_l)))$p.value
+      m_lnaq <- !is.na(ep$Elevation) & ep$Elevation < 150.0 & !is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 0
+      m_laq  <- !is.na(ep$Elevation) & ep$Elevation < 150.0 & !is.na(ep$Is_Aquifer) & ep$Is_Aquifer == 1
+      grp_l  <- ifelse(m_up, "Upland", ifelse(m_laq, "Low_Aq", ifelse(m_lnaq, "Low_NonAq", NA_character_)))
+      ok_l   <- !is.na(grp_l) & is.finite(ep$pred_model_sc)
+      p_kw_l <- if (sum(ok_l) >= 5L && length(unique(grp_l[ok_l])) >= 2L) {
+        suppressWarnings(kruskal.test(ep$pred_model_sc[ok_l] ~ as.factor(grp_l[ok_l])))$p.value
       } else NA_real_
       med_ref <- median(ep$pred_combined[m_up], na.rm = TRUE)
       add_stratum("3. Landscape Regime", "Upland (>= 150 m)", m_up, "Kruskal-Wallis (3 Regimes)", p_kw_l, 1.0)
@@ -612,9 +621,10 @@ compute_stratified_descriptives <- function(bundles) {
       m_hw  <- !is.na(ep$Strahler) & ep$Strahler <= 2
       m_mid <- !is.na(ep$Strahler) & ep$Strahler %in% c(3, 4)
       m_ms  <- !is.na(ep$Strahler) & ep$Strahler >= 5
-      ord_g <- ifelse(m_hw, "1_HW", ifelse(m_mid, "2_Mid", "3_Main"))
-      p_ord <- if (length(unique(ord_g)) >= 2) {
-        suppressWarnings(kruskal.test(ep$pred_model_sc ~ as.factor(ord_g)))$p.value
+      ord_g <- ifelse(m_hw, "1_HW", ifelse(m_mid, "2_Mid", ifelse(m_ms, "3_Main", NA_character_)))
+      ok_o  <- !is.na(ord_g) & is.finite(ep$pred_model_sc)
+      p_ord <- if (sum(ok_o) >= 5L && length(unique(ord_g[ok_o])) >= 2L) {
+        suppressWarnings(kruskal.test(ep$pred_model_sc[ok_o] ~ as.factor(ord_g[ok_o])))$p.value
       } else NA_real_
       rho_ord <- suppressWarnings(cor(ep$Strahler, ep$pred_model_sc, use = "complete.obs", method = "spearman"))
       med_hw  <- median(ep$pred_combined[m_hw], na.rm = TRUE)
@@ -629,21 +639,24 @@ compute_stratified_descriptives <- function(bundles) {
     # 5. Major River Basins
     med_eng <- median(ep$pred_combined, na.rm = TRUE)
     add_stratum("5. River Basin", "All England Network", rep(TRUE, nrow(ep)), "Reference Network", NA_real_, 1.0)
-    if (!is.na(b$hum_cid) && any(ep$CatchID == b$hum_cid)) {
-      m_b <- ep$CatchID == b$hum_cid
-      p_b <- if (sum(m_b) >= 5L && sum(!m_b) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value else NA_real_
+    if (!is.na(b$hum_cid) && any(!is.na(ep$CatchID) & ep$CatchID == b$hum_cid)) {
+      m_b <- !is.na(ep$CatchID) & ep$CatchID == b$hum_cid
+      m_o <- !is.na(ep$CatchID) & ep$CatchID != b$hum_cid
+      p_b <- if (sum(m_b) >= 5L && sum(m_o) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[m_o]))$p.value else NA_real_
       add_stratum("5. River Basin", "Humber Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
                   if (!is.na(med_eng) && abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
     }
-    if (!is.na(b$tha_cid) && any(ep$CatchID == b$tha_cid)) {
-      m_b <- ep$CatchID == b$tha_cid
-      p_b <- if (sum(m_b) >= 5L && sum(!m_b) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value else NA_real_
+    if (!is.na(b$tha_cid) && any(!is.na(ep$CatchID) & ep$CatchID == b$tha_cid)) {
+      m_b <- !is.na(ep$CatchID) & ep$CatchID == b$tha_cid
+      m_o <- !is.na(ep$CatchID) & ep$CatchID != b$tha_cid
+      p_b <- if (sum(m_b) >= 5L && sum(m_o) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[m_o]))$p.value else NA_real_
       add_stratum("5. River Basin", "Thames Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
                   if (!is.na(med_eng) && abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
     }
-    if (!is.na(b$sev_cid) && any(ep$CatchID == b$sev_cid)) {
-      m_b <- ep$CatchID == b$sev_cid
-      p_b <- if (sum(m_b) >= 5L && sum(!m_b) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[!m_b]))$p.value else NA_real_
+    if (!is.na(b$sev_cid) && any(!is.na(ep$CatchID) & ep$CatchID == b$sev_cid)) {
+      m_b <- !is.na(ep$CatchID) & ep$CatchID == b$sev_cid
+      m_o <- !is.na(ep$CatchID) & ep$CatchID != b$sev_cid
+      p_b <- if (sum(m_b) >= 5L && sum(m_o) >= 5L) suppressWarnings(wilcox.test(ep$pred_model_sc[m_b], ep$pred_model_sc[m_o]))$p.value else NA_real_
       add_stratum("5. River Basin", "Severn Basin", m_b, "Mann-Whitney U vs Rest of Network", p_b,
                   if (!is.na(med_eng) && abs(med_eng) > 1e-9) median(ep$pred_combined[m_b], na.rm = TRUE) / med_eng else NA_real_)
     }

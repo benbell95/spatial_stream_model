@@ -92,6 +92,7 @@ The pipeline minimizes external dependencies so it runs reliably in headless Lin
   | **`S3N`** | GitHub (`remotes::install_github("jpierkunke/S3N")`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`). |
   | `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr` | CRAN | Runtime dependencies of `jpierkunke/S3N`. |
   | `jsonlite` *(optional / recommended)* | CRAN | Fast JSON parsing for `configs/*.json` and `network_metadata.json` (with built-in base-R fallback in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
+  | `data.table` *(optional / strongly recommended)* | CRAN | Multi-threaded `fread()` / `fwrite()` CSV I/O (`5–15x` faster on large sample files and ~93k-reach prediction outputs, with automatic base-R `read.csv()` / `write.csv()` fallback via `fast_read_csv()` / `fast_write_csv()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG plotting (`type = "cairo"`). |
 
 ### 2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)

@@ -113,6 +113,7 @@ lambda_cli <- if (length(lambda_arg) > 0) as.numeric(sub("^--(lambda|transform-l
 scale_arg  <- grep("^--(scale|transform-scale)=", args, value = TRUE)
 scale_cli  <- if (length(scale_arg) > 0) as.numeric(sub("^--(scale|transform-scale)=", "", scale_arg[1])) else NULL
 
+if (is.na(trans_cli) && any(args %in% c("--raw", "--untransformed"))) trans_cli <- "none"
 if (is.na(trans_cli)) trans_cli <- "log"
 
 trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli)
@@ -128,9 +129,9 @@ cat(sprintf("  Scalable Spatial Stream Network (S3N) Nitrate Modeling Pipeline [
 cat("======================================================================\n\n")
 
 t_start <- proc.time()
-df_full <- read.csv(file.path(PROC_DIR, "england_rsn_reaches.csv"))
+df_full <- fast_read_csv(file.path(PROC_DIR, "england_rsn_reaches.csv"))
 catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
-  read.csv(file.path(PROC_DIR, "rsn_catchments_lookup.csv"), stringsAsFactors = FALSE)
+  fast_read_csv(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))
 } else {
   NULL
 }
@@ -138,6 +139,16 @@ catch_lu <- if (file.exists(file.path(PROC_DIR, "rsn_catchments_lookup.csv"))) {
 obs_col_name <- "obs_mean"
 if (!(obs_col_name %in% names(df_full))) {
   stop(sprintf("Required column '%s' not found in processed reaches CSV under %s; re-run 01_preprocess_orn.py.", obs_col_name, PROC_DIR))
+}
+
+# Standardize on mean of transformed samples f_bar(y_ij) when matching precomputed reach aggregate exists
+if ("trans_obs_mean" %in% names(df_full) && !is.null(net_meta$transform_type) &&
+    identical(tolower(as.character(net_meta$transform_type)), trans_obj$type) &&
+    any(is.finite(df_full$trans_obs_mean[df_full$has_obs == 1]))) {
+  df_full$obs_y <- df_full$trans_obs_mean
+} else if (trans_obj$type == "log" && ("obs_log" %in% names(df_full)) &&
+           any(is.finite(df_full$obs_log[df_full$has_obs == 1]))) {
+  df_full$obs_y <- df_full$obs_log
 }
 
 # Optimize profile Maximum Likelihood lambda for Box-Cox / Yeo-Johnson or scale for asin / logit BEFORE computing folder tags
@@ -225,19 +236,20 @@ res_severn  <- analyze_domain(subset(df_full, CatchID == severn_info$catch_id), 
 
 # Compute England-relative Z-scores & percentiles on all prediction tables
 eng_pred <- if (!is.null(res_england) && !is.null(res_england$pred_df)) res_england$pred_df else NULL
+eng_norm_stats <- compute_norm_ref_stats(eng_pred)
 if (!is.null(res_england) && !is.null(res_england$pred_df)) {
-  res_england$pred_df <- add_normalised_columns(res_england$pred_df)
-  write.csv(res_england$pred_df, file.path(OUT_ROOT, "predictions_0117.csv"), row.names = FALSE)
+  res_england$pred_df <- add_normalised_columns(res_england$pred_df, ref_df = eng_pred, ref_stats = eng_norm_stats)
+  fast_write_csv(res_england$pred_df, file.path(OUT_ROOT, "predictions_0117.csv"))
 }
 for (b_pair in list(list(key = "humber", res = res_humber),
                     list(key = "thames", res = res_thames),
                     list(key = "severn", res = res_severn))) {
   if (!is.null(b_pair$res) && !is.null(b_pair$res$pred_df)) {
-    b_df <- add_normalised_columns(b_pair$res$pred_df, ref_df = eng_pred)
+    b_df <- add_normalised_columns(b_pair$res$pred_df, ref_df = eng_pred, ref_stats = eng_norm_stats)
     if (b_pair$key == "humber") res_humber$pred_df <- b_df
     if (b_pair$key == "thames") res_thames$pred_df <- b_df
     if (b_pair$key == "severn") res_severn$pred_df <- b_df
-    write.csv(b_df, file.path(OUT_ROOT, sprintf("predictions_%s_0117.csv", b_pair$key)), row.names = FALSE)
+    fast_write_csv(b_df, file.path(OUT_ROOT, sprintf("predictions_%s_0117.csv", b_pair$key)))
   }
 }
 
@@ -253,11 +265,20 @@ all_params <- do.call(rbind, Filter(Negate(is.null), list(
   if (!is.null(res_thames))  res_thames$param_df  else NULL,
   if (!is.null(res_severn))  res_severn$param_df  else NULL
 )))
+meas_m_vals <- if ("meas_method" %in% names(df_full)) tolower(trimws(as.character(df_full$meas_method[df_full$has_obs == 1L]))) else character(0)
+meas_m_vals <- unique(meas_m_vals[!is.na(meas_m_vals) & nzchar(meas_m_vals) & meas_m_vals != "na"])
+meas_method_lbl <- if (length(meas_m_vals) > 0L) {
+  paste(meas_m_vals, collapse = "+")
+} else if (isTRUE(meas_error_arg)) {
+  "gam"
+} else {
+  "exact"
+}
 all_cv$Determinand_Code     <- "0117"
 all_cv$Determinand_Name     <- "Nitrate as N"
 all_cv$Unit                 <- "mg/L"
 all_cv$Period               <- "all"
-all_cv$Meas_Method          <- "exact"
+all_cv$Meas_Method          <- meas_method_lbl
 all_cv$Source               <- source_abbr
 all_cv$Source_Desc          <- source_label
 all_cv$Transform_Type       <- trans_obj$type
@@ -271,7 +292,7 @@ all_params$Determinand_Code <- "0117"
 all_params$Determinand_Name <- "Nitrate as N"
 all_params$Unit             <- "mg/L"
 all_params$Period           <- "all"
-all_params$Meas_Method      <- "exact"
+all_params$Meas_Method      <- meas_method_lbl
 all_params$Source           <- source_abbr
 all_params$Source_Desc      <- source_label
 all_params$Transform_Type   <- trans_obj$type
@@ -281,8 +302,8 @@ all_params$Transform_Scale  <- ifelse(is.null(trans_obj$scale) || is.na(trans_ob
 all_params$Network_Abbr     <- net_meta$abbr
 all_params$Network_Label    <- net_meta$short_label
 
-write.csv(all_cv, file.path(OUT_ROOT, "cv_comparison_0117.csv"), row.names = FALSE)
-write.csv(all_params, file.path(OUT_ROOT, "parameters_0117.csv"), row.names = FALSE)
+fast_write_csv(all_cv, file.path(OUT_ROOT, "cv_comparison_0117.csv"))
+fast_write_csv(all_params, file.path(OUT_ROOT, "parameters_0117.csv"))
 exceed_list <- Filter(Negate(is.null), list(
   if (!is.null(res_england)) res_england$exceed_summary else NULL,
   if (!is.null(res_humber))  res_humber$exceed_summary  else NULL,
@@ -290,8 +311,8 @@ exceed_list <- Filter(Negate(is.null), list(
   if (!is.null(res_severn))  res_severn$exceed_summary  else NULL
 ))
 if (length(exceed_list) > 0L) {
-  write.csv(do.call(rbind, exceed_list),
-            file.path(OUT_ROOT, "exceedance_summary_0117.csv"), row.names = FALSE)
+  fast_write_csv(do.call(rbind, exceed_list),
+                 file.path(OUT_ROOT, "exceedance_summary_0117.csv"))
 }
 design_list <- Filter(Negate(is.null), list(
   if (!is.null(res_england)) res_england$design_df else NULL,
@@ -300,14 +321,14 @@ design_list <- Filter(Negate(is.null), list(
   if (!is.null(res_severn))  res_severn$design_df  else NULL
 ))
 if (length(design_list) > 0L) {
-  write.csv(do.call(rbind, design_list),
-            file.path(OUT_ROOT, "optimal_monitoring_design_0117.csv"), row.names = FALSE)
+  fast_write_csv(do.call(rbind, design_list),
+                 file.path(OUT_ROOT, "optimal_monitoring_design_0117.csv"))
 }
 if (!is.null(res_england) && !is.null(res_england$cv_pts)) {
-  write.csv(res_england$cv_pts, file.path(OUT_ROOT, "cv_predictions_england_0117.csv"), row.names = FALSE)
+  fast_write_csv(res_england$cv_pts, file.path(OUT_ROOT, "cv_predictions_england_0117.csv"))
 }
 if (!is.null(res_humber) && !is.null(res_humber$cv_pts)) {
-  write.csv(res_humber$cv_pts, file.path(OUT_ROOT, "cv_predictions_humber_0117.csv"), row.names = FALSE)
+  fast_write_csv(res_humber$cv_pts, file.path(OUT_ROOT, "cv_predictions_humber_0117.csv"))
 }
 
 saveRDS(list(england = res_england, humber = res_humber, thames = res_thames, severn = res_severn),

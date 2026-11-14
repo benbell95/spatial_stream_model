@@ -261,18 +261,21 @@ analyze_reach_relationships <- function(bundles, pair12_pred_match) {
     n_lbl <- if (b1$det_code %in% n_codes) b1$label else b2$label
     p_lbl <- if (b1$det_code %in% n_codes) b2$label else b1$label
 
-    pm$np_mass_ratio  <- n_raw / pmax(1e-6, p_raw)
+    valid_np <- is.finite(n_raw) & is.finite(p_raw) & (n_raw >= 0) & (p_raw > 1e-6)
+    pm$np_mass_ratio  <- ifelse(valid_np, n_raw / p_raw, NA_real_)
     # Atomic conversion: (N mg/L / 14.0067 g/mol) / (P mg/L / 30.97376 g/mol) = 2.21135 * (N / P)
     pm$np_molar_ratio <- 2.21135 * pm$np_mass_ratio
-    pm$np_regime      <- ifelse(pm$np_molar_ratio < 10.0, "N-Limited (Molar N:P < 10)",
+    pm$np_regime      <- ifelse(is.na(pm$np_molar_ratio), NA_character_,
+                         ifelse(pm$np_molar_ratio < 10.0, "N-Limited (Molar N:P < 10)",
                          ifelse(pm$np_molar_ratio <= 20.0, "Co-Limited (Molar N:P 10-20)",
-                                "P-Limited (Molar N:P > 20)"))
+                                "P-Limited (Molar N:P > 20)")))
 
     obs_np_mass  <- NA_real_; obs_np_molar <- NA_real_
     if (n_both_obs >= 5) {
       n_obs_v <- if (b1$det_code %in% n_codes) pm$obs1_raw[both_obs_idx] else pm$obs2_raw[both_obs_idx]
       p_obs_v <- if (b1$det_code %in% n_codes) pm$obs2_raw[both_obs_idx] else pm$obs1_raw[both_obs_idx]
-      obs_np_mass  <- median(n_obs_v / pmax(1e-6, p_obs_v), na.rm = TRUE)
+      ok_onp <- is.finite(n_obs_v) & is.finite(p_obs_v) & (n_obs_v >= 0) & (p_obs_v > 1e-6)
+      obs_np_mass  <- if (any(ok_onp)) median(n_obs_v[ok_onp] / p_obs_v[ok_onp], na.rm = TRUE) else NA_real_
       obs_np_molar <- 2.21135 * obs_np_mass
     }
 
@@ -536,22 +539,22 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
            "R2", "RMSE", "MAE", "Delta_R2_vs_OLS", "Pct_RMSE_Red_OLS")]
   })
   cv_comp_df <- do.call(rbind, cv_list)
-  write.csv(cv_comp_df, file.path(out_dir, "cv_metrics_comparison.csv"), row.names = FALSE)
+  fast_write_csv(cv_comp_df, file.path(out_dir, "cv_metrics_comparison.csv"))
 
   # ----------------------------------------------------------------------------
   # 2. Assemble Reach Prediction & Uncertainty Distribution Summary Table
   #    + Detailed Descriptive Statistics & Stratified Results Tables
   # ----------------------------------------------------------------------------
   pred_sum_df <- summarize_prediction_bundles(bundles)
-  write.csv(pred_sum_df, file.path(out_dir, "prediction_distribution_summary.csv"), row.names = FALSE)
+  fast_write_csv(pred_sum_df, file.path(out_dir, "prediction_distribution_summary.csv"))
 
   desc_bundle <- compute_detailed_descriptives(bundles)
   desc_df     <- desc_bundle$desc_df
   rep_df      <- desc_bundle$rep_df
-  write.csv(desc_df, file.path(out_dir, "descriptive_stats_summary.csv"), row.names = FALSE)
+  fast_write_csv(desc_df, file.path(out_dir, "descriptive_stats_summary.csv"))
 
   strat_df <- compute_stratified_descriptives(bundles)
-  write.csv(strat_df, file.path(out_dir, "stratified_results_summary.csv"), row.names = FALSE)
+  fast_write_csv(strat_df, file.path(out_dir, "stratified_results_summary.csv"))
 
   # ----------------------------------------------------------------------------
   # 3. Pairwise, Omnibus & Within-Run Statistical Tests
@@ -590,8 +593,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     b1 <- bundles[[i]]; b2 <- bundles[[j]]
     comp_lbl <- sprintf("%s vs. %s", b1$label, b2$label)
     same_net <- (b1$net_abbr == b2$net_abbr) &&
-      (nrow(b1$eng_pred) == nrow(b2$eng_pred)) &&
-      (length(intersect(b1$eng_pred$RivID, b2$eng_pred$RivID)) >= 0.5 * min(nrow(b1$eng_pred), nrow(b2$eng_pred)))
+      ("RivID" %in% names(b1$eng_pred)) && ("RivID" %in% names(b2$eng_pred))
     same_det <- (b1$det_code == b2$det_code)
 
     # A. Fisher's z-test on All England S3N Combined CV R2
@@ -798,18 +800,42 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
 
   # E. Omnibus Multi-Run Statistical Tests (when K >= 3, e.g. seasonal/yearly/monthly comparisons)
   if (K >= 3) {
+    # Fast sufficient-statistics one-way ANOVA (O(K) group summaries instead of building an N x K model matrix)
+    grp_n    <- numeric(K)
+    grp_mean <- rep(NA_real_, K)
+    grp_ss   <- numeric(K)
+    for (g_i in seq_len(K)) {
+      v_g <- bundles[[g_i]]$eng_pred$pred_model_sc
+      v_g <- v_g[is.finite(v_g)]
+      grp_n[g_i] <- length(v_g)
+      if (grp_n[g_i] > 0L) {
+        mu_g <- mean(v_g)
+        grp_mean[g_i] <- mu_g
+        grp_ss[g_i]   <- sum((v_g - mu_g)^2)
+      }
+    }
+    ok_g     <- grp_n > 0L
+    N_tot    <- sum(grp_n)
+    k_act    <- sum(ok_g)
+    grand_mu <- if (N_tot > 0L) sum(grp_n[ok_g] * grp_mean[ok_g]) / N_tot else NA_real_
+    ss_bet   <- if (k_act >= 2L) sum(grp_n[ok_g] * (grp_mean[ok_g] - grand_mu)^2) else NA_real_
+    ss_with  <- sum(grp_ss[ok_g])
+    df1      <- k_act - 1L
+    df2      <- N_tot - k_act
+    f_stat   <- if (df1 >= 1L && df2 >= 1L && is.finite(ss_with) && ss_with > 0) (ss_bet / df1) / (ss_with / df2) else NA_real_
+    f_pval   <- if (is.finite(f_stat)) pf(f_stat, df1, df2, lower.tail = FALSE) else NA_real_
+
     all_pred_vals <- unlist(lapply(bundles, function(b) b$eng_pred$pred_model_sc))
     all_pred_grp  <- factor(rep(run_labels, sapply(bundles, function(b) nrow(b$eng_pred))), levels = run_labels)
-    aov_pred <- summary(aov(all_pred_vals ~ all_pred_grp))[[1]]
     kw_pred  <- suppressWarnings(kruskal.test(all_pred_vals ~ all_pred_grp))
 
     add_stat_row("All Runs (Omnibus)", "Multi-Run Omnibus", "One-Way ANOVA F-Test (Reach Predictions Across Runs)",
-                 "Group Means", K, length(all_pred_vals),
-                 min(tapply(all_pred_vals, all_pred_grp, mean, na.rm = TRUE)),
-                 max(tapply(all_pred_vals, all_pred_grp, mean, na.rm = TRUE)),
-                 diff(range(tapply(all_pred_vals, all_pred_grp, mean, na.rm = TRUE))),
-                 "F", as.numeric(aov_pred$`F value`[1]), as.numeric(aov_pred$`Pr(>F)`[1]),
-                 sprintf("Significant variation in mean predictions across %d runs (%s)", K, sig_stars(aov_pred$`Pr(>F)`[1])))
+                 "Group Means", K, N_tot,
+                 min(grp_mean[ok_g], na.rm = TRUE),
+                 max(grp_mean[ok_g], na.rm = TRUE),
+                 diff(range(grp_mean[ok_g], na.rm = TRUE)),
+                 "F", f_stat, f_pval,
+                 sprintf("Significant variation in mean predictions across %d runs (%s)", K, sig_stars(f_pval)))
 
     add_stat_row("All Runs (Omnibus)", "Multi-Run Omnibus", "Kruskal-Wallis Rank-Sum Test (Reach Predictions Across Runs)",
                  "Group Medians", K, length(all_pred_vals),
@@ -834,7 +860,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   }
 
   stat_tests_df <- if (length(stat_rows) > 0) do.call(rbind, stat_rows) else data.frame()
-  write.csv(stat_tests_df, file.path(out_dir, "statistical_tests_summary.csv"), row.names = FALSE)
+  fast_write_csv(stat_tests_df, file.path(out_dir, "statistical_tests_summary.csv"))
 
   # ----------------------------------------------------------------------------
   # 4. Reach-by-Reach Relationship & Cross-Determinand Co-Occurrence Analysis
@@ -842,7 +868,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
   rel_info <- analyze_reach_relationships(bundles, pair12_pred_match)
   if (!is.null(rel_info) && !is.null(rel_info$stratum_df)) {
     pair12_pred_match <- rel_info$pm
-    write.csv(rel_info$stratum_df, file.path(out_dir, "reach_relationship_summary.csv"), row.names = FALSE)
+    fast_write_csv(rel_info$stratum_df, file.path(out_dir, "reach_relationship_summary.csv"))
   }
 
   # ----------------------------------------------------------------------------
@@ -860,23 +886,31 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     })
     param_long <- do.call(rbind, p_list)
 
-    # Two-sample Wald Z-test comparing against Run 1
+    # Two-sample Wald Z-test comparing against Run 1 (only when runs share determinand & transform scale)
+    same_scale_all <- runs_share_scale(bundles)
     ref_p <- subset(param_long, Run_Index == 1L)
     ref_key <- paste(ref_p$Canon_Domain, ref_p$Canon_Model, ref_p$Parameter, sep = "||")
     all_key <- paste(param_long$Canon_Domain, param_long$Canon_Model, param_long$Parameter, sep = "||")
     m_idx   <- match(all_key, ref_key)
 
-    param_long$Ref_Estimate <- ref_p$Estimate[m_idx]
-    param_long$Diff_vs_Run1 <- ifelse(param_long$Run_Index == 1L, 0.0, param_long$Estimate - param_long$Ref_Estimate)
-    z_val <- ifelse(param_long$Run_Index == 1L | is.na(m_idx), NA_real_,
-                    (param_long$Estimate - ref_p$Estimate[m_idx]) /
-                      sqrt(param_long$Approx_SE^2 + ref_p$Approx_SE[m_idx]^2))
-    p_val <- ifelse(is.na(z_val), NA_real_, 2 * pnorm(-abs(z_val)))
+    if (same_scale_all) {
+      param_long$Ref_Estimate <- ref_p$Estimate[m_idx]
+      param_long$Diff_vs_Run1 <- ifelse(param_long$Run_Index == 1L, 0.0, param_long$Estimate - param_long$Ref_Estimate)
+      z_val <- ifelse(param_long$Run_Index == 1L | is.na(m_idx), NA_real_,
+                      (param_long$Estimate - ref_p$Estimate[m_idx]) /
+                        sqrt(param_long$Approx_SE^2 + ref_p$Approx_SE[m_idx]^2))
+      p_val <- ifelse(is.na(z_val), NA_real_, 2 * pnorm(-abs(z_val)))
+    } else {
+      param_long$Ref_Estimate <- NA_real_
+      param_long$Diff_vs_Run1 <- NA_real_
+      z_val <- rep(NA_real_, nrow(param_long))
+      p_val <- rep(NA_real_, nrow(param_long))
+    }
     param_long$Wald_Z       <- round(z_val, 4)
     param_long$Wald_P       <- p_val
     param_long$Significance <- sapply(p_val, sig_stars)
     param_comp_df <- param_long
-    write.csv(param_comp_df, file.path(out_dir, "parameter_comparison.csv"), row.names = FALSE)
+    fast_write_csv(param_comp_df, file.path(out_dir, "parameter_comparison.csv"))
   }
 
   # ----------------------------------------------------------------------------
@@ -957,7 +991,13 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
 plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, run_cols, out_file) {
   K <- length(bundles)
   run_labels <- sapply(bundles, function(b) b$label)
-  det_short  <- shorten_det_name(bundles[[1]]$det_name)
+  same_det   <- (length(unique(sapply(bundles, function(b) b$det_code))) == 1L)
+  same_scale <- runs_share_scale(bundles)
+  det_short  <- if (same_det) {
+    shorten_det_name(bundles[[1]]$det_name)
+  } else {
+    paste(unique(sapply(bundles, function(b) shorten_det_name(b$det_name))), collapse = " vs. ")
+  }
 
   open_png_device(out_file, width = 2600, height = 2000, res = 200)
   on.exit(dev.off(), add = TRUE)
@@ -1007,28 +1047,36 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
          bty = "n", cex = 0.82)
 
   # Panel B: S3N Combined 5-Fold CV RMSE by Domain and Run
-  rmse_plot <- ifelse(is.na(rmse_mat), 0, rmse_mat)
-  ymax_b <- max(0.1, max(rmse_plot, na.rm = TRUE) * 1.25)
-  bp_b <- matrix(barplot(rmse_plot, beside = TRUE, col = run_cols, border = "#222222",
-                         ylim = c(0, ymax_b), ylab = "5-Fold CV RMSE (Model Scale)",
-                         main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)", 60),
-                         cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
-                 nrow = K)
-  grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
-  for (i in seq_len(K)) {
-    for (d_idx in seq_along(doms_use)) {
-      val <- rmse_mat[i, d_idx]
-      if (!is.na(val)) {
-        text(bp_b[i, d_idx], val + 0.025 * ymax_b, labels = sprintf("%.3f", val), cex = 0.72, font = 2, col = "#111111")
+  if (same_scale) {
+    rmse_plot <- ifelse(is.na(rmse_mat), 0, rmse_mat)
+    ymax_b <- max(0.1, max(rmse_plot, na.rm = TRUE) * 1.25)
+    bp_b <- matrix(barplot(rmse_plot, beside = TRUE, col = run_cols, border = "#222222",
+                           ylim = c(0, ymax_b), ylab = "5-Fold CV RMSE (Model Scale)",
+                           main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE (Lower is Better)", 60),
+                           cex.main = 1.12, cex.lab = 1.0, cex.names = 0.95, las = 1),
+                   nrow = K)
+    grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
+    for (i in seq_len(K)) {
+      for (d_idx in seq_along(doms_use)) {
+        val <- rmse_mat[i, d_idx]
+        if (!is.na(val)) {
+          text(bp_b[i, d_idx], val + 0.025 * ymax_b, labels = sprintf("%.3f", val), cex = 0.72, font = 2, col = "#111111")
+        }
       }
     }
+    legend("topright", legend = run_labels, fill = run_cols, border = "#222222",
+           bty = "n", cex = 0.82)
+  } else {
+    plot.new()
+    box(col = "#cccccc")
+    title(main = wrap_title("B. Out-of-Sample S3N Combined CV RMSE", 60), cex.main = 1.12)
+    text(0.5, 0.5, "Runs use different determinands or transform scales;\ndirect model-scale RMSE comparison omitted.",
+         col = "#555555", cex = 0.95)
   }
-  legend("topright", legend = run_labels, fill = run_cols, border = "#222222",
-         bty = "n", cex = 0.82)
 
   # Panel C: Empirical CDF of Out-of-Sample Absolute CV Errors (All England)
   has_cv_pts <- sapply(bundles, function(b) !is.null(b$eng_cv) && nrow(b$eng_cv) > 0)
-  if (any(has_cv_pts)) {
+  if (same_scale && any(has_cv_pts)) {
     err_list <- lapply(bundles, function(b) {
       if (!is.null(b$eng_cv)) abs(b$eng_cv$obs_y - b$eng_cv$cv_comb) else numeric(0)
     })
@@ -1048,7 +1096,7 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
       sprintf("%s (Med |e| = %.3f, n = %d)", run_labels[i], median(err_list[[i]], na.rm = TRUE), length(err_list[[i]]))
     })
     legend("bottomright", legend = leg_c, col = run_cols[which(has_cv_pts)], lwd = 2.5, bty = "n", cex = 0.80)
-    sub_c_txt <- if (!is.null(pair12_cv_match) && nrow(pair12_cv_match) >= 10) {
+    sub_c_txt <- if (same_det && !is.null(pair12_cv_match) && nrow(pair12_cv_match) >= 10) {
       wt_p <- safe_paired_wilcox(pair12_cv_match$abs_e2, pair12_cv_match$abs_e1)$p.value
       dm_p <- safe_paired_ttest(pair12_cv_match$sq_e2, pair12_cv_match$sq_e1)$p.value
       sprintf("Co-located Stations (n = %d): Paired Wilcoxon p = %s (%s) | Paired MSE t-test p = %s (%s)",
@@ -1061,6 +1109,12 @@ plot_comp1_cv <- function(bundles, cv_comp_df, pair12_cv_match, stat_tests_df, r
     )
   } else {
     plot.new()
+    if (!same_scale && any(has_cv_pts)) {
+      box(col = "#cccccc")
+      title(main = wrap_title("C. Empirical CDF of Station CV Errors", 60), cex.main = 1.12)
+      text(0.5, 0.5, "Runs use different determinands or transform scales;\npooled model-scale error CDF omitted.",
+           col = "#555555", cex = 0.95)
+    }
   }
 
   # Panel D: Spatial Gain over Non-Spatial OLS (Delta R2 = R2_S3N - R2_OLS)
@@ -2004,12 +2058,13 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
     eng_p <- subset(param_comp_df, grepl("All England", Canon_Domain))
     for (r_i in seq_len(nrow(eng_p))) {
       p <- eng_p[r_i, ]
+      d_str <- if (is.na(p$Diff_vs_Run1)) "—" else sprintf("%+.4f", p$Diff_vs_Run1)
       z_str <- if (is.na(p$Wald_Z)) "—" else sprintf("%.2f", p$Wald_Z)
       p_str <- if (is.na(p$Wald_P)) "—" else fmt_pval(p$Wald_P)
       s_str <- if (is.na(p$Wald_P)) "—" else p$Significance
-      add_line("| %s | `%s` | **%s** | `%.4f` | `[%.4f, %.4f]` | `%+.4f` | `%s` | `%s` | `%s` |",
+      add_line("| %s | `%s` | **%s** | `%.4f` | `[%.4f, %.4f]` | `%s` | `%s` | `%s` | `%s` |",
                p$Canon_Model, p$Parameter, p$Run_Label, p$Estimate,
-               p$CI_Lower, p$CI_Upper, p$Diff_vs_Run1, z_str, p_str, s_str)
+               p$CI_Lower, p$CI_Upper, d_str, z_str, p_str, s_str)
     }
     add_line("")
   }

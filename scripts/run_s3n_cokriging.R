@@ -94,7 +94,16 @@ source_cli   <- resolve_source_tag(src_cli, base_dir = BASE_DIR)
 source_abbr  <- format_source_abbr(src_cli, base_dir = BASE_DIR)
 source_label <- format_source_label(src_cli, base_dir = BASE_DIR)
 source_tag   <- format_source_folder_tag(source_cli)
-src_dirs     <- resolve_data_source_dirs(DATA_DIR, source = src_cli, base_dir = BASE_DIR,
+range_arg    <- grep("^--range-mode=", args, value = TRUE)
+range_cli    <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
+if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
+  rm_res       <- apply_range_mode_to_source(source_cli, range_cli, base_dir = BASE_DIR)
+  source_cli   <- rm_res$source_tag
+  source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
+  source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
+  source_tag   <- format_source_folder_tag(source_cli)
+}
+src_dirs     <- resolve_data_source_dirs(DATA_DIR, source = source_cli, base_dir = BASE_DIR,
                                          custom_dir = custom_dir_cli,
                                          custom_samples = custom_samples_cli,
                                          custom_sites = custom_sites_cli)
@@ -111,14 +120,16 @@ if ("--list-networks" %in% args) {
 }
 
 PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
-                                                source = source_cli, processed_dir = dir_cfg$processed_dir)
+                                                source = source_cli, processed_dir = dir_cfg$processed_dir,
+                                                custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
+                                                custom_sites = custom_sites_cli)
 net_meta       <- load_network_metadata(PROC_DIR)
 REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
 SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
 CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
 
 if ("--list-basins" %in% args) {
-  c_lu <- read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE)
+  c_lu <- fast_read_csv(CATCHMENTS_CSV)
   rbd_tab <- aggregate(cbind(n_reaches, n_obs_reaches) ~ RBD_ID + RBD_Name, data = c_lu, FUN = sum)
   rbd_tab <- rbd_tab[order(-rbd_tab$n_obs_reaches), ]
   cat("=== River Basin Districts ===\n")
@@ -141,7 +152,10 @@ WIDE_VAR_META <- load_determinand_catalog(BASE_DIR)
 
 # Parse multivariate arguments
 targets_arg <- grep("^--targets=", args, value = TRUE)
-pos_args    <- args[!grepl("^--", args)]
+skip_pos_i  <- integer(0)
+src_sp_i    <- which(args == "--source")
+if (length(src_sp_i) > 0L) skip_pos_i <- c(skip_pos_i, src_sp_i + 1L)
+pos_args    <- args[setdiff(which(!grepl("^--", args)), skip_pos_i)]
 target_spec <- if (length(targets_arg) > 0) {
   sub("^--targets=", "", targets_arg[1])
 } else if (length(pos_args) > 0) {
@@ -160,13 +174,14 @@ detect_target_dataset <- function(tok) {
   if (grepl(":", tok, fixed = TRUE)) return(tok)
   if (!is.na(default_ds)) return(paste0(default_ds, ":", tok))
   if (grepl("^[0-9]{4}$", tok)) return(paste0("wq:", tok))
+  if (grepl("^[0-9]{2,7}-[0-9]{2}-[0-9]$", tok)) return(paste0("lcms:", tok))
   for (cand_ds in c("inverts", "diatoms", "macrophytes", "rhs")) {
     for (s_name in names(src_dirs$active_dirs)) {
       s_dir  <- src_dirs$active_dirs[[s_name]]
       cand_p <- file.path(s_dir, paste0(toupper(s_name), " ", DATASET_FILES[[cand_ds]]$file))
       if (!file.exists(cand_p)) cand_p <- file.path(s_dir, DATASET_FILES[[cand_ds]]$file)
       if (file.exists(cand_p)) {
-        hdr <- colnames(read.csv(cand_p, nrows = 1, fileEncoding = "UTF-8-BOM"))
+        hdr <- colnames(fast_read_csv(cand_p, nrows = 1L, fileEncoding = "UTF-8-BOM"))
         if (tok %in% hdr) return(paste0(cand_ds, ":", tok))
       }
     }
@@ -236,55 +251,8 @@ tdir_raw_val   <- if (length(tdir_raw_arg) > 0) tolower(trimws(sub("^--threshold
 
 load_s3n_backend(BASE_DIR)
 
-# Helpers shared with run_s3n_determinand.R for identical data parsing & ROS
-impute_censored_ros <- function(vals, is_cens) {
-  if (!any(is_cens)) return(vals)
-  n <- length(vals)
-  c_limits <- sort(unique(vals[is_cens]))
-  J <- length(c_limits)
-  min_thr <- min(0.0, min(vals, na.rm = TRUE) - 1.0, na.rm = TRUE)
-  thresholds <- c(min_thr, c_limits, Inf)
-  A <- vector("list", J + 1)
-  C <- vector("list", J + 1)
-  for (i in seq_len(n)) {
-    if (is_cens[i]) {
-      j <- match(vals[i], c_limits) + 1L
-      C[[j]] <- c(C[[j]], i)
-    } else {
-      j_find <- max(which(thresholds[1:(J + 1)] <= vals[i]))
-      A[[j_find]] <- c(A[[j_find]], i)
-    }
-  }
-  for (j in seq_len(J + 1)) if (length(A[[j]]) > 1) A[[j]] <- A[[j]][order(vals[A[[j]]])]
-  p <- numeric(J + 2); p[J + 2] <- 0.0
-  for (j in seq(J + 1, 2, by = -1)) {
-    d_j <- thresholds[j]; A_j <- length(A[[j]])
-    B_j <- sum((is_cens & vals <= d_j) | (!is_cens & vals < d_j))
-    p[j] <- if (A_j + B_j > 0) p[j + 1] + (1.0 - p[j + 1]) * (A_j / (A_j + B_j)) else p[j + 1]
-  }
-  p[1] <- if (length(A[[1]]) > 0) 1.0 else p[2]
-  pp <- numeric(n)
-  for (j in seq_len(J + 1)) {
-    A_j <- length(A[[j]])
-    if (A_j > 0) {
-      ranks_a <- ave(seq_len(A_j), vals[A[[j]]], FUN = mean)
-      pp[A[[j]]] <- (1.0 - p[j]) + (p[j] - p[j + 1]) * (ranks_a / (A_j + 1.0))
-    }
-  }
-  for (j in 2:(J + 1)) {
-    C_j <- length(C[[j]])
-    if (C_j > 0) pp[C[[j]]] <- (1.0 - p[j]) * ((seq_len(C_j)) / (C_j + 1.0))
-  }
-  pp <- pmin(1.0 - 1e-6, pmax(1e-6, pp))
-  unc_idx <- which(!is_cens & vals > 0)
-  if (length(unc_idx) < 3) return(ifelse(is_cens, 0.5 * vals, vals))
-  z_unc <- qnorm(pp[unc_idx]); l_unc <- log(vals[unc_idx])
-  slope <- max(0.05, cov(z_unc, l_unc) / max(1e-9, var(z_unc)))
-  inter <- mean(l_unc) - slope * mean(z_unc)
-  out <- vals; c_idx <- which(is_cens)
-  out[c_idx] <- pmin(vals[c_idx], pmax(1e-6, exp(inter + slope * qnorm(pp[c_idx]))))
-  out
-}
+# impute_censored_ros() is provided by scripts/s3n_transforms.R (sourced via s3n_plot_functions.R)
+.wq_csv_cache <- new.env(parent = emptyenv())
 
 find_first_col <- function(cols, candidates) {
   cols_low <- tolower(trimws(cols))
@@ -297,7 +265,13 @@ find_first_col <- function(cols, candidates) {
 
 read_wq_target_file <- function(f_path, source_label_tag, det_code, allow_substr_det = FALSE) {
   if (!file.exists(f_path)) return(NULL)
-  raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+  cache_k <- normalizePath(f_path, winslash = "/", mustWork = FALSE)
+  if (exists(cache_k, envir = .wq_csv_cache, inherits = FALSE)) {
+    raw <- get(cache_k, envir = .wq_csv_cache, inherits = FALSE)
+  } else {
+    raw <- fast_read_csv(f_path, fileEncoding = "UTF-8-BOM")
+    assign(cache_k, raw, envir = .wq_csv_cache)
+  }
   fnames <- colnames(raw)
   id_c   <- find_first_col(fnames, c("network_id", "site_id", "station_id", "id", "location_id", "site"))
   dt_c   <- find_first_col(fnames, c("sample_datetime", "datetime", "date_time", "date", "survey_date", "timestamp"))
@@ -310,9 +284,9 @@ read_wq_target_file <- function(f_path, source_label_tag, det_code, allow_substr
   keep_rows <- rep(FALSE, nrow(raw))
   if (!is.null(det_c)) {
     det_vals  <- as.character(raw[[det_c]])
-    keep_rows <- (det_vals == det_code) | (sub("^0+", "", det_vals) == sub("^0+", "", det_code)) |
-      grepl(paste0("^", det_code, "$"), det_vals, ignore.case = TRUE)
-    if (allow_substr_det) keep_rows <- keep_rows | grepl(det_code, det_vals, fixed = TRUE)
+    keep_rows <- !is.na(det_vals) & ((det_vals == det_code) | (sub("^0+", "", det_vals) == sub("^0+", "", det_code)) |
+      grepl(paste0("^", det_code, "$"), det_vals, ignore.case = TRUE))
+    if (allow_substr_det) keep_rows <- keep_rows | (!is.na(det_vals) & grepl(det_code, det_vals, fixed = TRUE))
   } else if (det_code %in% fnames) {
     val_c <- det_code
     keep_rows <- !is.na(raw[[det_code]])
@@ -358,11 +332,12 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
     det_name <- det_samples$det_desc[1]
     det_unit <- det_samples$unit_short_desc[1]
     raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
-    is_cens  <- det_samples$meas_sign %in% c("<", "yes", "true", "1")
+    is_cens  <- (det_samples$meas_sign %in% c("<", "yes", "true", "1")) & !grepl("tobit", det_samples$meas_method, ignore.case = TRUE)
   } else if (ds_mode == "lcms") {
     csv_p <- file.path(RSN_DIR, "RSN LCMS GCMS Samples.csv")
-    all_samples <- read.csv(csv_p, stringsAsFactors = FALSE, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
-    keep_m <- (all_samples$cas_number == det_code) | grepl(det_code, all_samples$compound_name, ignore.case = TRUE)
+    all_samples <- fast_read_csv(csv_p, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
+    keep_m <- (!is.na(all_samples$cas_number) & all_samples$cas_number == det_code) |
+              (!is.na(all_samples$compound_name) & grepl(det_code, all_samples$compound_name, ignore.case = TRUE))
     det_samples <- all_samples[keep_m, c("network_id", "sample_datetime", "compound_name", "less_than_flag", "meas_result", "unit_short_desc")]
     rm(all_samples)
     if (nrow(det_samples) == 0) stop(sprintf("No LCMS samples found for '%s'.", det_code))
@@ -372,7 +347,7 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
     det_name <- det_samples$compound_name[1]
     det_unit <- det_samples$unit_short_desc[1]
     raw_vals <- suppressWarnings(as.numeric(det_samples$meas_result))
-    is_cens  <- tolower(trimws(det_samples$less_than_flag)) == "yes"
+    is_cens  <- !is.na(det_samples$less_than_flag) & (tolower(trimws(det_samples$less_than_flag)) == "yes")
   } else {
     s_dfs <- list()
     for (s_name in names(src_dirs$active_dirs)) {
@@ -381,7 +356,7 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
       if (!file.exists(f_path)) f_path <- file.path(s_dir, ds_info$file)
       if (!file.exists(f_path)) f_path <- file.path(s_dir, "samples.csv")
       if (file.exists(f_path)) {
-        raw <- read.csv(f_path, stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+        raw <- fast_read_csv(f_path, fileEncoding = "UTF-8-BOM")
         fnames <- colnames(raw)
         id_c <- find_first_col(fnames, c("network_id", "site_id", "station_id", "id"))
         dt_c <- find_first_col(fnames, c(ds_info$dt_col, "sample_datetime", "datetime", "date_time", "date", "survey_date"))
@@ -424,15 +399,19 @@ extract_target_samples <- function(tgt, trans_type_override = NULL) {
     raw_vals
   }
 
-  det_samples$year   <- as.integer(substr(det_samples$sample_datetime, 1, 4))
-  det_samples$month  <- as.integer(substr(det_samples$sample_datetime, 6, 7))
+  det_samples$year   <- suppressWarnings(as.integer(substr(det_samples$sample_datetime, 1, 4)))
+  det_samples$month  <- suppressWarnings(as.integer(substr(det_samples$sample_datetime, 6, 7)))
   season_lu          <- c("winter", "winter", "spring", "spring", "spring",
                           "summer", "summer", "summer", "autumn", "autumn", "autumn", "winter")
-  det_samples$season <- season_lu[det_samples$month]
+  det_samples$season <- ifelse(!is.na(det_samples$month) & det_samples$month >= 1L & det_samples$month <= 12L,
+                               season_lu[det_samples$month], NA_character_)
 
-  if (!is.na(year_f))   det_samples <- det_samples[det_samples$year == year_f, , drop = FALSE]
-  if (!is.na(season_f)) det_samples <- det_samples[det_samples$season == season_f, , drop = FALSE]
-  if (!is.na(month_f))  det_samples <- det_samples[det_samples$month == month_f, , drop = FALSE]
+  if (!is.na(year_f))   det_samples <- det_samples[!is.na(det_samples$year)   & det_samples$year == year_f, , drop = FALSE]
+  if (!is.na(season_f)) det_samples <- det_samples[!is.na(det_samples$season) & det_samples$season == season_f, , drop = FALSE]
+  if (!is.na(month_f))  det_samples <- det_samples[!is.na(det_samples$month)  & det_samples$month == month_f, , drop = FALSE]
+  if (nrow(det_samples) == 0L) {
+    stop(sprintf("No remaining samples for target '%s' after temporal filtering.", det_code))
+  }
 
   t_type <- if (!is.null(trans_type_override) && nzchar(trans_type_override)) {
     trans_type_override
@@ -467,10 +446,10 @@ cat("======================================================================\n")
 cat(sprintf("  Multivariate Stream Co-Kriging (%s, P = %d, K <= %d)\n", toupper(method_cli), P, k_factors))
 cat("======================================================================\n")
 
-sites_lu   <- read.csv(SITES_CSV, stringsAsFactors = FALSE)
-sites_lu   <- sites_lu[sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
-df_reaches <- read.csv(REACHES_CSV, stringsAsFactors = FALSE)
-catch_lu   <- if (file.exists(CATCHMENTS_CSV)) read.csv(CATCHMENTS_CSV, stringsAsFactors = FALSE) else NULL
+sites_lu   <- fast_read_csv(SITES_CSV)
+sites_lu   <- sites_lu[!is.na(sites_lu$included_250m) & sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
+df_reaches <- fast_read_csv(REACHES_CSV)
+catch_lu   <- if (file.exists(CATCHMENTS_CSV)) fast_read_csv(CATCHMENTS_CSV) else NULL
 
 extracted    <- vector("list", P)
 targets_meta <- vector("list", P)
@@ -577,39 +556,11 @@ if (nchar(slug_joined) > 64L) slug_joined <- paste0(substr(slug_joined, 1L, 52L)
 out_folder <- paste0("cokrig_", slug_joined, "_", net_meta$abbr)
 if (nzchar(source_tag)) out_folder <- paste0(out_folder, "_", source_tag)
 if (method_cli != "lmc") out_folder <- paste0(out_folder, "_", method_cli)
-if (P > 3L && k_factors < P && method_cli == "lmc") out_folder <- paste0(out_folder, "_k", k_factors)
+if (k_factors < P && method_cli == "lmc") out_folder <- paste0(out_folder, "_k", k_factors)
 OUT_DIR <- rel_path(OUT_BASE, "results", out_folder)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
-# Build domain list: All England + core 3 basins + optional --basin=
-resolve_basin_spec <- function(spec, c_lu) {
-  spec_trim <- trimws(spec)
-  if (grepl("^[0-9]+$", spec_trim)) {
-    cid <- as.integer(spec_trim)
-    sub_c <- if (!is.null(c_lu)) c_lu[c_lu$CatchID == cid, ] else data.frame()
-    rname <- if (nrow(sub_c) > 0) sub_c$Main_River[1] else paste0("Catchment ", cid)
-    slug  <- gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(paste0(rname, "_", cid))))
-    return(list(slug = slug, short_title = rname, domain_label = sprintf("%s (CatchID=%d)", rname, cid), catch_ids = cid))
-  }
-  if (is.null(c_lu)) stop("Catchment lookup CSV not found.")
-  m_idx <- grep(spec_trim, c_lu$Main_River, ignore.case = TRUE)
-  if (length(m_idx) > 0) {
-    sub_m <- c_lu[m_idx, ]
-    sub_m <- sub_m[order(-sub_m$n_obs_reaches, -sub_m$n_reaches), ]
-    cid   <- sub_m$CatchID[1]; rname <- sub_m$Main_River[1]
-    slug  <- gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(paste0(rname, "_", cid))))
-    return(list(slug = slug, short_title = rname, domain_label = sprintf("%s (CatchID=%d)", rname, cid), catch_ids = cid))
-  }
-  r_idx <- grep(spec_trim, c_lu$RBD_Name, ignore.case = TRUE)
-  if (length(r_idx) > 0) {
-    rid <- c_lu$RBD_ID[r_idx[1]]; rname <- c_lu$RBD_Name[r_idx[1]]
-    slug <- gsub("^_|_$", "", gsub("[^a-z0-9]+", "_", tolower(paste0("rbd_", rname))))
-    return(list(slug = slug, short_title = paste0(rname, " RBD"),
-                domain_label = sprintf("%s RBD (RBD=%d)", rname, rid), catch_ids = unique(c_lu$CatchID[c_lu$RBD_ID == rid])))
-  }
-  stop(sprintf("Could not match '--basin=%s'.", spec))
-}
-
+# resolve_basin_spec() is shared via scripts/s3n_covariates.R
 humber_info <- resolve_core_basin(df_reaches, catch_lu, net_meta, "humber")
 thames_info <- resolve_core_basin(df_reaches, catch_lu, net_meta, "thames")
 severn_info <- resolve_core_basin(df_reaches, catch_lu, net_meta, "severn")
@@ -633,6 +584,8 @@ var_names       <- vapply(targets_meta, function(m) m$label, character(1))
 vars_sub        <- format_covariates_subtitle(var_specs = var_specs)
 method_lbl      <- if (method_cli == "colocated") "Sequential Co-Located Residual Co-Kriging" else sprintf("Factor-LMC Joint NNGP (K=%d)", k_factors)
 
+eng_pred_ref <- NULL
+eng_norm_stats_list <- vector("list", P)
 for (dom in domains) {
   res_dom <- fit_multivariate_s3n_domain(
     df_reaches      = df_reaches,
@@ -670,8 +623,15 @@ for (dom in domains) {
   for (p in seq_len(P)) {
     m_p <- targets_meta[[p]]
     c_slug <- gsub("[^a-zA-Z0-9_]+", "_", m_p$code)
+    if (dom$slug == "england") {
+      eng_norm_stats_list[[p]] <- compute_norm_ref_stats(res_dom$pred_dfs[[p]])
+      res_dom$pred_dfs[[p]] <- add_normalised_columns(res_dom$pred_dfs[[p]], ref_df = res_dom$pred_dfs[[p]], ref_stats = eng_norm_stats_list[[p]])
+    } else {
+      ref_p <- if (is.null(eng_pred_ref)) res_dom$pred_dfs[[p]] else eng_pred_ref[[p]]
+      res_dom$pred_dfs[[p]] <- add_normalised_columns(res_dom$pred_dfs[[p]], ref_df = ref_p, ref_stats = eng_norm_stats_list[[p]])
+    }
     out_csv <- file.path(OUT_DIR, sprintf("predictions_%s_%s.csv", dom$slug, c_slug))
-    write.csv(res_dom$pred_dfs[[p]], out_csv, row.names = FALSE)
+    fast_write_csv(res_dom$pred_dfs[[p]], out_csv)
 
     if (dom$slug == "england") {
       ftag <- norm_meta$file_tag
@@ -693,6 +653,7 @@ for (dom in domains) {
   }
 
   if (dom$slug == "england") {
+    eng_pred_ref <- res_dom$pred_dfs
     fig_diag <- file.path(OUT_DIR, "fig_cokrig_cross_correlation.png")
     plot_fig_cokrig_diagnostics(
       cross_cov_df  = res_dom$cross_cov_df,
@@ -713,9 +674,9 @@ cc_all  <- if (length(all_cross_list) > 0L) do.call(rbind, all_cross_list) else 
 cov_all <- if (length(all_cov_list) > 0L) do.call(rbind, all_cov_list) else NULL
 ex_all  <- if (length(all_exceed_list) > 0L) do.call(rbind, all_exceed_list) else NULL
 
-if (!is.null(cv_all)) write.csv(cv_all, file.path(OUT_DIR, "cv_univariate_vs_cokriging.csv"), row.names = FALSE)
-if (!is.null(cc_all)) write.csv(cc_all, file.path(OUT_DIR, "cokriging_cross_covariance.csv"), row.names = FALSE)
-if (!is.null(ex_all)) write.csv(ex_all, file.path(OUT_DIR, "exceedance_summary_cokriging.csv"), row.names = FALSE)
+if (!is.null(cv_all)) fast_write_csv(cv_all, file.path(OUT_DIR, "cv_univariate_vs_cokriging.csv"))
+if (!is.null(cc_all)) fast_write_csv(cc_all, file.path(OUT_DIR, "cokriging_cross_covariance.csv"))
+if (!is.null(ex_all)) fast_write_csv(ex_all, file.path(OUT_DIR, "exceedance_summary_cokriging.csv"))
 
 report_path <- file.path(OUT_DIR, "cokriging_evaluation_report.md")
 generate_cokriging_report(

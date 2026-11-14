@@ -32,18 +32,18 @@ resolve_base_dir <- function() {
 rel_path <- function(base_dir, ...) {
   parts <- c(list(...))
   parts <- as.character(unlist(parts))
-  parts <- parts[nzchar(parts)]
+  parts <- parts[!is.na(parts) & nzchar(parts)]
   if (length(parts) == 0) return(base_dir)
-  p <- if (is.null(base_dir) || !nzchar(base_dir) || base_dir == ".") {
+  p <- if (is.null(base_dir) || is.na(base_dir[1]) || !nzchar(base_dir[1]) || base_dir[1] == ".") {
     do.call(file.path, as.list(parts))
   } else {
-    do.call(file.path, as.list(c(base_dir, parts)))
+    do.call(file.path, as.list(c(base_dir[1], parts)))
   }
   sub("^\\./", "", p)
 }
 
 is_abs_path <- function(p) {
-  grepl("^(/|\\\\\\\\|[A-Za-z]:[/\\\\])", as.character(p)[1])
+  !is.null(p) && length(p) > 0L && !is.na(p[1]) && grepl("^(/|\\\\\\\\|[A-Za-z]:[/\\\\])", as.character(p)[1])
 }
 
 format_rel_display_path <- function(p, base_dir = ".") {
@@ -116,6 +116,127 @@ read_json_safe <- function(filepath) {
   NULL
 }
 
+has_data_table <- function() {
+  isTRUE(getOption("s3n.use_data_table", TRUE)) &&
+    isTRUE(requireNamespace("data.table", quietly = TRUE))
+}
+
+#' Fast CSV reader using data.table::fread() when available, falling back to read.csv().
+fast_read_csv <- function(file, nrows = -1L, colClasses = NULL, select = NULL,
+                          check.names = TRUE, fileEncoding = "", stringsAsFactors = FALSE, ...) {
+  if (!is.null(file) && length(file) == 1L && has_data_table()) {
+    dt_res <- tryCatch({
+      nr_dt <- if (!is.null(nrows) && is.finite(nrows) && nrows >= 0L) as.integer(nrows) else Inf
+      raw_hdr <- NULL
+      if ((!is.null(select) && is.character(select) && length(select) > 0L) ||
+          (!is.null(colClasses) && is.character(colClasses) && !is.null(names(colClasses)))) {
+        raw_hdr <- names(data.table::fread(file, nrows = 0L, check.names = FALSE, showProgress = FALSE))
+      }
+      sel_use <- select
+      if (!is.null(sel_use) && is.character(sel_use) && length(sel_use) > 0L) {
+        clean_hdr <- make.names(raw_hdr, unique = TRUE)
+        idx <- which(raw_hdr %in% sel_use | clean_hdr %in% sel_use)
+        if (length(idx) == 0L) return(data.frame())
+        sel_use <- idx
+      }
+      cc_arg <- colClasses
+      drop_arg <- NULL
+      if (!is.null(cc_arg) && is.character(cc_arg)) {
+        if (!is.null(names(cc_arg))) {
+          clean_hdr_cc <- make.names(raw_hdr, unique = TRUE)
+          null_nms <- names(cc_arg)[!is.na(cc_arg) & (cc_arg == "NULL")]
+          if (length(null_nms) > 0L) {
+            drop_idx <- which(raw_hdr %in% null_nms | clean_hdr_cc %in% null_nms)
+            if (length(drop_idx) > 0L) drop_arg <- raw_hdr[drop_idx]
+          }
+          cc_keep <- cc_arg[!is.na(cc_arg) & (cc_arg != "NULL")]
+          if (length(cc_keep) > 0L) {
+            mapped_cc <- character(0)
+            for (nm in names(cc_keep)) {
+              hit <- which(raw_hdr == nm | clean_hdr_cc == nm)
+              if (length(hit) > 0L) mapped_cc[raw_hdr[hit[1L]]] <- unname(cc_keep[nm])
+            }
+            if (!is.null(sel_use)) {
+              mapped_cc <- mapped_cc[names(mapped_cc) %in% raw_hdr[sel_use]]
+            }
+            cc_arg <- if (length(mapped_cc) > 0L) mapped_cc else NULL
+          } else {
+            cc_arg <- NULL
+          }
+        } else {
+          null_idx <- which(!is.na(cc_arg) & (cc_arg == "NULL"))
+          if (length(null_idx) > 0L) drop_arg <- null_idx
+          valid_idx <- which(!is.na(cc_arg) & (cc_arg != "NULL"))
+          if (!is.null(sel_use)) valid_idx <- intersect(valid_idx, sel_use)
+          cc_arg <- if (length(valid_idx) > 0L) split(valid_idx, cc_arg[valid_idx]) else NULL
+        }
+      }
+      args_dt <- list(
+        input = file,
+        nrows = nr_dt,
+        data.table = FALSE,
+        check.names = check.names,
+        stringsAsFactors = stringsAsFactors,
+        showProgress = FALSE
+      )
+      if (!is.null(sel_use)) args_dt$select <- sel_use
+      if (!is.null(drop_arg) && is.null(sel_use)) args_dt$drop <- drop_arg
+      if (!is.null(cc_arg)) args_dt$colClasses <- cc_arg
+      extra <- list(...)
+      if (length(extra) > 0L) args_dt <- c(args_dt, extra)
+      do.call(data.table::fread, args_dt)
+    }, error = function(e) NULL)
+    if (!is.null(dt_res)) return(dt_res)
+  }
+
+  cc_base <- colClasses
+  if (!is.null(select)) {
+    hdr_args <- list(file = file, nrows = 1L, stringsAsFactors = FALSE, check.names = FALSE)
+    if (nzchar(fileEncoding)) hdr_args$fileEncoding <- fileEncoding
+    raw_hdr <- tryCatch(colnames(do.call(read.csv, hdr_args)), error = function(e) character(0))
+    if (length(raw_hdr) > 0L) {
+      clean_hdr <- make.names(raw_hdr, unique = TRUE)
+      keep_mask <- (raw_hdr %in% select) | (clean_hdr %in% select)
+      cc_merged <- ifelse(keep_mask, NA_character_, "NULL")
+      if (!is.null(cc_base) && is.character(cc_base)) {
+        if (!is.null(names(cc_base))) {
+          for (nm in names(cc_base)) {
+            hit <- which((raw_hdr == nm | clean_hdr == nm) & keep_mask)
+            if (length(hit) > 0L) cc_merged[hit] <- unname(cc_base[nm])
+          }
+        } else if (length(cc_base) == length(raw_hdr)) {
+          cc_merged[keep_mask] <- cc_base[keep_mask]
+        }
+      }
+      cc_base <- cc_merged
+    }
+  }
+  base_args <- list(
+    file = file,
+    nrows = nrows,
+    check.names = check.names,
+    stringsAsFactors = stringsAsFactors
+  )
+  if (nzchar(fileEncoding)) base_args$fileEncoding <- fileEncoding
+  if (!is.null(cc_base)) base_args$colClasses <- cc_base
+  extra <- list(...)
+  if (length(extra) > 0L) base_args <- c(base_args, extra)
+  do.call(read.csv, base_args)
+}
+
+#' Fast CSV writer using data.table::fwrite() when available, falling back to write.csv().
+fast_write_csv <- function(x, file, row.names = FALSE) {
+  if (has_data_table() && isFALSE(row.names)) {
+    ok_dt <- tryCatch({
+      data.table::fwrite(x, file = file, row.names = FALSE, na = "NA", showProgress = FALSE)
+      TRUE
+    }, error = function(e) FALSE)
+    if (isTRUE(ok_dt)) return(invisible(NULL))
+  }
+  write.csv(x, file = file, row.names = row.names)
+  invisible(NULL)
+}
+
 parse_json_string_field <- function(lines, key, default = "") {
   pat <- paste0('"', key, '"\\s*:\\s*"([^"]*)"')
   hit <- grep(pat, lines, value = TRUE)
@@ -134,6 +255,8 @@ find_directory_config_file <- function(base_dir = ".") {
   rel_path(base_dir, "configs", "directories.json")
 }
 
+.s3n_dir_config_cache <- new.env(parent = emptyenv())
+
 load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
   cfg_file <- find_directory_config_file(base_dir)
   if (!file.exists(cfg_file) && isTRUE(auto_create)) {
@@ -143,6 +266,16 @@ load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
                  '  "gis_dir": "gis",',
                  '  "output_dir": "output"',
                  '}'), cfg_file)
+  }
+
+  cfg_exists <- file.exists(cfg_file)
+  cfg_mtime  <- if (cfg_exists) as.numeric(file.mtime(cfg_file)) else NA_real_
+  cache_key  <- normalizePath(base_dir, mustWork = FALSE)
+  if (!isTRUE(auto_create) && exists(cache_key, envir = .s3n_dir_config_cache, inherits = FALSE)) {
+    cached <- get(cache_key, envir = .s3n_dir_config_cache, inherits = FALSE)
+    if (identical(cached$mtime, cfg_mtime)) {
+      return(cached$val)
+    }
   }
 
   raw_cfg <- list(data_dir = "data", gis_dir = "gis", output_dir = "output", processed_dir = "")
@@ -155,7 +288,7 @@ load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
     raw_cfg$gis_dir       <- pick_j("gis_dir", "gis")
     raw_cfg$output_dir    <- pick_j("output_dir", "output")
     raw_cfg$processed_dir <- pick_j("processed_dir", "")
-  } else if (file.exists(cfg_file)) {
+  } else if (cfg_exists) {
     txt <- tryCatch(paste(readLines(cfg_file, warn = FALSE, encoding = "UTF-8"), collapse = "\n"), error = function(e) "")
     get_field <- function(k, default = "") {
       pat <- paste0('"', k, '"\\s*:\\s*"([^"]*)"')
@@ -185,13 +318,15 @@ load_directory_config <- function(base_dir = ".", auto_create = FALSE) {
     dir.create(out_d, recursive = TRUE, showWarnings = FALSE)
   }
 
-  list(
-    config_file   = if (file.exists(cfg_file)) cfg_file else NULL,
+  res <- list(
+    config_file   = if (cfg_exists) cfg_file else NULL,
     data_dir      = data_d,
     gis_dir       = gis_d,
     output_dir    = out_d,
     processed_dir = proc_d
   )
+  assign(cache_key, list(mtime = cfg_mtime, val = res), envir = .s3n_dir_config_cache)
+  res
 }
 
 parse_custom_dir_args <- function(args = character(0), base_dir = ".") {
@@ -664,20 +799,32 @@ resolve_data_source_dirs <- function(data_dir, source = "rsn", base_dir = NULL, 
       active_dirs[["rsn"]] <- rsn_dir
     } else if (tk == "ssn") {
       active_dirs[["ssn"]] <- ssn_dir
-    } else if (!is.null(custom_dir) && nzchar(custom_dir) && dir.exists(custom_dir)) {
-      active_dirs[[tk]] <- custom_dir
-    } else if (tk %in% names(reg$sources)) {
-      cfg_d <- reg$sources[[tk]]$data_dir
-      cand_d <- if (is.null(cfg_d) || !nzchar(cfg_d)) {
-        rel_path(data_dir, "custom", tk)
-      } else if (dir.exists(cfg_d)) {
-        cfg_d
-      } else {
-        rel_path(base_dir, cfg_d)
+    } else if (!is.null(custom_dir) && nzchar(custom_dir)) {
+      if (!dir.exists(custom_dir)) {
+        stop(sprintf("Custom data directory '%s' does not exist.", custom_dir))
       }
-      active_dirs[[tk]] <- if (dir.exists(cand_d)) cand_d else rel_path(data_dir, "custom", tk)
+      if (length(list.files(custom_dir)) == 0L) {
+        warning(sprintf("Custom data directory '%s' is empty.", custom_dir))
+      }
+      active_dirs[[tk]] <- custom_dir
     } else {
-      active_dirs[[tk]] <- rel_path(data_dir, "custom", tk)
+      base_tk <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", tk)
+      reg_tk  <- if (tk %in% names(reg$sources)) tk else if (base_tk %in% names(reg$sources)) base_tk else NULL
+      if (!is.null(reg_tk)) {
+        cfg_d <- reg$sources[[reg_tk]]$data_dir
+        cand_d <- if (is.null(cfg_d) || !nzchar(cfg_d)) {
+          rel_path(data_dir, "custom", reg_tk)
+        } else if (dir.exists(cfg_d)) {
+          cfg_d
+        } else {
+          rel_path(base_dir, cfg_d)
+        }
+        active_dirs[[tk]] <- if (dir.exists(cand_d)) cand_d else rel_path(data_dir, "custom", reg_tk)
+      } else {
+        d_exact <- rel_path(data_dir, "custom", tk)
+        d_base  <- rel_path(data_dir, "custom", base_tk)
+        active_dirs[[tk]] <- if (!dir.exists(d_exact) && dir.exists(d_base)) d_base else d_exact
+      }
     }
   }
 
@@ -745,7 +892,7 @@ print_available_sources <- function(base_dir = NULL) {
 # WATER NETWORK METADATA & DIRECTORY RESOLUTION HELPERS
 # ==============================================================================
 
-resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir = NULL, gis_dir = NULL, source = "rsn", processed_dir = NULL) {
+resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir = NULL, gis_dir = NULL, source = "rsn", processed_dir = NULL, custom_dir = NULL, custom_samples = NULL, custom_sites = NULL) {
   src_tag   <- resolve_source_tag(source, base_dir = base_dir)
   src_suff  <- paste0("_", src_tag)
   cfg_dirs  <- load_directory_config(base_dir = base_dir)
@@ -779,7 +926,9 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
   sub_d <- rel_path(proc_root, paste0(abbr, src_suff))
 
   if (!file.exists(rel_path(sub_d, "england_rsn_reaches.csv"))) {
-    dirs_info <- resolve_data_source_dirs(d_dir, source = source, base_dir = base_dir)
+    dirs_info <- resolve_data_source_dirs(d_dir, source = source, base_dir = base_dir,
+                                          custom_dir = custom_dir, custom_samples = custom_samples,
+                                          custom_sites = custom_sites)
     py_src <- if (length(dirs_info$active_dirs) > 1) {
       paste(names(dirs_info$active_dirs), collapse = "+")
     } else {
@@ -794,6 +943,15 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
     }
     if (!is.null(d_dir) && nzchar(d_dir)) {
       py_args <- c(py_args, paste0("--data-dir=", shQuote(d_dir)))
+    }
+    if (!is.null(custom_dir) && nzchar(custom_dir)) {
+      py_args <- c(py_args, paste0("--custom-dir=", shQuote(custom_dir)))
+    }
+    if (!is.null(custom_samples) && nzchar(custom_samples)) {
+      py_args <- c(py_args, paste0("--custom-samples=", shQuote(custom_samples)))
+    }
+    if (!is.null(custom_sites) && nzchar(custom_sites)) {
+      py_args <- c(py_args, paste0("--custom-sites=", shQuote(custom_sites)))
     }
     status <- run_python_script(rel_path(base_dir, "scripts", "01_preprocess_orn.py"), py_args)
     if (status != 0L) {
@@ -922,17 +1080,16 @@ lookup_source_numeric <- function(src_vec, kv_map, default_val = NA_real_) {
   n <- length(src_vec)
   if (n == 0L) return(numeric(0))
   if (length(kv_map) == 0L) return(rep(as.numeric(default_val), n))
-  s_low  <- tolower(trimws(as.character(src_vec)))
-  s_base <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s_low)
-  res    <- rep(as.numeric(default_val), n)
-  nms    <- names(kv_map)
-  for (i in seq_len(n)) {
-    if (s_low[i] %in% nms) {
-      res[i] <- unname(kv_map[s_low[i]])
-    } else if (s_base[i] %in% nms) {
-      res[i] <- unname(kv_map[s_base[i]])
-    }
-  }
+  s_low    <- tolower(trimws(as.character(src_vec)))
+  s_base   <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", s_low)
+  res      <- rep(as.numeric(default_val), n)
+  nms      <- names(kv_map)
+  idx_low  <- match(s_low, nms)
+  idx_base <- match(s_base, nms)
+  has_low  <- !is.na(idx_low)
+  use_base <- !has_low & !is.na(idx_base)
+  if (any(has_low))  res[has_low]  <- unname(kv_map[idx_low[has_low]])
+  if (any(use_base)) res[use_base] <- unname(kv_map[idx_base[use_base]])
   res
 }
 
@@ -945,27 +1102,33 @@ filter_samples_by_source_priority <- function(df, prefer_sources, reach_col = "R
   rank_map <- stats::setNames(seq_along(prefer_sources), tolower(prefer_sources))
   ranks    <- lookup_source_numeric(src_vec, rank_map, default_val = length(prefer_sources) + 1.0)
 
-  reach_idx <- split(seq_len(nrow(df)), df[[reach_col]])
-  keep <- rep(TRUE, nrow(df))
-  n_affected <- 0L
-  for (ix in reach_idx) {
-    r_ix  <- ranks[ix]
-    r_min <- min(r_ix)
-    drop_local <- r_ix > r_min
-    if (any(drop_local)) {
-      keep[ix[drop_local]] <- FALSE
-      n_affected <- n_affected + 1L
-    }
-  }
+  r_key   <- df[[reach_col]]
+  u_r     <- unique(r_key)
+  g_id    <- match(r_key, u_r)
+  ord_r   <- order(g_id, ranks)
+  g_ord   <- g_id[ord_r]
+  min_pos <- ord_r[!duplicated(g_ord)]
+  min_grp <- numeric(length(u_r))
+  min_grp[g_ord[!duplicated(g_ord)]] <- ranks[min_pos]
+  keep    <- ranks == min_grp[g_id]
+  n_drop  <- as.integer(sum(!keep))
+  n_aff   <- if (n_drop > 0L) as.integer(length(unique(g_id[!keep]))) else 0L
   list(
     df        = df[keep, , drop = FALSE],
-    n_dropped = as.integer(sum(!keep)),
-    n_reaches = as.integer(n_affected)
+    n_dropped = n_drop,
+    n_reaches = n_aff
   )
 }
 
 #' Aggregate sample rows to reach level, supporting --source-weight and --source-se.
 aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = numeric(0), src_se = numeric(0)) {
+  if (nrow(df) == 0L) {
+    return(data.frame(
+      RivID = integer(0), val = numeric(0), y_resp = numeric(0), obs_up_dist_km = numeric(0),
+      is_censored = integer(0), lod_sc = numeric(0), meas_uncertainty = numeric(0),
+      meas_method = character(0), source_weight = numeric(0), stringsAsFactors = FALSE
+    ))
+  }
   if (!"data_source" %in% names(df)) df$data_source <- "RSN"
   if (!"meas_uncertainty" %in% names(df)) df$meas_uncertainty <- NA_real_
   if (!"meas_method" %in% names(df)) df$meas_method <- ""
@@ -979,7 +1142,79 @@ aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = num
     df$meas_method[has_ov] <- "source_se"
   }
 
+  # Normalize log-scale sample SDs (tobit_interval / geometric_midpoint) onto raw scale once
+  # before pooling across samples or data sources, marking meas_method = "tobit_raw_sd" to
+  # prevent downstream delta-method code from multiplying by raw_obs_vals a second time.
+  mth_low <- tolower(trimws(as.character(df$meas_method)))
+  ok_ls <- !is.na(df$meas_uncertainty) & is.finite(df$meas_uncertainty) & df$meas_uncertainty >= 0 &
+    (mth_low %in% c("tobit_interval", "geometric_midpoint"))
+  if (any(ok_ls)) {
+    df$meas_uncertainty[ok_ls] <- df$meas_uncertainty[ok_ls] * pmax(1e-6, df$val[ok_ls])
+    df$meas_method[ok_ls] <- "tobit_raw_sd"
+  }
+
   has_sw <- (length(src_weights) > 0L)
+  if (!has_sw) {
+    u_riv   <- unique(df$RivID)
+    g_id    <- match(df$RivID, u_riv)
+    n_r     <- length(u_riv)
+    counts  <- tabulate(g_id, nbins = n_r)
+    val_out <- as.numeric(rowsum(df$val, g_id, reorder = FALSE)) / counts
+    y_out   <- as.numeric(rowsum(df$y_sample, g_id, reorder = FALSE)) / counts
+    up_out  <- as.numeric(rowsum(df$obs_up_dist_km, g_id, reorder = FALSE)) / counts
+
+    cens_cnt <- as.integer(rowsum(as.integer(!is.na(df$is_cens) & df$is_cens == 1L), g_id, reorder = FALSE))
+    all_c_v  <- (cens_cnt == counts)
+    cens_o   <- as.integer(all_c_v)
+    lod_out  <- rep(NA_real_, n_r)
+    if (any(all_c_v)) {
+      is_c_row <- all_c_v[g_id]
+      lod_vals <- numeric(nrow(df))
+      lod_vals[is_c_row] <- trans_obj$fwd(df$raw_lod[is_c_row])
+      ok_lod <- is_c_row & is.finite(lod_vals)
+      if (any(ok_lod)) {
+        lod_sums <- as.numeric(rowsum(ifelse(ok_lod, lod_vals, 0.0), g_id, reorder = FALSE))
+        lod_cnts <- as.integer(rowsum(as.integer(ok_lod), g_id, reorder = FALSE))
+        ok_g     <- all_c_v & (lod_cnts > 0L)
+        lod_out[ok_g] <- lod_sums[ok_g] / lod_cnts[ok_g]
+      }
+    }
+
+    u_val   <- df$meas_uncertainty
+    ok_u    <- !is.na(u_val) & is.finite(u_val) & u_val >= 0
+    unc_out <- rep(NA_real_, n_r)
+    if (any(ok_u)) {
+      u_sq_sum <- as.numeric(rowsum(ifelse(ok_u, u_val^2, 0.0), g_id, reorder = FALSE))
+      u_cnt    <- as.integer(rowsum(as.integer(ok_u), g_id, reorder = FALSE))
+      has_u_g  <- u_cnt > 0L
+      unc_out[has_u_g] <- sqrt(u_sq_sum[has_u_g]) / counts[has_u_g]
+    }
+
+    m_val   <- df$meas_method
+    ok_m    <- !is.na(m_val) & nzchar(m_val)
+    mth_out <- rep("", n_r)
+    if (any(ok_m)) {
+      g_m     <- g_id[ok_m]
+      first_m <- !duplicated(g_m)
+      mth_out[g_m[first_m]] <- m_val[ok_m][first_m]
+    }
+
+    riv_ids <- as.integer(u_riv)
+    ord_out <- order(riv_ids)
+    return(data.frame(
+      RivID            = riv_ids[ord_out],
+      val              = val_out[ord_out],
+      y_resp           = y_out[ord_out],
+      obs_up_dist_km   = up_out[ord_out],
+      is_censored      = cens_o[ord_out],
+      lod_sc           = lod_out[ord_out],
+      meas_uncertainty = unc_out[ord_out],
+      meas_method      = mth_out[ord_out],
+      source_weight    = rep(1.0, n_r),
+      stringsAsFactors = FALSE
+    ))
+  }
+
   riv_groups <- split(seq_len(nrow(df)), df$RivID)
   n_r <- length(riv_groups)
 
@@ -995,56 +1230,39 @@ aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = num
 
   for (k in seq_len(n_r)) {
     ix <- riv_groups[[k]]
-    if (!has_sw) {
-      val_out[k] <- mean(df$val[ix])
-      y_out[k]   <- mean(df$y_sample[ix])
-      up_out[k]  <- mean(df$obs_up_dist_km[ix])
-      all_c      <- all(df$is_cens[ix] == 1L)
-      cens_o[k]  <- as.integer(all_c)
-      if (all_c) lod_out[k] <- mean(trans_obj$fwd(df$raw_lod[ix]), na.rm = TRUE)
-      u <- df$meas_uncertainty[ix]
-      u_clean <- u[!is.na(u) & is.finite(u) & u >= 0]
-      if (length(u_clean) > 0L) unc_out[k] <- sqrt(sum(u_clean^2)) / length(u_clean)
-      m <- df$meas_method[ix]
-      m_clean <- m[!is.na(m) & nzchar(m)]
-      if (length(m_clean) > 0L) mth_out[k] <- m_clean[1]
-      wt_out[k] <- 1.0
-    } else {
-      # Group by data_source first so high sampling frequency within one campaign never outvotes another network
-      src_splits <- split(ix, tolower(trimws(as.character(df$data_source[ix]))))
-      ns <- length(src_splits)
-      s_val  <- numeric(ns); s_y <- numeric(ns); s_up <- numeric(ns)
-      s_w    <- numeric(ns); s_u <- rep(NA_real_, ns); s_c <- logical(ns)
-      s_lod  <- rep(NA_real_, ns)
-      for (j in seq_len(ns)) {
-        sj <- src_splits[[j]]
-        s_val[j] <- mean(df$val[sj])
-        s_y[j]   <- mean(df$y_sample[sj])
-        s_up[j]  <- mean(df$obs_up_dist_km[sj])
-        s_w[j]   <- lookup_source_numeric(df$data_source[sj[1]], src_weights, default_val = 1.0)
-        s_c[j]   <- all(df$is_cens[sj] == 1L)
-        if (s_c[j]) s_lod[j] <- mean(trans_obj$fwd(df$raw_lod[sj]), na.rm = TRUE)
-        u_j <- df$meas_uncertainty[sj]
-        u_clean <- u_j[!is.na(u_j) & is.finite(u_j) & u_j >= 0]
-        if (length(u_clean) > 0L) s_u[j] <- sqrt(sum(u_clean^2)) / length(u_clean)
-      }
-      w_norm <- s_w / sum(s_w)
-      val_out[k] <- sum(w_norm * s_val)
-      y_out[k]   <- sum(w_norm * s_y)
-      up_out[k]  <- sum(w_norm * s_up)
-      all_c      <- all(s_c)
-      cens_o[k]  <- as.integer(all_c)
-      if (all_c) lod_out[k] <- sum(w_norm * s_lod, na.rm = TRUE)
-      ok_u <- !is.na(s_u) & is.finite(s_u)
-      if (any(ok_u)) {
-        w_u <- s_w[ok_u] / sum(s_w[ok_u])
-        unc_out[k] <- sqrt(sum((w_u * s_u[ok_u])^2))
-      }
-      m <- df$meas_method[ix]
-      m_clean <- m[!is.na(m) & nzchar(m)]
-      if (length(m_clean) > 0L) mth_out[k] <- m_clean[1]
-      wt_out[k] <- max(1e-4, min(1.0, max(s_w)))
+    # Group by data_source first so high sampling frequency within one campaign never outvotes another network
+    src_splits <- split(ix, tolower(trimws(as.character(df$data_source[ix]))))
+    ns <- length(src_splits)
+    s_val  <- numeric(ns); s_y <- numeric(ns); s_up <- numeric(ns)
+    s_w    <- numeric(ns); s_u <- rep(NA_real_, ns); s_c <- logical(ns)
+    s_lod  <- rep(NA_real_, ns)
+    for (j in seq_len(ns)) {
+      sj <- src_splits[[j]]
+      s_val[j] <- mean(df$val[sj])
+      s_y[j]   <- mean(df$y_sample[sj])
+      s_up[j]  <- mean(df$obs_up_dist_km[sj])
+      s_w[j]   <- lookup_source_numeric(df$data_source[sj[1]], src_weights, default_val = 1.0)
+      s_c[j]   <- all(!is.na(df$is_cens[sj]) & df$is_cens[sj] == 1L)
+      if (s_c[j]) s_lod[j] <- mean(trans_obj$fwd(df$raw_lod[sj]), na.rm = TRUE)
+      u_j <- df$meas_uncertainty[sj]
+      u_clean <- u_j[!is.na(u_j) & is.finite(u_j) & u_j >= 0]
+      if (length(u_clean) > 0L) s_u[j] <- sqrt(sum(u_clean^2)) / length(sj)
     }
+    w_norm <- s_w / sum(s_w)
+    val_out[k] <- sum(w_norm * s_val)
+    y_out[k]   <- sum(w_norm * s_y)
+    up_out[k]  <- sum(w_norm * s_up)
+    all_c      <- all(s_c)
+    cens_o[k]  <- as.integer(all_c)
+    if (all_c) lod_out[k] <- sum(w_norm * s_lod, na.rm = TRUE)
+    ok_u <- !is.na(s_u) & is.finite(s_u)
+    if (any(ok_u)) {
+      unc_out[k] <- sqrt(sum((w_norm[ok_u] * s_u[ok_u])^2))
+    }
+    m <- df$meas_method[ix]
+    m_clean <- m[!is.na(m) & nzchar(m)]
+    if (length(m_clean) > 0L) mth_out[k] <- m_clean[1]
+    wt_out[k] <- max(1e-4, min(1.0, max(s_w)))
   }
 
   data.frame(

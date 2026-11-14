@@ -215,7 +215,8 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   # Figure 1: 4-Panel Distributions, Representativeness, Tail-Up vs Tail-Down & Uncertainty
   fig1_file <- file.path(out_dir, "fig_desc1_distributions_and_representativeness.png")
   open_png_device(fig1_file, width = 2600, height = 2000, res = 200)
-  par(mfrow = c(2, 2), mar = c(4.8, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
+  tryCatch({
+    par(mfrow = c(2, 2), mar = c(4.8, 4.8, 4.0, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Kernel Density of Full Network Predictions vs. Observed Monitoring Stations
   obs_sc   <- ep$obs_model_sc[ep$has_obs == 1 & !is.na(ep$obs_model_sc)]
@@ -260,8 +261,8 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   )
 
   # Panel B: Empirical CDF Comparing S3N Combined, Tail-Up, Tail-Down & Observed Stations
-  tu_sc <- ep$pred_tu_sc
-  td_sc <- ep$pred_td_sc
+  tu_sc <- if ("pred_tu_sc" %in% names(ep)) ep$pred_tu_sc else ep$pred_tu
+  td_sc <- if ("pred_td_sc" %in% names(ep)) ep$pred_td_sc else ep$pred_td
   xr_b  <- quantile(c(ep$pred_model_sc, obs_sc), probs = c(0.005, 0.995), na.rm = TRUE)
   xs_b  <- seq(xr_b[1], xr_b[2], length.out = 300)
   plot(NULL, xlim = xr_b, ylim = c(0, 1),
@@ -337,15 +338,18 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
   points(seq_along(se_groups), se_mns, pch = 18, cex = 1.4, col = "#111111")
   text(seq_along(se_groups), bp_d$stats[5, ], labels = sprintf("Mean=%.3f", se_mns), pos = 3, cex = 0.76, font = 2)
 
-  mtext(wrap_title(sprintf("S3N Single-Run Descriptive Diagnostics: %s (%s — %s)",
-                           b1$det_name, b1$label, b1$dir_name), 180),
-        side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
-  dev.off()
+    mtext(wrap_title(sprintf("S3N Single-Run Descriptive Diagnostics: %s (%s — %s)",
+                             b1$det_name, b1$label, b1$dir_name), 180),
+          side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
+  }, finally = {
+    if (dev.cur() > 1L) dev.off()
+  })
 
   # Figure 2: 4-Panel Stratified Environmental & Topological Gradients
   fig2_file <- file.path(out_dir, "fig_desc2_stratified_gradients.png")
   open_png_device(fig2_file, width = 2600, height = 2000, res = 200)
-  par(mfrow = c(2, 2), mar = c(5.0, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
+  tryCatch({
+    par(mfrow = c(2, 2), mar = c(5.0, 4.8, 3.6, 1.8), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Boxplot by Combined Landscape Regime (Upland, Lowland Non-Aquifer, Lowland Aquifer)
   if (("Elevation" %in% names(ep)) && ("Is_Aquifer" %in% names(ep))) {
@@ -459,10 +463,12 @@ plot_single_run_descriptives <- function(b1, desc_df, rep_df, strat_df, out_dir)
     plot.new()
   }
 
-  mtext(wrap_title(sprintf("S3N Stratified Environmental & Topological Gradients: %s (%s)",
-                           b1$det_name, b1$label), 180),
-        side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
-  dev.off()
+    mtext(wrap_title(sprintf("S3N Stratified Environmental & Topological Gradients: %s (%s)",
+                             b1$det_name, b1$label), 180),
+          side = 3, line = 0.4, outer = TRUE, cex = 1.15, font = 2, col = "#111111")
+  }, finally = {
+    if (dev.cur() > 1L) dev.off()
+  })
 
   invisible(c(fig1_file, fig2_file))
 }
@@ -622,10 +628,10 @@ run_descriptive_stats <- function(run_dir, label = NULL, out_dir = NULL, out_roo
   stat_csv  <- file.path(out_dir, "within_run_statistical_tests.csv")
   rep_md    <- file.path(out_dir, "descriptive_report.md")
 
-  write.csv(desc_df,  desc_csv,  row.names = FALSE)
-  if (!is.null(rep_df)) write.csv(rep_df, rep_csv, row.names = FALSE)
-  write.csv(strat_df, strat_csv, row.names = FALSE)
-  write.csv(stat_df,  stat_csv,  row.names = FALSE)
+  fast_write_csv(desc_df,  desc_csv)
+  if (!is.null(rep_df)) fast_write_csv(rep_df, rep_csv)
+  fast_write_csv(strat_df, strat_csv)
+  fast_write_csv(stat_df,  stat_csv)
 
   fig_paths <- plot_single_run_descriptives(b1, desc_df, rep_df, strat_df, out_dir)
   write_descriptive_markdown_report(b1, desc_df, rep_df, strat_df, stat_df, out_dir, rep_md)

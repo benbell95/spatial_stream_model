@@ -88,11 +88,11 @@ _DET_STEM_TO_CODE = (
     ("nitrite", "0118"),
     ("ammon", "0111"),
     ("oxidised", "0116"),
-    ("organic_carbon", "0301"),
+    ("organiccarbon", "0301"),
     ("conductiv", "0077"),
     ("alkalin", "0162"),
-    ("dissolved_oxygen", "9924"),
-    ("water_temp", "0076"),
+    ("dissolvedoxygen", "9924"),
+    ("watertemp", "0076"),
     ("temperature", "0076"),
 )
 _DET_CATALOG_CACHE = None
@@ -105,6 +105,7 @@ def match_known_determinand(col_name):
         _DET_CATALOG_CACHE = load_determinand_catalog(BASE_DIR)
 
     c_norm = normalize_name(col_name)
+    c_tokens = set(re.findall(r"[a-z0-9]+", str(col_name).lower()))
     matched_code = None
     for stem, code in _DET_STEM_TO_CODE:
         if stem in c_norm:
@@ -123,18 +124,21 @@ def match_known_determinand(col_name):
             if name_norm and len(name_norm) >= 4 and name_norm in c_norm:
                 matched_code = code
                 break
-    if matched_code is None and re.search(r"(?:^|_)ph(?:$|_)", c_norm):
+    if matched_code is None and "ph" in c_tokens:
         matched_code = "0061"
 
     if matched_code and matched_code in _DET_CATALOG_CACHE:
         info = _DET_CATALOG_CACHE[matched_code]
         unit = extract_unit_from_string(col_name) or info.get("unit", "mg/L")
-        return {"code": matched_code, "name": info.get("name", matched_code), "unit": unit}
+        return {"code": matched_code, "name": info.get("name", matched_code), "unit": unit, "matched": True}
+    if matched_code:
+        unit = extract_unit_from_string(col_name) or "mg/L"
+        return {"code": matched_code, "name": str(col_name).strip(), "unit": unit, "matched": True}
 
     clean_name = re.sub(r"\s*[\(\[].*?[\)\]]", "", str(col_name)).strip()
     code = re.sub(r"[^a-zA-Z0-9_]", "_", clean_name.lower())[:16]
     unit = extract_unit_from_string(col_name) or "mg/L"
-    return {"code": code, "name": clean_name, "unit": unit}
+    return {"code": code, "name": clean_name, "unit": unit, "matched": False}
 
 
 # ==============================================================================
@@ -292,9 +296,9 @@ def format_custom_dataset(
         else:
             for f_col in fieldnames:
                 c_norm = normalize_name(f_col)
-                c_tokens = set(re.split(r"[^a-z0-9]+", c_norm))
-                if any(k in c_norm for k in ("nitrate", "phosphate", "ammon", "turbid", "conduct", "oxygen")) or (
-                    "ph" in c_tokens or "temp" in c_tokens or "temperature" in c_tokens or "water_temp" in c_norm
+                c_tokens = set(re.findall(r"[a-z0-9]+", f_col.lower()))
+                if any(k in c_norm for k in ("nitrate", "phosphate", "ammon", "turbid", "conduct", "oxygen", "watertemp", "organiccarbon")) or (
+                    "ph" in c_tokens or "temp" in c_tokens or "temperature" in c_tokens
                 ):
                     val_col_list.append(f_col)
 
@@ -361,19 +365,55 @@ def format_custom_dataset(
     saw_wgs84 = False
     prefix = site_id_prefix or (source_name.upper()[:4] + "_")
 
+    bng_cache = {}
+    det_match_cache = {}
+
     with open(csv_file, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+        reader = csv.reader(f)
+        header = next(reader, None) or []
+        col_idx = {h: i for i, h in enumerate(header)}
+        n_cols = len(header)
+
+        filter_idx = [(col_idx[fk], fv) for fk, fv in parsed_filters if fk in col_idx] if parsed_filters else []
+        missing_filter = bool(parsed_filters) and (len(filter_idx) != len(parsed_filters))
+        idx_x = col_idx[mapped_x]
+        idx_y = col_idx[mapped_y]
+        idx_name = col_idx.get(mapped_name) if mapped_name else None
+        idx_id = col_idx.get(mapped_id) if mapped_id else None
+        idx_date = col_idx.get(mapped_date) if mapped_date else None
+        idx_time = col_idx.get(mapped_time) if mapped_time else None
+        idx_det_code = col_idx.get(mapped_det_code) if mapped_det_code else None
+        idx_det_name = col_idx.get(mapped_det_name) if mapped_det_name else None
+        idx_unit = col_idx.get(mapped_unit) if mapped_unit else None
+        idx_sign = col_idx.get(mapped_sign) if mapped_sign else None
+        val_col_pairs = [(v_col, col_idx[v_col]) for v_col in val_col_list if v_col in col_idx]
+
+        # Pre-resolve wide-table determinand metadata outside the per-row loop
+        wide_det_meta = {}
+        for v_col, _ in val_col_pairs:
+            d_info = match_known_determinand(v_col)
+            if d_info.get("matched") or not (len(val_col_list) == 1 and default_det_code):
+                wide_det_meta[v_col] = (d_info["code"], d_info["name"], d_info["unit"])
+            else:
+                wide_det_meta[v_col] = (default_det_code, default_det_name, default_unit)
+
         for row in reader:
+            if not row:
+                continue
             total_rows += 1
             if limit and total_rows > limit:
                 break
+            if len(row) < n_cols:
+                row = row + [""] * (n_cols - len(row))
 
             # Filter
-            if parsed_filters:
+            if missing_filter:
+                filtered_rows += 1
+                continue
+            if filter_idx:
                 match_all = True
-                for fk, fv in parsed_filters:
-                    row_val = str(row.get(fk, "")).strip().lower()
-                    if row_val != fv:
+                for f_i, fv in filter_idx:
+                    if row[f_i].strip().lower() != fv:
                         match_all = False
                         break
                 if not match_all:
@@ -381,8 +421,8 @@ def format_custom_dataset(
                     continue
 
             # Coordinates
-            raw_x = row.get(mapped_x, "").strip()
-            raw_y = row.get(mapped_y, "").strip()
+            raw_x = row[idx_x].strip()
+            raw_y = row[idx_y].strip()
             if not raw_x or not raw_y:
                 continue
             try:
@@ -391,20 +431,32 @@ def format_custom_dataset(
             except ValueError:
                 continue
 
-            if parsed_bbox:
-                if not (parsed_bbox[0] <= px <= parsed_bbox[2] and parsed_bbox[1] <= py <= parsed_bbox[3]):
-                    continue
-
-            is_wgs84 = (abs(px) <= 180.0 and abs(py) <= 90.0) or (input_crs == 4326)
+            if input_crs == 27700:
+                is_wgs84 = False
+            elif input_crs == 4326:
+                is_wgs84 = True
+            else:
+                is_wgs84 = (abs(px) <= 180.0 and abs(py) <= 90.0)
             if is_wgs84:
                 saw_wgs84 = True
             if is_wgs84 and convert_to_bng:
-                east, north = wgs84_to_bng(py, px)
+                xy_key = (px, py)
+                bng_res = bng_cache.get(xy_key)
+                if bng_res is None:
+                    bng_res = wgs84_to_bng(py, px)
+                    bng_cache[xy_key] = bng_res
+                east, north = bng_res
             else:
                 east, north = round(px, 2), round(py, 2)
 
-            raw_site_name = row.get(mapped_name, "").strip() if mapped_name else ""
-            raw_id_val = row.get(mapped_id, "").strip() if mapped_id else ""
+            if parsed_bbox:
+                is_bbox_bng = any(abs(v) > 360.0 for v in parsed_bbox)
+                bx, by = (east, north) if is_bbox_bng else (px, py)
+                if not (parsed_bbox[0] <= bx <= parsed_bbox[2] and parsed_bbox[1] <= by <= parsed_bbox[3]):
+                    continue
+
+            raw_site_name = row[idx_name].strip() if idx_name is not None else ""
+            raw_id_val = row[idx_id].strip() if idx_id is not None else ""
 
             # Site ID assignment
             if group_sites_by == "coords":
@@ -449,63 +501,79 @@ def format_custom_dataset(
                 }
 
             # Datetime
-            raw_date = row.get(mapped_date, "").strip() if mapped_date else ""
-            raw_time = row.get(mapped_time, "").strip() if mapped_time else ""
+            raw_date = row[idx_date].strip() if idx_date is not None else ""
+            raw_time = row[idx_time].strip() if idx_time is not None else ""
             dt_iso = parse_datetime_iso(raw_date, raw_time)
 
+            row_det_code = row[idx_det_code].strip() if idx_det_code is not None else ""
+            row_det_name = row[idx_det_name].strip() if idx_det_name is not None else ""
+            row_unit = row[idx_unit].strip() if idx_unit is not None else ""
+            row_sign = row[idx_sign].strip().lower() if idx_sign is not None else ""
+
             # Measurement Values
-            for v_col in val_col_list:
-                raw_v = row.get(v_col, "").strip()
+            for v_col, v_idx in val_col_pairs:
+                raw_v = row[v_idx].strip()
                 if not raw_v:
                     continue
 
-                if mapped_det_code and row.get(mapped_det_code):
-                    d_code = row.get(mapped_det_code).strip()
-                    d_name = row.get(mapped_det_name, "").strip() if mapped_det_name else default_det_name
-                    d_unit = row.get(mapped_unit, "").strip() if mapped_unit else default_unit
-                elif len(val_col_list) == 1 and default_det_code:
-                    d_code = default_det_code
-                    d_name = default_det_name
-                    d_unit = default_unit
-                else:
-                    d_info = match_known_determinand(v_col)
+                if row_det_code:
+                    d_code = row_det_code
+                    d_name = row_det_name or default_det_name
+                    d_unit = row_unit or default_unit
+                elif row_det_name:
+                    d_info = det_match_cache.get(row_det_name)
+                    if d_info is None:
+                        d_info = match_known_determinand(row_det_name)
+                        det_match_cache[row_det_name] = d_info
                     d_code = d_info["code"]
-                    d_name = d_info["name"]
-                    d_unit = d_info["unit"]
+                    d_name = d_info["name"] if d_info.get("matched") else row_det_name
+                    d_unit = row_unit or d_info["unit"]
+                else:
+                    d_code, d_name, w_unit = wide_det_meta[v_col]
+                    d_unit = row_unit or w_unit
 
-                det_info_map[d_code] = {"code": d_code, "name": d_name, "unit": d_unit}
+                if d_code not in det_info_map:
+                    det_info_map[d_code] = {"code": d_code, "name": d_name, "unit": d_unit}
+                else:
+                    info_entry = det_info_map[d_code]
+                    if d_name and not info_entry.get("name"):
+                        info_entry["name"] = d_name
+                    if d_unit and not info_entry.get("unit"):
+                        info_entry["unit"] = d_unit
 
                 token = parse_raw_measurement_token(raw_v)
                 if token is None:
                     continue
-                if token["type"] == "interval" and effective_mode == "skip":
+                tok_type = token["type"]
+                if tok_type == "interval" and effective_mode == "skip":
                     continue
 
+                tok_a = token.get("a")
+                tok_b = token.get("b")
+                tok_val = token.get("val")
+
                 # Explicit sign override from dataset column if available
-                if mapped_sign and row.get(mapped_sign):
-                    raw_sign = str(row.get(mapped_sign)).strip().lower()
-                    ex_sign = "<" if raw_sign in ("<", "yes", "true", "1", "y", "lt") else (">" if raw_sign in (">", "gt") else raw_sign)
+                if row_sign:
+                    ex_sign = "<" if row_sign in ("<", "yes", "true", "1", "y", "lt") else (">" if row_sign in (">", "gt") else row_sign)
                     if ex_sign in ("<", ">"):
                         token["sign"] = ex_sign
-                        bound_val = token.get("val") if token.get("val") is not None else (token.get("b") if ex_sign == "<" else token.get("a"))
+                        bound_val = tok_val if tok_val is not None else (tok_b if ex_sign == "<" else tok_a)
                         if ex_sign == "<":
-                            token["type"] = "left"
-                            token["a"] = 0.0
-                            token["b"] = bound_val
+                            tok_type = "left"
+                            tok_a = 0.0
+                            tok_b = bound_val
                         else:
-                            token["type"] = "right"
-                            token["a"] = bound_val
-                            token["b"] = None
+                            tok_type = "right"
+                            tok_a = bound_val
+                            tok_b = None
+                        token["type"] = tok_type
+                        token["a"] = tok_a
+                        token["b"] = tok_b
 
-                token_key = (token["type"], token.get("a"), token.get("b"))
+                token_key = (tok_type, tok_a, tok_b)
                 det_token_counts[d_code][token_key] += 1
 
-                staged_records.append({
-                    "site_id": sid,
-                    "sample_datetime": dt_iso,
-                    "det_code": d_code,
-                    "token": token,
-                })
+                staged_records.append((sid, dt_iso, d_code, token))
 
     # 5. Fit Tobit Model (or Alternative Models) per Determinand
     tobit_models = {}
@@ -526,47 +594,51 @@ def format_custom_dataset(
             print("-" * 76)
 
     # 6. PASS 2: Map Tokens to Unbiased Values and Uncertainties
-    samples_list = []
+    samples_rows = []
     ranges_converted = 0
     censored_count = 0
+    pred_cache = {}
 
-    for rec in staged_records:
-        d_code = rec["det_code"]
-        token = rec["token"]
+    for sid, dt_iso, d_code, token in staged_records:
         d_info = det_info_map[d_code]
+        tok_type = token["type"]
+        tok_a = token.get("a")
+        tok_b = token.get("b")
+        tok_val = token.get("val")
+        cache_k = (d_code, tok_type, tok_a, tok_b, tok_val, token.get("sign"))
+        cached_fmt = pred_cache.get(cache_k)
 
-        if effective_mode == "tobit":
-            model = tobit_models.get(d_code)
-            meas_res, meas_sign, meas_low, meas_upp, meas_unc, meas_meth = model.predict(
-                rec_type=token["type"],
-                a=token.get("a"),
-                b=token.get("b"),
-                val=token.get("val")
+        if cached_fmt is None:
+            if effective_mode == "tobit":
+                model = tobit_models.get(d_code)
+                meas_res, meas_sign, meas_low, meas_upp, meas_unc, meas_meth = model.predict(
+                    rec_type=tok_type, a=tok_a, b=tok_b, val=tok_val
+                )
+            else:
+                meas_res, meas_sign, meas_low, meas_upp, meas_unc, meas_meth = compute_alternative_range_result(
+                    token=token, range_mode=effective_mode
+                )
+            cached_fmt = (
+                f"{meas_res:.5g}" if isinstance(meas_res, float) else ("" if meas_res is None else str(meas_res)),
+                meas_sign,
+                f"{meas_low:.5g}" if isinstance(meas_low, float) else ("" if meas_low is None else str(meas_low)),
+                f"{meas_upp:.5g}" if isinstance(meas_upp, float) else ("" if meas_upp is None else str(meas_upp)),
+                f"{meas_unc:.4f}" if isinstance(meas_unc, float) else ("" if meas_unc is None else str(meas_unc)),
+                meas_meth,
             )
-        else:
-            meas_res, meas_sign, meas_low, meas_upp, meas_unc, meas_meth = compute_alternative_range_result(
-                token=token,
-                range_mode=effective_mode
-            )
+            pred_cache[cache_k] = cached_fmt
 
-        if token["type"] == "interval":
+        res_s, meas_sign, low_s, upp_s, unc_s, meas_meth = cached_fmt
+        if tok_type == "interval":
             ranges_converted += 1
         if meas_sign in ("<", ">"):
             censored_count += 1
 
-        samples_list.append({
-            "site_id": rec["site_id"],
-            "sample_datetime": rec["sample_datetime"],
-            "det_code": d_code,
-            "det_name": d_info["name"],
-            "meas_result": f"{meas_res:.5g}" if isinstance(meas_res, float) else ("" if meas_res is None else str(meas_res)),
-            "meas_sign": meas_sign,
-            "unit_short_desc": d_info["unit"],
-            "meas_lower": f"{meas_low:.5g}" if isinstance(meas_low, float) else ("" if meas_low is None else str(meas_low)),
-            "meas_upper": f"{meas_upp:.5g}" if isinstance(meas_upp, float) else ("" if meas_upp is None else str(meas_upp)),
-            "meas_uncertainty": f"{meas_unc:.4f}" if isinstance(meas_unc, float) else ("" if meas_unc is None else str(meas_unc)),
-            "meas_method": meas_meth,
-        })
+        samples_rows.append([
+            sid, dt_iso, d_code, d_info["name"],
+            res_s, meas_sign, d_info["unit"],
+            low_s, upp_s, unc_s, meas_meth,
+        ])
 
     # 7. Write Canonical Output Files (Tag output folder with range mode when ranges are used)
     ranges_used = (ranges_converted > 0 and effective_mode in ("tobit", "geometric", "midpoint", "lower", "upper"))
@@ -592,18 +664,16 @@ def format_custom_dataset(
     with open(sites_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["site_id", "easting", "northing", "site_name", "source"])
         writer.writeheader()
-        for s_data in sites_dict.values():
-            writer.writerow(s_data)
+        writer.writerows(sites_dict.values())
 
     with open(samples_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=[
+        writer = csv.writer(f)
+        writer.writerow([
             "site_id", "sample_datetime", "det_code", "det_name",
             "meas_result", "meas_sign", "unit_short_desc",
             "meas_lower", "meas_upper", "meas_uncertainty", "meas_method"
         ])
-        writer.writeheader()
-        for smp in samples_list:
-            writer.writerow(smp)
+        writer.writerows(samples_rows)
 
     # 8. Optional: Generate Declarative JSON Configuration Profile
     cfg_path = None
@@ -649,7 +719,7 @@ def format_custom_dataset(
         if filtered_rows > 0:
             print(f"  Rows Filtered Out      : {filtered_rows:,}")
         print(f"  Unique Sites Created   : {len(sites_dict):,} -> {sites_path}")
-        print(f"  Valid Samples Written  : {len(samples_list):,} -> {samples_path}")
+        print(f"  Valid Samples Written  : {len(samples_rows):,} -> {samples_path}")
         print(f"  Ranges Processed       : {ranges_converted:,} intervals converted ({effective_mode.upper()})")
         if ranges_used:
             print(f"  Output Folder Tagged   : {output_dir} [Mode: {effective_mode.upper()}]")
@@ -661,7 +731,7 @@ def format_custom_dataset(
         for s_sample in list(sites_dict.values())[:3]:
             print(f"  {s_sample}")
         print("Preview of samples.csv:")
-        for sm_sample in samples_list[:3]:
+        for sm_sample in samples_rows[:3]:
             print(f"  {sm_sample}")
         print("=" * 76)
         print("Next Steps in Pipeline:")
@@ -670,7 +740,7 @@ def format_custom_dataset(
         print(f"  2. Inspect station snapping diagnostics:")
         print(f"     Rscript scripts/06_station_snapping_diagnostics.R --source={tagged_source_name} --list-catchments")
         print(f"  3. Fit S3N model & kriging predictions:")
-        det_run = default_det_code if default_det_code else (samples_list[0]["det_code"] if samples_list else "0117")
+        det_run = default_det_code if default_det_code else (samples_rows[0][2] if samples_rows else "0117")
         print(f"     Rscript scripts/run_s3n_determinand.R {det_run} --source={tagged_source_name}")
         print("=" * 76)
 
@@ -683,7 +753,7 @@ def format_custom_dataset(
         "samples_path": samples_path,
         "config_path": cfg_path,
         "n_sites": len(sites_dict),
-        "n_samples": len(samples_list),
+        "n_samples": len(samples_rows),
         "ranges_converted": ranges_converted,
         "censored_count": censored_count,
         "tobit_models": tobit_models,

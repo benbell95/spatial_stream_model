@@ -45,7 +45,7 @@ S3N_KERNEL_SPECS <- list(
 )
 
 normalize_kernel_name <- function(k_str, default = "exponential") {
-  if (is.null(k_str) || !nzchar(trimws(k_str))) return(default)
+  if (is.null(k_str) || length(k_str) == 0L || is.na(k_str[1]) || !nzchar(trimws(as.character(k_str[1])))) return(default)
   k <- tolower(trimws(k_str))
   if (k %in% c("exp", "exponential")) return("exponential")
   if (k %in% c("sph", "spherical"))   return("spherical")
@@ -95,7 +95,7 @@ S3N_TREND_SPECS <- list(
 )
 
 normalize_trend_name <- function(t_str, default = "linear") {
-  if (is.null(t_str) || !nzchar(trimws(t_str))) return(default)
+  if (is.null(t_str) || length(t_str) == 0L || is.na(t_str[1]) || !nzchar(trimws(as.character(t_str[1])))) return(default)
   t_val <- tolower(trimws(t_str))
   if (t_val %in% c("linear", "ols", "gls", "default", "parametric")) return("linear")
   if (t_val %in% c("spline", "splines", "ns", "bspline", "cubic")) return("spline")
@@ -167,8 +167,9 @@ print_available_kernels <- function() {
 S3N_CV_MODES <- c("random", "catchment", "strahler", "spatial_block")
 
 normalize_cv_mode_name <- function(cv_mode, default = "random") {
-  m <- tolower(trimws(as.character(cv_mode)))
-  if (length(m) == 0L || !nzchar(m)) return(default)
+  if (is.null(cv_mode) || length(cv_mode) == 0L || is.na(cv_mode[1])) return(default)
+  m <- tolower(trimws(as.character(cv_mode[1])))
+  if (!nzchar(m)) return(default)
   if (m %in% c("random", "5fold", "kfold")) return("random")
   if (m %in% c("catchment", "leave_catchment_out", "lco", "basin")) return("catchment")
   if (m %in% c("strahler", "headwater", "headwater_extrapolation")) return("strahler")
@@ -252,9 +253,9 @@ parse_threshold_dir_arg <- function(args, default = "above") {
 }
 
 parse_design_sites_arg <- function(args, default = 0L) {
-  hit <- grep("^--(design-sites|optimal-design)=", args, value = TRUE)
+  hit <- grep("^--(design-sites|optimal-design|design-k|design)=", args, value = TRUE)
   if (length(hit) == 0L) return(as.integer(default))
-  val <- suppressWarnings(as.integer(sub("^--(design-sites|optimal-design)=", "", hit[1])))
+  val <- suppressWarnings(as.integer(sub("^--(design-sites|optimal-design|design-k|design)=", "", hit[1])))
   if (is.na(val) || val < 0L) return(as.integer(default))
   val
 }
@@ -310,14 +311,16 @@ run_spatial_tobit_em_kriging <- function(df_ord, n_obs, X_obs, y_vec_init, is_ce
   # Precompute neighbor structure from uncensored -> censored reaches for exact E-step kriging
   nb_u2c <- NULL
   if (length(uncens_idx) >= 5L) {
-    ord_u2c   <- c(uncens_idx, cens_idx)
+    obs_u2c   <- c(uncens_idx, cens_idx)
+    unobs_u2c <- setdiff(seq_len(nrow(df_ord)), obs_u2c)
+    ord_u2c   <- c(obs_u2c, unobs_u2c)
     df_u2c    <- df_ord[ord_u2c, , drop = FALSE]
     par_u2c_i <- match(df_u2c$parent_dn, df_u2c$RivID, nomatch = 0L)
     par_u2c   <- ifelse(df_u2c$parent_dn == 0 | par_u2c_i == 0L, -1L, par_u2c_i - 1L)
     tt_u2c    <- .Call("C_build_tree_tin_tout", as.integer(par_u2c))
     m_u2c     <- min(as.integer(m_use), max(2L, length(uncens_idx) - 2L))
     nb_u2c    <- .Call("C_compute_s3n_neighbors",
-                       as.integer(length(uncens_idx)), as.integer(m_u2c), as.integer(par_u2c),
+                       as.integer(c(length(uncens_idx), length(obs_u2c))), as.integer(m_u2c), as.integer(par_u2c),
                        as.integer(df_u2c$CatchID), as.integer(tt_u2c[[1]]), as.integer(tt_u2c[[2]]),
                        as.double(df_u2c$Dist2Mth_km), as.double(up_dist[ord_u2c]),
                        as.double(df_u2c$log_AFV), as.double(df_u2c$mid_X),
@@ -345,26 +348,26 @@ run_spatial_tobit_em_kriging <- function(df_ord, n_obs, X_obs, y_vec_init, is_ce
       n_c <- length(cens_idx)
       n_e <- n_u + n_c
       m_u2c <- min(as.integer(m_use), max(2L, n_u - 2L))
+      c_slice <- (n_u * m_u2c + 1L):(n_e * m_u2c)
       p_u2c <- list(
-        nnIndx = nb_u2c$pred_neighbors$nnIndx[1:(n_e * m_u2c)],
-        nnDist = nb_u2c$pred_neighbors$nnDist[1:(n_e * m_u2c)],
-        nnWght = nb_u2c$pred_neighbors$nnWght[1:(n_e * m_u2c)]
+        nnIndx = nb_u2c$pred_neighbors$nnIndx[c_slice],
+        nnDist = nb_u2c$pred_neighbors$nnDist[c_slice],
+        nnWght = nb_u2c$pred_neighbors$nnWght[c_slice]
       )
       pr_c <- .Call(
         "C_s3n_predict_meas_error",
         X_obs[uncens_idx, , drop = FALSE],
         as.matrix(y_curr[uncens_idx]),
         numeric(0),
-        X_obs[c(uncens_idx, cens_idx), , drop = FALSE],
+        X_obs[cens_idx, , drop = FALSE],
         as.double(beta_em),
         as.double(c(theta_em, kid_em)),
         as.integer(m_u2c),
         p_u2c$nnIndx, p_u2c$nnDist, p_u2c$nnWght,
         nb_u2c$obsobs_dist, nb_u2c$obsobs_wt
       )
-      tail_idx <- (n_u + 1L):n_e
-      mu_c <- as.numeric(pr_c$prediction[tail_idx])
-      sd_c <- pmax(1e-4, as.numeric(pr_c$prediction.ci[tail_idx, 2] - pr_c$prediction[tail_idx]) / 1.959964)
+      mu_c <- as.numeric(pr_c$prediction)
+      sd_c <- pmax(1e-4, as.numeric(pr_c$prediction.ci[, 2] - pr_c$prediction) / 1.959964)
     } else {
       mu_c <- as.numeric(X_obs[cens_idx, , drop = FALSE] %*% beta_em)
       sd_c <- rep(sqrt(max(1e-4, theta_em[1] + theta_em[2])), length(cens_idx))
@@ -395,38 +398,62 @@ apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val 
   t_len <- length(valid_idx)
   if (t_len < 2L) return(list(slices = slice_list, rho_temporal = NA_real_))
 
-  # Estimate lag-1 temporal correlation from observed reaches across consecutive slices
+  # Estimate lag-1 temporal correlation from observed reaches aligned by RivID across consecutive slices
   cors <- numeric(0)
   for (k in seq_len(t_len - 1L)) {
     d1 <- slice_list[[valid_idx[k]]]$eng_pred
     d2 <- slice_list[[valid_idx[k + 1L]]]$eng_pred
-    both <- which(d1$has_obs == 1L & d2$has_obs == 1L & is.finite(d1$obs_model_sc) & is.finite(d2$obs_model_sc))
+    m12 <- match(d1$RivID, d2$RivID)
+    both <- which(d1$has_obs == 1L & is.finite(d1$obs_model_sc) &
+                  !is.na(m12) & d2$has_obs[m12] == 1L & is.finite(d2$obs_model_sc[m12]))
     if (length(both) >= 10L) {
-      r_k <- suppressWarnings(cor(d1$obs_model_sc[both], d2$obs_model_sc[both]))
+      r_k <- suppressWarnings(cor(d1$obs_model_sc[both], d2$obs_model_sc[m12[both]]))
       if (is.finite(r_k)) cors <- c(cors, r_k)
     }
   }
   rho_t <- if (length(cors) > 0L) min(0.85, max(0.15, mean(cors))) else 0.60
+  R_t <- outer(seq_len(t_len), seq_len(t_len), function(a, b) rho_t^abs(a - b))
 
   borrow_domain <- function(df_list) {
     if (any(vapply(df_list, is.null, logical(1)))) return(df_list)
-    q <- nrow(df_list[[1]])
-    Z <- vapply(df_list, function(d) as.numeric(d$pred_model_sc), numeric(q))
-    V <- vapply(df_list, function(d) pmax(as.numeric(d$se_model_sc)^2, 1e-8), numeric(q))
-    P <- 1.0 / V
+    ref_riv <- df_list[[1]]$RivID
+    q <- length(ref_riv)
+    Z <- matrix(0.0, nrow = q, ncol = t_len)
+    V <- matrix(1e12, nrow = q, ncol = t_len)
+    P <- matrix(0.0, nrow = q, ncol = t_len)
+    for (k in seq_len(t_len)) {
+      d <- df_list[[k]]
+      idx <- match(ref_riv, d$RivID)
+      ok <- !is.na(idx)
+      if (any(ok)) {
+        zk <- as.numeric(d$pred_model_sc[idx[ok]])
+        vk <- pmax(as.numeric(d$se_model_sc[idx[ok]])^2, 1e-8)
+        fin <- is.finite(zk) & is.finite(vk)
+        ok_pos <- which(ok)[fin]
+        Z[ok_pos, k] <- zk[fin]
+        V[ok_pos, k] <- vk[fin]
+        P[ok_pos, k] <- 1.0 / vk[fin]
+      }
+    }
+    S_mat <- sqrt(V)
     out_list <- df_list
     for (t_i in seq_len(t_len)) {
       w_vec <- rho_t^abs(seq_len(t_len) - t_i)
       Pw <- sweep(P, 2L, w_vec, "*")
-      prec_tot <- rowSums(Pw)
+      prec_tot <- pmax(1e-12, rowSums(Pw))
       z_new <- rowSums(Z * Pw) / prec_tot
-      se_new <- sqrt(1.0 / prec_tot)
+      Alpha <- sweep(Pw, 1L, prec_tot, "/")
+      AlphaS <- Alpha * S_mat
+      se_new <- sqrt(pmax(1e-8, rowSums((AlphaS %*% R_t) * AlphaS)))
       d_upd <- out_list[[t_i]]
-      d_upd$pred_model_sc <- round(z_new, 5)
-      d_upd$se_model_sc   <- round(se_new, 5)
-      d_upd$pred_combined <- round(trans_obj$inv(z_new), 4)
+      back_idx <- match(d_upd$RivID, ref_riv)
+      z_mapped <- z_new[back_idx]
+      se_mapped <- se_new[back_idx]
+      d_upd$pred_model_sc <- round(z_mapped, 5)
+      d_upd$se_model_sc   <- round(se_mapped, 5)
+      d_upd$pred_combined <- round(trans_obj$inv(z_mapped), 4)
       if (!is.na(threshold_val) && is.finite(threshold_val)) {
-        ex <- compute_exceedance_risk(z_new, se_new, threshold_val, trans_obj, dir = threshold_dir)
+        ex <- compute_exceedance_risk(z_mapped, se_mapped, threshold_val, trans_obj, dir = threshold_dir)
         d_upd$exceed_prob     <- round(ex$prob, 5)
         d_upd$compliance_tier <- ex$tier
       }
@@ -456,13 +483,21 @@ compute_spatiotemporal_trends <- function(slice_list, trans_obj) {
   if (t_len < 2L) return(NULL)
 
   ref <- valid_s[[1]]$eng_pred
-  q <- nrow(ref)
-  Z <- vapply(valid_s, function(s) as.numeric(s$eng_pred$pred_model_sc), numeric(q))
-  V <- vapply(valid_s, function(s) pmax(as.numeric(s$eng_pred$se_model_sc)^2, 1e-8), numeric(q))
-  W <- 1.0 / V
+  ref_riv <- ref$RivID
+  q <- length(ref_riv)
+  Z <- vapply(valid_s, function(s) {
+    idx <- match(ref_riv, s$eng_pred$RivID)
+    as.numeric(s$eng_pred$pred_model_sc[idx])
+  }, numeric(q))
+  V <- vapply(valid_s, function(s) {
+    idx <- match(ref_riv, s$eng_pred$RivID)
+    pmax(as.numeric(s$eng_pred$se_model_sc[idx])^2, 1e-8)
+  }, numeric(q))
+  W <- ifelse(is.finite(Z) & is.finite(V), 1.0 / V, 0.0)
+  Z[!is.finite(Z)] <- 0.0
   t_seq <- seq_len(t_len)
 
-  W_sum <- rowSums(W)
+  W_sum <- pmax(1e-12, rowSums(W))
   t_bar <- as.numeric(W %*% t_seq) / W_sum
   z_bar <- rowSums(W * Z) / W_sum
 
@@ -528,11 +563,12 @@ compute_spatiotemporal_transitions <- function(slice_list, period_labels, trans_
     ib <- pairs[[pi]][2]
     da <- slice_list[[ia]]$eng_pred
     db <- slice_list[[ib]]$eng_pred
+    idx_b <- match(da$RivID, db$RivID)
 
     za <- as.numeric(da$pred_model_sc)
-    zb <- as.numeric(db$pred_model_sc)
+    zb <- as.numeric(db$pred_model_sc[idx_b])
     va <- pmax(as.numeric(da$se_model_sc)^2, 1e-8)
-    vb <- pmax(as.numeric(db$se_model_sc)^2, 1e-8)
+    vb <- pmax(as.numeric(db$se_model_sc[idx_b])^2, 1e-8)
 
     dz     <- zb - za
     se_dz  <- sqrt(va + vb)
@@ -699,6 +735,10 @@ compute_optimal_monitoring_design <- function(df_ord, n_obs, se_comb, parent_0, 
     cand_all
   }
   q_tot <- nrow(df_ord)
+  if (length(parent_0) != q_tot || length(se_comb) != q_tot || length(up_dist) != q_tot ||
+      length(tt[[1]]) != q_tot || length(tt[[2]]) != q_tot) {
+    stop("compute_optimal_monitoring_design: input vector lengths do not match nrow(df_ord)")
+  }
   eval_use <- if (q_tot > 4000L) {
     unique(round(seq(1, q_tot, length.out = 4000L)))
   } else {
@@ -722,8 +762,10 @@ compute_optimal_monitoring_design <- function(df_ord, n_obs, se_comb, parent_0, 
     as.integer(eval_use - 1L),
     as.integer(k_use)
   )
-  if (length(res$cand_pos) == 0L) return(NULL)
-  sel_rows <- cand_use[res$cand_pos + 1L]
+  valid_idx <- which(res$cand_pos >= 1L & res$cand_pos <= length(cand_use) &
+                     is.finite(res$var_reduced) & res$var_reduced > 0)
+  if (length(valid_idx) == 0L) return(NULL)
+  sel_rows <- cand_use[res$cand_pos[valid_idx]]
   data.frame(
     Rank            = seq_along(sel_rows),
     RivID           = df_ord$RivID[sel_rows],
@@ -735,11 +777,11 @@ compute_optimal_monitoring_design <- function(df_ord, n_obs, se_comb, parent_0, 
     mid_Y           = round(df_ord$mid_Y[sel_rows], 1),
     Elevation       = round(df_ord$Elevation[sel_rows], 1),
     Current_SE_sc   = round(se_comb[sel_rows], 5),
-    Var_Reduced     = round(res$var_reduced, 6),
-    Pct_Var_Reduced = round(res$pct_var_reduced, 4),
-    Cum_Pct_Reduced = round(res$cum_pct_reduced, 4),
-    Mean_SE_Before  = round(res$mean_se_before, 5),
-    Mean_SE_After   = round(res$mean_se_after, 5)
+    Var_Reduced     = round(res$var_reduced[valid_idx], 6),
+    Pct_Var_Reduced = round(res$pct_var_reduced[valid_idx], 4),
+    Cum_Pct_Reduced = round(res$cum_pct_reduced[valid_idx], 4),
+    Mean_SE_Before  = round(res$mean_se_before[valid_idx], 5),
+    Mean_SE_After   = round(res$mean_se_after[valid_idx], 5)
   )
 }
 
@@ -896,7 +938,7 @@ fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
     gam_terms <- character(0)
     for (cn in cont_cols) {
       n_u <- length(unique(df_tr[[cn]]))
-      k_c <- max(3L, min(as.integer(spline_df) + 2L, n_u - 1L, floor(n_tr / max(3L, length(cont_cols) + 1L))))
+      k_c <- min(as.integer(spline_df) + 2L, n_u - 1L, floor(n_tr / max(3L, length(cont_cols) + 1L)))
       if (k_c >= 3L) {
         gam_terms <- c(gam_terms, sprintf("s(%s, bs='cr', k=%d)", cn, k_c))
       } else {
@@ -962,6 +1004,7 @@ fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
 
       tr_b <- rpart::rpart(
         y_resp ~ ., data = sub_df, method = "anova",
+        model = FALSE, x = FALSE, y = FALSE,
         control = rpart::rpart.control(cp = 0.005, minsplit = min_sp, maxdepth = 6L, xval = 0L)
       )
       if (length(oob_b) > 0L) {
@@ -998,11 +1041,11 @@ fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
     lr    <- 0.06
     min_sp <- max(6L, floor(n_tr / 12L))
 
-    fit_gbm_seq <- function(df_fit, y_fit, df_pred_list, n_rounds) {
+    fit_gbm_seq <- function(df_fit, y_fit, df_pred_list, n_rounds, keep_history = TRUE) {
       n_f  <- nrow(df_fit)
       mu_0 <- mean(y_fit)
       res  <- y_fit - mu_0
-      preds_hist <- lapply(df_pred_list, function(d) matrix(mu_0, nrow = nrow(d), ncol = n_rounds))
+      preds_hist <- if (keep_history) lapply(df_pred_list, function(d) matrix(mu_0, nrow = nrow(d), ncol = n_rounds)) else NULL
       imp_acc <- setNames(numeric(p_cov), cov_cols)
       cur_p   <- lapply(df_pred_list, function(d) rep(mu_0, nrow(d)))
 
@@ -1012,6 +1055,7 @@ fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
         sub_d$r_target <- res[sub_idx]
         tr_m <- rpart::rpart(
           r_target ~ ., data = sub_d, method = "anova",
+          model = FALSE, x = FALSE, y = FALSE,
           control = rpart::rpart.control(cp = 0.002, minsplit = min_sp, maxdepth = 3L, xval = 0L)
         )
         step_f <- lr * as.numeric(predict(tr_m, newdata = df_fit))
@@ -1023,10 +1067,10 @@ fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
         }
         for (k_l in seq_along(df_pred_list)) {
           cur_p[[k_l]] <- cur_p[[k_l]] + lr * as.numeric(predict(tr_m, newdata = df_pred_list[[k_l]]))
-          preds_hist[[k_l]][, m_i] <- cur_p[[k_l]]
+          if (keep_history) preds_hist[[k_l]][, m_i] <- cur_p[[k_l]]
         }
       }
-      list(preds_hist = preds_hist, imp = imp_acc)
+      list(preds_hist = preds_hist, cur_p = cur_p, imp = imp_acc)
     }
 
     # 5-fold cross-fitting on training stations to select optimal boosting iteration & unbiased OOF predictions
@@ -1037,15 +1081,15 @@ fit_nonlinear_trend <- function(X_tr, y_tr_vec, X_eval, trend_mode = "linear",
       val_i <- which(f_id == kf)
       trn_i <- which(f_id != kf)
       if (length(val_i) == 0L || length(trn_i) < 6L) next
-      g_kf <- fit_gbm_seq(df_tr[trn_i, , drop = FALSE], y_tr[trn_i], list(df_tr[val_i, , drop = FALSE]), ntree)
+      g_kf <- fit_gbm_seq(df_tr[trn_i, , drop = FALSE], y_tr[trn_i], list(df_tr[val_i, , drop = FALSE]), ntree, keep_history = TRUE)
       oof_mat[val_i, ] <- g_kf$preds_hist[[1]]
     }
     mse_by_iter <- colMeans((oof_mat - y_tr)^2)
     best_iter   <- which.min(mse_by_iter)
     pred_oof_tr <- as.numeric(oof_mat[, best_iter])
 
-    full_gbm  <- fit_gbm_seq(df_tr, y_tr, list(df_ev), best_iter)
-    pred_eval <- as.numeric(full_gbm$preds_hist[[1]][, best_iter])
+    full_gbm  <- fit_gbm_seq(df_tr, y_tr, list(df_ev), best_iter, keep_history = FALSE)
+    pred_eval <- as.numeric(full_gbm$cur_p[[1]])
     imp_vec   <- full_gbm$imp
     if (sum(imp_vec) > 0) imp_vec <- 100.0 * imp_vec / sum(imp_vec)
     for (cn in cov_cols) {
@@ -1111,10 +1155,10 @@ compute_reach_log_afv <- function(df, afv_scheme = "length", parent_0 = NULL) {
   .Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 1L)
 }
 
-fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponential") {
+fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponential", init_theta = NULL) {
   if (kernel_name == "auto") {
     cand_names <- names(S3N_KERNEL_SPECS)
-    fits <- lapply(cand_names, function(kn) fit_nngp_cpp(X_obs, y_vec_obs, obs_nb, vy, kernel_name = kn))
+    fits <- lapply(cand_names, function(kn) fit_nngp_cpp(X_obs, y_vec_obs, obs_nb, vy, kernel_name = kn, init_theta = init_theta))
     aics <- vapply(fits, function(f) f$aic, numeric(1))
     best_idx <- which.min(aics)
     best_fit <- fits[[best_idx]]
@@ -1135,22 +1179,34 @@ fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponentia
     res$neg2loglik
   }
 
-  grid_eta <- log(c(0.05, 0.25, 0.80))
-  grid_phi <- log(c(0.015, 0.06, 0.25))
-  best_val <- Inf
-  best_par <- c(log(0.15), log(0.05))
-  for (ge in grid_eta) {
-    for (gp in grid_phi) {
-      val <- eval_obj(c(ge, gp))
-      if (val < best_val) {
-        best_val <- val
-        best_par <- c(ge, gp)
+  has_init <- !is.null(init_theta) && length(init_theta) >= 3L &&
+    all(is.finite(init_theta[1:3])) && all(init_theta[1:3] > 0)
+  if (has_init) {
+    best_par <- c(
+      log(max(1e-5, as.numeric(init_theta[2]) / max(1e-8, as.numeric(init_theta[1])))),
+      log(max(1e-4, as.numeric(init_theta[3])))
+    )
+    best_val <- eval_obj(best_par)
+    nm_maxit <- 80L
+  } else {
+    grid_eta <- log(c(0.05, 0.25, 0.80))
+    grid_phi <- log(c(0.015, 0.06, 0.25))
+    best_val <- Inf
+    best_par <- c(log(0.15), log(0.05))
+    for (ge in grid_eta) {
+      for (gp in grid_phi) {
+        val <- eval_obj(c(ge, gp))
+        if (val < best_val) {
+          best_val <- val
+          best_par <- c(ge, gp)
+        }
       }
     }
+    nm_maxit <- 180L
   }
 
   opt <- tryCatch(
-    optim(best_par, eval_obj, method = "Nelder-Mead", control = list(maxit = 180L, reltol = 1e-6)),
+    optim(best_par, eval_obj, method = "Nelder-Mead", control = list(maxit = nm_maxit, reltol = 1e-6)),
     error = function(e) list(par = best_par, value = best_val)
   )
   eta_hat <- exp(max(-12.0, min(6.0, opt$par[1])))
@@ -1191,8 +1247,8 @@ bootstrap_nngp_cpp <- function(fit_obj, X_obs) {
 
 fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
                                       nb_tu, nb_td, mid_x, mid_y, m_use,
-                                      fit_tu, fit_td, kernel_id = 0L, estimate_only = FALSE,
-                                      tau_init = NULL) {
+                                      fit_tu, fit_td, kernel_id = 0L, kernel_id_td = kernel_id,
+                                      estimate_only = FALSE, tau_init = NULL, init_params = NULL) {
   y_dbl <- as.double(y_vec_obs)
   v_use <- if (has_me) as.double(v_meas) else numeric(0)
   p_cov <- ncol(X_obs)
@@ -1219,7 +1275,7 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
     phi_eu <- exp(max(-7.0, min(3.0, par[4])))
     s_scale <- if (has_me) exp(max(-8.0, min(8.0, par[5]))) else 1.0
     params_vec <- c(s_scale * 1.0, s_scale * r_td, s_scale * r_euc, s_scale * r_tau,
-                    phi_tu, phi_td, phi_eu, as.double(kernel_id))
+                    phi_tu, phi_td, phi_eu, as.double(kernel_id), as.double(kernel_id_td), as.double(kernel_id_td))
     res <- .Call("C_s3n_joint_nngp",
                  X_obs, y_dbl, v_use, X_obs, numeric(p_cov),
                  nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
@@ -1233,25 +1289,50 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
   r_tau_init <- log(max(0.02, min(10.0, tau_0 / sig_tu_0)))
   s_init     <- log(max(1e-4, 0.5 * (sig_tu_0 + sig_td_0)))
 
-  starts <- list(
-    c(r_td_init,  log(0.10), r_tau_init, log(0.03), s_init),
-    c(log(0.02),  log(0.01), log(max(0.02, as.numeric(fit_tu$Theta["tau.sq"]) / sig_tu_0)), log(0.03), log(sig_tu_0)),
-    c(log(50.0),  log(0.01), log(max(0.02, as.numeric(fit_td$Theta["tau.sq"]) / max(1e-5, 0.02 * sig_td_0))), log(0.03), log(max(1e-5, 0.02 * sig_td_0))),
-    c(0.0,        log(0.25), r_tau_init, log(0.05), s_init)
-  )
-  best_par <- starts[[1]]
-  best_val <- Inf
-  for (st in starts) {
-    p_st <- if (has_me) st else st[1:4]
-    v_st <- eval_joint(p_st)
-    if (v_st < best_val) {
-      best_val <- v_st
-      best_par <- p_st
+  use_warm <- !is.null(init_params) &&
+    all(c("sigma.sq_tu", "sigma.sq_td", "sigma.sq_euc", "tau.sq", "phi_euc") %in% names(init_params)) &&
+    all(is.finite(init_params[c("sigma.sq_tu", "sigma.sq_td", "sigma.sq_euc", "tau.sq", "phi_euc")])) &&
+    init_params["sigma.sq_tu"] > 0 && init_params["sigma.sq_td"] >= 0 &&
+    init_params["sigma.sq_euc"] >= 0 && init_params["tau.sq"] > 0 && init_params["phi_euc"] > 0
+
+  if (use_warm) {
+    ip_tu  <- max(1e-5, as.numeric(init_params["sigma.sq_tu"]))
+    ip_td  <- max(1e-5 * ip_tu, as.numeric(init_params["sigma.sq_td"]))
+    ip_euc <- max(1e-5 * ip_tu, as.numeric(init_params["sigma.sq_euc"]))
+    ip_tau <- max(1e-5 * ip_tu, as.numeric(init_params["tau.sq"]))
+    ip_phi <- max(1e-4, as.numeric(init_params["phi_euc"]))
+    warm_st <- c(
+      log(max(exp(-8.0), min(exp(8.0), ip_td / ip_tu))),
+      log(max(exp(-10.0), min(exp(6.0), ip_euc / ip_tu))),
+      log(max(exp(-10.0), min(exp(6.0), ip_tau / ip_tu))),
+      log(max(exp(-7.0), min(exp(3.0), ip_phi))),
+      log(ip_tu)
+    )
+    best_par <- if (has_me) warm_st else warm_st[1:4]
+    best_val <- eval_joint(best_par)
+    nm_maxit <- 80L
+  } else {
+    starts <- list(
+      c(r_td_init,  log(0.10), r_tau_init, log(0.03), s_init),
+      c(log(0.02),  log(0.01), log(max(0.02, as.numeric(fit_tu$Theta["tau.sq"]) / sig_tu_0)), log(0.03), log(sig_tu_0)),
+      c(log(50.0),  log(0.01), log(max(0.02, as.numeric(fit_td$Theta["tau.sq"]) / max(1e-5, 0.02 * sig_td_0))), log(0.03), log(max(1e-5, 0.02 * sig_td_0))),
+      c(0.0,        log(0.25), r_tau_init, log(0.05), s_init)
+    )
+    best_par <- starts[[1]]
+    best_val <- Inf
+    for (st in starts) {
+      p_st <- if (has_me) st else st[1:4]
+      v_st <- eval_joint(p_st)
+      if (v_st < best_val) {
+        best_val <- v_st
+        best_par <- p_st
+      }
     }
+    nm_maxit <- 140L
   }
 
   opt <- tryCatch(
-    optim(best_par, eval_joint, method = "Nelder-Mead", control = list(maxit = 140L, reltol = 1e-5)),
+    optim(best_par, eval_joint, method = "Nelder-Mead", control = list(maxit = nm_maxit, reltol = 1e-5)),
     error = function(e) list(par = best_par, value = best_val)
   )
   par_hat <- opt$par
@@ -1262,7 +1343,7 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
   s_scale <- if (has_me) exp(max(-8.0, min(8.0, par_hat[5]))) else 1.0
 
   params_raw <- c(s_scale * 1.0, s_scale * r_td, s_scale * r_euc, s_scale * r_tau,
-                  phi_tu, phi_td, phi_eu, as.double(kernel_id))
+                  phi_tu, phi_td, phi_eu, as.double(kernel_id), as.double(kernel_id_td), as.double(kernel_id_td))
   fit_res <- .Call("C_s3n_joint_nngp",
                    X_obs, y_dbl, v_use, X_obs, numeric(p_cov),
                    nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
@@ -1270,14 +1351,16 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
 
   mult <- if (has_me) 1.0 else fit_res$scale
   params_final <- c(
-    sigma.sq_tu  = params_raw[1] * mult,
-    sigma.sq_td  = params_raw[2] * mult,
-    sigma.sq_euc = params_raw[3] * mult,
-    tau.sq       = params_raw[4] * mult,
-    phi_tu       = phi_tu,
-    phi_td       = phi_td,
-    phi_euc      = phi_eu,
-    kernel_id    = as.double(kernel_id)
+    sigma.sq_tu   = params_raw[1] * mult,
+    sigma.sq_td   = params_raw[2] * mult,
+    sigma.sq_euc  = params_raw[3] * mult,
+    tau.sq        = params_raw[4] * mult,
+    phi_tu        = phi_tu,
+    phi_td        = phi_td,
+    phi_euc       = phi_eu,
+    kernel_id     = as.double(kernel_id),
+    kernel_id_td  = as.double(kernel_id_td),
+    kernel_id_euc = as.double(kernel_id_td)
   )
   beta_hat <- as.numeric(fit_res$Beta)
   names(beta_hat) <- colnames(X_obs)
@@ -1368,9 +1451,11 @@ fit_s3n_domain <- function(df,
         if (any(ok_ls)) u_raw[ok_ls] <- u_raw[ok_ls] * pmax(1e-6, raw_obs_vals[ok_ls])
       }
       v_phys <- calc_response_meas_variance(raw_obs_vals, u_raw, trans_obj)
-      has_gam <- ("meas_method" %in% names(df_ord)) && isTRUE(any(tolower(df_ord$meas_method[1:n_obs]) == "gam", na.rm = TRUE))
+      has_unc_method <- ("meas_method" %in% names(df_ord)) &&
+        isTRUE(any(tolower(trimws(as.character(df_ord$meas_method[1:n_obs]))) %in%
+                     c("gam", "tobit_interval", "tobit_raw_sd", "geometric_midpoint", "source_se"), na.rm = TRUE))
       has_meta_gam <- !is.null(net_meta) && !is.null(net_meta$meas_method) && identical(tolower(net_meta$meas_method), "gam")
-      has_phys_me <- isTRUE((mean(v_phys) > 1e-8) && (isTRUE(use_meas_error) || has_gam || has_meta_gam))
+      has_phys_me <- isTRUE((mean(v_phys) > 1e-8) && (isTRUE(use_meas_error) || has_unc_method || has_meta_gam))
       if (!has_phys_me) v_phys <- numeric(n_obs)
     }
   }
@@ -1439,11 +1524,16 @@ fit_s3n_domain <- function(df,
   nb_td <- build_neighbors(1L)
   t_nb  <- (proc.time() - t0)[3]
 
-  estimate_component <- function(X_m, y_m, obs_nb_m, vy_m, k_name) {
+  estimate_component <- function(X_m, y_m, obs_nb_m, vy_m, k_name, init_theta = NULL) {
     if (k_name == "exponential" && isTRUE(.s3n_env$has_s3n_pkg)) {
+      has_it <- !is.null(init_theta) && length(init_theta) >= 3L &&
+        all(is.finite(init_theta[1:3])) && all(init_theta[1:3] > 0)
+      sig_0 <- if (has_it) as.numeric(init_theta[1]) else vy_m * 0.7
+      tau_0 <- if (has_it) as.numeric(init_theta[2]) else vy_m * 0.1
+      phi_0 <- if (has_it) as.numeric(init_theta[3]) else 0.05
       res_b <- BRISC_estimation_stream(
         coords = as.matrix(seq_len(nrow(X_m))), y = as.matrix(y_m), x = X_m,
-        neighbor = obs_nb_m, sigma.sq = vy_m * 0.7, tau.sq = vy_m * 0.1, phi = 0.05,
+        neighbor = obs_nb_m, sigma.sq = sig_0, tau.sq = tau_0, phi = phi_0,
         cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
       )
       res_b$kernel_name <- "exponential"
@@ -1451,14 +1541,14 @@ fit_s3n_domain <- function(df,
       res_b$engine      <- "brisc"
       return(res_b)
     }
-    fit_nngp_cpp(X_m, as.double(y_m), obs_nb_m, vy_m, kernel_name = k_name)
+    fit_nngp_cpp(X_m, as.double(y_m), obs_nb_m, vy_m, kernel_name = k_name, init_theta = init_theta)
   }
 
   em_res <- NULL
   censor_req <- tolower(trimws(as.character(censor_mode)))
   if (censor_req %in% c("em", "tobit") &&
       ("is_censored" %in% names(df_ord)) && ("lod_sc" %in% names(df_ord))) {
-    is_cens_obs <- as.logical(df_ord$is_censored[1:n_obs] == 1L)
+    is_cens_obs <- !is.na(df_ord$is_censored[1:n_obs]) & (df_ord$is_censored[1:n_obs] == 1L)
     if (any(is_cens_obs)) {
       lod_sc_obs <- as.numeric(df_ord$lod_sc[1:n_obs]) - trend_fit$g_perp_tr
       em_res <- run_spatial_tobit_em_kriging(
@@ -1472,6 +1562,17 @@ fit_s3n_domain <- function(df,
       y_obs_s3n <- as.matrix(y_vec_s3n)
       y_vec_obs <- y_vec_s3n + trend_fit$g_perp_tr
       vy        <- max(1e-4, var(y_vec_s3n))
+      cens_fin  <- which(is_cens_obs & is.finite(lod_sc_obs))
+      if (length(cens_fin) == length(em_res$cond_var) && length(cens_fin) > 0L) {
+        v_add <- ifelse(is.finite(em_res$cond_var) & em_res$cond_var > 0, em_res$cond_var, 0.0)
+        v_phys[cens_fin] <- v_phys[cens_fin] + v_add
+        v_bar_phys <- mean(v_phys)
+        if (any(v_phys > 1e-12)) {
+          has_phys_me <- TRUE
+          has_me      <- TRUE
+        }
+        v_meas <- v_phys
+      }
       cat(sprintf("  [Spatial Tobit EM Kriging] Imputed %d left-censored reaches in %d EM iterations (converged=%s)\n",
                   em_res$n_cens, em_res$n_iter, as.character(em_res$converged)))
     }
@@ -1566,7 +1667,7 @@ fit_s3n_domain <- function(df,
       X_obs = X_obs, y_vec_obs = y_vec_s3n, v_meas = v_meas, has_me = has_me,
       X_all = X_all, nb_tu = nb_tu, nb_td = nb_td,
       mid_x = df_ord$mid_X, mid_y = df_ord$mid_Y, m_use = m_use,
-      fit_tu = fit_tu, fit_td = fit_td, kernel_id = kid_tu,
+      fit_tu = fit_tu, fit_td = fit_td, kernel_id = kid_tu, kernel_id_td = kid_td,
       tau_init = if (has_me) tau_base else NULL
     )
     joint_fit$prediction <- joint_fit$prediction + trend_fit$g_perp_eval
@@ -1619,7 +1720,8 @@ fit_s3n_domain <- function(df,
   if ("meas_uncertainty" %in% names(df_ord)) pred_df$meas_uncertainty <- df_ord$meas_uncertainty
   if ("meas_method" %in% names(df_ord))      pred_df$meas_method      <- df_ord$meas_method
   if (trend_req != "linear") {
-    pred_df$pred_trend_sc <- round(as.numeric(X_all %*% fit_tu$Beta) + trend_fit$g_perp_eval, 5)
+    beta_tr_lin <- if (!is.null(joint_fit)) joint_fit$Beta else fit_tu$Beta
+    pred_df$pred_trend_sc <- round(as.numeric(X_all %*% beta_tr_lin) + trend_fit$g_perp_eval, 5)
   }
 
   exceed_summary <- NULL
@@ -1752,18 +1854,20 @@ fit_s3n_domain <- function(df,
     y_tr         <- as.matrix(y_vec[tr] - tf_cv$g_perp_tr)
     vy_cv        <- max(1e-4, var(as.numeric(y_tr)))
 
-    run_cv_component <- function(model_int, k_name, kid) {
+    run_cv_component <- function(model_int, k_name, kid, init_theta = NULL) {
       nb_cv <- .Call("C_compute_s3n_neighbors",
-                     as.integer(n_tr), as.integer(m_cv), as.integer(par_cv),
+                     as.integer(c(n_tr, n_eval)), as.integer(m_cv), as.integer(par_cv),
                      as.integer(cid_cv), as.integer(tt_cv[[1]]), as.integer(tt_cv[[2]]),
                      as.double(d2m_cv), as.double(up_cv), as.double(afv_cv),
                      as.double(mx_cv), as.double(my_cv), as.integer(model_int))
+      te_slice <- (n_tr * m_cv + 1L):(n_eval * m_cv)
       p_cv <- list(
-        nnIndx = nb_cv$pred_neighbors$nnIndx[1:(n_eval * m_cv)],
-        nnDist = nb_cv$pred_neighbors$nnDist[1:(n_eval * m_cv)],
-        nnWght = nb_cv$pred_neighbors$nnWght[1:(n_eval * m_cv)]
+        nnIndx = nb_cv$pred_neighbors$nnIndx[te_slice],
+        nnDist = nb_cv$pred_neighbors$nnDist[te_slice],
+        nnWght = nb_cv$pred_neighbors$nnWght[te_slice]
       )
-      f_cv <- estimate_component(X_tr, y_tr, nb_cv$obs_neighbors, vy_cv, k_name)
+      X_te <- X_obs[te, , drop = FALSE]
+      f_cv <- estimate_component(X_tr, y_tr, nb_cv$obs_neighbors, vy_cv, k_name, init_theta = init_theta)
       if (has_me) {
         v_phys_tr  <- v_phys[tr]
         v_bar_tr   <- mean(v_phys_tr)
@@ -1773,14 +1877,14 @@ fit_s3n_domain <- function(df,
         v_tr       <- v_phys_tr + v_wt_tr
         theta_me   <- c(f_cv$Theta["sigma.sq"], tau_mic_cv, f_cv$Theta["phi"], kid)
         pr_raw     <- .Call("C_s3n_predict_meas_error",
-                            X_tr, y_tr, v_tr, X_eval,
+                            X_tr, y_tr, v_tr, X_te,
                             f_cv$Beta, as.double(theta_me), as.integer(m_cv),
                             p_cv$nnIndx, p_cv$nnDist, p_cv$nnWght,
                             nb_cv$obsobs_dist, nb_cv$obsobs_wt)
         denom <- sum(theta_me[1:2])
       } else if (identical(f_cv$engine, "brisc") && kid == 0L && isTRUE(.s3n_env$has_s3n_pkg)) {
         pr_raw <- BRISC_prediction_stream(
-          BRISC_Out = f_cv, coords.0 = as.matrix(1:n_eval), X.0 = X_eval,
+          BRISC_Out = f_cv, coords.0 = as.matrix(seq_along(te)), X.0 = X_te,
           neighbor = p_cv, obsobs_dist = nb_cv$obsobs_dist, obsobs_wt = nb_cv$obsobs_wt,
           n_omp = n_omp, verbose = FALSE
         )
@@ -1788,20 +1892,20 @@ fit_s3n_domain <- function(df,
       } else {
         th_cv  <- c(f_cv$Theta["sigma.sq"], f_cv$Theta["tau.sq"], f_cv$Theta["phi"], kid)
         pr_raw <- .Call("C_s3n_predict_meas_error",
-                        X_tr, y_tr, numeric(0), X_eval,
+                        X_tr, y_tr, numeric(0), X_te,
                         f_cv$Beta, as.double(th_cv), as.integer(m_cv),
                         p_cv$nnIndx, p_cv$nnDist, p_cv$nnWght,
                         nb_cv$obsobs_dist, nb_cv$obsobs_wt)
         denom <- sum(th_cv[1:2])
       }
-      pred_te <- pr_raw$prediction[(n_tr + 1L):n_eval] + g_te_cv
-      se_te   <- (pr_raw$prediction.ci[(n_tr + 1L):n_eval, 2] - pr_raw$prediction[(n_tr + 1L):n_eval]) / 1.959964
+      pred_te <- as.numeric(pr_raw$prediction) + g_te_cv
+      se_te   <- as.numeric(pr_raw$prediction.ci[, 2] - pr_raw$prediction) / 1.959964
       inf_te  <- pmax(1e-4, 1 - (se_te^2) / denom)
       list(pred = pred_te, inf = inf_te, nb = nb_cv, fit = f_cv)
     }
 
-    res_tu_cv  <- run_cv_component(0L, fit_tu$kernel_name, kid_tu)
-    res_td_cv  <- run_cv_component(1L, fit_td$kernel_name, kid_td)
+    res_tu_cv  <- run_cv_component(0L, fit_tu$kernel_name, kid_tu, init_theta = fit_tu$Theta)
+    res_td_cv  <- run_cv_component(1L, fit_td$kernel_name, kid_td, init_theta = fit_td$Theta)
     cv_tu[te]  <- res_tu_cv$pred
     cv_td[te]  <- res_td_cv$pred
     if (comb_mode == "joint" && !is.null(joint_fit)) {
@@ -1817,15 +1921,23 @@ fit_s3n_domain <- function(df,
         nnDist = nb_td_eval$pred_neighbors$nnDist[1:(n_eval * m_cv)],
         nnWght = nb_td_eval$pred_neighbors$nnWght[1:(n_eval * m_cv)]
       )
-      v_tr_use <- if (has_me) as.double(v_meas[tr]) else numeric(0)
-      jf_tr <- .Call("C_s3n_joint_nngp",
-                     X_tr, as.double(y_tr), v_tr_use, X_tr, numeric(ncol(X_tr)),
-                     nb_tu_eval, nb_td_eval, as.double(mx_cv[1:n_eval]), as.double(my_cv[1:n_eval]),
-                     as.integer(m_cv), as.double(joint_fit$params), 0L)
-      jp_ev <- .Call("C_s3n_joint_nngp",
-                     X_tr, as.double(y_tr), v_tr_use, X_eval, as.double(jf_tr$Beta),
-                     nb_tu_eval, nb_td_eval, as.double(mx_cv[1:n_eval]), as.double(my_cv[1:n_eval]),
-                     as.integer(m_cv), as.double(joint_fit$params), 1L)
+      tau_b_j_cv <- NULL
+      v_tr_use <- if (has_me) {
+        tau_mic_tu_cv <- max(1e-6 * res_tu_cv$fit$Theta["sigma.sq"], res_tu_cv$fit$Theta["tau.sq"] - mean(v_phys[tr]))
+        tau_mic_td_cv <- max(1e-6 * res_td_cv$fit$Theta["sigma.sq"], res_td_cv$fit$Theta["tau.sq"] - mean(v_phys[tr]))
+        tau_b_j_cv    <- max(1e-5 * 0.5 * (res_tu_cv$fit$Theta["sigma.sq"] + res_td_cv$fit$Theta["sigma.sq"]),
+                             0.5 * (tau_mic_tu_cv + tau_mic_td_cv))
+        v_wt_j_cv     <- if (has_sw) (1.0 / w_obs[tr] - 1.0) * tau_b_j_cv else numeric(length(tr))
+        as.double(v_phys[tr] + v_wt_j_cv)
+      } else numeric(0)
+      jp_ev <- fit_and_predict_joint_s3n(
+        X_obs = X_tr, y_vec_obs = as.double(y_tr), v_meas = v_tr_use, has_me = has_me,
+        X_all = X_eval, nb_tu = nb_tu_eval, nb_td = nb_td_eval,
+        mid_x = mx_cv[1:n_eval], mid_y = my_cv[1:n_eval], m_use = m_cv,
+        fit_tu = res_tu_cv$fit, fit_td = res_td_cv$fit,
+        kernel_id = kid_tu, kernel_id_td = kid_td,
+        tau_init = tau_b_j_cv, init_params = joint_fit$params
+      )
       cv_comb[te] <- jp_ev$prediction[(n_tr + 1L):n_eval] + g_te_cv
     } else {
       cv_comb[te] <- (res_tu_cv$inf * cv_tu[te] + res_td_cv$inf * cv_td[te]) / (res_tu_cv$inf + res_td_cv$inf)
@@ -1946,6 +2058,12 @@ fit_s3n_domain <- function(df,
     cv_td   = cv_td,
     cv_comb = cv_comb
   )
+
+  ord_back <- match(df$RivID, pred_df$RivID)
+  if (!anyNA(ord_back)) {
+    pred_df <- pred_df[ord_back, , drop = FALSE]
+    rownames(pred_df) <- NULL
+  }
 
   list(
     pred_df        = pred_df,

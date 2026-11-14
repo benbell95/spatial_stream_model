@@ -61,7 +61,7 @@ estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
 }
 
 build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NULL, scale = NULL) {
-  t_raw <- tolower(trimws(as.character(transform_type)))
+  t_raw <- if (is.null(transform_type) || length(transform_type) == 0L || is.na(transform_type[1])) "" else tolower(trimws(as.character(transform_type[1])))
   if (!nzchar(t_raw)) t_raw <- "log"
 
   alias_map <- c(
@@ -258,32 +258,36 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
       is_log         = FALSE,
       lambda         = lam_val,
       scale          = 1.0,
-      valid_fn       = function(y) !is.na(y),
+      valid_fn       = function(y) !is.na(y) & is.finite(y),
       fwd            = function(y) {
-        pos <- (y >= 0)
-        z <- numeric(length(y))
+        y <- as.numeric(y)
+        z <- rep(NA_real_, length(y))
+        pos <- is.finite(y) & (y >= 0)
+        neg <- is.finite(y) & (y < 0)
         if (any(pos)) {
           yp <- y[pos]
           z[pos] <- if (abs(lam_val) < 1e-4) log(yp + 1.0) else (((yp + 1.0)^lam_val) - 1.0) / lam_val
         }
-        if (any(!pos)) {
-          yn <- y[!pos]
-          z[!pos] <- if (abs(2.0 - lam_val) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam_val)) - 1.0) / (2.0 - lam_val)
+        if (any(neg)) {
+          yn <- y[neg]
+          z[neg] <- if (abs(2.0 - lam_val) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam_val)) - 1.0) / (2.0 - lam_val)
         }
         z
       },
       inv            = function(z) {
-        pos <- (z >= 0)
-        y <- numeric(length(z))
+        z <- as.numeric(z)
+        y <- rep(NA_real_, length(z))
+        pos <- is.finite(z) & (z >= 0)
+        neg <- is.finite(z) & (z < 0)
         if (any(pos)) {
           zp <- z[pos]
           yp <- if (abs(lam_val) < 1e-4) exp(zp) - 1.0 else (pmax(1e-6, zp * lam_val + 1.0))^(1.0 / lam_val) - 1.0
           y[pos] <- if (lam_val < 0) pmin(1e6, yp) else yp
         }
-        if (any(!pos)) {
-          zn <- z[!pos]
+        if (any(neg)) {
+          zn <- z[neg]
           yn <- if (abs(2.0 - lam_val) < 1e-4) 1.0 - exp(-zn) else 1.0 - (pmax(1e-6, -zn * (2.0 - lam_val) + 1.0))^(1.0 / (2.0 - lam_val))
-          y[!pos] <- if (lam_val > 2.0) pmax(-1e6, yn) else yn
+          y[neg] <- if (lam_val > 2.0) pmax(-1e6, yn) else yn
         }
         y
       }
@@ -443,11 +447,11 @@ print_available_transforms <- function() {
 # NORMALISATION (canonical schema: pred_model_sc, obs_model_sc, pred_tu_sc, pred_td_sc)
 # ==============================================================================
 
-add_normalised_columns <- function(df, ref_df = df) {
-  if (!("pred_model_sc" %in% names(df)) || !("pred_model_sc" %in% names(ref_df))) return(df)
-  ref_x  <- ref_df$pred_model_sc
-  ref_x  <- ref_x[is.finite(ref_x)]
-  if (length(ref_x) == 0) return(df)
+compute_norm_ref_stats <- function(ref_df) {
+  if (is.null(ref_df) || !("pred_model_sc" %in% names(ref_df))) return(NULL)
+  ref_x <- ref_df$pred_model_sc
+  ref_x <- ref_x[is.finite(ref_x)]
+  if (length(ref_x) == 0L) return(NULL)
 
   mu_x <- mean(ref_x, na.rm = TRUE)
   sd_x <- sd(ref_x, na.rm = TRUE)
@@ -464,7 +468,26 @@ add_normalised_columns <- function(df, ref_df = df) {
   rng_x <- max(ref_x, na.rm = TRUE) - min_x
   if (!is.finite(rng_x) || rng_x < 1e-12) rng_x <- 1.0
 
-  pct_fn <- ecdf(ref_x)
+  list(
+    mu_x = mu_x, sd_x = sd_x, med_x = med_x, mad_x = mad_x,
+    min_x = min_x, rng_x = rng_x, pct_fn = ecdf(ref_x)
+  )
+}
+
+add_normalised_columns <- function(df, ref_df = df, ref_stats = NULL) {
+  if (!("pred_model_sc" %in% names(df))) return(df)
+  if (is.null(ref_stats)) {
+    ref_stats <- compute_norm_ref_stats(ref_df)
+    if (is.null(ref_stats)) return(df)
+  }
+
+  mu_x   <- ref_stats$mu_x
+  sd_x   <- ref_stats$sd_x
+  med_x  <- ref_stats$med_x
+  mad_x  <- ref_stats$mad_x
+  min_x  <- ref_stats$min_x
+  rng_x  <- ref_stats$rng_x
+  pct_fn <- ref_stats$pct_fn
 
   df$pred_zscore        <- round((df$pred_model_sc - mu_x) / sd_x, 5)
   df$pred_robust_zscore <- round((df$pred_model_sc - med_x) / mad_x, 5)
@@ -491,4 +514,68 @@ add_normalised_columns <- function(df, ref_df = df) {
     df$obs_percentile    <- ifelse(has_o, round(100.0 * pct_fn(df$obs_model_sc), 2), NA_real_)
   }
   df
+}
+
+# Robust Lognormal Regression on Order Statistics (ROS, Helsel & Cohn 1988) — Vectorized O(n log n)
+impute_censored_ros <- function(vals, is_cens) {
+  is_cens <- !is.na(is_cens) & as.logical(is_cens) & is.finite(vals)
+  if (!any(is_cens)) return(vals)
+  n <- length(vals)
+  c_limits <- sort(unique(vals[is_cens]))
+  J <- length(c_limits)
+  min_thr <- min(0.0, min(vals, na.rm = TRUE) - 1.0, na.rm = TRUE)
+  thresholds <- c(min_thr, c_limits, Inf)
+
+  cens_mask <- is_cens
+  unc_mask  <- !is_cens & is.finite(vals)
+  unc_bin   <- integer(n)
+  if (any(unc_mask)) {
+    unc_bin[unc_mask] <- findInterval(vals[unc_mask], c_limits, left.open = FALSE) + 1L
+  }
+  cens_bin <- integer(n)
+  cens_bin[cens_mask] <- match(vals[cens_mask], c_limits) + 1L
+
+  A_counts <- tabulate(unc_bin[unc_mask], nbins = J + 1L)
+  p <- numeric(J + 2L)
+  p[J + 2L] <- 0.0
+  for (j in seq(J + 1L, 2L, by = -1L)) {
+    d_j <- thresholds[j]
+    A_j <- A_counts[j]
+    B_j <- sum((cens_mask & vals <= d_j) | (unc_mask & vals < d_j))
+    p[j] <- if (A_j + B_j > 0L) p[j + 1L] + (1.0 - p[j + 1L]) * (A_j / (A_j + B_j)) else p[j + 1L]
+  }
+  p[1L] <- if (A_counts[1L] > 0L) 1.0 else p[2L]
+
+  pp <- numeric(n)
+  for (j in seq_len(J + 1L)) {
+    idx_a <- which(unc_mask & unc_bin == j)
+    A_j   <- length(idx_a)
+    if (A_j > 0L) {
+      ranks_a <- rank(vals[idx_a], ties.method = "average")
+      pp[idx_a] <- (1.0 - p[j]) + (p[j] - p[j + 1L]) * (ranks_a / (A_j + 1.0))
+    }
+  }
+  for (j in 2:(J + 1L)) {
+    idx_c <- which(cens_mask & cens_bin == j)
+    C_j   <- length(idx_c)
+    if (C_j > 0L) {
+      pp[idx_c] <- (1.0 - p[j]) * (seq_len(C_j) / (C_j + 1.0))
+    }
+  }
+  pp <- pmin(1.0 - 1e-6, pmax(1e-6, pp))
+
+  unc_pos <- which(unc_mask & vals > 0)
+  if (length(unc_pos) < 3L) {
+    warning("Fewer than 3 positive uncensored samples for ROS; falling back to 0.5 * LOD.")
+    return(ifelse(cens_mask, 0.5 * vals, vals))
+  }
+  z_unc <- stats::qnorm(pp[unc_pos])
+  l_unc <- log(vals[unc_pos])
+  slope <- max(0.05, stats::cov(z_unc, l_unc) / max(1e-9, stats::var(z_unc)))
+  inter <- mean(l_unc) - slope * mean(z_unc)
+
+  out <- vals
+  c_idx <- which(cens_mask)
+  out[c_idx] <- pmin(vals[c_idx], pmax(1e-6, exp(inter + slope * stats::qnorm(pp[c_idx]))))
+  out
 }

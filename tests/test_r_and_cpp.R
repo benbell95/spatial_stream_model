@@ -7,8 +7,16 @@ assert_true <- function(cond, msg) {
   if (!isTRUE(cond)) stop(sprintf("ASSERTION FAILED: %s", msg), call. = FALSE)
 }
 
+quiet_eval <- function(expr) {
+  val <- NULL
+  utils::capture.output({
+    val <- eval.parent(substitute(expr))
+  })
+  val
+}
+
 assert_near <- function(a, b, tol = 1e-4, msg = "") {
-  ok <- all(is.finite(a) & is.finite(b) & abs(a - b) <= tol)
+  ok <- length(a) > 0L && length(a) == length(b) && all(is.finite(a) & is.finite(b) & abs(a - b) <= tol)
   if (!ok) {
     stop(sprintf("ASSERTION FAILED (%s): got %s, expected %s (tol=%g)",
                  msg, paste(a, collapse = ","), paste(b, collapse = ","), tol),
@@ -315,14 +323,12 @@ df_syn <- data.frame(
 )
 df_syn$obs_val[1:18] <- exp(1.5 - 0.003 * df_syn$Elevation[1:18] + 0.4 * df_syn$Is_Aquifer[1:18] + rnorm(18, 0, 0.1))
 
-sink(tempfile())
-dom_out <- fit_s3n_domain(
+dom_out <- quiet_eval(fit_s3n_domain(
   df = df_syn, domain_id = "test", domain_label = "Synthetic Basin",
   trans_obj = build_transformer("log"), var_specs = c("Elevation", "Is_Aquifer"),
   m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
   kernel = "auto", combine_mode = "joint", afv_scheme = "hydro_yield"
-)
-sink()
+))
 assert_true(!is.null(dom_out), "fit_s3n_domain returned non-null result")
 assert_true(nrow(dom_out$cv_summary) == 4L && all(is.finite(dom_out$cv_summary$RMSE)), "5-fold CV summary valid")
 assert_true("S3N Joint (TU + TD + Euc)" %in% dom_out$param_df$Model, "Joint model parameters recorded in param_df")
@@ -355,15 +361,13 @@ for (t_mode in c("spline", "gam", "rf", "gbm")) {
 }
 
 for (t_mode in c("gam", "rf", "gbm")) {
-  sink(tempfile())
-  dom_t <- fit_s3n_domain(
+  dom_t <- quiet_eval(fit_s3n_domain(
     df = df_syn, domain_id = "test", domain_label = "Synthetic Basin",
     trans_obj = build_transformer("log"), var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
     m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
     kernel = "exponential", combine_mode = "joint", afv_scheme = "length",
     trend = t_mode, spline_df = 3L, n_trees = 25L
-  )
-  sink()
+  ))
   assert_true(!is.null(dom_t), paste0("fit_s3n_domain succeeded for trend=", t_mode))
   assert_true("pred_trend_sc" %in% names(dom_t$pred_df) && all(is.finite(dom_t$pred_df$pred_trend_sc)),
               paste0("pred_trend_sc exported for trend=", t_mode))
@@ -426,16 +430,14 @@ assert_true(ex_below$prob[2] < 0.05 && ex_below$tier[2] == "Confidently Complian
 # End-to-end fit_s3n_domain with catchment CV + threshold + optimal monitoring design
 df_syn_cat <- df_syn
 df_syn_cat$CatchID <- rep(c(101L, 102L, 103L, 104L), length.out = nrow(df_syn_cat))
-sink(tempfile())
-dom_val <- fit_s3n_domain(
+dom_val <- quiet_eval(fit_s3n_domain(
   df = df_syn_cat, domain_id = "test", domain_label = "Synthetic Basin",
   trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
   m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
   kernel = "exponential", combine_mode = "joint", afv_scheme = "length",
   trend = "linear", cv_mode = "catchment", threshold = 5.0,
   threshold_dir = "above", design_sites = 3L
-)
-sink()
+))
 assert_true(!is.null(dom_val), "fit_s3n_domain validation+risk+design succeeded")
 assert_true(all(c("exceed_prob", "compliance_tier") %in% names(dom_val$pred_df)), "pred_df has exceedance columns")
 assert_true(!is.null(dom_val$exceed_summary) && sum(dom_val$exceed_summary$Reach_Count) == nrow(df_syn_cat),
@@ -483,15 +485,13 @@ cens_rows <- which(df_syn_em$has_obs == 1L)[1:8]
 df_syn_em$is_censored[cens_rows] <- 1L
 df_syn_em$lod_sc[cens_rows] <- log(df_syn_em$obs_val[cens_rows] + 0.5)
 
-sink(tempfile())
-dom_em <- fit_s3n_domain(
+dom_em <- quiet_eval(fit_s3n_domain(
   df = df_syn_em, domain_id = "test", domain_label = "Synthetic Tobit Basin",
   trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
   m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
   kernel = "exponential", combine_mode = "joint", afv_scheme = "length",
   censor_mode = "em"
-)
-sink()
+))
 assert_true(!is.null(dom_em), "fit_s3n_domain censor_mode=em succeeded")
 assert_true(grepl("\\[Tobit-EM\\]", dom_em$cv_summary$Spatial_Method[1]), "Spatial_Method tagged [Tobit-EM]")
 assert_true(any(dom_em$param_df$Model == "Spatial Tobit EM"), "Spatial Tobit EM logged in param_df")
@@ -942,26 +942,24 @@ df_syn_sw$obs_source_weight <- 1.0
 low_w_idx <- obs_sw_idx[seq(1L, length(obs_sw_idx), by = 2L)]
 df_syn_sw$obs_source_weight[low_w_idx] <- 0.2
 
-sink(tempfile())
-dom_unw_v <- fit_s3n_domain(
+dom_unw_v <- quiet_eval(fit_s3n_domain(
   df = df_syn_unw, domain_id = "test", domain_label = "Synthetic Unweighted Basin",
   trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
   m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
   kernel = "exponential", combine_mode = "precision", afv_scheme = "length"
-)
-dom_sw_v <- fit_s3n_domain(
+))
+dom_sw_v <- quiet_eval(fit_s3n_domain(
   df = df_syn_sw, domain_id = "test", domain_label = "Synthetic Source-Weighted Basin",
   trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
   m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
   kernel = "exponential", combine_mode = "precision", afv_scheme = "length"
-)
-dom_sw_j <- fit_s3n_domain(
+))
+dom_sw_j <- quiet_eval(fit_s3n_domain(
   df = df_syn_sw, domain_id = "test", domain_label = "Synthetic Source-Weighted Joint",
   trans_obj = tr_log, var_specs = c("Elevation", "US_Accum_km", "Is_Aquifer"),
   m_neighbors = 5L, n_boot = 10L, n_omp = 1L,
   kernel = "exponential", combine_mode = "joint", afv_scheme = "length"
-)
-sink()
+))
 assert_true(!is.null(dom_sw_j) && all(is.finite(dom_sw_j$pred_df$pred_combined)) && all(dom_sw_j$pred_df$se_model_sc > 0),
             "fit_s3n_domain (joint) runs cleanly with obs_source_weight")
 rivs_low <- df_syn_sw$RivID[low_w_idx]
@@ -974,4 +972,206 @@ assert_true(any(dom_sw_j$param_df$Parameter == "mean_source_penalty_var" & dom_s
             "param_df logs positive mean_source_penalty_var when source weights < 1")
 
 cat("  [PASS] Multi-source priority filtering, reliability weights, source SEs, and weighted C++ NNGP\n")
+
+cat("=== 12. Phase 5 Regression Tests (NA/YJ, ROS, Design Indexing, ST Misalignment, Scale & Plotting) ===\n")
+# 12a. Yeo-Johnson handles NA observations cleanly without dropping everything or failing optimize()
+y_na_yj <- c(NA_real_, -2.0, 0.0, 2.0, 5.0, NA_real_, 8.0)
+tr_yj_na <- build_transformer("yeojohnson", y_obs = y_na_yj)
+assert_true(is.finite(tr_yj_na$lambda), "YJ handles NA observations cleanly")
+z_yj_na <- tr_yj_na$fwd(y_na_yj)
+assert_true(is.na(z_yj_na[1]) && is.na(z_yj_na[6]) && all(is.finite(z_yj_na[!is.na(y_na_yj)])),
+            "YJ fwd preserves NA positions")
+
+# 12b. Vectorized impute_censored_ros produces positive finite imputed values <= detection limits
+ros_in <- c(0.1, 0.2, 0.5, 1.0, 2.0, 4.0, 8.0)
+ros_cens <- c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE)
+ros_out <- impute_censored_ros(ros_in, ros_cens)
+assert_true(length(ros_out) == length(ros_in) && all(is.finite(ros_out)) &&
+            all(ros_out[ros_cens] > 0 & ros_out[ros_cens] <= ros_in[ros_cens]) &&
+            all(abs(ros_out[!ros_cens] - ros_in[!ros_cens]) < 1e-12),
+            "impute_censored_ros respects censoring bounds and preserves uncensored values")
+
+# 12c. compute_optimal_monitoring_design maps non-consecutive candidate positions accurately without +1/+1 shift
+df_des_inter <- df_syn
+df_des_inter$has_obs <- rep(c(1L, 0L), length.out = nrow(df_des_inter))
+dn_idx <- match(df_des_inter$parent_dn, df_des_inter$RivID)
+parent_0_inter <- ifelse(df_des_inter$parent_dn <= 0L | is.na(dn_idx), -1L, as.integer(dn_idx - 1L))
+tt_des <- .Call("C_build_tree_tin_tout", as.integer(parent_0_inter))
+se_inter <- dom_val$pred_df$se_model_sc[match(df_des_inter$RivID, dom_val$pred_df$RivID)]
+des_inter <- compute_optimal_monitoring_design(
+  df_ord = df_des_inter,
+  n_obs = sum(df_des_inter$has_obs == 1L),
+  se_comb = se_inter,
+  parent_0 = parent_0_inter,
+  tt = tt_des,
+  up_dist = df_des_inter$up_dist_mid_km,
+  params_5 = c(0.4, 2.0, 0.2, 2.0, 0.2),
+  k_design = 3L
+)
+assert_true(!is.null(des_inter) && nrow(des_inter) >= 1L &&
+            all(des_inter$RivID %in% df_des_inter$RivID[df_des_inter$has_obs == 0L]),
+            "compute_optimal_monitoring_design strictly selects unobserved candidates (no off-by-one shift)")
+
+# 12d. Spatio-temporal borrowing aligns misaligned RivID row orders across slices & keeps borrowed SE positive/finite
+d_shuf1 <- dom_val$pred_df
+d_shuf2 <- dom_val$pred_df[rev(seq_len(nrow(dom_val$pred_df))), ]
+d_shuf2$pred_model_sc <- d_shuf2$pred_model_sc + 0.4
+d_shuf2$se_model_sc   <- pmax(0.05, d_shuf2$se_model_sc * 1.4)
+d_shuf3 <- dom_val$pred_df[sample(nrow(dom_val$pred_df)), ]
+d_shuf3$pred_model_sc <- d_shuf3$pred_model_sc + 0.8
+st_shuf <- apply_spatiotemporal_borrowing(
+  list(
+    list(eng_pred = d_shuf1, hum_pred = d_shuf1, tha_pred = d_shuf1, sev_pred = d_shuf1),
+    list(eng_pred = d_shuf2, hum_pred = d_shuf2, tha_pred = d_shuf2, sev_pred = d_shuf2),
+    list(eng_pred = d_shuf3, hum_pred = d_shuf3, tha_pred = d_shuf3, sev_pred = d_shuf3)
+  ),
+  tr_log
+)
+m_idx <- match(d_shuf1$RivID, st_shuf$slices[[2]]$eng_pred$RivID)
+assert_true(all(!is.na(m_idx)) && all(is.finite(st_shuf$slices[[2]]$eng_pred$se_model_sc[m_idx]) &
+            st_shuf$slices[[2]]$eng_pred$se_model_sc[m_idx] > 0),
+            "apply_spatiotemporal_borrowing aligns shuffled RivID rows and guarantees positive SEs")
+
+# 12e. format_covariates_folder_tag handles mixed positive + -excl tags consistently
+tag_mix <- format_covariates_folder_tag(c("Elevation", "-Slope", "Is_Aquifer"))
+assert_true(nzchar(tag_mix) && grepl("elev", tag_mix, ignore.case = TRUE) &&
+            grepl("no_", tag_mix, ignore.case = TRUE),
+            "format_covariates_folder_tag encodes mixed positive and negative specs cleanly")
+
+# 12f. compute_color_scale recovers from swapped vmin > vmax, degenerate midpoint, and filters invalid logit ticks
+tr_logit_pct <- build_transformer("logit", y_obs = c(5, 25, 50, 75, 95))
+cs_swapped <- compute_color_scale(tr_logit_pct$fwd(c(10, 50, 90)), tr_logit_pct, vmin_raw = 80, vmax_raw = 20)
+raw_ticks <- tr_logit_pct$inv(cs_swapped$ticks)
+assert_true(cs_swapped$vmin < cs_swapped$vmax &&
+            abs(cs_swapped$vmin - tr_logit_pct$fwd(20)) < 1e-6 &&
+            abs(cs_swapped$vmax - tr_logit_pct$fwd(80)) < 1e-6 &&
+            all(raw_ticks > 0 & raw_ticks < 100),
+            "compute_color_scale swaps vmin > vmax and excludes 0 / >= scale from logit ticks")
+cs_degen <- compute_color_scale(tr_log$fwd(c(5.0, 5.0, 5.0)), tr_log)
+assert_true(is.finite(cs_degen$vmin) && is.finite(cs_degen$vmax) && cs_degen$vmin < cs_degen$vmax,
+            "compute_color_scale expands degenerate constant range cleanly")
+
+# 12g. aggregate_samples_by_reach_weighted pools tobit_raw_sd as sample-mean SE and retains canonical mean of transformed samples
+df_agg_test <- data.frame(
+  RivID = c(10L, 10L),
+  val = c(2.0, 8.0),
+  y_sample = tr_log$fwd(c(2.0, 8.0)),
+  obs_up_dist_km = c(5.0, 5.0),
+  is_cens = c(0L, 0L),
+  raw_lod = c(2.0, 8.0),
+  meas_uncertainty = c(0.3, 0.4),
+  meas_method = c("tobit_interval", "tobit_interval"),
+  data_source = c("waterblitz", "waterblitz"),
+  stringsAsFactors = FALSE
+)
+agg_res <- aggregate_samples_by_reach_weighted(df_agg_test, tr_log)
+assert_near(agg_res$y_resp[1], mean(tr_log$fwd(c(2.0, 8.0))), tol = 1e-6,
+            msg = "aggregate_samples_by_reach_weighted uses mean of transformed samples")
+# Raw SDs = 0.3 * 2 = 0.6 and 0.4 * 8 = 3.2 -> SE of mean = sqrt(0.6^2 + 3.2^2) / 2
+assert_near(agg_res$meas_uncertainty[1], sqrt(0.6^2 + 3.2^2) / 2.0, tol = 1e-6,
+            msg = "aggregate_samples_by_reach_weighted pools sample-mean SE accurately")
+assert_true(agg_res$meas_method[1] == "tobit_raw_sd", "aggregate_samples_by_reach_weighted preserves tobit_raw_sd flag")
+
+# 12h. compute_norm_ref_stats + add_normalised_columns(..., ref_stats=) matches ref_df output identically
+df_ref_n <- data.frame(
+  pred_model_sc = c(1.0, 2.5, 3.0, 4.5, 6.0),
+  pred_tu_sc    = c(1.1, 2.4, 3.1, 4.4, 5.9),
+  obs_model_sc  = c(1.2, NA_real_, 3.2, 4.1, NA_real_)
+)
+df_sub_n <- df_ref_n[c(2, 4, 5), , drop = FALSE]
+rs_n <- compute_norm_ref_stats(df_ref_n)
+n_via_df <- add_normalised_columns(df_sub_n, ref_df = df_ref_n)
+n_via_st <- add_normalised_columns(df_sub_n, ref_df = NULL, ref_stats = rs_n)
+assert_true(identical(n_via_df, n_via_st),
+            "compute_norm_ref_stats + ref_stats produces identical output to ref_df path")
+
+# 12i. Vectorized filter_samples_by_source_priority selects highest-priority source per reach
+df_prio <- data.frame(
+  RivID = c(101L, 101L, 101L, 102L, 102L, 103L),
+  data_source = c("cs_citizen", "ea_wims", "cs_citizen", "waterblitz", "cs_citizen", "unknown_src"),
+  val = c(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+  stringsAsFactors = FALSE
+)
+pf_res <- filter_samples_by_source_priority(df_prio, c("ea_wims", "waterblitz", "cs_citizen"))
+assert_true(pf_res$n_dropped == 3L && pf_res$n_reaches == 2L &&
+            nrow(pf_res$df) == 3L &&
+            all(pf_res$df$data_source[pf_res$df$RivID == 101L] == "ea_wims") &&
+            all(pf_res$df$data_source[pf_res$df$RivID == 102L] == "waterblitz") &&
+            all(pf_res$df$data_source[pf_res$df$RivID == 103L] == "unknown_src"),
+            "vectorized filter_samples_by_source_priority retains winning sources across reaches")
+
+# 12j. Vectorized unweighted aggregate_samples_by_reach_weighted multi-reach check
+df_agg_multi <- data.frame(
+  RivID = c(30L, 10L, 30L, 20L),
+  val = c(2.0, 5.0, 6.0, 3.0),
+  y_sample = tr_log$fwd(c(2.0, 5.0, 6.0, 3.0)),
+  obs_up_dist_km = c(4.0, 1.0, 8.0, 2.0),
+  is_cens = c(1L, 0L, 0L, 1L),
+  raw_lod = c(2.0, 5.0, 6.0, 3.0),
+  meas_uncertainty = c(0.2, NA_real_, 0.5, 0.1),
+  meas_method = c("sensor_sd", "", "tobit_interval", "limit"),
+  data_source = c("a", "b", "a", "c"),
+  stringsAsFactors = FALSE
+)
+agg_m <- aggregate_samples_by_reach_weighted(df_agg_multi, tr_log)
+assert_true(identical(as.integer(agg_m$RivID), c(10L, 20L, 30L)) &&
+            identical(as.integer(agg_m$is_censored), c(0L, 1L, 0L)) &&
+            abs(agg_m$val[agg_m$RivID == 30L] - 4.0) < 1e-8 &&
+            abs(agg_m$obs_up_dist_km[agg_m$RivID == 30L] - 6.0) < 1e-8 &&
+            is.na(agg_m$lod_sc[agg_m$RivID == 30L]) &&
+            abs(agg_m$lod_sc[agg_m$RivID == 20L] - tr_log$fwd(3.0)) < 1e-6 &&
+            abs(agg_m$meas_uncertainty[agg_m$RivID == 30L] - sqrt(0.2^2 + 3.0^2) / 2.0) < 1e-6 &&
+            agg_m$meas_method[agg_m$RivID == 30L] == "sensor_sd",
+            "vectorized aggregate_samples_by_reach_weighted sorts by RivID and pools multi-reach stats accurately")
+
+# 12k. load_directory_config() memoizes repeated lookups
+cfg_1 <- load_directory_config()
+cfg_2 <- load_directory_config()
+assert_true(is.list(cfg_1) && identical(cfg_1, cfg_2),
+            "load_directory_config returns identical cached configuration")
+
+# 12l. Warm-started fit_nngp_cpp converges closely to cold-start fit
+if (exists("fit_nngp_cpp", mode = "function") && exists("fit_u", inherits = FALSE) &&
+    !is.null(fit_u$Theta) && exists("nb_obs_tu", inherits = FALSE)) {
+  fit_warm <- fit_nngp_cpp(X_obs, y_obs, nb_obs_tu$obs_neighbors, var(y_obs),
+                           kernel_name = "exponential", init_theta = fit_u$Theta)
+  assert_true(all(is.finite(fit_warm$Beta)) && all(is.finite(fit_warm$Theta)) &&
+              abs(fit_warm$neg2loglik - fit_u$neg2loglik) < 0.5,
+              "warm-started fit_nngp_cpp reaches same log-likelihood optimum as cold start")
+}
+
+# 12m. fast_read_csv / fast_write_csv preserve UTF-8 BOM, leading-zero colClasses, select=, and NA roundtrip
+csv_test_f <- tempfile(fileext = ".csv")
+bom_con <- file(csv_test_f, open = "wb")
+writeBin(as.raw(c(0xEF, 0xBB, 0xBF)), bom_con)
+writeBin(charToRaw("cas_number,Site Name,val,extra\n0117,Alpha,1.5,x\n0180,Beta,NA,y\n"), bom_con)
+close(bom_con)
+
+old_dt_opt <- getOption("s3n.use_data_table", TRUE)
+on.exit(options(s3n.use_data_table = old_dt_opt), add = TRUE)
+modes_to_check <- if (isTRUE(requireNamespace("data.table", quietly = TRUE))) c(FALSE, TRUE) else c(FALSE)
+for (use_dt_flag in modes_to_check) {
+  options(s3n.use_data_table = use_dt_flag)
+  r_full <- fast_read_csv(csv_test_f, colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
+  assert_true(identical(names(r_full), c("cas_number", "Site.Name", "val", "extra")) &&
+              identical(r_full$cas_number, c("0117", "0180")) &&
+              is.na(r_full$val[2]) && abs(r_full$val[1] - 1.5) < 1e-8,
+              sprintf("fast_read_csv BOM + leading-zero colClasses (use_dt=%s)", use_dt_flag))
+  r_sel <- fast_read_csv(csv_test_f, select = c("cas_number", "Site.Name", "val"),
+                         colClasses = c(cas_number = "character"), fileEncoding = "UTF-8-BOM")
+  assert_true(identical(names(r_sel), c("cas_number", "Site.Name", "val")) &&
+              identical(r_sel$cas_number, c("0117", "0180")),
+              sprintf("fast_read_csv select= column skipping (use_dt=%s)", use_dt_flag))
+  csv_rt_f <- tempfile(fileext = ".csv")
+  fast_write_csv(r_sel, csv_rt_f)
+  r_rt <- fast_read_csv(csv_rt_f, colClasses = c(cas_number = "character"))
+  assert_true(identical(r_rt$cas_number, r_sel$cas_number) &&
+              is.na(r_rt$val[2]) && abs(r_rt$val[1] - 1.5) < 1e-8,
+              sprintf("fast_write_csv -> fast_read_csv roundtrip (use_dt=%s)", use_dt_flag))
+  unlink(csv_rt_f)
+}
+options(s3n.use_data_table = old_dt_opt)
+unlink(csv_test_f)
+
+cat("  [PASS] Phase 5 regression suite passed\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

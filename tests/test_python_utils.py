@@ -15,6 +15,8 @@ if _SCRIPTS_DIR not in sys.path:
 
 import s3n_py_utils as u  # noqa: E402
 import format_custom_data as fcd  # noqa: E402
+import importlib  # noqa: E402
+prep_orn = importlib.import_module("01_preprocess_orn")  # noqa: E402
 
 
 def _make_wkb_linestring(coords, has_z=False):
@@ -93,6 +95,19 @@ class TestMeasurementTokensAndTobit(unittest.TestCase):
         self.assertIsNone(u.parse_raw_measurement_token("NO_WATER_AVAILABLE"))
         self.assertIsNone(u.parse_raw_measurement_token(""))
 
+        sci_left = u.parse_raw_measurement_token("<1e-3")
+        self.assertEqual(sci_left["type"], "left")
+        self.assertAlmostEqual(sci_left["b"], 1e-3, places=8)
+
+        sci_iv = u.parse_raw_measurement_token("1.5e-2 - 3.5e-2")
+        self.assertEqual(sci_iv["type"], "interval")
+        self.assertAlmostEqual(sci_iv["a"], 0.015, places=8)
+        self.assertAlmostEqual(sci_iv["b"], 0.035, places=8)
+
+        sci_right = u.parse_raw_measurement_token(">2.5e2")
+        self.assertEqual(sci_right["type"], "right")
+        self.assertAlmostEqual(sci_right["a"], 250.0, places=6)
+
     def test_interval_tobit_model(self):
         counts = {
             ("point", 5.0, 5.0): 20,
@@ -124,6 +139,17 @@ class TestMeasurementTokensAndTobit(unittest.TestCase):
         lf0 = mod.predict("left", 0.0, 0.0)
         self.assertTrue(math.isfinite(lf0[0]))
 
+        # Zero-anchored [0, b] interval must behave as left-censored (< b), not fail log(0)
+        counts_zero_iv = dict(counts)
+        counts_zero_iv[("interval", 0.0, 3.0)] = 10
+        mod2 = u.IntervalTobitModel("ZeroIntervalTest")
+        mod2.fit_from_token_counts(counts_zero_iv)
+        self.assertTrue(mod2.fitted)
+        iv_zero = mod2.predict("interval", 0.0, 3.0)
+        self.assertEqual(iv_zero[5], "tobit_interval")
+        self.assertEqual(iv_zero[2], 0.0)
+        self.assertTrue(0.0 < iv_zero[0] <= 3.0)
+
     def test_match_known_determinand(self):
         d_n = fcd.match_known_determinand("Nitrate (mg/L)")
         self.assertEqual(d_n["code"], "0117")
@@ -132,6 +158,11 @@ class TestMeasurementTokensAndTobit(unittest.TestCase):
         self.assertEqual(d_p["code"], "0180")
         d_ph = fcd.match_known_determinand("pH")
         self.assertEqual(d_ph["code"], "0061")
+        self.assertEqual(fcd.match_known_determinand("Field pH")["code"], "0061")
+        self.assertEqual(fcd.match_known_determinand("Water Temp (C)")["code"], "0076")
+        self.assertEqual(fcd.match_known_determinand("Organic Carbon")["code"], "0301")
+        # Avoid false substring collision on "ph" in unrelated names like "phosphorus"/"graphite"
+        self.assertNotEqual(fcd.match_known_determinand("graphite_index").get("code"), "0061")
 
     def test_compute_alternative_range_result(self):
         tok = u.parse_raw_measurement_token("4 - 16")
@@ -160,6 +191,11 @@ class TestSourcesAndRangeDetection(unittest.TestCase):
         key_hyph, tokens_hyph, _, _ = u.resolve_source_tag("rsn,waterblitz-tobit", reg, base_dir=_REPO_ROOT)
         self.assertEqual(key_hyph, "rsn+waterblitz_tobit")
         self.assertEqual(tokens_hyph, ["rsn", "waterblitz_tobit"])
+
+        # Range-mode suffix on a registered source without dedicated subfolder should resolve to single base constituent
+        key_rsn_tobit, toks_rsn_tobit, _, _ = u.resolve_source_tag("rsn_tobit", reg, base_dir=_REPO_ROOT)
+        self.assertEqual(key_rsn_tobit, "rsn_tobit")
+        self.assertEqual(toks_rsn_tobit, ["rsn"])
 
     def test_detect_range_mode_avoids_false_substring_match(self):
         sources_reg, _ = u.load_source_registry(_REPO_ROOT)
@@ -243,6 +279,64 @@ class TestGeometryCensoringAndTransforms(unittest.TestCase):
         self.assertAlmostEqual(w_len, 12.5, places=5)
         self.assertAlmostEqual(w_shr, 4.0, places=5)
         self.assertAlmostEqual(w_hyd, 12.5 * (1.0 + 0.002 * 200.0) * 1.5, places=5)
+
+    def test_yeojohnson_negative_jacobian_sign(self):
+        # Negative-only sample skewed towards zero should behave sensibly and remain finite
+        # Previously wrong Jacobian sign (-log(-y+1)) pushed lambda to extremes
+        neg_vals = [-1.0, -2.0, -4.0, -8.0, -16.0]
+        lam = u.estimate_yeojohnson_lambda(neg_vals)
+        self.assertTrue(-2.0 <= lam <= 3.0)
+        # Positive skewed sample should prefer Box-Cox-like lambda near 0 (not ~2.0)
+        pos_skew = [1.0, 2.0, 4.0, 8.0, 16.0]
+        lam_pos = u.estimate_yeojohnson_lambda(pos_skew)
+        self.assertTrue(-1.0 <= lam_pos <= 1.0)
+
+    def test_summarize_reach_site_obs_canonical_mean_and_se(self):
+        # Site A has 3 samples at along_m=100m, Site B has 1 sample at along_m=500m -> weighted along_m = 200m -> obs_up_dist_km = 10 - 0.2 = 9.8
+        s_list = [
+            ("SA", 10.0, 100.0, [10.0, 30.0, 50.0], [0.0, 0.3, 0.4], ["exact_point", "tobit_interval"]),
+            ("SB", 20.0, 500.0, [90.0], [0.0], ["exact_point"]),
+        ]
+        row = prep_orn.summarize_reach_site_obs(s_list, d2m_km=10.0, trans_type="logit", eff_scale=100.0)
+        self.assertEqual(row[0], 1)
+        self.assertAlmostEqual(row[2], 10.0, places=2)
+        self.assertAlmostEqual(row[3], 9.8, places=4)
+        # Canonical trans_obs_mean = mean of logit(y / 100), not logit(mean(y) / 100)
+        expected_trans = sum(u.apply_forward_transform(v, "logit", scale=100.0) for v in [10.0, 30.0, 50.0, 90.0]) / 4.0
+        self.assertAlmostEqual(row[6], expected_trans, places=4)
+        # Pooled SE of sample mean = sqrt(0.3^2 + 0.4^2) / 4 = 0.5 / 4 = 0.125
+        self.assertAlmostEqual(row[7], 0.125, places=5)
+        self.assertEqual(row[8], "tobit_interval")
+        self.assertEqual(row[9], 4)
+
+    def test_format_custom_dataset_bbox_in_bng(self):
+        import contextlib
+        import io
+        self.assertEqual(u.parse_datetime_iso("2023-06-01 02:30:00 PM"), "2023-06-01T14:30:00")
+        self.assertEqual(u.parse_datetime_iso("2023-06-01 12:30:00 AM"), "2023-06-01T00:30:00")
+        with tempfile.TemporaryDirectory() as tmpd:
+            in_csv = os.path.join(tmpd, "raw_bng.csv")
+            out_dir = os.path.join(tmpd, "formatted")
+            with open(in_csv, "w", encoding="utf-8") as f:
+                f.write("site_id,easting,northing,date,nitrate\n")
+                f.write("S_IN,450000,350000,2024-06-01,12.5\n")
+                f.write("S_OUT,200000,100000,2024-06-01,9.0\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                res = fcd.format_custom_dataset(
+                    input_path=in_csv,
+                    output_dir=out_dir,
+                    source_name="bng_bbox_test",
+                    bbox="400000,300000,500000,400000",
+                    verbose=True,
+                )
+            self.assertIsNotNone(res)
+            self.assertEqual(res["n_samples"], 1)
+            self.assertIn("Valid Samples Written", buf.getvalue())
+            with open(os.path.join(out_dir, "sites.csv"), "r", encoding="utf-8") as f:
+                sites_txt = f.read()
+            self.assertIn("S_IN", sites_txt)
+            self.assertNotIn("S_OUT", sites_txt)
 
 
 if __name__ == "__main__":
