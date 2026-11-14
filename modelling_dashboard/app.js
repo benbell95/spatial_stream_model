@@ -31,6 +31,138 @@
       title: "4-Panel GAM + S3N Diagnostics & Cross-Validation (SVG)",
       note: "Vector SVG diagnostic summary for non-linear --trend=gam Nitrate model (CV R2 = 0.6743)."
     },
+    ntaxa_england: {
+      title: "England WHPT N-Taxa (whpt_ntaxa) — Joint TU+TD+Euc Surface & SE (--reverse-color)",
+      note: "90,876 reaches, 1,160 RSN stations (3,408 samples). Inverted ecological palette: blue = high taxon richness, red = low richness."
+    },
+    ntaxa_gam_england: {
+      title: "England WHPT N-Taxa — Non-Linear REML GAM + S3N Trend (--reverse-color)",
+      note: "Penalized cubic regression splines capture non-linear elevation and catchment-size richness thresholds before NNGP spatial kriging (CV R2 = 0.2664)."
+    },
+    ntaxa_humber: {
+      title: "Humber Basin (CatchID=80) — Stream Macroinvertebrate N-Taxa",
+      note: "211 stations across 14,048 reaches. Combined CV R2 = 0.1625 (vs 0.0987 OLS), RMSE = 5.1285 taxa."
+    },
+    ntaxa_thames_severn: {
+      title: "Thames (3055) & Severn (2786) Basins — WHPT N-Taxa & Kriging SE",
+      note: "Severn CV R2 rises from 0.0200 (OLS) to 0.1750 (Joint S3N), while Thames exhibits localized heterogeneity at n=107."
+    },
+    ntaxa_diag: {
+      title: "4-Panel WHPT N-Taxa Diagnostics, CV & Parameter CIs (SVG)",
+      note: "Compares OLS (R2 = 0.1371), Tail-Up (0.1834), Tail-Down (0.2391), and Combined Joint NNGP (0.2648) across England."
+    },
+    ntaxa_gam_diag: {
+      title: "4-Panel GAM + S3N WHPT N-Taxa Diagnostics & CV (SVG)",
+      note: "Vector SVG diagnostic summary for non-linear --trend=gam WHPT N-Taxa model (All-England CV R2 = 0.2664, RMSE = 5.3926 taxa)."
+    },
+    ntaxa_z_england: {
+      title: "England WHPT N-Taxa Robust Z-Score Map (--norm=robust_zscore --reverse-color)",
+      note: "Expresses richness deviations as (x - median) / (1.4826 * MAD) to highlight ecological richness anomalies nationally."
+    },
+    ntaxa_z_humber: {
+      title: "Humber Basin WHPT N-Taxa Robust Z-Score Map (--norm=robust_zscore)",
+      note: "High-resolution Humber sub-basin view contrasting upland Pennine richness (+Z) against lowland/urban corridors (-Z)."
+    },
+    ntaxa_z_thames_severn: {
+      title: "Thames & Severn WHPT N-Taxa Robust Z-Score Maps (--norm=robust_zscore)",
+      note: "Contrasts Thames chalk/urban richness anomalies against Severn upland-to-lowland gradients on a dimensionless robust scale."
+    },
+    eut_cokrig_rmni: {
+      title: "Co-Kriged Macrophyte RMNI (Factor-LMC Joint with P & N)",
+      note: "Borrows spatial strength from 1,210 Orthophosphate & Nitrate stations to predict RMNI (All-England Aux-Aided R2 = 0.7580; Thames R2 rescued from -0.2671 to 0.3165)."
+    },
+    eut_cokrig_0180: {
+      title: "Co-Kriged Orthophosphate (0180) in P-N-RMNI LMC",
+      note: "Jointly modelled log-Orthophosphate surface (Aux-Aided CV R2 = 0.6560 vs 0.4665 Univariate)."
+    },
+    eut_cokrig_xcorr: {
+      title: "LMC Residual Cross-Correlation Matrix (0180, 0117, RMNI)",
+      note: "Strong Tail-Down residual correlations between Orthophosphate-RMNI (+0.752) and Nitrate-RMNI (+0.790) power cross-variable borrowing."
+    },
+    eut_rmni_linear: {
+      title: "England Macrophyte RMNI — Linear Joint S3N (300 DPI)",
+      note: "All-England CV R2 = 0.7398 (RMSE = 0.7139) vs 0.6289 OLS; higher RMNI indicates more eutrophic macrophyte communities."
+    },
+    eut_rmni_gam: {
+      title: "England Macrophyte RMNI — Non-Linear GAM + S3N (300 DPI)",
+      note: "Highest national RMNI accuracy: CV R2 = 0.7607 (RMSE = 0.6846), capturing non-linear slope and drainage-area thresholds."
+    },
+    eut_rmni_diag: {
+      title: "4-Panel RMNI Linear S3N Diagnostics & Parameter CIs (SVG)",
+      note: "Vector SVG CV and parameter summary for Linear Joint S3N on macrophytes:rmni."
+    },
+    eut_rmni_gam_diag: {
+      title: "4-Panel RMNI GAM + S3N Diagnostics & Parameter CIs (SVG)",
+      note: "Vector SVG diagnostic summary for --trend=gam RMNI model (All-England CV R2 = 0.7607)."
+    },
+    eut_do_season_grid: {
+      title: "England Dissolved Oxygen % Saturation (9901) Across 4 Seasons (--reverse-color)",
+      note: "Shared-scale [69.3%, 109.2%] seasonal DO maps with precision-weighted temporal borrowing (rho_t = 0.150)."
+    },
+    eut_do_summer: {
+      title: "Summer (JJA) Dissolved Oxygen % Saturation & Kriging SE (--reverse-color)",
+      note: "Low-flow summer oxygen sag zones (red); instantaneous DO has higher diel variance (CV R2 = 0.1574) than biological RMNI."
+    },
+    eut_p_rmni_maps: {
+      title: "Side-by-Side Orthophosphate (0180) vs. Macrophyte RMNI Predictions",
+      note: "90,876 matched reaches show Pearson r = 0.9005 (Spearman rho = 0.8542) and 86.55% 4-quadrant concordance (Odds Ratio = 41.40)."
+    },
+    eut_p_rmni_rel: {
+      title: "Orthophosphate vs. RMNI Reach-Level Relationship & Strata",
+      note: "Thames Basin has 81.86% High-P / High-RMNI reaches vs. 96.71% Low-P / Low-RMNI in Uplands (>= 150 m)."
+    },
+    nw_no3_map: {
+      title: "North West RBD (RBD=12) — Nitrate (0117) Predictions & Kriging SE",
+      note: "12,465 reaches, 136 RSN stations. Joint S3N CV R2 = 0.6702 (vs 0.6523 OLS), RMSE = 0.8429 log mg/L."
+    },
+    nw_no3_exceed: {
+      title: "North West RBD — 5-Tier Nitrate Exceedance Risk (11.3 mg/L as N)",
+      note: "93.8% Confidently Compliant (11,686 reaches), 5.7% Likely Compliant (704), 0.6% Uncertain (75), 0% Exceeding."
+    },
+    nw_no3_winter: {
+      title: "North West RBD — Winter (DJF) Nitrate Map (--by=season --st-borrow)",
+      note: "Shared-scale [0.033, 10.000] mg/L N winter surface with temporal borrowing (rho_t = 0.363); CV R2 = 0.6197."
+    },
+    nw_no3_spring: {
+      title: "North West RBD — Spring (MAM) Nitrate Map (--by=season --st-borrow)",
+      note: "Shared-scale spring Nitrate surface across North West RBD; Joint S3N CV R2 = 0.6576."
+    },
+    nw_no3_summer: {
+      title: "North West RBD — Summer (JJA) Nitrate Map (--by=season --st-borrow)",
+      note: "Shared-scale summer Nitrate surface across North West RBD; Joint S3N CV R2 = 0.6704."
+    },
+    nw_no3_autumn: {
+      title: "North West RBD — Autumn (SON) Nitrate Map (--by=season --st-borrow)",
+      note: "Shared-scale autumn Nitrate surface across North West RBD; Joint S3N CV R2 = 0.6799."
+    },
+    nw_ntaxa_map: {
+      title: "North West RBD (RBD=12) — WHPT N-Taxa Richness (--reverse-color)",
+      note: "12,465 reaches, 131 RSN stations. Joint S3N lifts CV R2 from 0.1252 (OLS) to 0.1950 (RMSE = 5.1640 taxa)."
+    },
+    nw_snap_ribble: {
+      title: "River Ribble (CatchID=161) — Station-to-Reach Snapping Diagnostics",
+      note: "2,625 reaches, 31 included stations (2 excluded > 250 m), median snap 1.88 m (87.1% <= 10 m)."
+    },
+    nw_snap_mersey: {
+      title: "River Mersey (CatchID=177) — Station-to-Reach Snapping Diagnostics",
+      note: "1,776 reaches, 23 included stations (0 excluded), median snap 2.15 m (95.7% <= 10 m)."
+    },
+    nw_snap_weaver: {
+      title: "River Weaver (CatchID=173) — Station-to-Reach Snapping Diagnostics",
+      note: "856 reaches, 23 included stations (5 excluded > 250 m), median snap 2.18 m (100.0% <= 10 m)."
+    },
+    nw_snap_lune: {
+      title: "River Lune (CatchID=157) — Station-to-Reach Snapping Diagnostics",
+      note: "1,655 reaches, 17 included stations (0 excluded), median snap 3.48 m (76.5% <= 10 m)."
+    },
+    nw_snap_derwent: {
+      title: "River Derwent (CatchID=138) — Station-to-Reach Snapping Diagnostics",
+      note: "994 reaches in Cumbria/Lake District evaluated for station-to-reach snapping accuracy."
+    },
+    nw_opt_design: {
+      title: "North West RBD (RBD=12) Optimal Monitoring Design & Gap Map (K=50)",
+      note: "Top 50 greedy C++ active-learning sites cut North West kriging variance by 45.95% (Mean SE 0.6956 -> 0.4887 log mg/L)."
+    },
     whpt_england: {
       title: "England Macroinvertebrate Health (WHPT ASPT, --reverse-color)",
       note: "Inverted ecological palette: blue = high ecological quality (upland clean streams), red = impacted lowland/urban corridors."
@@ -234,24 +366,30 @@
   };
 
   const FEATURE_CATALOG = [
-    { cat: "major", badge: "CS7", title: "Data Transformation Comparison (Raw, Log, Sqrt, Box-Cox)", desc: "Benchmarks 4 Nitrate transformations across physical positivity, Jensen median bias, residual symmetry (0.118 skew), and Profile-MLE Box-Cox (lambda=0.50).", tab: "cs7" },
+    { cat: "major", badge: "CS8", title: "Data Transformation Comparison (Raw, Log, Sqrt, Box-Cox)", desc: "Benchmarks 4 Nitrate transformations across physical positivity, Jensen median bias, residual symmetry (0.118 skew), and Profile-MLE Box-Cox (lambda=0.50).", tab: "cs7" },
     { cat: "major", badge: "CS6", title: "Citizen Science WaterBlitz Co-Kriging Fusion", desc: "Ingest 44,982 England WaterBlitz citizen observations via format_custom_data.py and compare Equal vs. Statutory-Favoured (rsn,ssn priority + 0.25 weight) bivariate Co-Kriging.", tab: "cs6" },
     { cat: "major", badge: "Stage 1", title: "Zero-Dependency Python WKB GIS Extractor", desc: "Pure stdlib sqlite3 + binary WKB decoder extracts 90,876 ORN v2 reaches in ~8-15s without GDAL or sf.", tab: "overview" },
     { cat: "major", badge: "Stage 2", title: "C++/OpenMP Euler-Tour Joint NNGP", desc: "Sub-second O(n) Tail-Up + Tail-Down + Euclidean additive kriging via compiled s3n_fast_neighbors.so.", tab: "cs1" },
     { cat: "major", badge: "CS1", title: "Non-Linear GAM, Spline, RF & GBM Trends", desc: "Replace linear X*beta with --trend=gam, spline, rf, or gbm plus orthogonal OOB/OOF spatial residual kriging.", tab: "cs1" },
-    { cat: "major", badge: "CS2", title: "5-Tier Threshold Exceedance Risk Mapping", desc: "--threshold=uk applies indicative UK thresholds (11.3 mg/L NO3-N, 0.069 mg/L P) to map 5-tier Gaussian exceedance probability.", tab: "cs2" },
-    { cat: "major", badge: "CS2", title: "Ecological Metrics & Inverted Scales", desc: "Supports inverts (whpt_aspt), diatoms, macrophytes, rhs & lcms with --reverse-color palettes.", tab: "cs2" },
-    { cat: "major", badge: "CS3", title: "Spatio-Temporal Batching & Dynamic Borrowing", desc: "--by=year|season|month + --st-borrow precision weighting, fig6 trend tests & fig7 period transitions.", tab: "cs3" },
-    { cat: "major", badge: "CS4", title: "Multivariate Factor-LMC Joint Co-Kriging", desc: "Models P >= 2 heterotopic targets simultaneously via --method=lmc|colocated with Dual CV benchmarks.", tab: "cs4" },
-    { cat: "major", badge: "CS4", title: "Multi-Source Fusion & Network Preference", desc: "Combine statutory RSN + SSN + citizen science using --prefer-source, --source-weight & --source-se.", tab: "cs4" },
-    { cat: "major", badge: "CS5", title: "Descriptive Stats, Bias & N:P Stoichiometry", desc: "Scripts 05 & 04 run Mann-Whitney representativeness tests, gradient breakdowns, Fisher z & Wald Z-tests.", tab: "cs5" },
+    { cat: "major", badge: "CS3", title: "5-Tier Threshold Exceedance Risk Mapping", desc: "--threshold=uk applies indicative UK thresholds (11.3 mg/L NO3-N, 0.069 mg/L P) to map 5-tier Gaussian exceedance probability.", tab: "cs2" },
+    { cat: "major", badge: "CS3", title: "Ecological Metrics & Inverted Scales", desc: "Supports inverts (whpt_aspt), diatoms, macrophytes, rhs & lcms with --reverse-color palettes.", tab: "cs2" },
+    { cat: "major", badge: "CS7", title: "Spatio-Temporal Batching & Dynamic Borrowing", desc: "--by=year|season|month + --st-borrow precision weighting, fig6 trend tests & fig7 period transitions.", tab: "cs3" },
+    { cat: "major", badge: "CS5", title: "Multivariate Factor-LMC Joint Co-Kriging", desc: "Models P >= 2 heterotopic targets simultaneously via --method=lmc|colocated with Dual CV benchmarks.", tab: "cs4" },
+    { cat: "major", badge: "CS5", title: "Multi-Source Fusion & Network Preference", desc: "Combine statutory RSN + SSN + citizen science using --prefer-source, --source-weight & --source-se.", tab: "cs4" },
+    { cat: "major", badge: "CS9", title: "Descriptive Stats, Bias & N:P Stoichiometry", desc: "Scripts 05 & 04 run Mann-Whitney representativeness tests, gradient breakdowns, Fisher z & Wald Z-tests.", tab: "cs5" },
     { cat: "minor", badge: "Kernels", title: "5 Stream Covariance Kernels (--kernel)", desc: "exponential, spherical, mariah, linear, or auto (selects best kernel by Profile MLE likelihood).", tab: "cs1" },
     { cat: "minor", badge: "Confluence", title: "3 Physical AFV Weighting Schemes (--afv)", desc: "Branch weights by upstream length, Shreve link magnitude, or hydro_yield (orographic + aquifer proxy).", tab: "cs1" },
     { cat: "minor", badge: "Covariates", title: "15 Covariates & Mixed +/- Selection (--vars)", desc: "Customize predictors with --vars=+Soil_Idx,-Slope_z; inspect full catalog via --list-vars.", tab: "cs1" },
     { cat: "minor", badge: "Transforms", title: "12 Transforms & 4 Normalisations", desc: "boxcox, yeojohnson, log, sqrt, logit, asin + Taylor/Duan back-transform; robust_zscore, zscore, minmax, percentile.", tab: "cs7" },
     { cat: "minor", badge: "Censoring", title: "ROS, Site-ROS & Spatial Tobit EM (< LOD)", desc: "Handle left-censored '<' detection limits (--censor=ros|ros_site|em) and colorimetric ranges (--range-mode=tobit).", tab: "cs2" },
     { cat: "minor", badge: "Uncertainty", title: "Two-Stage Approach A Meas-Error Kriging", desc: "--meas-error / --gam and --source-se propagate Delta-Method observation SE into prediction SE maps.", tab: "cs2" },
-    { cat: "major", badge: "CS8", title: "Optimal Monitoring Network Design & Gap Mapping", desc: "--design-sites=<K> runs OpenMP C++ Schur-complement active learning and renders multi-panel gap maps (80.74% variance drop at K=50).", tab: "cs8" },
+    { cat: "major", badge: "CS10", title: "Optimal Monitoring Network Design & Gap Mapping", desc: "--design-sites=<K> runs OpenMP C++ Schur-complement active learning and renders multi-panel gap maps (80.74% variance drop at K=50).", tab: "cs8" },
+    { cat: "major", badge: "CS2", title: "Macroinvertebrate Taxon Richness (WHPT N-Taxa) & GAM", desc: "Models 3,408 England inverts samples with --reverse-color, --trend=gam, and Robust Z-Score anomaly mapping (CV R2 0.1371 -> 0.2664).", tab: "cs9" },
+    { cat: "major", badge: "CS4", title: "Multi-Approach Eutrophication Synthesis (P, N, RMNI & DO)", desc: "Compares Factor-LMC Co-Kriging (0180+0117+rmni), GAM+S3N (R2=0.7607), and Seasonal DO + P-RMNI concordance (r=0.9005).", tab: "cs10" },
+    { cat: "major", badge: "CS11", title: "North West Nitrate, Exceedance & Seasonal Trends (RBD=12)", desc: "Regional North West RBD (12,465 reaches) Nitrate predictions, 11.3 mg/L UK exceedance tiers (99.4% compliant), and 4-season borrowing.", tab: "cs11" },
+    { cat: "major", badge: "CS12", title: "North West Inverts N-Taxa (RBD=12)", desc: "Regional North West WHPT N-Taxa richness (131 obs reaches, CV R2 0.1252 -> 0.1950, RMSE = 5.1640 taxa).", tab: "cs12" },
+    { cat: "major", badge: "CS13", title: "North West Station-to-Reach Snapping Audits", desc: "Snapping precision QC across Ribble, Mersey, Weaver, Lune, and Derwent catchments (median 1.88-3.48 m).", tab: "cs13" },
+    { cat: "major", badge: "CS14", title: "North West Optimal Monitoring Design (K=50)", desc: "OpenMP C++ Schur-complement active learning in North West RBD cuts variance by 45.95% (Mean SE 0.6956 -> 0.4887).", tab: "cs14" },
     { cat: "minor", badge: "Validation", title: "Hydrological CV Modes (--cv-mode)", desc: "--cv-mode=random|spatial|catchment|downstream|upstream evaluates geographic & downstream extrapolation.", tab: "cs1" },
     { cat: "minor", badge: "Networks", title: "BYOWN Custom GeoPackage & GeoParquet", desc: "Bring your own river shapefile/gpkg via JSON profile (--network) or convert via --convert-to-geoparquet.", tab: "overview" },
     { cat: "minor", badge: "Graphics", title: "Hybrid DPI, Vector SVG & Size Scaling", desc: "--fig-format=png|pdf|svg, --dpi=<N>, and --fig-size=<pct> across standalone & runner scripts.", tab: "workbench" }
@@ -276,14 +414,27 @@
       window.location.href = "../cli_workbench/index.html";
       return;
     }
+    const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+    const activeGroup = targetBtn ? targetBtn.dataset.group : "overview";
+
+    document.querySelectorAll(".group-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.group === activeGroup);
+    });
+
+    const subtabStrip = document.getElementById("subtabStrip");
+    if (subtabStrip) {
+      subtabStrip.classList.toggle("hidden", activeGroup === "overview");
+    }
+
     document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.classList.toggle("hidden-in-group", btn.dataset.group !== activeGroup);
       btn.classList.toggle("active", btn.dataset.tab === tabId);
     });
     document.querySelectorAll(".tab-panel").forEach((p) => {
       p.classList.toggle("active", p.id === "tab-" + tabId);
     });
-    if (updateHash !== false) {
-      history.replaceState(null, "", "#" + tabId);
+    if (updateHash !== false && window.location.hash !== "#" + tabId) {
+      history.pushState({ tab: tabId }, "", "#" + tabId);
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -324,7 +475,15 @@
       ["fig-slot-cs6-charts", "wb_comp_svg"],
       ["fig-slot-cs7-maps", "tr_diff_map"],
       ["fig-slot-cs7-charts", "tr_comp_svg"],
-      ["fig-slot-cs8-design", "opt_design_england"]
+      ["fig-slot-cs8-design", "opt_design_england"],
+      ["fig-slot-cs9-map", "ntaxa_england"],
+      ["fig-slot-cs9-diag", "ntaxa_diag"],
+      ["fig-slot-cs10-map", "eut_cokrig_rmni"],
+      ["fig-slot-cs10-diag", "eut_rmni_gam_diag"],
+      ["fig-slot-cs11-map", "nw_no3_map"],
+      ["fig-slot-cs12-map", "nw_ntaxa_map"],
+      ["fig-slot-cs13-map", "nw_snap_ribble"],
+      ["fig-slot-cs14-design", "nw_opt_design"]
     ];
     defaults.forEach(([slotId, figKey]) => renderFigureInto(slotId, figKey));
 
@@ -434,6 +593,297 @@
       t.params_0117 || []
     );
 
+    // --- CS9: Macroinvertebrate Taxon Richness (WHPT N-Taxa) + GAM ---
+    const cs9KpiEl = document.getElementById("cs9-kpis");
+    if (cs9KpiEl) {
+      cs9KpiEl.innerHTML = [
+        { val: "0.2648", lbl: "All-England Joint S3N R²", sub: "Up from 0.1371 OLS (+0.1277)" },
+        { val: "0.2664", lbl: "GAM + S3N Joint R²", sub: "RMSE = 5.3926 taxa (vs 5.8486 OLS)" },
+        { val: "0.1750", lbl: "Severn Basin Joint R²", sub: "Up from 0.0200 OLS (0.1790 GAM)" },
+        { val: "3,408", lbl: "Inverts Samples (1,313 Sites)", sub: "1,160 England RSN observed reaches" }
+      ].map((k) => `
+        <div class="kpi-card">
+          <div class="kpi-val">${k.val}</div>
+          <div class="kpi-lbl">${esc(k.lbl)}</div>
+          <div class="kpi-sub">${esc(k.sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    const cs9SvgEl = document.getElementById("cs9-r2-svg");
+    if (cs9SvgEl) {
+      cs9SvgEl.innerHTML = buildInlineBarSvg("All-England Held-Out CV R² (WHPT N-Taxa, Untransformed)", [
+        { label: "OLS (Non-Spatial Linear)", val: 0.1371, color: "#64748b" },
+        { label: "S3N Tail-Up (FC + AFV)", val: 0.1834, color: "#0284c7" },
+        { label: "S3N Tail-Down (Stream)", val: 0.2391, color: "#38bdf8" },
+        { label: "S3N Combined (TU+TD+Euc)", val: 0.2648, color: "#34d399" },
+        { label: "GAM + S3N Combined", val: 0.2664, color: "#a78bfa" }
+      ], 0.35);
+    }
+
+    const cvNtaxaAll = [
+      ...(t.cv_whpt_ntaxa || []).filter((r) => r.Domain === "All England RSN Network" || (r.Model || "").includes("Combined")),
+      ...(t.cv_whpt_ntaxa_gam || []).filter((r) => r.Domain === "All England RSN Network" && (r.Model || "").includes("Combined"))
+    ];
+    renderTable("cs9-cv-table", [
+      { key: "Domain", label: "Domain" },
+      { key: "Model", label: "Model" },
+      { key: "Spatial_Method", label: "Trend" },
+      { key: "n_obs", label: "n_obs", num: true },
+      { key: "RMSE", label: "RMSE", num: true, digits: 4 },
+      { key: "R2", label: "CV R²", num: true, digits: 4, clsFn: (r) => (r.R2 >= 0.25 ? "highlight-cell" : "") }
+    ], cvNtaxaAll);
+
+    const pNtaxa = (t.params_whpt_ntaxa || []).filter((r) => r.Domain === "All England RSN Network" && (r.Model || "").includes("Joint"));
+    renderTable("cs9-param-table", [
+      { key: "Parameter", label: "Parameter" },
+      { key: "Estimate", label: "Estimate", num: true, digits: 4 }
+    ], pNtaxa);
+
+    // --- CS10: Eutrophication Modelling Synthesis ---
+    const cs10KpiEl = document.getElementById("cs10-kpis");
+    if (cs10KpiEl) {
+      cs10KpiEl.innerHTML = [
+        { val: "0.7607", lbl: "Best National RMNI R² (GAM+S3N)", sub: "RMSE = 0.6846 (vs 0.6289 OLS)" },
+        { val: "0.7580", lbl: "LMC Co-Kriging RMNI R² (Aux)", sub: "Thames rescued -0.2671 -> +0.3165" },
+        { val: "0.9005", lbl: "P (0180) vs RMNI Reach r", sub: "86.55% 4-quadrant concordance (OR=41.4)" },
+        { val: "0.1574", lbl: "Summer DO (9901) Joint R²", sub: "Diel noise limits grab-sample DO CV" }
+      ].map((k) => `
+        <div class="kpi-card">
+          <div class="kpi-val">${k.val}</div>
+          <div class="kpi-lbl">${esc(k.lbl)}</div>
+          <div class="kpi-sub">${esc(k.sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    const cs10SvgEl = document.getElementById("cs10-r2-svg");
+    if (cs10SvgEl) {
+      cs10SvgEl.innerHTML = buildInlineBarSvg("All-England Held-Out CV R² Across Eutrophication Models", [
+        { label: "Summer DO % Sat (9901 S3N)", val: 0.1574, color: "#f97316" },
+        { label: "RMNI Linear OLS", val: 0.6289, color: "#64748b" },
+        { label: "RMNI Non-Spatial GAM", val: 0.7319, color: "#38bdf8" },
+        { label: "RMNI Linear Joint S3N", val: 0.7398, color: "#0284c7" },
+        { label: "RMNI LMC Co-Kriging (Aux)", val: 0.7580, color: "#34d399" },
+        { label: "RMNI GAM + Joint S3N", val: 0.7607, color: "#a78bfa" }
+      ], 0.85);
+    }
+
+    const eutCvRows = [
+      ...(t.cv_eut_cokrig || []).filter((r) => r.Target_Code === "rmni" && (r.Domain === "All England RSN Network" || r.Domain.includes("Thames") || r.Domain.includes("Severn"))).map((r) => ({
+        Approach: "1. LMC Co-Kriging",
+        Domain: r.Domain,
+        Model: r.Model,
+        RMSE: r.RMSE,
+        R2: r.R2
+      })),
+      ...(t.cv_eut_rmni || []).filter((r) => r.Domain === "All England RSN Network" && (r.Model.includes("OLS") || r.Model.includes("Combined"))).map((r) => ({
+        Approach: "2. Univariate Linear",
+        Domain: r.Domain,
+        Model: r.Model,
+        RMSE: r.RMSE,
+        R2: r.R2
+      })),
+      ...(t.cv_eut_rmni_gam || []).filter((r) => (r.Domain === "All England RSN Network" || r.Domain.includes("Thames")) && r.Model.includes("Combined")).map((r) => ({
+        Approach: "2. Univariate GAM+S3N",
+        Domain: r.Domain,
+        Model: r.Model + " [GAM]",
+        RMSE: r.RMSE,
+        R2: r.R2
+      })),
+      ...(t.cv_eut_do_summer || []).filter((r) => r.Domain === "All England RSN Network" && r.Model.includes("Combined")).map((r) => ({
+        Approach: "3. Summer DO (9901)",
+        Domain: r.Domain,
+        Model: r.Model + " (log %)",
+        RMSE: r.RMSE,
+        R2: r.R2
+      }))
+    ];
+    renderTable("cs10-cv-table", [
+      { key: "Approach", label: "Approach" },
+      { key: "Domain", label: "Domain" },
+      { key: "Model", label: "Model" },
+      { key: "RMSE", label: "RMSE", num: true, digits: 4 },
+      { key: "R2", label: "CV R²", num: true, digits: 4, clsFn: (r) => (r.R2 >= 0.73 ? "highlight-cell" : "") }
+    ], eutCvRows);
+
+    renderTable("cs10-rel-table", [
+      { key: "Stratum", label: "Stratum (0180 vs RMNI)" },
+      { key: "n_reaches", label: "Reaches", num: true },
+      { key: "Pearson_r", label: "Pearson r", num: true, digits: 4 },
+      { key: "Pct_Q1_HighHigh", label: "% High-High", num: true, digits: 2 },
+      { key: "Pct_Concordant", label: "% Concordant", num: true, digits: 2, clsFn: (r) => (r.Pct_Concordant >= 85 ? "highlight-cell" : "") }
+    ], t.eut_p_rmni_rel || []);
+
+    // --- CS11: North West Nitrate, Exceedance & Seasonal Trends ---
+    const cs11KpiEl = document.getElementById("cs11-kpis");
+    if (cs11KpiEl) {
+      cs11KpiEl.innerHTML = [
+        { val: "0.6702", lbl: "North West Joint S3N R²", sub: "12,465 reaches, 136 obs (vs 0.6523 OLS)" },
+        { val: "93.8%", lbl: "Confidently Compliant", sub: "11,686 reaches < 11.3 mg/L (0% exceeding)" },
+        { val: "0.6799", lbl: "Peak Autumn Seasonal R²", sub: "Summer 0.6704 | Spring 0.6576 | Winter 0.6197" },
+        { val: "0.8429", lbl: "Joint S3N RMSE (log mg/L)", sub: "Temporal borrowing rho_t = 0.363" }
+      ].map((k) => `
+        <div class="kpi-card">
+          <div class="kpi-val">${k.val}</div>
+          <div class="kpi-lbl">${esc(k.lbl)}</div>
+          <div class="kpi-sub">${esc(k.sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    const cs11SvgEl = document.getElementById("cs11-r2-svg");
+    if (cs11SvgEl) {
+      cs11SvgEl.innerHTML = buildInlineBarSvg("North West RBD (RBD=12) Nitrate Held-Out CV R²", [
+        { label: "Annual OLS (Non-Spatial)", val: 0.6523, color: "#64748b" },
+        { label: "Annual Joint S3N", val: 0.6702, color: "#34d399" },
+        { label: "Winter (DJF) Joint S3N", val: 0.6197, color: "#38bdf8" },
+        { label: "Spring (MAM) Joint S3N", val: 0.6576, color: "#0284c7" },
+        { label: "Summer (JJA) Joint S3N", val: 0.6704, color: "#f97316" },
+        { label: "Autumn (SON) Joint S3N", val: 0.6799, color: "#a78bfa" }
+      ], 0.80);
+    }
+
+    const nw0117Rows = [
+      ...(t.cv_nw_0117 || []).filter((r) => (r.Domain || "").includes("North West")),
+      ...(t.cv_nw_0117_winter || []).filter((r) => (r.Domain || "").includes("North West") && (r.Model || "").includes("Combined")),
+      ...(t.cv_nw_0117_spring || []).filter((r) => (r.Domain || "").includes("North West") && (r.Model || "").includes("Combined")),
+      ...(t.cv_nw_0117_summer || []).filter((r) => (r.Domain || "").includes("North West") && (r.Model || "").includes("Combined")),
+      ...(t.cv_nw_0117_autumn || []).filter((r) => (r.Domain || "").includes("North West") && (r.Model || "").includes("Combined"))
+    ];
+    renderTable("cs11-cv-table", [
+      { key: "Period", label: "Period" },
+      { key: "Model", label: "Model" },
+      { key: "n_obs", label: "n_obs", num: true },
+      { key: "RMSE", label: "RMSE", num: true, digits: 4 },
+      { key: "R2", label: "CV R²", num: true, digits: 4, clsFn: (r) => (r.R2 >= 0.67 ? "highlight-cell" : "") }
+    ], nw0117Rows);
+
+    renderTable("cs11-exceed-table", [
+      { key: "Tier", label: "Exceedance Tier (11.3 mg/L)" },
+      { key: "Reaches", label: "Reaches", num: true },
+      { key: "Pct", label: "% of NW", num: true, digits: 1, clsFn: (r) => (r.Tier === "Confidently Compliant" ? "highlight-cell" : "") }
+    ], [
+      { Tier: "Confidently Compliant", Reaches: 11686, Pct: 93.8 },
+      { Tier: "Likely Compliant", Reaches: 704, Pct: 5.7 },
+      { Tier: "Uncertain / Priority Monitoring", Reaches: 75, Pct: 0.6 },
+      { Tier: "Likely Exceeding", Reaches: 0, Pct: 0.0 },
+      { Tier: "Confidently Exceeding", Reaches: 0, Pct: 0.0 }
+    ]);
+
+    // --- CS12: North West Inverts N-Taxa ---
+    const cs12KpiEl = document.getElementById("cs12-kpis");
+    if (cs12KpiEl) {
+      cs12KpiEl.innerHTML = [
+        { val: "0.1950", lbl: "North West N-Taxa Joint R²", sub: "Up from 0.1252 OLS (+0.0698)" },
+        { val: "5.1640", lbl: "Joint S3N RMSE (taxa)", sub: "131 observed reaches across 12,465" },
+        { val: "13.92", lbl: "Euclidean Variance (sigma2_Euc)", sub: "Dominant spatial gradient in NW RBD" },
+        { val: "7.56", lbl: "Tail-Up Variance (sigma2_TU)", sub: "Flow-connected AFV continuity (tau2=4.30)" }
+      ].map((k) => `
+        <div class="kpi-card">
+          <div class="kpi-val">${k.val}</div>
+          <div class="kpi-lbl">${esc(k.lbl)}</div>
+          <div class="kpi-sub">${esc(k.sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    const cs12SvgEl = document.getElementById("cs12-r2-svg");
+    if (cs12SvgEl) {
+      cs12SvgEl.innerHTML = buildInlineBarSvg("North West RBD (RBD=12) WHPT N-Taxa Held-Out CV R²", [
+        { label: "OLS (Non-Spatial)", val: 0.1252, color: "#64748b" },
+        { label: "S3N Tail-Down (Stream)", val: 0.1090, color: "#38bdf8" },
+        { label: "S3N Tail-Up (FC + AFV)", val: 0.1229, color: "#0284c7" },
+        { label: "S3N Combined (TU+TD+Euc)", val: 0.1950, color: "#34d399" }
+      ], 0.25);
+    }
+
+    const nwNtaxaRows = (t.cv_nw_ntaxa || []).filter((r) => (r.Domain || "").includes("North West"));
+    renderTable("cs12-cv-table", [
+      { key: "Domain", label: "Domain" },
+      { key: "Model", label: "Model" },
+      { key: "n_obs", label: "n_obs", num: true },
+      { key: "RMSE", label: "RMSE", num: true, digits: 4 },
+      { key: "R2", label: "CV R²", num: true, digits: 4, clsFn: (r) => (r.R2 >= 0.19 ? "highlight-cell" : "") }
+    ], nwNtaxaRows);
+
+    // --- CS13: North West Station Snapping Diagnostics ---
+    const nwSnapIds = new Set(["161", "177", "173", "157", "138"]);
+    const nwSnapRows = (t.nw_snapping || []).filter((r) => nwSnapIds.has(String(r.CatchID)) || (r.RBD_Name || "") === "North West");
+
+    const cs13KpiEl = document.getElementById("cs13-kpis");
+    if (cs13KpiEl) {
+      cs13KpiEl.innerHTML = [
+        { val: "1.88 m", lbl: "Ribble Median Snap Offset", sub: "31 included, 2 excluded (87.1% <= 10 m)" },
+        { val: "100.0%", lbl: "Weaver Snapping <= 10 m", sub: "23 included, median 2.18 m" },
+        { val: "95.7%", lbl: "Mersey Snapping <= 10 m", sub: "23 included, 0 excluded, median 2.15 m" },
+        { val: "76.5%", lbl: "Lune Snapping <= 10 m", sub: "17 included, 0 excluded, median 3.48 m" }
+      ].map((k) => `
+        <div class="kpi-card">
+          <div class="kpi-val">${k.val}</div>
+          <div class="kpi-lbl">${esc(k.lbl)}</div>
+          <div class="kpi-sub">${esc(k.sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    const cs13SvgEl = document.getElementById("cs13-snap-svg");
+    if (cs13SvgEl && nwSnapRows.length) {
+      cs13SvgEl.innerHTML = buildInlineBarSvg("North West Catchments: % of Included Stations Snapped <= 10 m", nwSnapRows.slice(0, 6).map((r) => ({
+        label: `${r.Main_River} (${r.CatchID})`,
+        val: Number(r.Pct_Within_10m || 0),
+        color: Number(r.Pct_Within_10m) >= 90 ? "#34d399" : "#38bdf8"
+      })), 100, "%");
+    }
+
+    renderTable("cs13-snap-table", [
+      { key: "Main_River", label: "Catchment" },
+      { key: "Total_Reaches", label: "Reaches", num: true },
+      { key: "Stations_Included", label: "Included", num: true },
+      { key: "Stations_Excluded", label: "Excl.", num: true },
+      { key: "Median_Snap_m", label: "Median (m)", num: true, digits: 2 },
+      { key: "Pct_Within_10m", label: "<= 10 m (%)", num: true, digits: 1, clsFn: (r) => (r.Pct_Within_10m >= 85 ? "highlight-cell" : "") }
+    ], nwSnapRows);
+
+    // --- CS14: North West Optimal Monitoring Design ---
+    const nwDesignRows = (t.nw_design || []).filter((r) => (r.Domain || "").includes("North West"));
+    const cs14KpiEl = document.getElementById("cs14-kpis");
+    if (cs14KpiEl) {
+      cs14KpiEl.innerHTML = [
+        { val: "45.95%", lbl: "NW Variance Reduction (K=50)", sub: "Ranked across 12,465 reaches in 21.33s" },
+        { val: "0.4887", lbl: "Mean Kriging SE After K=50", sub: "Down -29.7% from 0.6956 log mg/L" },
+        { val: "136", lbl: "Existing NW RSN Stations", sub: "93.8% already confidently compliant" },
+        { val: "+2.77%", lbl: "#1 Site Variance Drop", sub: "Riv 38848 (Ribble, Order 6)" }
+      ].map((k) => `
+        <div class="kpi-card">
+          <div class="kpi-val">${k.val}</div>
+          <div class="kpi-lbl">${esc(k.lbl)}</div>
+          <div class="kpi-sub">${esc(k.sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    const cs14SvgEl = document.getElementById("cs14-design-svg");
+    if (cs14SvgEl && nwDesignRows.length) {
+      const milestones = [1, 5, 10, 25, 50].map((k) => nwDesignRows.find((r) => Number(r.Rank) === k)).filter(Boolean);
+      cs14SvgEl.innerHTML = buildInlineBarSvg("North West Cumulative Variance Reduction by Added Stations (K)", milestones.map((r) => ({
+        label: `Top ${r.Rank} Station${r.Rank === 1 ? "" : "s"} (SE ${Number(r.Mean_SE_After).toFixed(3)})`,
+        val: Number(r.Cum_Pct_Reduced || 0),
+        color: Number(r.Rank) === 50 ? "#34d399" : "#38bdf8"
+      })), 50, "%");
+    }
+
+    renderTable("cs14-design-table", [
+      { key: "Rank", label: "Rank", num: true },
+      { key: "RivID", label: "RivID", num: true },
+      { key: "CatchID", label: "CatchID", num: true },
+      { key: "Strahler", label: "Order", num: true },
+      { key: "Elevation", label: "Elev (m)", num: true, digits: 1 },
+      { key: "Current_SE_sc", label: "Local SE", num: true, digits: 4 },
+      { key: "Pct_Var_Reduced", label: "dV (%)", num: true, digits: 2 },
+      { key: "Cum_Pct_Reduced", label: "Cum. dV (%)", num: true, digits: 2, clsFn: (r) => (r.Rank <= 5 ? "highlight-cell" : "") }
+    ], nwDesignRows.slice(0, 20));
+
     // --- CS2: Exceedance + WHPT ASPT ---
     const ex0117 = (t.exceed_0117 || []).filter((r) => r.Domain === "All England RSN Network");
     const ex0180 = (t.exceed_0180 || []).filter((r) => r.Domain === "All England RSN Network");
@@ -507,7 +957,7 @@
     );
 
     // --- CS4: Co-Kriging & Multi-Source ---
-    const ckEng0117 = (t.cokrig_cv || []).filter((r) => r.Domain === "All England RSN Network" && r.Target_Code === "0117");
+    const ckEng0117 = (t.cokrig_cv || []).filter((r) => r.Domain === "All England RSN Network" && (r.Target_Code === "0117" || Number(r.Target_Code) === 117));
     const ckUni = ckEng0117.find((r) => String(r.Model).includes("Univariate")) || {};
     const ckAux = ckEng0117.find((r) => String(r.Model).includes("Aux-Aided")) || {};
     const rssComb = (t.cv_rss || []).find((r) => r.Domain === "All England RSS Combined Network" && String(r.Model).includes("Combined")) || {};
@@ -811,7 +1261,13 @@
           : k.startsWith("cokrig") || k.startsWith("rss_") ? "cs4"
           : k.startsWith("wb_") ? "cs6"
           : k.startsWith("tr_") ? "cs7"
-          : k.startsWith("opt_design_") ? "cs8" : "cs5"
+          : k.startsWith("opt_design_") ? "cs8"
+          : k.startsWith("ntaxa_") ? "cs9"
+          : k.startsWith("eut_") ? "cs10"
+          : k.startsWith("nw_no3_") ? "cs11"
+          : k.startsWith("nw_snap_") ? "cs13"
+          : k.startsWith("nw_opt_") ? "cs14"
+          : k.startsWith("nw_") ? "cs12" : "cs5"
       }))
     ];
 
@@ -977,6 +1433,12 @@
   }
 
   // Boot
+  document.querySelectorAll(".group-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetTab = btn.dataset.defaultTab || "overview";
+      switchTab(targetTab);
+    });
+  });
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
@@ -992,8 +1454,20 @@
   initCopyButtons();
   initLightbox();
 
+  function syncTabFromHash() {
+    const hashTab = window.location.hash.replace("#", "") || "overview";
+    const target = document.getElementById("tab-" + hashTab) ? hashTab : "overview";
+    switchTab(target, false);
+  }
+
+  window.addEventListener("popstate", syncTabFromHash);
+  window.addEventListener("hashchange", syncTabFromHash);
+
   const initialHash = window.location.hash.replace("#", "");
   if (initialHash && document.getElementById("tab-" + initialHash)) {
+    history.replaceState({ tab: initialHash }, "", "#" + initialHash);
     switchTab(initialHash, false);
+  } else {
+    history.replaceState({ tab: "overview" }, "", window.location.pathname + window.location.search);
   }
 })();

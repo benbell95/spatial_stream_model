@@ -1059,7 +1059,7 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
     if (!is.null(res_hum)) list(res_hum$design_df) else NULL,
     if (!is.null(res_tha)) list(res_tha$design_df) else NULL,
     if (!is.null(res_sev)) list(res_sev$design_df) else NULL,
-    lapply(extra_fits, function(ef) ef$design_df)
+    lapply(extra_fits, function(ef) if (!is.null(ef$fit)) ef$fit$design_df else NULL)
   ))
   if (length(design_list) > 0L) {
     write.csv(do.call(rbind, design_list),
@@ -1213,10 +1213,10 @@ plot_temporal_slice <- function(sl, sc_val, sc_se_eng = NULL, sc_se_hum = NULL, 
     if (length(extra_fits) > 0L) {
       for (k in seq_along(extra_fits)) {
         ef <- extra_fits[[k]]
-        if (!is.null(ef$design_df) && nrow(ef$design_df) > 0L) {
+        if (!is.null(ef$fit) && !is.null(ef$fit$design_df) && nrow(ef$fit$design_df) > 0L) {
           des_k_path <- file.path(out_subdir, sprintf("fig_optimal_design_basin_%s_%s.png", ef$info$slug, det_code))
           plot_fig_optimal_design(
-            ef$pred_df, ef$design_df, domain_label = ef$design_df$Domain[1],
+            ef$pred_df, ef$fit$design_df, domain_label = ef$fit$design_df$Domain[1],
             det_code, det_title_name, det_unit, trans_obj, des_k_path,
             sc_se = NULL, vars_label = vars_sub, network_label = net_lbl, source_label = source_label
           )
