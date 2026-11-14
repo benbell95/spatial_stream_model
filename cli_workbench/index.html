@@ -46,8 +46,8 @@
             <button class="fig-toggle-btn" type="button" data-shell="powershell">PowerShell</button>
             <button class="fig-toggle-btn" type="button" data-shell="cmd">Command</button>
           </div>
-          <button id="wbWrapToggleBtn" class="btn" type="button" title="Switch between single-line and multi-line wrapped command">Wrap Flags: On</button>
-          <button id="wbResetBtn" class="btn" type="button" title="Reset all options to default values">Reset Defaults</button>
+          <button id="wbWrapToggleBtn" class="btn" type="button" title="Switch between single-line and multi-line wrapped command">Wrap Flags: Off</button>
+          <button id="wbResetBtn" class="btn btn-reset" type="button" title="Reset all options to default values">Reset Commands</button>
         </div>
       </div>
 
@@ -78,7 +78,13 @@
       <div class="code-wrap" style="margin-top:4px;">
         <div class="code-bar">
           <span id="wbCmdTargetScript">Bash &middot; scripts/run_s3n_determinand.R</span>
-          <button class="copy-btn" data-copy-target="wbOutputCmd">Copy Command</button>
+          <div class="wb-code-bar-actions">
+            <div id="wbHistoryWrap" class="wb-history-wrap">
+              <button id="wbHistoryBtn" class="copy-btn" type="button" aria-expanded="false" hidden>History (0)</button>
+              <div id="wbHistoryMenu" class="wb-history-menu" hidden></div>
+            </div>
+            <button class="copy-btn" data-copy-target="wbOutputCmd">Copy Command</button>
+          </div>
         </div>
         <pre id="wbOutputCmd" class="wb-cmd-pre"></pre>
       </div>
@@ -88,6 +94,17 @@
         <ul id="wbNotesList"></ul>
       </div>
     </section>
+
+    <!-- SECTION NAVIGATION TABS -->
+    <div id="wbSectionTabsWrap" class="wb-nav-tabs-wrap">
+      <div id="wbSectionTabs" class="fig-toggle-bar wb-nav-tabs" role="tablist" aria-label="Command Sections">
+        <button class="fig-toggle-btn" type="button" role="tab" aria-selected="false" data-wb-tab="all">All</button>
+        <button class="fig-toggle-btn active" type="button" role="tab" aria-selected="true" data-wb-tab="model">Model &amp; Preprocess</button>
+        <button class="fig-toggle-btn" type="button" role="tab" aria-selected="false" data-wb-tab="discovery">Discovery</button>
+        <button class="fig-toggle-btn" type="button" role="tab" aria-selected="false" data-wb-tab="post">Compare &amp; Diagnostics</button>
+        <button class="fig-toggle-btn" type="button" role="tab" aria-selected="false" data-wb-tab="plots">Re-Plot Outputs</button>
+      </div>
+    </div>
 
     <!-- 2. DISCOVERY & INSPECTION COMMANDS (--list) -->
     <section id="wbDiscoveryCard" class="card wb-discovery-card" aria-labelledby="discoveryHeading">
@@ -117,11 +134,11 @@
     </section>
 
     <!-- 3. CONFIGURE ANALYSIS (ORGANISED BY FUNCTION / ABILITY) -->
-    <section aria-label="Configure Analysis">
+    <section id="wbConfigureSection" aria-label="Configure Analysis">
       <div class="wb-sections-grid">
 
         <!-- GROUP 1: CORE WORKFLOW, TARGET & DATA SOURCE -->
-        <div class="wb-group-card">
+        <div class="wb-group-card" data-wb-group="model">
           <div class="wb-group-head">
             <div>
               <h3 class="wb-group-title">1. Core Workflow, Target &amp; Data Source</h3>
@@ -135,22 +152,26 @@
                 <label for="wbMode">Workflow Script</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about Workflow Script">i</button>
-                  <span class="info-popover"><strong>Workflow Entrypoint</strong><code>run_s3n_determinand.R</code> fits univariate S3N models + maps. <code>run_s3n_cokriging.R</code> fits multivariate Factor-LMC / Colocated co-kriging across 2+ targets. <code>01_preprocess_orn.py</code> snaps monitoring stations onto ORN v2 and computes topology/AFV tables.</span>
+                  <span class="info-popover"><strong>Workflow Entrypoint</strong><code>run_s3n_determinand.R</code> fits univariate S3N models + maps. <code>run_s3n_cokriging.R</code> fits multivariate Factor-LMC / Colocated co-kriging across 2+ targets. <code>01_preprocess_orn.py</code> snaps stations onto ORN v2. Cards 5 &amp; 6 also let you switch directly to <code>05_descriptive_stats.R</code>, <code>04_compare_model_runs.R</code>, and <code>06_station_snapping_diagnostics.R</code>.</span>
                 </span>
               </div>
               <select id="wbMode">
                 <option value="det">Single-Determinand (run_s3n_determinand.R)</option>
                 <option value="cokrig">Multivariate Co-Kriging (run_s3n_cokriging.R)</option>
                 <option value="prep">Preprocessing &amp; Snapping (01_preprocess_orn.py)</option>
+                <option value="stats">Post-Run Descriptives (05_descriptive_stats.R)</option>
+                <option value="compare">Compare Model Runs (04_compare_model_runs.R)</option>
+                <option value="snap">Station Snapping Diagnostics (06_station_snapping_diagnostics.R)</option>
+                <option value="plots">Standalone Re-Plotting (03_generate_plots.R)</option>
               </select>
             </div>
 
-            <div class="field" data-applies="det,cokrig">
+            <div class="field" data-applies="det,cokrig,prep">
               <div class="field-head">
                 <label for="wbTargetSel">Target / Determinand(s)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about Target determinands">i</button>
-                  <span class="info-popover"><strong>Target Code(s)</strong>Includes all numerical RSN &amp; SSN determinands grouped by category: <strong>Water Quality</strong> (nutrients, ions, metals, pesticides, PFAS), <strong>Biology</strong> (<code>inverts</code>, <code>macrophytes</code>, <code>diatoms</code>), <strong>Habitat</strong> (<code>rhs</code>), <strong>Organics</strong> (<code>lcms</code>), and Co-Kriging suites. Select a specific <code>--dataset</code> to filter the list, or choose <em>Custom...</em>.</span>
+                  <span class="info-popover"><strong>Target Code(s)</strong>Curated popular targets from the Usage Guide, grouped by <strong>Water Quality</strong> (15), <strong>Biology</strong> (<code>inverts</code>, <code>diatoms</code>, <code>macrophytes</code>), <strong>Habitat</strong> (<code>rhs</code>), and Co-Kriging suites. Select a specific <code>--dataset</code> to filter, or choose <em>Custom...</em> (use <em>List Determinands</em> above to inspect all available codes).</span>
                 </span>
               </div>
               <select id="wbTargetSel">
@@ -160,7 +181,7 @@
               <input id="wbTargetCustom" class="wb-custom-sub" type="text" value="0117" placeholder="e.g. 0117, whpt_aspt, or 206440 (LCMS CAS)" hidden />
             </div>
 
-            <div class="field" data-applies="all">
+            <div class="field" data-applies="det,cokrig,prep">
               <div class="field-head">
                 <label for="wbDataset">Dataset (<code>--dataset</code>)</label>
                 <span class="info-wrap">
@@ -179,7 +200,7 @@
               </select>
             </div>
 
-            <div class="field" data-applies="all">
+            <div class="field" data-applies="det,cokrig,prep,snap">
               <div class="field-head">
                 <label for="wbSourceSel">Monitoring Source (<code>--source</code>)</label>
                 <span class="info-wrap">
@@ -198,7 +219,7 @@
               <input id="wbSourceCustom" class="wb-custom-sub" type="text" value="rsn" placeholder="e.g. rsn+my_custom_source" hidden />
             </div>
 
-            <div class="field" data-applies="all">
+            <div class="field" data-applies="det,cokrig,prep,snap">
               <div class="field-head">
                 <label for="wbNetworkSel">River Network (<code>--network</code>)</label>
                 <span class="info-wrap">
@@ -216,7 +237,7 @@
         </div>
 
         <!-- GROUP 2: TRANSFORM, CENSORING & SPATIAL ENGINE -->
-        <div class="wb-group-card">
+        <div class="wb-group-card" data-wb-group="model">
           <div class="wb-group-head">
             <div>
               <h3 class="wb-group-title">2. Transformations, Censoring &amp; Spatial Model</h3>
@@ -225,7 +246,7 @@
             <span class="pill pill-green">Model Physics</span>
           </div>
           <div class="form-grid">
-            <div class="field" data-applies="all">
+            <div class="field" data-applies="det,prep">
               <div class="field-head">
                 <label for="wbTransform">Response Transform (<code>--transform</code>)</label>
                 <span class="info-wrap">
@@ -265,19 +286,18 @@
 
             <div class="field" data-applies="det,prep">
               <div class="field-head">
-                <label for="wbCensor">Left-Censored <code>&lt; LOD</code> (<code>--censor</code>)</label>
+                <label for="wbCensor">Left-Censored <code>&lt; LOD</code> (<code>--censor</code> / <code>--censor-method</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about Censor flag">i</button>
-                  <span class="info-popover"><strong>Non-Detect Handling (<code>--censor</code>)</strong><code>ros</code> uses Regression on Order Statistics; <code>ros_site</code> fits separate ROS curves per station; <code>em</code> activates iterative <strong>Spatial Tobit EM kriging</strong> incorporating spatial neighbors around censored/range intervals.</span>
+                  <span class="info-popover"><strong>Non-Detect Handling</strong><code>ros</code> uses Regression on Order Statistics; <code>ros_site</code> fits separate ROS curves per station (in <code>01_preprocess_orn.py</code>); <code>em</code> activates iterative <strong>Spatial Tobit EM kriging</strong> (in <code>run_s3n_determinand.R</code>); <code>half_lod</code> uses 0.5 &times; detection limit.</span>
                 </span>
               </div>
               <select id="wbCensor">
                 <option value="default">Default (ROS Imputation)</option>
                 <option value="ros">ros — Global Log-Probability ROS</option>
-                <option value="ros_site">ros_site — Site-Level Hierarchical ROS</option>
+                <option value="ros_site">ros_site — Site-Level ROS (Preprocess)</option>
                 <option value="em">em — Spatial Tobit EM Censored Kriging</option>
-                <option value="half">half — 0.5 &times; Detection Limit</option>
-                <option value="dl">dl — Face-Value Detection Limit</option>
+                <option value="half_lod">half_lod — 0.5 &times; Detection Limit</option>
               </select>
             </div>
 
@@ -317,9 +337,9 @@
               </select>
             </div>
 
-            <div class="field" data-applies="det,cokrig">
+            <div class="field" data-applies="det,prep">
               <div class="field-head">
-                <label for="wbAfv">Confluence Weight (<code>--afv</code>)</label>
+                <label for="wbAfv">Confluence Weight (<code>--afv</code> / <code>--afv-scheme</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about AFV flag">i</button>
                   <span class="info-popover"><strong>Additive Function Value (<code>--afv</code>)</strong>Determines how Tail-Up variance splits at river confluences: equal upstream network length (<code>length</code>), Shreve stream order magnitude (<code>shreve</code>), or orographic rainfall + aquifer permeability proxy (<code>hydro_yield</code>).</span>
@@ -331,11 +351,42 @@
                 <option value="hydro_yield">hydro_yield — Orographic + Aquifer Proxy</option>
               </select>
             </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbCombine">TU+TD Combine (<code>--combine</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Combine flag">i</button>
+                  <span class="info-popover"><strong>Tail-Up + Tail-Down Combination (<code>--combine</code>)</strong><code>joint</code> (default) solves one unified TU+TD+Euclidean NNGP Cholesky system. <code>precision</code> uses legacy spatial information-gain averaging.</span>
+                </span>
+              </div>
+              <select id="wbCombine">
+                <option value="joint">joint — Unified NNGP Cholesky (Default)</option>
+                <option value="precision">precision — Legacy Precision-Weighted</option>
+              </select>
+            </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbVarsSel">Covariate Subset (<code>--vars</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Vars flag">i</button>
+                  <span class="info-popover"><strong>Custom Covariate Subset (<code>--vars</code>)</strong>Modify the default 6 predictors (<code>elev,slope,urban,chalk,sand,clay</code>) using modifiers like <code>-chalk,-sand,+aquifer</code> or an explicit list. Use <em>List Covariates</em> under Discovery for all columns.</span>
+                </span>
+              </div>
+              <select id="wbVarsSel">
+                <option value="">Default 6 Covariates (elev,slope,urban,chalk,sand,clay)</option>
+                <option value="-chalk,-sand,+aquifer">-chalk,-sand,+aquifer (Swap Geology for Aquifer)</option>
+                <option value="elev,slope,urban,aquifer">elev,slope,urban,aquifer (4-Var Subset)</option>
+                <option value="custom">Custom covariate expression...</option>
+              </select>
+              <input id="wbVarsCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. -chalk,+aquifer or elev,slope" hidden />
+            </div>
           </div>
         </div>
 
         <!-- GROUP 3: VALIDATION, RISK, TEMPORAL & MONITORING DESIGN -->
-        <div class="wb-group-card">
+        <div class="wb-group-card" data-wb-group="model">
           <div class="wb-group-head">
             <div>
               <h3 class="wb-group-title">3. Validation, Threshold Risk, Time &amp; Network Design</h3>
@@ -383,7 +434,7 @@
               </div>
             </div>
 
-            <div class="field" data-applies="det">
+            <div class="field" data-applies="det,prep">
               <div class="field-head">
                 <label for="wbTemporal">Temporal Slicing (<code>--by</code> / Filter)</label>
                 <span class="info-wrap">
@@ -396,8 +447,30 @@
                 <option value="by_season">--by=season --st-borrow (4 Seasons + Trends)</option>
                 <option value="by_year">--by=year --st-borrow (Annual + Trends)</option>
                 <option value="by_month">--by=month --st-borrow (Monthly Cycle)</option>
-                <option value="season_winter">--season=winter (Single Season Filter)</option>
-                <option value="year_2024">--year=2024 (Single Year Filter)</option>
+                <option value="custom_season">Single Season (--season=...)</option>
+                <option value="custom_year">Single Year (--year=...)</option>
+                <option value="custom_month">Single Month (--month=...)</option>
+              </select>
+              <select id="wbTemporalSeason" class="wb-custom-sub" aria-label="Select season" hidden>
+                <option value="winter">winter (Dec–Feb)</option>
+                <option value="spring">spring (Mar–May)</option>
+                <option value="summer">summer (Jun–Aug)</option>
+                <option value="autumn">autumn (Sep–Nov)</option>
+              </select>
+              <input id="wbTemporalYear" class="wb-custom-sub" type="number" min="1990" max="2035" value="2024" placeholder="Year (e.g. 2024)" hidden />
+              <select id="wbTemporalMonth" class="wb-custom-sub" aria-label="Select month" hidden>
+                <option value="1">1 — January</option>
+                <option value="2">2 — February</option>
+                <option value="3">3 — March</option>
+                <option value="4">4 — April</option>
+                <option value="5">5 — May</option>
+                <option value="6">6 — June</option>
+                <option value="7">7 — July</option>
+                <option value="8">8 — August</option>
+                <option value="9">9 — September</option>
+                <option value="10">10 — October</option>
+                <option value="11">11 — November</option>
+                <option value="12">12 — December</option>
               </select>
             </div>
 
@@ -435,11 +508,26 @@
               </select>
               <input id="wbBasinCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. Eden,Wye or 3125" hidden />
             </div>
+
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbBoot">Bootstrap CIs / Speed (<code>--boot</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Bootstrap flag">i</button>
+                  <span class="info-popover"><strong>Parametric Bootstrap Iterations (<code>--boot</code>)</strong>Controls bootstrap replicates for parameter confidence intervals (<code>50</code> default). Set <code>0</code> for a fast run without bootstrap CIs, or <code>100</code> for tighter CIs.</span>
+                </span>
+              </div>
+              <select id="wbBoot">
+                <option value="50">50 iterations (Default)</option>
+                <option value="0">0 — Fast Run (Skip Bootstrap CIs)</option>
+                <option value="100">100 — High-Precision CIs</option>
+              </select>
+            </div>
           </div>
         </div>
 
         <!-- GROUP 4: MULTI-SOURCE FUSION, GRAPHICS & COMPUTE -->
-        <div class="wb-group-card">
+        <div class="wb-group-card" data-wb-group="model">
           <div class="wb-group-head">
             <div>
               <h3 class="wb-group-title">4. Multi-Source Fusion, Graphics &amp; Compute</h3>
@@ -498,17 +586,17 @@
               <input id="wbSeCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. rsn:0.05,waterblitz:0.4" hidden />
             </div>
 
-            <div class="field" data-applies="det,cokrig">
+            <div class="field" data-applies="det,cokrig,stats,compare,snap">
               <div class="field-head">
                 <label for="wbFormat">Figure Output (<code>--dpi</code> / <code>--fig-format</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about Figure Output flag">i</button>
-                  <span class="info-popover"><strong>Publication Graphics Mode</strong>Use <code>PNG @ 300 DPI</code> for crisp 90k-reach national stream maps (fast rasterization), <code>SVG</code> for resolution-independent vector diagnostics &amp; small basins, or <code>PDF</code> for print typesetting.</span>
+                  <span class="info-popover"><strong>Publication Graphics Mode</strong>Uses <code>PNG @ 200 DPI</code> by default for fast rasterization; select <code>PNG @ 300 DPI</code> for crisp high-res national stream maps, <code>SVG</code> for resolution-independent vector diagnostics &amp; small basins, or <code>PDF</code> for print typesetting.</span>
                 </span>
               </div>
               <select id="wbFormat">
+                <option value="png_200">PNG @ 200 DPI (Default)</option>
                 <option value="png_300">PNG @ 300 DPI (High-Res Maps)</option>
-                <option value="png_200">PNG @ 200 DPI (Default Fast)</option>
                 <option value="svg">SVG (Scalable Vector Graphics)</option>
                 <option value="pdf">PDF (Vector Print Export)</option>
               </select>
@@ -523,9 +611,8 @@
                 </span>
               </div>
               <select id="wbPalette">
-                <option value="auto">Auto (Invert for Ecology Datasets)</option>
-                <option value="standard">Standard (Blue-Low &rarr; Red-High)</option>
-                <option value="reverse">Force --reverse-color (Red-Low &rarr; Blue-High)</option>
+                <option value="standard">Standard (Blue-Low &rarr; Red-High, Default)</option>
+                <option value="reverse">Reverse (--reverse-color, Red-Low &rarr; Blue-High)</option>
               </select>
             </div>
 
@@ -534,19 +621,281 @@
                 <label for="wbOmp">OpenMP Threads (<code>--omp</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about OpenMP flag">i</button>
-                  <span class="info-popover"><strong>Parallel C++ Compute (<code>--omp</code>)</strong>Controls thread count inside <code>s3n_fast_neighbors.so</code> for NNGP likelihood, kriging prediction, weighted Co-Kriging, and Greedy Optimal Monitoring Design. Use <code>4</code> on laptops or <code>8+</code> on workstations.</span>
+                  <span class="info-popover"><strong>Parallel C++ Compute (<code>--omp</code>)</strong>Controls thread count inside <code>s3n_fast_neighbors.so</code> for NNGP likelihood, kriging prediction, weighted Co-Kriging, and Greedy Optimal Monitoring Design. Defaults to <code>1</code> in R; pass <code>4</code> on laptops or <code>8+</code> on workstations.</span>
                 </span>
               </div>
               <select id="wbOmp">
-                <option value="4">4 threads (Balanced Default)</option>
+                <option value="1">1 thread (Script Default)</option>
+                <option value="4">4 threads (Multi-Core)</option>
                 <option value="8">8 threads (Workstation Fast)</option>
-                <option value="1">1 thread (Low-Memory Safe)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- GROUP 5: POST-RUN DESCRIPTIVE STATS & MODEL COMPARISONS -->
+        <div id="wbPostCard" class="wb-group-card" data-wb-group="post">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">5. Post-Run Descriptives &amp; Comparisons</h3>
+              <p class="wb-group-sub">Inspect saved outputs with <code>05_descriptive_stats.R</code> or compare runs with <code>04_compare_model_runs.R</code>.</p>
+            </div>
+            <span class="pill pill-blue">Post-Run</span>
+          </div>
+
+          <div class="wb-card-actions">
+            <div id="wbPostActionBtns" class="fig-toggle-bar" role="group" aria-label="Post-Run Script">
+              <button class="fig-toggle-btn" type="button" data-post-mode="stats">Descriptive Stats (05)</button>
+              <button class="fig-toggle-btn" type="button" data-post-mode="compare">Compare Runs (04)</button>
+            </div>
+            <button id="wbScanOutputsPostBtn" class="btn wb-scan-btn" type="button" title="Scan your local output/ or output/results/ folder to populate saved run directories">Scan output/</button>
+            <span id="wbScanStatusPost" class="wb-scan-status"></span>
+          </div>
+
+          <div class="wb-fields">
+            <div class="field" data-post-applies="stats,compare">
+              <div class="field-head">
+                <label for="wbPostDir1">Primary Run / Parent Directory</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Primary Run Directory">i</button>
+                  <span class="info-popover"><strong>Primary Results Folder</strong>Saved model directory for <code>05_descriptive_stats.R</code> (e.g. <code>output/results/det_0117_orn_rsn</code>), first run for <code>04_compare_model_runs.R</code>, or parent temporal batch directory when using <code>--by=season|year|month</code>.</span>
+                </span>
+              </div>
+              <select id="wbPostDir1Sel" aria-label="Pick scanned primary run directory" hidden></select>
+              <input id="wbPostDir1" class="wb-custom-sub" type="text" list="wbOutputDirsList" value="output/results/det_0117_orn_rsn" placeholder="e.g. output/results/det_0117_orn_rsn" />
+            </div>
+
+            <div class="field" data-post-applies="compare">
+              <div class="field-head">
+                <label for="wbCompareMode">Comparison Mode (<code>--by</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Comparison Mode">i</button>
+                  <span class="info-popover"><strong>Multi-Run vs. Temporal Slice Comparison</strong>Compare 2+ saved output folders side by side, or pass a single temporal batch folder with <code>--by=season</code>, <code>--by=year</code>, or <code>--by=month</code> to compare its subfolders automatically.</span>
+                </span>
+              </div>
+              <select id="wbCompareMode">
+                <option value="dirs">Multi-Run Directories (&lt;dir1&gt; &lt;dir2&gt; ...)</option>
+                <option value="season">Temporal Subfolders (--by=season)</option>
+                <option value="year">Temporal Subfolders (--by=year)</option>
+                <option value="month">Temporal Subfolders (--by=month)</option>
+              </select>
+            </div>
+
+            <div id="wbPostDir2Wrap" class="field" data-post-applies="compare">
+              <div class="field-head">
+                <label for="wbPostDir2">Additional Run Directory(s)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Additional Run Directories">i</button>
+                  <span class="info-popover"><strong>Run 2+ Folders</strong>Comma- or space-separated model output directories to compare against the primary run (supports cross-network, cross-determinand, or covariate comparisons).</span>
+                </span>
+              </div>
+              <div id="wbPostDir2SelRow" class="wb-sel-add-row" hidden>
+                <select id="wbPostDir2Sel" aria-label="Pick scanned additional run directory" hidden></select>
+                <button id="wbPostDir2AddBtn" class="btn wb-scan-btn" type="button" title="Append selected folder to compare 3+ runs">+ Add</button>
+              </div>
+              <input id="wbPostDir2" class="wb-custom-sub" type="text" list="wbOutputDirsList" value="output/results/det_0180_orn_rsn" placeholder="e.g. output/results/det_0180_orn_rsn" />
+            </div>
+
+            <div class="field" data-post-applies="stats,compare">
+              <div class="field-head">
+                <label for="wbPostLabels">Run Label(s) (<code>--label</code> / <code>--labels</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Run Labels">i</button>
+                  <span class="info-popover"><strong>Custom Legend / Report Labels</strong>Optional display label for <code>05_descriptive_stats.R</code> (<code>--label="..."</code>) or comma-separated labels for <code>04_compare_model_runs.R</code> (<code>--labels="L1,L2,..."</code>).</span>
+                </span>
+              </div>
+              <input id="wbPostLabels" type="text" value="" placeholder="Optional, e.g. Nitrate,Orthophosphate" />
+            </div>
+
+            <div class="field" data-post-applies="stats,compare">
+              <div class="field-head">
+                <label for="wbPostOut">Custom Output Directory (<code>--out</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Post-Run Output Directory">i</button>
+                  <span class="info-popover"><strong>Output Destination</strong>Optional custom folder for reports, CSVs, and figures. Leave blank to use defaults (<code>&lt;run_dir&gt;/descriptives/</code> or <code>output/comparisons/...</code>).</span>
+                </span>
+              </div>
+              <input id="wbPostOut" type="text" value="" placeholder="Optional, e.g. output/comparisons/custom" />
+            </div>
+          </div>
+        </div>
+
+        <!-- GROUP 6: STATION SNAPPING DIAGNOSTICS -->
+        <div id="wbSnapCard" class="wb-group-card" data-wb-group="post">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">6. Station Snapping Diagnostics</h3>
+              <p class="wb-group-sub">Audit station-to-reach snapping distances and geometry with <code>06_station_snapping_diagnostics.R</code>.</p>
+            </div>
+            <span class="pill pill-amber">Diagnostics</span>
+          </div>
+
+          <div class="wb-card-actions">
+            <button id="wbActivateSnapBtn" class="fig-toggle-btn" type="button">Use Snapping Diagnostics (06)</button>
+          </div>
+
+          <div class="wb-fields">
+            <div class="field" data-snap-applies="snap">
+              <div class="field-head">
+                <label for="wbSnapCatchmentSel">Catchment / Basin Filter (<code>--catchment</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Snapping Catchment Filter">i</button>
+                  <span class="info-popover"><strong>Catchment-Level Zoom Maps</strong>Filters snapping diagnostics and renders metre-scale station-to-reach zoom insets for selected catchments (e.g. <code>Thames</code> or <code>Humber,Thames,Severn,Eden</code>). Use <em>List Snapping Catchments</em> above to see all IDs.</span>
+                </span>
+              </div>
+              <select id="wbSnapCatchmentSel">
+                <option value="all">All Catchments (Full Network Summary)</option>
+                <option value="Thames">Thames</option>
+                <option value="Humber">Humber</option>
+                <option value="Severn">Severn</option>
+                <option value="Eden">Eden</option>
+                <option value="Humber,Thames,Severn,Eden">Humber,Thames,Severn,Eden (Major Basins)</option>
+                <option value="custom">Custom catchment ID(s) or name(s)...</option>
+              </select>
+              <input id="wbSnapCatchmentCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. Ribble,Wye or 306" hidden />
+            </div>
+
+            <div class="field" data-snap-applies="snap">
+              <div class="field-head">
+                <label for="wbSnapOut">Custom Output Directory (<code>--out</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Snapping Output Directory">i</button>
+                  <span class="info-popover"><strong>Snapping Report &amp; Map Folder</strong>Defaults to <code>output/station_snapping/&lt;network&gt;/</code>. Set a custom path to isolate sensitivity tests.</span>
+                </span>
+              </div>
+              <input id="wbSnapOut" type="text" value="" placeholder="Optional, e.g. output/station_snapping/test" />
+            </div>
+
+            <p class="wb-card-note">Uses <strong>Monitoring Source</strong> (<code>--source</code>), <strong>River Network</strong> (<code>--network</code>), and <strong>Figure Output</strong> (<code>--fig-format</code> / <code>--dpi</code>) from Cards 1 &amp; 4 when non-default.</p>
+          </div>
+        </div>
+
+        <!-- GROUP 7: STANDALONE RE-PLOTTING (03_generate_plots.R) -->
+        <div id="wbPlotCard" class="wb-group-card wb-group-card-full" data-wb-group="plots">
+          <div class="wb-group-head">
+            <div>
+              <h3 class="wb-group-title">7. Standalone Re-Plotting (<code>03_generate_plots.R</code>)</h3>
+              <p class="wb-group-sub">Re-render publication maps, custom basins, or rescaled color bars from any saved model run without re-fitting.</p>
+            </div>
+            <span class="pill pill-blue">Graphics</span>
+          </div>
+
+          <div class="wb-card-actions">
+            <button id="wbActivatePlotBtn" class="fig-toggle-btn" type="button">Use Standalone Plotting (03)</button>
+            <button id="wbScanOutputsPlotBtn" class="btn wb-scan-btn" type="button" title="Scan your local output/ or output/results/ folder to populate saved run directories">Scan output/</button>
+            <span id="wbScanStatusPlot" class="wb-scan-status"></span>
+          </div>
+
+          <div class="wb-fields wb-fields-2col">
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotDir">Saved Run Directory (<code>--dir</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Plot Run Directory">i</button>
+                  <span class="info-popover"><strong>Model Output Directory (<code>--dir</code>)</strong>Folder containing saved predictions (e.g. <code>output/results/det_0117_orn_rsn</code> or a temporal batch folder).</span>
+                </span>
+              </div>
+              <select id="wbPlotDirSel" aria-label="Pick scanned run directory to plot" hidden></select>
+              <input id="wbPlotDir" class="wb-custom-sub" type="text" list="wbOutputDirsList" value="output/results/det_0117_orn_rsn" placeholder="e.g. output/results/det_0117_orn_rsn" />
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotBasin">Custom Basin Focus (<code>--basin</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Plot Basin">i</button>
+                  <span class="info-popover"><strong>Basin Maps (<code>--basin</code>)</strong>Optional river name(s) or CatchID(s) to render high-resolution dedicated basin maps (e.g. <code>Eden,Ribble</code>).</span>
+                </span>
+              </div>
+              <input id="wbPlotBasin" type="text" value="" placeholder="Optional, e.g. Eden,Ribble" />
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotVmin">Color Scale Min (<code>--vmin</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about vmin">i</button>
+                  <span class="info-popover"><strong>Fixed Lower Bound (<code>--vmin</code>)</strong>Optional lower limit for the map color bar (e.g. <code>0.2</code>) to align scales across runs.</span>
+                </span>
+              </div>
+              <input id="wbPlotVmin" type="text" value="" placeholder="Optional, e.g. 0.2" />
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotVmax">Color Scale Max (<code>--vmax</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about vmax">i</button>
+                  <span class="info-popover"><strong>Fixed Upper Bound (<code>--vmax</code>)</strong>Optional upper limit for the map color bar (e.g. <code>20</code>).</span>
+                </span>
+              </div>
+              <input id="wbPlotVmax" type="text" value="" placeholder="Optional, e.g. 20" />
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotFigSize">Figure Size Scale (<code>--fig-size</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about fig-size">i</button>
+                  <span class="info-popover"><strong>Canvas Dimension Scaling (<code>--fig-size</code>)</strong>Scale output figure dimensions proportionally (e.g. <code>125%</code>, <code>+20%</code>, or <code>80%</code>).</span>
+                </span>
+              </div>
+              <input id="wbPlotFigSize" type="text" value="" placeholder="Optional, e.g. 125% or +20%" />
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotNorm">Normalised Scale (<code>--norm</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Plot Norm">i</button>
+                  <span class="info-popover"><strong>Normalised Map Mode (<code>--norm</code>)</strong>Re-render maps using saved normalised predictions (<code>zscore</code>, <code>robust_zscore</code>, <code>percentile</code>, or <code>minmax</code>).</span>
+                </span>
+              </div>
+              <select id="wbPlotNorm">
+                <option value="none">None — Native Units (Default)</option>
+                <option value="zscore">zscore — Standard Z-Score</option>
+                <option value="robust_zscore">robust_zscore — Median / MAD</option>
+                <option value="percentile">percentile — 0–100% Rank</option>
+                <option value="minmax">minmax — 0–1 Scaling</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotPalette">Color Palette (<code>--reverse-color</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Plot Palette">i</button>
+                  <span class="info-popover"><strong>Color Polarity</strong>Flip gradient polarity with <code>--reverse-color</code> for ecological/oxygen metrics where low values indicate stress.</span>
+                </span>
+              </div>
+              <select id="wbPlotPalette">
+                <option value="auto">Default (Use Saved Run Polarity)</option>
+                <option value="standard">Force --normal-color</option>
+                <option value="reverse">Force --reverse-color</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <div class="field-head">
+                <label for="wbPlotFormat">File Type / Resolution (<code>--fig-format</code> / <code>--dpi</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Plot File Type">i</button>
+                  <span class="info-popover"><strong>Figure File Format &amp; DPI</strong>Export raster <code>PNG</code> at 200 DPI (default) or 300 DPI, or resolution-independent vector <code>SVG</code> / <code>PDF</code> files.</span>
+                </span>
+              </div>
+              <select id="wbPlotFormat">
+                <option value="png_200">PNG @ 200 DPI (Default)</option>
+                <option value="png_300">PNG @ 300 DPI (High-Res)</option>
+                <option value="svg">SVG (Scalable Vector Graphics)</option>
+                <option value="pdf">PDF (Vector Print Export)</option>
               </select>
             </div>
           </div>
         </div>
 
       </div>
+      <input id="wbOutputDirPicker" type="file" webkitdirectory directory multiple hidden />
+      <datalist id="wbOutputDirsList"></datalist>
     </section>
 
   </main>
