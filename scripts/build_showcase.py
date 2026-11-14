@@ -19,7 +19,6 @@ import shutil
 from PIL import Image
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(BASE_DIR, "output")
 DASH_DIR = os.path.join(BASE_DIR, "modelling_dashboard")
 FIG_DEST_DIR = os.path.join(DASH_DIR, "assets", "figures")
 
@@ -62,15 +61,6 @@ def read_csv_rows(rel_path):
         rows = [{k: coerce_value(v) for k, v in row.items()} for row in reader]
     _CSV_CACHE[rel_path] = rows
     return rows
-
-
-def read_text_excerpt(rel_path, max_lines=160):
-    full_path = os.path.join(BASE_DIR, rel_path)
-    if not os.path.exists(full_path):
-        return ""
-    with open(full_path, "r", encoding="utf-8") as f:
-        lines = f.read().splitlines()[:max_lines]
-    return "\n".join(lines)
 
 
 def _round_float_match(m):

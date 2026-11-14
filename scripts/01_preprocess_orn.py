@@ -121,7 +121,6 @@ DATA_DIR = RUNTIME_CFG.data_dir
 RSN_DIR = RUNTIME_CFG.rsn_dir
 SSN_DIR = RUNTIME_CFG.ssn_dir
 CONFIG_DIR = RUNTIME_CFG.config_dir
-SOURCE_CONFIG_DIR = RUNTIME_CFG.source_config_dir
 OUT_DIR = RUNTIME_CFG.processed_dir
 
 
@@ -782,6 +781,33 @@ def read_geoparquet_footer_metadata(parquet_path):
     return info
 
 
+def _gdal_library_candidates(platform_name=None):
+    """Return shared-library lookup candidates for GDAL on Linux, macOS, or Windows."""
+    plat = sys.platform if platform_name is None else platform_name
+    candidates = [ctypes.util.find_library("gdal")]
+    if plat == "darwin":
+        candidates.extend([
+            "libgdal.dylib",
+            *(f"libgdal.{v}.dylib" for v in (37, 36, 35, 34)),
+            "/opt/homebrew/lib/libgdal.dylib",
+            "/opt/homebrew/opt/gdal/lib/libgdal.dylib",
+            "/usr/local/lib/libgdal.dylib",
+            "/usr/local/opt/gdal/lib/libgdal.dylib",
+            "/opt/local/lib/libgdal.dylib",
+        ])
+    elif plat.startswith("win"):
+        candidates.extend([
+            *(f"gdal{v}.dll" for v in (309, 308, 307, 306)),
+            "gdal.dll",
+        ])
+    else:
+        candidates.extend([
+            *(f"libgdal.so.{v}" for v in (37, 36, 35, 34)),
+            "libgdal.so",
+        ])
+    return [c for c in candidates if c]
+
+
 def _get_gdal_lib():
     """
     Lazily loads `libgdal` via `ctypes` and configures OGR C API signatures for
@@ -791,23 +817,8 @@ def _get_gdal_lib():
     if _GDAL_LIB is not None:
         return _GDAL_LIB
 
-    candidates = [
-        ctypes.util.find_library("gdal"),
-        "libgdal.so.37",
-        "libgdal.so.36",
-        "libgdal.so.35",
-        "libgdal.so.34",
-        "libgdal.so",
-        "gdal309.dll",
-        "gdal308.dll",
-        "gdal307.dll",
-        "gdal306.dll",
-        "gdal.dll",
-    ]
     gdal = None
-    for cand in candidates:
-        if not cand:
-            continue
+    for cand in _gdal_library_candidates():
         try:
             gdal = ctypes.CDLL(cand)
             break
@@ -817,7 +828,7 @@ def _get_gdal_lib():
     if gdal is None:
         raise RuntimeError(
             "Could not load libgdal shared library or pyarrow to read GeoParquet file. "
-            "Install `gdal-libs` or `pyarrow`."
+            "Install `gdal` / `gdal-libs` or `pyarrow`."
         )
 
     gdal.GDALAllRegister()

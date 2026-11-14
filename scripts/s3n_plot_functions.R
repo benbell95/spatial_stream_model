@@ -895,39 +895,47 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
 
   # Panel B: 5-Fold CV R2 Comparison Across Domains
   avail_doms <- unique(cv_tab$Domain)
-  model_order <- c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)",
-                   "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)")
-  r2_true <- vapply(avail_doms, function(d) {
-    sub <- cv_tab[cv_tab$Domain == d, ]
-    vals <- vapply(model_order, function(mn) {
-      hit <- sub$R2[sub$Model == mn]
-      if (length(hit) > 0 && is.finite(hit[1])) hit[1] else NA_real_
-    }, numeric(1))
-    unname(vals)
-  }, numeric(4))
-  if (is.null(dim(r2_true))) r2_true <- matrix(r2_true, nrow = 4, ncol = length(avail_doms))
-  r2_mat <- pmax(0, r2_true)
-  short_map <- c(
-    "Humber Basin (CatchID=80)"   = "Humber Basin",
-    "Severn Basin (CatchID=2786)" = "Severn Basin",
-    "Thames Basin (CatchID=3055)" = "Thames Basin"
-  )
-  short_map[eng_dom] <- if (nrow(eng_row) > 0L) sprintf("All England\n(n=%d)", eng_row$n_obs[1]) else "All England"
-  colnames(r2_mat) <- ifelse(avail_doms %in% names(short_map), short_map[avail_doms],
-                             sub(" \\((CatchID|RBD)=.*\\)$", "", avail_doms))
-  ymax_b <- max(0.88, max(r2_mat, na.rm = TRUE) * 1.18)
-  cex_names_b <- if (ncol(r2_mat) > 4) 0.78 else 0.90
-  cex_txt_b   <- if (ncol(r2_mat) > 4) 0.64 else 0.72
-  bp <- barplot(r2_mat, beside = TRUE, ylim = c(0, ymax_b),
-                col = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"),
-                border = "#222222", cex.names = cex_names_b, ylab = "5-Fold Cross-Validation R2",
-                main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 60))
-  grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
-  r2_lbls <- ifelse(is.finite(r2_true), sprintf("%.2f", r2_true), "")
-  text(bp, r2_mat + 0.03 * ymax_b, labels = r2_lbls, cex = cex_txt_b, font = 2)
-  legend("topright",
-         legend = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream)", "S3N Tail-Up (FC + AFV)", "S3N Combined (TU + TD)"),
-         fill = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"), border = "#222222", bty = "n", cex = 0.80)
+  avail_doms <- avail_doms[!is.na(avail_doms) & nzchar(avail_doms)]
+  if (length(avail_doms) == 0L) {
+    plot.new()
+    title(main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 60))
+    text(0.5, 0.5, "No cross-validation metrics available", col = "#666666", cex = 0.95)
+  } else {
+    model_order <- c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)",
+                     "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)")
+    r2_true <- vapply(avail_doms, function(d) {
+      sub <- cv_tab[cv_tab$Domain == d, ]
+      vals <- vapply(model_order, function(mn) {
+        hit <- sub$R2[sub$Model == mn]
+        if (length(hit) > 0 && is.finite(hit[1])) hit[1] else NA_real_
+      }, numeric(1))
+      unname(vals)
+    }, numeric(4))
+    if (is.null(dim(r2_true))) r2_true <- matrix(r2_true, nrow = 4L, ncol = length(avail_doms))
+    r2_mat <- matrix(pmax(0, r2_true), nrow = 4L, ncol = length(avail_doms))
+    short_map <- c(
+      "Humber Basin (CatchID=80)"   = "Humber Basin",
+      "Severn Basin (CatchID=2786)" = "Severn Basin",
+      "Thames Basin (CatchID=3055)" = "Thames Basin"
+    )
+    short_map[eng_dom] <- if (nrow(eng_row) > 0L) sprintf("All England\n(n=%d)", eng_row$n_obs[1]) else "All England"
+    colnames(r2_mat) <- ifelse(avail_doms %in% names(short_map), short_map[avail_doms],
+                               sub(" \\((CatchID|RBD)=.*\\)$", "", avail_doms))
+    ymax_b <- max(0.88, max(c(0, r2_mat), na.rm = TRUE) * 1.18)
+    cex_names_b <- if (ncol(r2_mat) > 4L) 0.78 else 0.90
+    cex_txt_b   <- if (ncol(r2_mat) > 4L) 0.64 else 0.72
+    bp <- barplot(r2_mat, beside = TRUE, ylim = c(0, ymax_b),
+                  col = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"),
+                  border = "#222222", cex.names = cex_names_b, ylab = "5-Fold Cross-Validation R2",
+                  main = wrap_title("B. Out-of-Sample Variance Explained (R2) by Model", 60))
+    grid(nx = NA, ny = NULL, col = "#e0e0e0", lty = "dotted")
+    r2_lbls <- matrix(ifelse(is.finite(r2_true), sprintf("%.2f", r2_true), ""),
+                      nrow = 4L, ncol = length(avail_doms))
+    text(bp, r2_mat + 0.03 * ymax_b, labels = r2_lbls, cex = cex_txt_b, font = 2)
+    legend("topright",
+           legend = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream)", "S3N Tail-Up (FC + AFV)", "S3N Combined (TU + TD)"),
+           fill = c("#95a5a6", "#3498db", "#2ecc71", "#e67e22"), border = "#222222", bty = "n", cex = 0.80)
+  }
 
   # Panel C: Forest Plot of Fixed-Effect Estimates & 95% Bootstrap CIs (All England S3N)
   eng_p_dom <- if (!is.null(param_tab) && any(grepl("All England", param_tab$Domain))) {

@@ -338,6 +338,15 @@ class TestGeometryCensoringAndTransforms(unittest.TestCase):
             self.assertIn("S_IN", sites_txt)
             self.assertNotIn("S_OUT", sites_txt)
 
+    def test_gdal_library_candidates(self):
+        mac = prep_orn._gdal_library_candidates("darwin")
+        self.assertIn("libgdal.dylib", mac)
+        self.assertIn("/opt/homebrew/lib/libgdal.dylib", mac)
+        lin = prep_orn._gdal_library_candidates("linux")
+        self.assertIn("libgdal.so", lin)
+        win = prep_orn._gdal_library_candidates("win32")
+        self.assertIn("gdal.dll", win)
+
 
 if __name__ == "__main__":
     unittest.main()

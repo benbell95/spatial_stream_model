@@ -11,7 +11,7 @@ This guide is the single reference for repository layout, environment dependenci
   - [2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)](#21-python-environment-01_preprocess_ornpy-format_custom_datapy-build_showcasepy)
   - [2.2 R Environment](#22-r-environment)
   - [2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)](#23-compiled-c--openmp-library-srcs3n_fast_neighborscpp)
-  - [2.4 Linux System Dependencies](#24-linux-system-dependencies)
+  - [2.4 System Dependencies (Linux & macOS)](#24-system-dependencies-linux--macos)
   - [2.5 Hardware Profile](#25-hardware-profile)
 - [3. Configuration Files & Environment Variables](#3-configuration-files--environment-variables)
   - [3.1 Directory Paths (`configs/directories.json`)](#31-directory-paths-configsdirectoriesjson)
@@ -110,13 +110,19 @@ R CMD SHLIB src/s3n_fast_neighbors.cpp
 ```
 *(A precompiled Linux `x86_64` `.so` is included; recompile after modifying C++ code, on Windows/macOS, or if hitting a distro ABI mismatch.)*
 
-### 2.4 Linux System Dependencies
+### 2.4 System Dependencies (Linux & macOS)
 | Dependency | Fedora / RHEL | Ubuntu / Debian | Purpose |
 | :--- | :--- | :--- | :--- |
 | **C/C++ Compiler & OpenMP** | `gcc`, `gcc-c++`, `libgomp` | `build-essential`, `libomp-dev` | Compiling `src/s3n_fast_neighbors.cpp` and `S3N`. |
 | **R Dev Headers & BLAS/LAPACK** | `R-core-devel`, `openblas-devel`, `lapack-devel` | `r-base-dev`, `libopenblas-dev`, `liblapack-dev` | `<R.h>`, LAPACK, and BLAS headers. |
 | **Cairo Graphics** | `cairo`, `cairo-devel` | `libcairo2`, `libcairo2-dev` | Headless anti-aliased PNG/SVG rendering (`type = "cairo"`). |
 | **SQLite3** | `sqlite-libs` | `libsqlite3-0` | Underlying C library used by Python `sqlite3` to read `.gpkg` files. |
+
+#### macOS Notes (Intel & Apple Silicon)
+- **Compiler & C++ Recompile**: Install Xcode Command Line Tools (`xcode-select --install`) and run `R CMD SHLIB src/s3n_fast_neighbors.cpp` from the repository root (replacing the precompiled Linux binary).
+- **OpenMP (`--omp=N`)**: Stock Apple Clang + CRAN R compiles cleanly without OpenMP (running single-threaded). To enable multi-threaded C++ and `S3N`, install `brew install libomp` and add the corresponding `-Xpreprocessor -fopenmp` / `-lomp` flags in `~/.R/Makevars`.
+- **Graphics Devices**: `PNG` (default) and `PDF` fall back automatically to native macOS Quartz/PDF devices when Cairo is unavailable. `SVG` output (`--fig-format=svg` or [`scripts/07_compare_cokriging_runs.R`](../scripts/07_compare_cokriging_runs.R)) requires XQuartz (`capabilities("cairo") == TRUE`).
+- **GeoParquet & Arbitrary CRS Transforms**: Standard `.gpkg` and CSV preprocessing need no extra packages. For `.parquet`/`.geoparquet` files, install `pyarrow` (`pip install pyarrow`) or Homebrew `gdal` (`brew install gdal`, searched via `libgdal.dylib` / `/opt/homebrew/lib/libgdal.dylib`); for non-BNG EPSG CRS transforms, install `pyproj` or `brew install proj` (`cs2cs`).
 
 ### 2.5 Hardware Profile
 - **RAM**: ~1.5 GB peak memory for a full national run.

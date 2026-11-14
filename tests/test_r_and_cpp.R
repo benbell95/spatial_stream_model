@@ -1173,5 +1173,51 @@ for (use_dt_flag in modes_to_check) {
 options(s3n.use_data_table = old_dt_opt)
 unlink(csv_test_f)
 
+# 12n. plot_fig4_diagnostics renders cleanly across 1-domain and multi-domain CV tables without matrix dim drop
+fig4_test_dir <- tempfile("fig4_test_")
+dir.create(fig4_test_dir, recursive = TRUE)
+fig4_eng_pred <- data.frame(
+  RivID = 1:12,
+  Elevation = c(rep(200, 4), rep(50, 8)),
+  Is_Aquifer = c(rep(0L, 4), rep(1L, 4), rep(0L, 4)),
+  pred_combined = seq(1.0, 12.0, length.out = 12)
+)
+fig4_cv_pts <- data.frame(obs_y = c(0.1, 0.5, 1.0, 1.4), cv_comb = c(0.15, 0.45, 0.95, 1.35))
+fig4_models <- c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)",
+                 "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)")
+fig4_cv_1dom <- data.frame(
+  Domain = rep("All England RSN Network", 4),
+  Model = fig4_models,
+  R2 = c(-0.05, 0.42, 0.51, 0.63),
+  RMSE = c(0.9, 0.6, 0.55, 0.48),
+  n_obs = rep(40L, 4),
+  stringsAsFactors = FALSE
+)
+fig4_cv_2dom <- rbind(
+  fig4_cv_1dom,
+  data.frame(Domain = rep("Humber Basin (CatchID=80)", 4), Model = fig4_models,
+             R2 = c(0.10, 0.38, 0.44, 0.59), RMSE = c(0.8, 0.65, 0.60, 0.50), n_obs = rep(20L, 4),
+             stringsAsFactors = FALSE)
+)
+fig4_params <- data.frame(
+  Domain = rep("All England RSN Network", 4),
+  Model = c("S3N Tail-Down (Stream)", "S3N Tail-Down (Stream)", "S3N Tail-Up (FC + AFV)", "S3N Tail-Up (FC + AFV)"),
+  Parameter = c("Elevation_z", "Is_Chalk_Limestone", "Elevation_z", "Is_Chalk_Limestone"),
+  Estimate = c(-0.25, 0.40, -0.22, 0.35),
+  CI_Lower = c(-0.40, 0.20, -0.38, 0.15),
+  CI_Upper = c(-0.10, 0.60, -0.06, 0.55),
+  stringsAsFactors = FALSE
+)
+fig4_p1 <- file.path(fig4_test_dir, "fig4_1dom.png")
+fig4_p2 <- file.path(fig4_test_dir, "fig4_2dom.png")
+plot_fig4_diagnostics(fig4_eng_pred, fig4_cv_pts, fig4_cv_pts, fig4_cv_1dom, fig4_params,
+                      "0117", "Nitrate as N", "mg/L", build_transformer("log"), fig4_p1)
+plot_fig4_diagnostics(fig4_eng_pred, fig4_cv_pts, fig4_cv_pts, fig4_cv_2dom, fig4_params,
+                      "0117", "Nitrate as N", "mg/L", build_transformer("log"), fig4_p2)
+assert_true(file.exists(fig4_p1) && file.info(fig4_p1)$size > 1000L &&
+            file.exists(fig4_p2) && file.info(fig4_p2)$size > 1000L,
+            "plot_fig4_diagnostics renders 1-domain and multi-domain PNGs without matrix dimension drop")
+unlink(fig4_test_dir, recursive = TRUE)
+
 cat("  [PASS] Phase 5 regression suite passed\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")
