@@ -29,6 +29,7 @@ Designed to run cleanly on Linux servers, laptops, and Databricks clusters **wit
 - [Setup & Installation](#-setup--installation)
   - [1. System Prerequisites](#1-system-prerequisites)
   - [2. Quick Setup (R Packages, C++ Library & Paths)](#2-quick-setup-r-packages-c-library--paths)
+  - [3. Required Data Downloads](#3-required-data-downloads)
 - [Quickstart](#-quickstart)
   - [Step 1 — Preprocess the River Network & Monitoring Data](#step-1--preprocess-the-river-network--monitoring-data)
   - [Step 2 — Inspect Station-to-Reach Snapping](#step-2--inspect-station-to-reach-snapping-optional)
@@ -91,6 +92,16 @@ remotes::install_github("jpierkunke/S3N")
 R CMD SHLIB src/s3n_fast_neighbors.cpp
 ```
 Default workspace folders (`gis/`, `data/`, `data/processed/`, `output/`) are configured in [`configs/directories.json`](configs/directories.json) and can be overridden via environment variables or CLI flags (`--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`). See [Setup, Architecture & Testing](docs/setup_and_architecture.md) for full OS package lists and configuration details.
+
+### 3. Required Data Downloads
+
+Download and unzip the three external datasets into `gis/` and `data/` before running the default pipeline (or pass `--source=rsn` if omitting the optional `SSN` dataset):
+
+1. **OS Open Rivers Network (`ORN` v2.0 — Required)**: Download **version 2.0** in **GeoPackage** format (`ORN_v2_GeoPackage.zip`) from [openrivers.net/download/](https://openrivers.net/download/) and extract `ORN_v2.gpkg` into `gis/ORN_v2.gpkg`.
+2. **River Surveillance Network (`RSN` — Required)**: Download `NCEA_River_Surveillance_Network_ARD_Open.zip` from [Environment Agency NCEA — RSN Analysis Ready Data](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#access) and extract its CSV files directly into `data/NCEA_River_Surveillance_Network_ARD_Open/`.
+3. **Small Streams Network (`SSN` — Optional, recommended)**: Download `NCEA_Small_Streams_Network_ARD_Open.zip` from [Environment Agency NCEA — SSN Analysis Ready Data](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/98aca14e-3736-4329-b4b6-ae7c36fa5db1?q=small+streams+network&jry=qs&pg=1&rpp=20&srt=most_relevant#access) and extract its CSV files directly into `data/NCEA_Small_Streams_Network_ARD_Open/`.
+
+See [Section 3 of Setup, Architecture & Testing](docs/setup_and_architecture.md#3-obtaining--placing-the-required-data) for Bash/PowerShell unzip commands, avoiding nested subfolders, and verifying discovery via `python3 scripts/01_preprocess_orn.py --list-sources`.
 
 ---
 

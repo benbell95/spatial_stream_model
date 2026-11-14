@@ -20,7 +20,7 @@ Use this index to find the right guide for your task.
 | Guide | Purpose |
 | :--- | :--- |
 | [**CLI Workbench (`cli_workbench/index.html`)**](../cli_workbench/index.html) | Friendly standalone offline browser tool for building ready-to-run commands with grouped dropdowns, `i` option tooltips, and shell formatting for **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (including optional full `Rscript.exe` path & R-version selection). |
-| [**Setup, Architecture & Testing**](./setup_and_architecture.md) | Repository layout, directory & determinand configuration (`configs/directories.json`, `configs/determinands.json`), Python/R/C++ dependencies, compiling `src/s3n_fast_neighbors.so` / `.dll`, and running `tests/`. |
+| [**Setup, Architecture & Testing**](./setup_and_architecture.md) | Repository layout, obtaining & unzipping required datasets (`ORN` v2.0 GeoPackage, `RSN`, optional `SSN`), directory & determinand configuration (`configs/directories.json`, `configs/determinands.json`), Python/R/C++ dependencies, compiling `src/s3n_fast_neighbors.so` / `.dll`, and running `tests/`. |
 | [**End-to-End Usage Guide**](./usage_guide.md) | Complete CLI flag reference across all scripts (`01`–`08`, `run_s3n_determinand.R`, `run_s3n_cokriging.R`, `format_custom_data.py`, `build_showcase.py`), decision cheat sheet, and output schemas. |
 | [**Running on Databricks**](./databricks_guide.md) | Cell-by-cell notebook pattern for running the hybrid Python/R pipeline on Databricks Git Folders and Unity Catalog Volumes. |
 
