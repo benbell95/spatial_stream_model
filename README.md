@@ -5,7 +5,7 @@
 [![C++ OpenMP](https://img.shields.io/badge/C%2B%2B-OpenMP%20Engine-00599C?logo=cplusplus&logoColor=white)](src/s3n_fast_neighbors.cpp)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-This project implements a headless pipeline for **Scalable Spatial Stream Network (`S3N` / NNGP)** regression, 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access UK Environment Agency (EA) national river network data, and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
+This project implements a headless pipeline for **Scalable Spatial Stream Network (`S3N` / NNGP)** modelling, including; 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access river network data from the Environment Agency (EA), and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
 
 These scripts are fast, and are designed to run on any system without heavy GIS/plotting dependencies (no `GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2` packages are required).
 
