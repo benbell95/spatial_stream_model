@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+title: "Scalable Spatial Stream Network Modelling"
+message: "If you use this software, please cite it using the metadata below, as well as the upstream S3N and BRISC papers."
+type: software
+authors:
+  - family-names: "Bell"
+    given-names: "Benjamin"
+    orcid: "https://orcid.org/0000-0002-0899-9280"
+version: 1.0.0
+date-released: 2026-11-14
+license: GPL-3.0
+repository-code: "https://github.com/benbell95/spatial_stream_model"
+keywords:
+  - spatial stream networks
+  - NNGP
+  - water quality modelling
+  - kriging
+  - R
+  - Python
+references:
+  - type: article
+    title: "Scalable Spatial Stream Network (S3N) Models"
+    authors:
+      - family-names: "Kunke"
+        given-names: "Jessica P."
+      - family-names: "Olden"
+        given-names: "Julian D."
+      - family-names: "McCormick"
+        given-names: "Tyler H."
+    year: 2025
+    url: "https://arxiv.org/abs/2512.12398"
+  - type: article
+    title: "BRISC: Bootstrap for Rapid Inference on Spatial Covariances"
+    authors:
+      - family-names: "Saha"
+        given-names: "Arkajyoti"
+      - family-names: "Datta"
+        given-names: "Abhirup"
+    journal: "Stat"
+    volume: 7
+    issue: 1
+    year: 2018
