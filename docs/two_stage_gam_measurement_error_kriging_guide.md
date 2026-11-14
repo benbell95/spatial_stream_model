@@ -1,14 +1,14 @@
-# Two-Stage Modeling & Heteroskedastic Measurement Error Kriging Guide
+# Two-Stage Modelling & Heteroskedastic Measurement Error Kriging Guide
 
-This guide details the statistical methodology, mathematical formulation, C++ implementation, and practical workflow for **Two-Stage Modeling** in the Scalable Spatial Stream Network (`S3N`) pipeline. It focuses on taking site-level predictions and estimation uncertainties produced by a first-stage temporal model—such as a Generalized Additive Model (`GAM`), state-space filter, or dynamic harmonic regression—and geostatistically interpolating them across river networks using **Approach A: Heteroskedastic Measurement Error Kriging**.
+This guide documents the methodology, equations, C++ implementation, and workflow for **Two-Stage Modelling** in the Scalable Spatial Stream Network (`S3N`) pipeline. It takes station predictions and estimation uncertainties from a first-stage temporal model—such as a Generalised Additive Model (`GAM`), state-space filter, or dynamic harmonic regression—and interpolates them across river networks via **Approach A: Heteroskedastic Measurement Error Kriging**.
 
 ---
 
 ## Table of Contents
 
-- [1. Executive Summary & Why Two-Stage Modeling is Needed](#1-executive-summary--why-two-stage-modeling-is-needed)
+- [1. Executive Summary & Why Two-Stage Modelling Is Needed](#1-executive-summary--why-two-stage-modelling-is-needed)
   - [1.1 The Spatiotemporal Decoupling Challenge in River Networks](#11-the-spatiotemporal-decoupling-challenge-in-river-networks)
-  - [1.2 The Statistical Validity of Two-Stage Modeling](#12-the-statistical-validity-of-two-stage-modeling)
+  - [1.2 The Statistical Validity of Two-Stage Modelling](#12-the-statistical-validity-of-two-stage-modelling)
 - [2. Mathematical & Theoretical Foundations](#2-mathematical--theoretical-foundations)
   - [2.1 The Two-Stage Observation Model](#21-the-two-stage-observation-model)
   - [2.2 The Delta Method for Response Variance Conversion](#22-the-delta-method-for-response-variance-conversion)
@@ -38,14 +38,14 @@ This guide details the statistical methodology, mathematical formulation, C++ im
 
 ---
 
-## 1. Executive Summary & Why Two-Stage Modeling is Needed
+## 1. Executive Summary & Why Two-Stage Modelling Is Needed
 
 ### 1.1 The Spatiotemporal Decoupling Challenge in River Networks
-Water quality determinands in river networks (such as nitrate, orthophosphate, dissolved organic carbon, and pesticides) exhibit complex variation across both time and space:
-- **Temporal Dynamics**: Strong seasonal cycles driven by agricultural fertilizer application, biological uptake, flow-dependent dilution/flushing, and multi-year climate trends.
+Water quality determinands in river networks (such as nitrate, orthophosphate, dissolved organic carbon, and pesticides) vary across both time and space:
+- **Temporal Dynamics**: Seasonal cycles driven by agricultural fertiliser application, biological uptake, flow-dependent dilution/flushing, and multi-year climate trends.
 - **Spatial Topology**: Downstream advective mass transport, dilution across river confluences, and geological baseflow contributions along the branching stream network.
 
-Attempting to fit a fully non-separable, continuous spatiotemporal stream network model across 90,000+ national river reaches with irregular sampling frequencies (e.g. monthly grab samples with missing values and uneven temporal coverage) can be computationally intractable and unstable.
+Fitting a single continuous spatiotemporal stream network model across 90,000+ reaches with irregular grab sampling and missing dates is often computationally fragile. Splitting the problem into station-level temporal fitting (Stage 1) followed by network kriging (Stage 2) keeps both stages tractable.
 
 ```mermaid
 flowchart TD
@@ -76,22 +76,24 @@ flowchart TD
     end
 ```
 
-### 1.2 The Statistical Validity of Two-Stage Modeling
+### 1.2 The Statistical Validity of Two-Stage Modelling
 A frequent question in environmental statistics is: **"Can I fit a spatial model on values that were already estimated by a GAM? Is that statistically valid?"**
 
 > [!IMPORTANT]
-> **Yes, two-stage modeling is statistically valid IF AND ONLY IF the second-stage spatial model explicitly accounts for the heteroskedastic estimation uncertainty of the first stage.**
+> **Yes, two-stage modelling is statistically valid provided the second-stage spatial model explicitly accounts for the heteroskedastic estimation uncertainty of the first stage.**
 
-If you run standard homoskedastic kriging on GAM estimates:
-1. **The Error-in-Variables Fallacy**: Stations with highly uncertain estimates (e.g., sites with few observations or noisy residuals having large standard error $u_i$) receive the **exact same weight** in spatial kriging as stations with decades of intensive monitoring and tiny standard errors.
-2. **Artificial Nugget Inflation**: In standard kriging, the nugget effect $\tau^2$ represents microscale spatial variation occurring at distances shorter than the shortest inter-station distance. If input points have estimation error, standard kriging misinterprets that estimation error as microscale spatial variability, artificially inflating $\tau^2$ and depressing spatial correlation range ($\phi$).
-3. **Exact Interpolation Artifact**: Standard kriging forces the spatial surface to interpolate directly through every observation point ($E[Y(s_i) \mid \boldsymbol{y}] = y_i$). For modeled GAM values, this is statistically invalid: the model should **denoise** the estimate, shrinking noisy GAM points toward their spatial neighbors.
+Running standard homoskedastic kriging on GAM estimates introduces three problems:
+1. **The Error-in-Variables Fallacy**: Stations with noisy estimates (e.g., few observations and large standard error $u_i$) receive the **same** kriging weight as decades-long stations with small standard errors.
+2. **Artificial Nugget Inflation**: Standard kriging treats first-stage estimation noise as sub-reach spatial variability, inflating $\tau^2$ and shortening the estimated spatial correlation range ($\phi$).
+3. **Exact Interpolation Artifact**: Standard kriging pulls predictions tightly toward noisy station means instead of denoising uncertain Stage-1 estimates toward upstream/downstream neighbours.
 
 **Approach A: Heteroskedastic Measurement Error Kriging** resolves all three issues.
 
 ---
 
 ## 2. Mathematical & Theoretical Foundations
+
+> **In plain English:** Each input station brings two numbers from Stage 1: its estimated value $\hat{x}_i$ and its standard error $u_i$. Because spatial kriging runs on a transformed scale (e.g. $\log x$), the Delta Method first converts $u_i$ into a response-scale variance $v_i$. The solver then splits the total non-spatial noise into true sub-reach variability ($\tau^2_{\text{micro}}$) plus each station's known $v_i$, letting kriging trust precise stations closely while smoothing noisy ones toward their stream neighbours.
 
 ### 2.1 The Two-Stage Observation Model
 
@@ -105,7 +107,7 @@ $$
 
 where:
 - $\boldsymbol{x}_i^T \boldsymbol{\beta}$ represents fixed-effect landscape and geomorphic covariates (elevation, slope, upstream catchment accumulation, geology/aquifer, coordinates).
-- $w_{\text{TU}}(s_i) \sim \mathcal{GP}(0, \sigma_{\text{TU}}^2 \boldsymbol{R}_{\text{TU}})$ is the **Tail-Up process** representing downstream advective mass transport and dilution across stream confluences with Shreve-based Additive Function Values ($\pi_i$).
+- $w_{\text{TU}}(s_i) \sim \mathcal{GP}(0, \sigma_{\text{TU}}^2 \boldsymbol{R}_{\text{TU}})$ is the **Tail-Up process** representing downstream advective mass transport and dilution across stream confluences with Additive Function Values ($\pi_i$, defaulting to channel length `US_Accum_km` via `--afv=length`, with optional `shreve` or `hydro_yield`).
 - $w_{\text{TD}}(s_i) \sim \mathcal{GP}(0, \sigma_{\text{TD}}^2 \boldsymbol{R}_{\text{TD}})$ is the **Tail-Down process** representing bidirectional hydrologic distance correlation conditioned on distance to the river mouth (`Dist2Mth_km`).
 - $\varepsilon_{\text{micro}}(s_i) \overset{\text{iid}}{\sim} \mathcal{N}(0, \tau_{\text{micro}}^2)$ is the **true microscale spatial nugget variance** (spatial variation at sub-reach scales).
 - $\eta_i \sim \mathcal{N}(0, v_i)$ is the **heteroskedastic observation/estimation error**, where $v_i$ is the known estimation variance from Stage 1.
@@ -114,7 +116,7 @@ where:
 
 ### 2.2 The Delta Method for Response Variance Conversion
 
-Because the first-stage GAM estimates uncertainty on the natural concentration scale ($u_i = \text{SE}(\hat{x}_i)$) while spatial modeling occurs on a transformed scale $y = g(x)$, we apply the first-order Taylor expansion (the **Delta Method**):
+Because the first-stage GAM estimates uncertainty on the natural concentration scale ($u_i = \text{SE}(\hat{x}_i)$) while spatial modelling occurs on a transformed scale $y = g(x)$, the first-order Taylor expansion (the **Delta Method**) converts the uncertainty:
 
 $$
 \text{Var}(g(X)) \approx \left[ g'(E[X]) \right]^2 \text{Var}(X)
@@ -142,7 +144,7 @@ When fitting spatial covariance parameters via Maximum Likelihood (using Vecchia
 - Total non-spatial variance: $\hat{\tau}_{\text{total}}^2$
 - Spatial decay parameter: $\hat{\phi}$
 
-In standard homoskedastic kriging, $\hat{\tau}_{\text{total}}^2$ is used directly as the nugget. In **Measurement Error Kriging**, we recognize that $\hat{\tau}_{\text{total}}^2$ bundles both intrinsic spatial microscale variation $\tau_{\text{micro}}^2$ and the mean first-stage measurement error:
+In standard homoskedastic kriging, $\hat{\tau}_{\text{total}}^2$ is used directly as the nugget. In **Measurement Error Kriging**, $\hat{\tau}_{\text{total}}^2$ bundles both intrinsic spatial microscale variation $\tau_{\text{micro}}^2$ and the mean first-stage measurement error:
 
 $$
 \hat{\tau}_{\text{total}}^2 = \tau_{\text{micro}}^2 + \bar{v}, \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i
@@ -170,7 +172,7 @@ $$
 
 where:
 - $\boldsymbol{c}_0 = [C(s_0, s_{(1)}), \dots, C(s_0, s_{(m)})]^T$ is the cross-covariance vector.
-- $\boldsymbol{\Sigma}_m$ is the $m \times m$ local neighbor covariance matrix:
+- $\boldsymbol{\Sigma}_m$ is the $m \times m$ local neighbour covariance matrix:
 
 $$
 \boldsymbol{\Sigma}_m = \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_{(1)}, v_{(2)}, \dots, v_{(m)})
@@ -183,22 +185,24 @@ $$
 E[w(s_i) \mid \boldsymbol{y}] \ne y_i
 $$
 
-The spatial prediction **filters out the measurement error $\eta_i$**. An observed station with large GAM uncertainty $v_i$ is smoothed toward its neighbors, while an observed station with negligible uncertainty ($v_i \to 0$) is closely honoured.
+The spatial prediction **filters out the measurement error $\eta_i$**. An observed station with large GAM uncertainty $v_i$ is smoothed toward its neighbours, while an observed station with negligible uncertainty ($v_i \to 0$) is closely honoured.
 
 ---
 
 ## 3. High-Performance C++ Solver Architecture
 
-To maintain the extreme computational efficiency of S3N (predicting all 91,077 reaches of England in under a second), Approach A was implemented natively in C++ inside [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp).
+> **In plain English:** Solving a separate $15 \times 15$ kriging system for 90,000+ reaches in R causes heavy memory allocation overhead. Instead, `C_s3n_predict_meas_error()` runs each reach's tiny Cholesky solve inside fixed stack arrays across OpenMP threads with zero dynamic allocations.
+
+To preserve sub-second runtimes across all `90,876` ORN v2 RSN reaches, Approach A is implemented natively in C++ inside [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp).
 
 ### 3.1 Stack Allocation & Numerical Stability
-Standard linear solvers in R allocate memory dynamically on the heap for every reach $s_0$, leading to severe memory fragmentation over 90,000 reaches. 
+Standard linear solvers in R allocate memory dynamically on the heap for every reach $s_0$, causing substantial allocation overhead over 90,000 reaches. 
 
 In `C_s3n_predict_meas_error`:
 1. **Fixed Stack Buffers**: Local matrices are declared as `double A[64 * 64]` and `double rhs[64]` directly on the CPU thread stack ($m \le 64$, with typical $m = 15$). Memory allocation overhead is **strictly 0 bytes**.
 2. **In-Place Cholesky Decomposition**: Matrix $\boldsymbol{\Sigma}_m$ is decomposed into $\boldsymbol{L}\boldsymbol{L}^T$ using `solve_chol_stack()`.
-3. **Adaptive Diagonal Jitter**: If two upstream stations have identical hydrologic coordinates causing near-collinearity, the solver detects non-positive definite pivots ($L_{kk} \le 10^{-12}$) and injects an adaptive diagonal regularization $\epsilon = 10^{-6} \times \sigma^2$, guaranteeing that decomposition never fails.
-4. **OpenMP Multi-Core Scaling**: Outer prediction loops across all reaches $q$ are parallelized via `#pragma omp parallel for`.
+3. **Adaptive Diagonal Jitter**: If two upstream stations share identical hydrologic coordinates causing near-collinearity, the solver detects non-positive definite pivots ($L_{kk} \le 10^{-12}$) and injects diagonal regularisation $\epsilon = 10^{-6} \times \sigma^2$ so decomposition completes cleanly.
+4. **OpenMP Multi-Core Scaling**: Outer prediction loops across all reaches $q$ are parallelised via `#pragma omp parallel for`.
 
 ### 3.2 Machine-Precision Consistency Verification
 When $v_i = 0$ (no measurement error), `C_s3n_predict_meas_error` was benchmarked against the standard BRISC prediction engine across the Thames River Basin (7,491 reaches, 116 observed). The maximum absolute discrepancy was:
@@ -213,7 +217,7 @@ This confirms that Approach A reduces to standard homoskedastic kriging to exact
 
 ## 4. Input Data Format & Schema Specification
 
-To supply first-stage GAM estimates to the pipeline, organize your dataset in `data/custom/<source_name>/` with two CSV files: `sites.csv` and `samples.csv`.
+To supply first-stage GAM estimates to the pipeline, organise your dataset in `data/custom/<source_name>/` with two CSV files: `sites.csv` and `samples.csv`.
 
 ### 4.1 Station Coordinate Points (`sites.csv`)
 Standard station definition file:
@@ -230,7 +234,7 @@ The samples table must contain the GAM predictions, standard errors, and the met
 | :--- | :---: | :---: | :--- |
 | **`site_id`** | **Yes** | String / Int | Foreign key matching `site_id` in `sites.csv`. |
 | **`sample_datetime`** | **Yes** | String | Date of prediction (e.g. `"2023-06-01"` for annual/period mean, or ISO datetime). |
-| **`meas_result`** | **Yes** | Numeric | Modeled point prediction on the natural scale ($\hat{x}_i$). |
+| **`meas_result`** | **Yes** | Numeric | Modelled point prediction on the natural scale ($\hat{x}_i$). |
 | **`meas_uncertainty`** | **Yes** | Numeric | **Estimation standard error** on the natural scale ($u_i = \text{SE}(\hat{x}_i)$). |
 | **`meas_method`** | **Yes** | String | Must be set to **`"gam"`** to activate Approach A automatically. |
 | `det_code` | Optional | String | Determinand code (e.g. `0117` for Nitrate, `0180` for Orthophosphate). |
@@ -281,21 +285,14 @@ Rscript scripts/run_s3n_determinand.R 0117 \
 ```
 
 #### What Happens Internally:
-1. Detects `meas_method = "gam"` (or `--meas-error` / `--gam`) and logs:
-   ```text
-   --- Fitting All England RSN_GAM_MEAN Network (91077 reaches, 1220 observed) ---
-     [Approach A: Measurement Error Kriging] Active: accounting for GAM estimation uncertainty
-       Mean measurement SE: 0.0835 (model scale), Mean error variance: 0.008009
-       Tail-Up Decomposition: Total Nugget = 0.1850 -> Microscale = 0.1770 + Meas Error = 0.0080
-       Tail-Down Decomposition: Total Nugget = 0.1919 -> Microscale = 0.1839 + Meas Error = 0.0080
-   ```
+1. Detects `meas_method` in `c("gam", "tobit_interval", "tobit_raw_sd", "geometric_midpoint", "source_se")` (or `--meas-error` / `--gam` / `--source-se`) and prints an `[Approach A: Measurement Error Kriging] Active` summary with mean response-scale error variance and the Tail-Up/Tail-Down nugget decomposition.
 2. Runs 5-fold cross-validation where validation stations are denoised using measurement error weighting.
 3. Produces reach-level predictions (including normalised outputs), parameter decomposition tables, cross-validation summaries, and publication-quality maps (Figures 1–5).
 
 ---
 
 ### Step 3: Standalone Model Execution
-You can also run the core modeling script [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
+You can also run the core modelling script [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
 ```bash
 Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 ```
@@ -304,7 +301,7 @@ Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 
 ## 6. Output Tables & Interpretation
 
-All results are saved under `output/results/det_<code>_<net>_<source>/` (e.g. `output/results/det_0117_orn_rsn_gam_mean/`), or `output/results/<net>_<source>/` for `02_fit_s3n_models.R`:
+All results are saved under `output/results/det_<code>_<net>_<source>/` (e.g. `output/results/det_0117_orn_rsn_gam_mean/`), or `output/results/<net>_<source>/` for `02_fit_s3n_models.R`. The tables below show illustrative values from an early `rsn_gam_mean` benchmark run (`1,220` observed reaches across `91,077` network reaches on an earlier extract; standard ORN v2 RSN has `90,876` reaches / `1,210` observed reaches):
 
 ### 6.1 Parameter Estimates Table (`parameters_0117.csv`)
 Under Approach A, the parameter table reports both the standard covariance parameters and the decoupled microscale variance (illustrative values below):
@@ -354,16 +351,16 @@ Station B (High Precision, e.g. SE = 0.02 mg/L, v_i = 0.0004):
 ## 8. Troubleshooting & FAQ
 
 ### Q1: What if my first-stage model outputs standard errors on the log-scale already?
-If your GAM was fit directly on $\log(\text{concentration})$ and produced $\text{SE}(\log X)$, those are already response-scale standard errors! You can set $v_i = [\text{SE}(\log X)]^2$ directly by running with `--transform=none` and supplying `meas_uncertainty = se_log` on an unscaled response.
+If your GAM was fitted directly on $\log(\text{concentration})$ and produced $\text{SE}(\log X)$, those are already response-scale standard errors. Set $v_i = [\text{SE}(\log X)]^2$ directly by running with `--transform=none` and supplying `meas_uncertainty = se_log` on the log response.
 
 ### Q2: What if some stations have missing uncertainty (`NA` or `0`)?
 If `meas_uncertainty` is missing or $0$ for a particular site, the C++ solver sets $v_i = 0$ for that station. That station will behave as a standard exact observation, while stations with $v_j > 0$ will be appropriately smoothed.
 
 ### Q3: Does this affect regular non-GAM runs (e.g. `--source=rsn`)?
-**No.** If `meas_method` is blank or anything other than `"gam"`, and `--meas-error` / `--gam` is not passed, the pipeline runs standard homoskedastic S3N kriging.
+**No.** Unless `meas_method` is one of `gam`, `tobit_interval`, `tobit_raw_sd`, `geometric_midpoint`, or `source_se` (or `--meas-error` / `--gam` / `--source-se` is passed), the pipeline runs standard homoskedastic S3N kriging.
 
 ### Q4: Can I use this for sensor telemetry with calibration drift uncertainty?
-**Yes!** If you have optical nitrate sondes where sensor manufacturer calibration error increases with turbidity or biofouling, you can encode that time-varying sensor error into `meas_uncertainty`, set `meas_method = "gam"`, and S3N will automatically downweight degraded sensors.
+**Yes.** If you have optical nitrate sondes whose manufacturer calibration error increases with turbidity or biofouling, encode that time-varying sensor error into `meas_uncertainty`, set `meas_method = "gam"` (or `"source_se"`), and S3N will down-weight degraded sensors accordingly.
 
 ---
 

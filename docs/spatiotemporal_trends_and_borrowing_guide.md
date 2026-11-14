@@ -78,14 +78,14 @@ Rscript scripts/run_s3n_determinand.R 0052 --by=year --st-borrow --censor=em
 In real monitoring networks, station coverage is rarely identical every year:
 - A tributary might be sampled in 2021 and 2023, but **skipped in 2022** due to drought, access issues, or rotating monitoring schedules.
 - If 2022 is fitted completely independently, that unmonitored tributary falls back toward the fixed-effect regression mean with a **large kriging standard error (`se_model_sc`)**.
-- Yet we know from 2021 and 2023 what that tributary's spatial residual looks like.
+- Yet 2021 and 2023 observations already reveal that tributary's typical spatial residual.
 
 ### 3.2 Two-Step Empirical Bayes Temporal Smoother
 After all $T$ slices ($t = 1, \dots, T$) are fitted by S3N:
 
 1. **Data-Driven Temporal Correlation ($\hat{\rho}_t$)**:
    The pipeline identifies reaches that were directly monitored in consecutive slices $(t, t+1)$ and computes the average Pearson correlation of `obs_model_sc` across adjacent periods, clamped to $\hat{\rho}_t \in [0.15, 0.85]$ (defaulting to `0.60` if fewer than 10 overlapping stations exist).
-   - High $\hat{\rho}_t$ (e.g. `0.80`) means water quality is persistent year-to-year, so neighboring years carry strong information.
+   - High $\hat{\rho}_t$ (e.g. `0.80`) means water quality is persistent year-to-year, so neighbouring years carry strong information.
    - Low $\hat{\rho}_t$ (e.g. `0.25`) means conditions fluctuate rapidly, keeping borrowing conservative.
 
 2. **Precision-Weighted Exponential Smoothing**:
@@ -109,7 +109,7 @@ After all $T$ slices ($t = 1, \dots, T$) are fitted by S3N:
 Whenever `--by=` produces at least $T \ge 2$ valid slices, `compute_spatiotemporal_trends()` automatically computes a reach-by-reach temporal trend across the entire network—whether `--st-borrow` is enabled or not.
 
 ### 4.1 Precision-Weighted Least Squares (WLS) Slope
-For each reach $i$, we regress the predicted model-scale values $\hat{z}_{i,1}, \dots, \hat{z}_{i,T}$ against the integer period index $t = 1, \dots, T$ using inverse-variance weights $w_{i,t} = 1 / \max(\text{SE}_{i,t}^2, 10^{-8})$:
+For each reach $i$, the pipeline regresses the predicted model-scale values $\hat{z}_{i,1}, \dots, \hat{z}_{i,T}$ against the integer period index $t = 1, \dots, T$ using inverse-variance weights $w_{i,t} = 1 / \max(\text{SE}_{i,t}^2, 10^{-8})$:
 
 $$
 \hat{\beta}_{\text{time}}(i) = \frac{\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)(\hat{z}_{i,t} - \bar{z}_i)}{\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)^2}, \qquad \text{SE}\big(\hat{\beta}_{\text{time}}(i)\big) = \left(\sum_{t=1}^T w_{i,t} (t - \bar{t}_i)^2\right)^{-1/2}

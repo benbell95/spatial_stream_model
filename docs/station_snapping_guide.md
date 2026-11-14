@@ -20,8 +20,9 @@
 
 ### Command Line
 ```bash
-# List available catchments in the preprocessed dataset
+# List available catchments / sources
 Rscript scripts/06_station_snapping_diagnostics.R --list-catchments
+Rscript scripts/06_station_snapping_diagnostics.R --list-sources
 
 # Run diagnostics for the default network (orn) and default source (rsn)
 Rscript scripts/06_station_snapping_diagnostics.R
@@ -30,12 +31,9 @@ Rscript scripts/06_station_snapping_diagnostics.R
 Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
 Rscript scripts/06_station_snapping_diagnostics.R --catchment=Humber,Thames,Severn,Eden
 
-# Target a specific network, monitoring source, or snapping threshold
+# Target a specific network, monitoring source, or hide > 250 m excluded stations
 Rscript scripts/06_station_snapping_diagnostics.R \
-  --network=orn --source=rsn --catchment=Thames --max-plots=8
-
-# Include stations exceeding the 250 m threshold in plots/tables
-Rscript scripts/06_station_snapping_diagnostics.R --include-excluded
+  --network=orn --source=rsn --catchment=Thames --only-included
 ```
 
 ### Supported CLI Flags
@@ -43,11 +41,13 @@ Rscript scripts/06_station_snapping_diagnostics.R --include-excluded
 | :--- | :--- | :--- |
 | `--network=<id>` | `orn` | Network ID from `configs/networks/<id>.json`. |
 | `--source=<id>` | `rsn` | Monitoring source ID or composite (`rsn`, `ssn`, `rss`, `a+b`). |
-| `--catchment=<list>` | Top catchments | Comma-separated catchment names or `CatchID`s to plot in detail. |
-| `--list-catchments` | `FALSE` | Print available catchments and station counts, then exit. |
-| `--max-plots=<N>` | Auto | Maximum number of per-catchment diagnostic plots to generate when `--catchment` is omitted. |
-| `--include-excluded` | `FALSE` | Include stations snapped beyond `250 m` (`included_250m == 0`) in outputs. |
+| `--range-mode=<mode>` | `auto` | Resolve interval-tagged custom source (`auto`, `tobit`, `geometric`, `midpoint`, `none`). |
+| `--catchment=<list>` | Top catchments | Comma-separated catchment names, `CatchID`s, or `'all'` (aliases `--catchments=`, `--basin=`, `--basins=`). |
+| `--list-catchments` | `FALSE` | Print available catchments and station counts, then exit (aliases `--list`, `--list-basins`). |
+| `--list-sources` | `FALSE` | Print registered monitoring sources and exit. |
+| `--only-included` | `FALSE` | Exclude stations snapped beyond `250 m` (`included_250m == 0`) from diagnostic tables and plots (by default, excluded stations are shown). |
 | `--out=<dir>` | Auto | Override output folder (default: `output/station_snapping/<net>_<source>/`). |
+| `--fig-format=`, `--dpi=`, `--fig-size=` | `png` / `150–200` / `100` | Control exported plot format (`png`, `pdf`, `svg`), resolution, and percentage scaling. |
 | `--processed-dir=`, `--data-dir=`, `--gis-dir=`, `--output-dir=` | From `configs/directories.json` | Override workspace root directories. |
 
 ### Calling from R
@@ -64,7 +64,7 @@ res <- analyze_station_snapping(catchment = "Thames", network = "orn", source = 
 | :--- | :--- |
 | `station_snapping_all.csv` | Full station-to-reach snapping table across the entire network. |
 | `catchment_snapping_summary.csv` | Per-catchment station counts (`Stations_Total`, `Stations_Included`) and `snap_dist_m` distribution (`Min`, `Q25`, `Median`, `Mean`, `Q75`, `P95`, `Max`). |
-| `station_snapping_catchment_<CatchID>_<slug>.csv` | Station snapping rows filtered to each analyzed catchment. |
+| `station_snapping_catchment_<CatchID>_<slug>.csv` | Station snapping rows filtered to each analysed catchment. |
 | `station_snapping_report.md` | Automated Markdown summary of network-wide and catchment-level snapping statistics. |
 | `fig_snap_overview_<net>.png` | 4-panel network-wide snapping diagnostic figure. |
 | `fig_snap_catchment_<CatchID>_<slug>.png` | Per-catchment map, snapping distance histogram, and 4 metre-scale zoomed insets. |
@@ -88,7 +88,7 @@ res <- analyze_station_snapping(catchment = "Thames", network = "orn", source = 
 
 ## 4. Interpreting the Diagnostic Figures
 
-- **`fig_snap_overview_<net>.png`**: Summarizes network-wide snapping distances (histogram + CDF against the `250 m` cutoff), spatial distribution of snapped vs. excluded stations, and top catchments by station count / median snap distance.
+- **`fig_snap_overview_<net>.png`**: Summarises network-wide snapping distances (histogram + CDF against the `250 m` cutoff), spatial distribution of snapped vs. excluded stations, and top catchments by station count / median snap distance.
 - **`fig_snap_catchment_<CatchID>_<slug>.png`**:
   - **Panel A**: Full catchment river network highlighting snapped reaches and station positions.
   - **Panel B**: Catchment snapping distance histogram (`snap_dist_m`) with median and `250 m` threshold markers.

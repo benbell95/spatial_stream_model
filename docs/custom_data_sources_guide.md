@@ -1,6 +1,6 @@
 # Bring Your Own Monitoring Dataset & Custom Sources Guide
 
-This guide explains how to incorporate additional monitoring data sources and custom field datasets into the Scalable Spatial Stream Network (`S3N`) modeling pipeline. It details the underlying architecture, data requirements, schema definitions, and provides step-by-step instructions for preprocessing, snapping diagnostics, model fitting, and multi-source comparative evaluations.
+This guide explains how to incorporate additional monitoring data sources and custom field datasets into the Scalable Spatial Stream Network (`S3N`) modelling pipeline. It details the underlying architecture, data requirements, schema definitions, and provides step-by-step instructions for preprocessing, snapping diagnostics, model fitting, and multi-source comparative evaluations.
 
 ---
 
@@ -17,12 +17,12 @@ This guide explains how to incorporate additional monitoring data sources and cu
   - [Method 2: Ad-Hoc CLI Flags (Zero Configuration)](#method-2-ad-hoc-cli-flags-zero-configuration)
   - [Method 3: Permanent Declarative JSON Profile (`configs/sources/<name>.json`)](#method-3-permanent-declarative-json-profile-configssourcesnamejson)
   - [Method 4: Multi-Source Combination & Composites (`--source=rsn+custom`)](#method-4-multi-source-combination--composites---sourcersncustom)
-- [5. Hydrological & Geostatistical Modeling Considerations](#5-hydrological--geostatistical-modeling-considerations)
+- [5. Hydrological & Geostatistical Modelling Considerations](#5-hydrological--geostatistical-modelling-considerations)
   - [5.1 Snapping Distance & Unrepresented Headwaters](#51-snapping-distance--unrepresented-headwaters)
   - [5.2 Catchment Subsetting](#52-catchment-subsetting)
   - [5.3 Sampling Frequency Imbalance & Aggregation](#53-sampling-frequency-imbalance--aggregation)
   - [5.4 Left-Censored Values & Detection Limits (`< LOD`)](#54-left-censored-values--detection-limits--lod)
-  - [5.5 Two-Stage Modeling with Pre-Fitted Values (GAMs, Machine Learning) & Approach A: Measurement Error Kriging](#55-two-stage-modeling-with-pre-fitted-values-gams-machine-learning--approach-a-measurement-error-kriging)
+  - [5.5 Measurement Uncertainty Lifecycle & Two-Stage Modelling (Approach A)](#55-measurement-uncertainty-lifecycle--two-stage-modelling-approach-a)
 - [6. End-to-End Walkthrough: Adding a Custom Dataset](#6-end-to-end-walkthrough-adding-a-custom-dataset)
   - [Step 1: Create Custom Data Directory & Files](#step-1-create-custom-data-directory--files)
   - [Step 2: Combine with National RSN and Preprocess](#step-2-combine-with-national-rsn-and-preprocess)
@@ -89,7 +89,7 @@ The pipeline supports four flexible ways to ingest custom or additional data sou
 | **Method 3: Declarative JSON Profile** | Permanent registration of recurring external datasets | `configs/sources/<name>.json` | `--source=my_survey` (e.g. `configs/sources/rsn.json`) |
 | **Method 4: Delimiter Combinations** | Merging custom datasets with official EA networks | None (on-the-fly syntax) | `--source=rsn+my_project` or `--source=rsn,ssn,my_project` |
 
-Built-in profiles in `configs/sources/` include `rsn.json`, `ssn.json`, and `composites.json` (`rss`, `all`). Multi-source tokens joined with `,` or `+` are normalized internally with `+` (preserving hyphens inside custom source names such as `waterblitz-tobit`).
+Built-in profiles in `configs/sources/` include `rsn.json`, `ssn.json`, and `composites.json` (`rss`, `all`). Multi-source tokens joined with `,` or `+` are normalised internally with `+` (preserving hyphens inside custom source names such as `waterblitz-tobit`).
 
 ---
 
@@ -103,15 +103,15 @@ The station points table defines the geographic locations of your monitoring poi
 | Column Name | Required | Data Type | Permitted Aliases / Variants | Description & Units |
 | :--- | :---: | :---: | :--- | :--- |
 | **`site_id`** | **Yes** | String / Integer | `network_id`, `station_id`, `id`, `location_id`, `site`, `code` | Unique monitoring station identifier (e.g. `"CS_001"`). |
-| **`easting`** | **Yes** | Numeric | `ngr_easting`, `eastings`, `bng_easting`, `x`, `point_x`, `longitude`, `lon` | Easting coordinate in British National Grid (`EPSG:27700`) meters, OR decimal longitude in degrees. |
-| **`northing`** | **Yes** | Numeric | `ngr_northing`, `northings`, `bng_northing`, `y`, `point_y`, `latitude`, `lat` | Northing coordinate in British National Grid (`EPSG:27700`) meters, OR decimal latitude in degrees. |
+| **`easting`** | **Yes** | Numeric | `ngr_easting`, `eastings`, `bng_easting`, `x`, `point_x`, `longitude`, `lon` | Easting coordinate in British National Grid (`EPSG:27700`) metres, OR decimal longitude in degrees. |
+| **`northing`** | **Yes** | Numeric | `ngr_northing`, `northings`, `bng_northing`, `y`, `point_y`, `latitude`, `lat` | Northing coordinate in British National Grid (`EPSG:27700`) metres, OR decimal latitude in degrees. |
 | `site_name` | No | String | `name`, `station_name`, `location_name`, `description` | Human-readable site label or river name. |
 | `source` | No | String | `network`, `origin`, `survey` | Dataset identifier (e.g. `"Citizen"`, `"WaterCompany"`). Defaults to the source tag. |
 
 #### Automatic Coordinate Reference System (CRS) Conversion:
-- **British National Grid (`EPSG:27700`)**: If coordinates exceed planar thresholds ($x > 180$, $y > 90$), they are treated directly as BNG Eastings and Northings in meters.
-- **WGS84 Lat/Lon (`EPSG:4326`)**: If coordinates fall within $-10 \le x \le 3$ and $49 \le y \le 61$, the preprocessor automatically detects decimal degrees and projects them to British National Grid meters in pure Python using Airy 1830 ellipsoid Transverse Mercator formulas with $< 1\text{ m}$ precision.
-- **Explicit CRS Override**: You can pass `--custom-crs=4326` or `--custom-crs=27700` to enforce projection handling.
+- **British National Grid (`EPSG:27700`)**: If coordinates fall outside lat/lon degree bounds (`abs(x) > 180` or `abs(y) > 90`), they are treated directly as BNG Eastings and Northings in metres.
+- **WGS84 Lat/Lon (`EPSG:4326`)**: If coordinates satisfy `abs(x) <= 180` and `abs(y) <= 90`, the preprocessor automatically detects decimal degrees and projects them to British National Grid metres in pure Python using Airy 1830 ellipsoid Transverse Mercator formulas.
+- **Explicit CRS Override**: Pass `--custom-crs=4326` or `--custom-crs=27700` to enforce projection handling.
 
 #### Example `sites.csv`:
 ```csv
@@ -164,29 +164,28 @@ To eliminate manual data manipulation, the repository provides a standalone Pyth
 3. **"Gold Standard" Interval-Censored Tobit & Truncated Lognormal Model (`--range-mode=tobit`, Default)**:
    Citizen-science and test-strip datasets frequently record concentrations as ranges (e.g. `5-10`, `0.2-0.5`, `1-2`, `<0.2`, `>10`).
    - **Why Arithmetic Midpoints Fail**: Water quality determinands follow right-skewed lognormal distributions. Taking a linear midpoint ($\frac{5+10}{2} = 7.5$) introduces a systematic upward bias in log-transformed models ($\log(7.5) = 2.015$ vs log-midpoint $1.956$), and cannot handle open boundaries ($<0.2$ or $>10$) without arbitrary multipliers.
-   - **The Gold Standard Solution**: The script fits an **interval-censored lognormal maximum likelihood model (Tobit formulation)** per determinand. It computes mathematically unbiased conditional expectations:
+   - **The Gold Standard Solution**: The script fits an **interval-censored lognormal maximum likelihood model (Tobit formulation)** per determinand and evaluates the exponential of the conditional log-expectation:
 
      $$
-     E[Y \mid a \le Y \le b] = \exp\left( \mu + \sigma \left[ \frac{\phi(\alpha) - \phi(\beta)}{\Phi(\beta) - \Phi(\alpha)} \right] \right)
+     \hat{y} = \exp\big(\mathbb{E}[\log Y \mid a \le Y \le b]\big) = \exp\left( \mu + \sigma \left[ \frac{\phi(\alpha) - \phi(\beta)}{\Phi(\beta) - \Phi(\alpha)} \right] \right)
      $$
 
      where $\alpha = \frac{\log a - \mu}{\sigma}$, $\beta = \frac{\log b - \mu}{\sigma}$, and $\phi, \Phi$ are the standard normal PDF and CDF.
-   - **Open-Ended Boundaries Handled Rigorously**: Non-detects ($<0.2$) and saturation limits ($>10$) are estimated strictly from the fitted distribution's tail probabilities ($0.119\text{ mg/L}$ for $<0.2$, $16.92\text{ mg/L}$ for $>10$) rather than ad-hoc guesses.
-   - **Analytical Binning Uncertainty**: Calculates analytical interval variance $\sigma_{\text{bin}} = \frac{\log(b) - \log(a)}{\sqrt{12}}$ and stores interval bounds in `samples.csv` (`meas_lower`, `meas_upper`, `meas_uncertainty`, `meas_method`).
+   - **Open-Ended Boundaries Handled Rigorously**: Non-detects ($<b$) and upper saturation limits ($>a$) use the one-sided truncated lognormal expectation (`m - s * phi(beta)/Phi(beta)` and `m + s * phi(alpha)/(1 - Phi(alpha))`).
+   - **Analytical Binning Uncertainty**: Stores interval bounds (`meas_lower`, `meas_upper`), log-scale bin standard deviation ($\sigma_{\text{bin}} = \frac{\log b - \log a}{\sqrt{12}}$ for bounded intervals, or $\sigma/\sqrt{12}$ for open tails), and `meas_method = "tobit_interval"` (falling back to `"geometric_midpoint"` if tail probability $< 10^{-10}$).
    - **Configurable Strategies (`--range-mode`)**:
-     - `tobit` *(Default, Gold Standard)*: Maximum likelihood expectation conditional on the fitted lognormal distribution.
-     - `geometric`: Geometric midpoint $y^* = \sqrt{a \cdot b} = \exp\left(\frac{\log a + \log b}{2}\right)$, exact linear midpoint in log-space.
-     - `midpoint`: Standard arithmetic midpoint $y^* = \frac{a + b}{2}$.
-     - `lower` / `upper`: Strict lower or upper interval bounds.
-     - `skip`: Skips range intervals.
+     - `tobit` *(Default, Gold Standard)*: Maximum likelihood conditional geometric expectation.
+     - `geometric`: Geometric midpoint $y^* = \sqrt{a \cdot b} = \exp\left(\frac{\log a + \log b}{2}\right)$.
+     - `midpoint`: Arithmetic midpoint $y^* = \frac{a + b}{2}$.
+     - `lower` / `upper` / `skip`: Lower bound, upper bound, or skip ranges.
 4. **Built-in Pure Python Coordinate Projection**:
-   Converts WGS84 decimal degrees (lat/lon) into British National Grid (`EPSG:27700`) meters using Airy 1830 ellipsoid Transverse Mercator formulas. Zero external GIS or Python dependencies required (no pandas, geopandas, or pyproj needed).
+   Converts WGS84 decimal degrees (lat/lon) into British National Grid (`EPSG:27700`) metres using Airy 1830 ellipsoid Transverse Mercator formulas. Zero external GIS or Python dependencies required (no pandas, geopandas, or pyproj needed).
 5. **Wide-to-Long Determinand Unpivoting**:
    If raw files store determinands as separate columns (e.g. `Nitrate (mg/L)`, `Phosphate (mg/L)`), the script unpivots them into standard relational `samples.csv` records with canonical EA codes (`0117`, `0180`, etc.).
 6. **Data Filtering & Subsetting**:
    Filter rows using `--filter="KEY=VALUE"` (e.g. `--filter="Country=England"`).
 7. **Instant Pipeline Integration**:
-   Writes outputs directly to `data/custom/<source_name>/` and optionally creates `configs/sources/<source_name>.json` (`--generate-config`), making the dataset immediately available for preprocessing and S3N modeling.
+   Writes outputs directly to `data/custom/<source_name>/` and optionally creates `configs/sources/<source_name>.json` (`--generate-config`), making the dataset immediately available for preprocessing and S3N modelling.
 
 #### Example 1: Formatting the Earthwatch Waterblitz Dataset
 ```bash
@@ -199,7 +198,7 @@ python3 scripts/format_custom_data.py data/Waterblitz \
   --site-id-prefix="WB_" \
   --generate-config
 ```
-*Result*: Converts 65,983 range intervals to numeric midpoints, flags 19,608 censored values, projects lat/lon to BNG meters, and writes 36,956 unique stations to `data/custom/waterblitz/sites.csv` and 85,591 observations to `data/custom/waterblitz/samples.csv`.
+*Result*: Converts 65,983 range intervals to numeric midpoints, flags 19,608 censored values, projects lat/lon to BNG metres, and writes 36,956 unique stations to `data/custom/waterblitz/sites.csv` and 85,591 observations to `data/custom/waterblitz/samples.csv`.
 
 #### Example 2: Arbitrary External Sensor Dataset with Explicit Column Mappings
 ```bash
@@ -241,7 +240,7 @@ python3 scripts/format_custom_data.py path/to/my_sensor_export.csv \
 | `--det-name <name>` | `Nitrate as N` | Determinand descriptive name |
 | `--unit <unit>` | `mg/L` | Measurement unit |
 | `--range-mode <mode>` | `tobit` | Strategy: `tobit` (Gold Standard MLE), `geometric` ($\sqrt{ab}$), `midpoint` ($\frac{a+b}{2}$), `lower`, `upper`, `skip` |
-| `--convert-to-bng` | `True` | Convert WGS84 lat/lon coordinates to BNG meters (disable with `--no-convert-to-bng`) |
+| `--convert-to-bng` | `True` | Convert WGS84 lat/lon coordinates to BNG metres (disable with `--no-convert-bng`) |
 | `--crs <epsg>` | *(Auto-detected)* | Override input coordinate CRS EPSG code (`4326` or `27700`) |
 | `--filter <expr>` | *(None)* | Row filter expression (e.g. `Country=England`) |
 | `--bbox <bounds>` | *(None)* | Spatial bounding box filter `min_x,min_y,max_x,max_y` |
@@ -252,7 +251,7 @@ python3 scripts/format_custom_data.py path/to/my_sensor_export.csv \
 
 #### Systematic Output Folder Tagging with Range Modes
 
-Whenever range intervals are present and converted (via default `tobit` or any alternative mode), scripts across the S3N pipeline systematically tag their output directory names with the active range mode (e.g. `_tobit`, `_geometric`, `_midpoint`):
+Whenever range intervals are actually present and formatted (via default `tobit` or an alternative mode), scripts tag output directories with the active range mode (e.g. `_tobit`, `_geometric`, `_midpoint`); datasets containing only exact point values omit the suffix:
 
 ```text
 Pipeline Stage                          Output Folder Pattern & Examples
@@ -318,10 +317,11 @@ python3 scripts/01_preprocess_orn.py \
   --custom-samples=path/to/my_sensor_readings.csv \
   --custom-name=sensor_network
 
-# 2. Fit S3N model using the custom source tag
+# 2. Fit S3N model using zero-config custom paths (auto-preprocesses if needed)
 Rscript scripts/run_s3n_determinand.R 0117 \
-  --source=sensor_network \
-  --custom-samples=path/to/my_sensor_readings.csv
+  --custom-sites=path/to/my_sensor_sites.csv \
+  --custom-samples=path/to/my_sensor_readings.csv \
+  --custom-name=sensor_network
 ```
 
 ---
@@ -409,7 +409,7 @@ Then simply use `--source=my_combined`.
 
 ---
 
-## 5. Hydrological & Geostatistical Modeling Considerations
+## 5. Hydrological & Geostatistical Modelling Considerations
 
 When integrating new monitoring sources with stream network models, keep these four domain considerations in mind:
 
@@ -424,92 +424,44 @@ The S3N preprocessor projects stations orthogonally onto the nearest stream reac
 
 ### 5.2 Catchment Subsetting
 The preprocessor subsets the national water network to **only the catchments containing at least one monitored station**.
-- If your custom dataset is confined to a single river basin (e.g. River Eden or River Tamar), the preprocessor automatically extracts only that catchment's reaches (e.g. ~2,500 reaches instead of 90,876), making downstream S3N modeling run in **< 2 seconds**!
+- If your custom dataset is confined to a single river basin (e.g. River Eden or River Tamar), the preprocessor automatically extracts only that catchment's reaches (e.g. ~2,500 reaches instead of 90,876), making downstream S3N modelling run in **< 2 seconds**.
 
 ### 5.3 Sampling Frequency Imbalance & Aggregation
 If your custom data consists of high-frequency telemetry sondes (e.g. 15-minute readings: ~35,000 samples/station/year) while national RSN data is monthly grab sampling (~12 samples/station/year):
 - **Why this matters**: In unweighted maximum likelihood estimation, a station with 35,000 observations would overwhelm the likelihood function relative to stations with 12 observations.
-- **How S3N handles this**: In [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), observations are aggregated to **reach-level means or medians** (`obs_mean` / `obs_median`) for the active modeling period (`all`, `year`, `season`, `month`) before conditioning the NNGP likelihood. This ensures each stream reach carries an appropriately balanced weight in spatial estimation.
+- **How S3N handles this**: In [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), observations are aggregated to **reach-level means** (`obs_mean` raw and `obs_y = mean(fwd(y))` transformed) for the active modelling period (`all`, `year`, `season`, `month`) before conditioning the NNGP likelihood. For cross-source pooling options (`--prefer-source`, `--source-weight`, `--source-se`), see [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md).
 
 ### 5.4 Left-Censored Values & Detection Limits (`< LOD`)
 If your custom dataset contains values reported below the Limit of Detection (e.g. `< 0.05 mg/L`):
 - Mark `meas_sign = "<"` (or `less_than_flag = "yes"`).
 - The pipeline applies **Multi-Threshold Robust Lognormal Regression on Order Statistics (`ROS`)** (Hirsch & Stedinger 1987; Helsel & Cohn 1988) by default (`--censor=ros`), or substitution via `--censor=half_lod`.
 
-### 5.5 Two-Stage Modeling with Pre-Fitted Values (GAMs, Machine Learning) & Approach A: Measurement Error Kriging
+### 5.5 Measurement Uncertainty Lifecycle & Two-Stage Modelling (Approach A)
 
-A powerful geostatistical modeling pattern is **two-stage modeling**:
-1. **Stage 1 (Temporal Smoothing / Detrending)**: A first-stage temporal model—such as a Generalized Additive Model (GAM), dynamic harmonic regression, or time-series filter—is fit independently at each monitoring station to remove seasonal cycles, flow dependence, and observation noise, producing site-level predictions $\hat{x}_i$ along with standard errors $u_i = \text{SE}(\hat{x}_i)$.
-2. **Stage 2 (Spatial Stream Network Kriging)**: S3N spatial tail-up and tail-down stream network models are fit across the network to interpolate values to all unmonitored reaches.
+Whenever your dataset supplies estimation or interval uncertainty via `meas_uncertainty` and `meas_method` (or via `--source-se`), the pipeline automatically converts uncertainty to response-scale variance via the Delta Method, decomposes total nugget variance into microscale spatial variance ($\tau_{\text{micro}}^2 = \max(10^{-6}\sigma^2, \hat{\tau}_{\text{total}}^2 - \bar{v})$) and mean estimation variance ($\bar{v}$), and solves the heteroskedastic NNGP system in C++:
 
-#### Is Two-Stage Modeling Statistically Valid?
-Yes, **provided the spatial model accounts for the heteroskedastic estimation uncertainty of the first stage**. 
-
-If standard homoskedastic kriging is used on pre-modelled values, two statistical issues arise:
-- Stations with poor first-stage fits (high SE due to sparse data or high residual scatter) are weighted identically to stations with hundreds of clean measurements.
-- Standard kriging will interpolate straight through the first-stage point estimates, attributing first-stage estimation uncertainty to microscale spatial variability (inflating the nugget).
-
-#### The Solution: Approach A — Heteroskedastic Measurement Error Kriging
-Under Approach A, the observation equation for reach $i$ becomes:
-
-$$
-y_i = \boldsymbol{x}_i^T \boldsymbol{\beta} + w_{\text{TU}}(s_i) + w_{\text{TD}}(s_i) + \varepsilon_{\text{micro}, i} + \eta_i
-$$
-
-where:
-- $w_{\text{TU}}(s_i), w_{\text{TD}}(s_i)$ are the spatial stream network processes.
-- $\varepsilon_{\text{micro}, i} \sim \mathcal{N}(0, \tau_{\text{micro}}^2)$ is the intrinsic microscale spatial nugget variation.
-- $\eta_i \sim \mathcal{N}(0, v_i)$ is the **known, site-specific measurement/estimation error variance** from the first stage.
-
-#### 1. Delta Method Variance Transformation
-Because S3N models log-transformed (or sqrt/Box-Cox/Yeo-Johnson transformed) concentrations $y_i = g(x_i)$, the raw standard error $u_i = \text{SE}(x_i)$ is converted to response-scale variance $v_i = \text{Var}(y_i)$ via the Delta Method:
-- **Log scale ($y = \log x$)**: $v_i \approx \left(\frac{u_i}{x_i}\right)^2$ (the squared coefficient of variation, $\text{CV}^2$).
-- **Square root scale ($y = \sqrt{x}$)**: $v_i \approx \left(\frac{u_i}{2\sqrt{x_i}}\right)^2$.
-- **Box-Cox scale ($y = \frac{x^\lambda - 1}{\lambda}$)**: $v_i \approx (x_i^{\lambda - 1} u_i)^2$.
-- **Raw scale ($y = x$)**: $v_i = u_i^2$.
-
-#### 2. Nugget Decomposition & C++ NNGP Solver
-The total estimated nugget $\hat{\tau}_{\text{total}}^2$ from BRISC reflects both spatial microscale variation and measurement noise:
-
-$$
-\tau_{\text{micro}}^2 = \max\left(10^{-6}\sigma^2, \hat{\tau}_{\text{total}}^2 - \bar{v}\right), \quad \text{where } \bar{v} = \frac{1}{n} \sum_{i=1}^n v_i
-$$
-
-In S3N's high-speed C++ solver (`src/s3n_fast_neighbors.cpp`), the NNGP prediction weights $\boldsymbol{\lambda}_0$ for target reach $s_0$ solve:
-
-$$
-\left[ \sigma^2 \boldsymbol{R}_m + \tau_{\text{micro}}^2 \boldsymbol{I}_m + \text{diag}(v_1, \dots, v_m) \right] \boldsymbol{\lambda}_0 = \boldsymbol{c}_0
-$$
-
-This downweights uncertain stations in spatial interpolation, denoises observation locations, and produces exact prediction standard errors.
-
-#### Providing GAM Estimates to the Pipeline
-To use Approach A, include `meas_uncertainty` and set `meas_method = "gam"` in your `samples.csv`:
-```csv
-site_id,sample_datetime,meas_result,meas_uncertainty,meas_method,unit_short_desc
-RSN001,2023-06-01,2.351,0.2197,gam,mg/L
-RSN002,2023-06-01,4.120,0.1850,gam,mg/L
-```
-- **Automatic Activation**: Whenever `meas_method = "gam"` is detected (or via `--meas-error` / `--gam` flag), Approach A is automatically activated.
-- **Reporting**: Cross-validation tables tag `Spatial_Method = "Measurement Error Kriging"` and parameter tables report the decomposed `tau.sq (microscale)` and `mean_meas_variance`.
-- **Example Two-Stage Workflow** (after placing GAM predictions & SEs into e.g. `data/custom/rsn_gam_mean/`):
+| `meas_method` | Origin | Units of `meas_uncertainty` | Auto-Triggers Approach A? |
+| :--- | :--- | :--- | :---: |
+| `exact_point` *(or blank)* | Direct lab assay | `0` / `NA` | No (unless `--meas-error`) |
+| `gam` | Stage-1 GAM / temporal model | Raw concentration SE | **Yes** |
+| `tobit_interval` / `geometric_midpoint` | `format_custom_data.py` range intervals | Log-scale bin SD $\sigma_{\text{bin}}$ | **Yes** |
+| `tobit_raw_sd` | Range / uncertainty in raw SD units | Raw SD (scaled via Delta Method) | **Yes** |
+| `source_se` | `--source-se=<s:sd>` CLI flag | Raw concentration SE | **Yes** |
 
 ```bash
-# Preprocess reaches with GAM estimates and uncertainty
+# Example: Preprocess Stage-1 GAM estimates (meas_method="gam") and fit with Approach A
 python3 scripts/01_preprocess_orn.py --source=rsn_gam_mean
-
-# Fit S3N model with Measurement Error Kriging
 Rscript scripts/run_s3n_determinand.R 0117 --source=rsn_gam_mean --basin=Thames
 ```
 
 > [!TIP]
-> **Comprehensive Two-Stage Modeling & Measurement Error Kriging Guide**: For a dedicated, complete guide detailing the theoretical foundations, Delta Method derivations, C++ stack solver mechanics, and comparative benchmarks, see [`docs/two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md).
+> For full mathematical derivations, Delta Method formulas, C++ stack solver details, and comparative benchmarks, see [`docs/two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md).
 
 ---
 
 ## 6. End-to-End Walkthrough: Adding a Custom Dataset
 
-Let us trace a complete, working example from raw files to comparative analysis.
+The steps below trace a complete, working example from raw files to comparative analysis.
 
 ### Step 1: Create Custom Data Directory & Files
 ```bash
@@ -575,7 +527,7 @@ Rscript scripts/04_compare_model_runs.R \
 | Issue / Error | Likely Cause | Solution |
 | :--- | :--- | :--- |
 | `Custom sites file not found for source 'xyz'` | Directory in `data/custom/xyz/` lacks a `sites.csv` file. | Ensure file is named `sites.csv` or pass `--custom-sites=path/to/my_file.csv`. |
-| `Could not find ID and Easting/Northing columns` | Column names do not match any recognized variant. | Rename columns to `site_id`, `easting`, `northing` or configure mappings in `configs/sources/<name>.json`. |
+| `Could not find ID and Easting/Northing columns` | Column names do not match any recognised variant. | Rename columns to `site_id`, `easting`, `northing` or configure mappings in `configs/sources/<name>.json`. |
 | `Stations snapped (0 active reaches)` | Monitoring points are $> 250\text{ m}$ from any reach polyline in the river network. | Inspect locations via `06_station_snapping_diagnostics.R` and rerun with `--max-snap-dist 500`. |
 | Coordinates snapped to sea or wrong coast | Coordinates were given in Lat/Lon degrees without detection, or inverted $(y, x)$. | Ensure coordinates are `(easting, northing)` or pass `--custom-crs=4326`. |
-| `Skipping separate fit (only N observed reaches)` | Custom source has $< 15$ observed reaches and S3N requires $m = 15$ nearest neighbors. | Combine with official surveillance data using `--source=rsn+<custom>` so the model has sufficient spatial observations for NNGP estimation. |
+| `Skipping separate fit (only N observed reaches)` | Custom source has $< 15$ observed reaches and S3N requires $m = 15$ nearest neighbours. | Combine with official surveillance data using `--source=rsn+<custom>` so the model has sufficient spatial observations for NNGP estimation. |

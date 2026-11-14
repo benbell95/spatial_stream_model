@@ -62,7 +62,7 @@ Passing `--threshold=uk` automatically sets both the threshold value and directi
 Given the selected response transformation $g(\cdot)$ (e.g. $g(y) = \ln(y)$ for `--transform=log`, $g(y) = y$ for `--transform=none`):
 
 1. Transform the regulatory threshold onto the model scale: $z_T = g(T)$.
-2. Compute the standardized normal deviate using the combined S3N prediction $\hat{z}(s_0)$ and kriging standard error $\text{SE}(s_0)$:
+2. Compute the standardised normal deviate using the combined S3N prediction $\hat{z}(s_0)$ and kriging standard error $\text{SE}(s_0)$:
 
    $$
    z_0 = \frac{z_T - \hat{z}(s_0)}{\max(\text{SE}(s_0), 10^{-8})}

@@ -1,6 +1,6 @@
 # Optimal Monitoring Network Design & Gap Mapping Guide
 
-When planning field campaigns or expanding statutory water quality surveillance, simply sampling where Kriging Standard Error (`SE`) happens to be highest can waste visits on short, isolated headwater twigs with negligible spatial reach. Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes our **OpenMP C++ greedy active-learning solver** (`C_s3n_optimal_design`) to pinpoint and map the exact $K$ unmonitored river reaches where adding new stations yields the **largest network-wide reduction in prediction uncertainty**, automatically generating both a ranked candidate table and dedicated multi-panel **Monitoring Gap & Priority Placement Maps** (`plot_fig_optimal_design()`).
+When expanding water quality monitoring, simply placing new stations where Kriging Standard Error (`SE`) is highest can waste visits on short, isolated headwater twigs. Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes the OpenMP C++ greedy active-learning solver (`C_s3n_optimal_design`) to select the $K$ unmonitored reaches that yield the largest network-wide reduction in prediction uncertainty, exporting both a ranked candidate CSV and multi-panel **Monitoring Gap & Priority Placement Maps** (`plot_fig_optimal_design()`).
 
 ---
 
@@ -8,7 +8,7 @@ When planning field campaigns or expanding statutory water quality surveillance,
 
 - [1. CLI Flags & Pipeline Integration](#1-cli-flags--pipeline-integration)
 - [2. Mathematical Formulation (`C_s3n_optimal_design`)](#2-mathematical-formulation-c_s3n_optimal_design)
-- [3. Visualization Function (`plot_fig_optimal_design`) & Map Panels](#3-visualization-function-plot_fig_optimal_design--map-panels)
+- [3. Visualisation Function (`plot_fig_optimal_design`) & Map Panels](#3-visualisation-function-plot_fig_optimal_design--map-panels)
 - [4. Output CSV Schema (`optimal_monitoring_design_<det>.csv`)](#4-output-csv-schema-optimal_monitoring_design_detcsv)
 - [5. Practical Interpretation & Combining with Threshold Exceedance](#5-practical-interpretation--combining-with-threshold-exceedance)
 - [6. Worked CLI Examples](#6-worked-cli-examples)
@@ -33,6 +33,8 @@ When planning field campaigns or expanding statutory water quality surveillance,
 
 ## 2. Mathematical Formulation (`C_s3n_optimal_design`)
 
+> **In plain English:** At each step, the solver tests every unmonitored reach and scores how much adding a gauge there would lower uncertainty across all connected downstream and neighbouring reaches combined. After picking the best site (`#1`), it updates the remaining uncertainty map before picking `#2`, preventing picks from bunching together on the same stream.
+
 After universal S3N kriging produces the baseline combined prediction standard error $\text{SE}_{\text{curr}}(s_j)$ at every reach $s_j$, the solver ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) / [`compute_optimal_monitoring_design()`](../scripts/s3n_model_functions.R)) models the variance reduction achieved across evaluation reaches $\mathcal{E}$ by placing a station with nugget variance $\tau^2$ at an unmonitored candidate reach $c \in \mathcal{C}$ (`has_obs == 0`).
 
 1. **Candidate & Evaluation Sets**:
@@ -53,13 +55,13 @@ After universal S3N kriging produces the baseline combined prediction standard e
 
 ---
 
-## 3. Visualization Function (`plot_fig_optimal_design`) & Map Panels
+## 3. Visualisation Function (`plot_fig_optimal_design`) & Map Panels
 
 [`plot_fig_optimal_design()`](../scripts/s3n_plot_functions.R) renders a 3-panel monitoring gap & active-learning layout whenever design results exist:
 
 - **Files Written**:
   - `fig_optimal_design_england_<det>.png` — All England monitoring gaps & top-$K$ placements
-  - `fig_optimal_design_humber_<det>.png`, `fig_optimal_design_thames_<det>.png`, `fig_optimal_design_severn_<det>.png` — Basin-scale active-learning designs (each core basin optimizes its own local $K$ picks)
+  - `fig_optimal_design_humber_<det>.png`, `fig_optimal_design_thames_<det>.png`, `fig_optimal_design_severn_<det>.png` — Basin-scale active-learning designs (each core basin optimises its own local $K$ picks)
   - `fig_optimal_design_basin_<slug>_<det>.png` — Any custom catchment requested with `--basin=`
 
 ### Panel Anatomy
@@ -98,7 +100,7 @@ Each fitted domain contributes `K` rows ordered by `Rank` (`1..K`):
 ## 5. Practical Interpretation & Combining with Threshold Exceedance
 
 1. **Statistical Variance Design vs. Compliance Risk Gaps**:
-   - `--design-sites=<K>` minimizes **model-wide epistemic uncertainty** (`Kriging SE`), naturally favouring long, well-connected unmonitored mainstem/tributary corridors in poorly sampled catchments.
+   - `--design-sites=<K>` minimises **model-wide epistemic uncertainty** (`Kriging SE`), naturally favouring long, well-connected unmonitored mainstem/tributary corridors in poorly sampled catchments.
    - Threshold exceedance (`--threshold=uk`) identifies **decision uncertainty** (`Uncertain 20–80%`, `0.20 <= P <= 0.80`) where predicted levels sit close to a standard. Cross-referencing both (`--threshold=uk --design-sites=50`) highlights high-SE candidate reaches that *also* lie inside yellow `Uncertain` management zones — delivering maximum regulatory value per extra water sample.
 2. **Reading the Marginal Gain Curve**:
    - Large `Pct_Var_Reduced` on early ranks (`1..10`) signals clear structural holes in current monitoring coverage; when `Pct_Var_Reduced` flattens toward `0.05%–0.1%` per site, extra stations mainly reduce local reach nugget error rather than regional interpolation error.

@@ -8,7 +8,7 @@ This guide is the single reference for repository layout, environment dependenci
 
 - [1. Repository & Output Layout](#1-repository--output-layout)
 - [2. Software & Hardware Requirements](#2-software--hardware-requirements)
-  - [2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`)](#21-python-environment-01_preprocess_ornpy-format_custom_datapy)
+  - [2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)](#21-python-environment-01_preprocess_ornpy-format_custom_datapy-build_showcasepy)
   - [2.2 R Environment](#22-r-environment)
   - [2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)](#23-compiled-c--openmp-library-srcs3n_fast_neighborscpp)
   - [2.4 Linux System Dependencies](#24-linux-system-dependencies)
@@ -39,7 +39,7 @@ spatial_stream_model/
 │   ├── NCEA_River_Surveillance_Network_ARD_Open/
 │   ├── NCEA_Small_Streams_Network_ARD_Open/
 │   └── processed/
-│       └── <net>_<source>/           # Standardized 5-file output from 01_preprocess_orn.py
+│       └── <net>_<source>/           # Standardised 5-file output from 01_preprocess_orn.py
 ├── gis/
 │   └── ORN_v2.gpkg                   # National river network GeoPackage (~10.4 GB)
 ├── modelling_dashboard/              # Interactive offline case-study explorer & results dashboard
@@ -54,16 +54,21 @@ spatial_stream_model/
 ├── scripts/
 │   ├── 01_preprocess_orn.py          # Network extraction, ROS imputation, station snapping
 │   ├── format_custom_data.py         # Helper to convert user CSVs into source format + JSON
+│   ├── build_showcase.py             # Stages WebP/SVG figures & data.js for modelling_dashboard/
 │   ├── run_s3n_determinand.R         # Main end-to-end R runner (fit + CV + kriging + plots)
+│   ├── run_s3n_cokriging.R           # Multivariate Factor-LMC / colocated co-kriging runner
 │   ├── 02_fit_s3n_models.R           # Standalone model fitting step (saves .rds checkpoint)
 │   ├── 03_generate_plots.R           # Standalone plotting step (reads .rds checkpoint)
 │   ├── 04_compare_model_runs.R       # Multi-run & cross-determinand comparison
 │   ├── 05_descriptive_stats.R        # Single-run descriptive stats & gradient tests
 │   ├── 06_station_snapping_diagnostics.R
+│   ├── 07_compare_cokriging_runs.R   # Equal vs. source-weighted co-kriging comparison
+│   ├── 08_compare_transforms.R       # Multi-transform (none/log/sqrt/boxcox) benchmark
 │   ├── s3n_py_utils.py               # Shared Python utilities (WKB, ROS, config, snapping)
-│   └── s3n_*.R                       # Shared R modules (config, covariates, transforms, model, plot, stats)
+│   └── s3n_*.R                       # Shared R modules (config, covariates, transforms, model, multivariate, plot, stats)
 ├── src/
-│   ├── Makevars                      # OpenMP compiler flags for R CMD SHLIB
+│   ├── Makevars                      # OpenMP compiler flags for Linux/macOS R CMD SHLIB
+│   ├── Makevars.win                  # OpenMP compiler flags for Windows Rtools R CMD SHLIB
 │   └── s3n_fast_neighbors.cpp        # OpenMP C++ Euler-tour & NNGP neighbor engine
 ├── tests/
 │   ├── test_python_utils.py          # Python unit tests
@@ -78,41 +83,44 @@ spatial_stream_model/
 
 ## 2. Software & Hardware Requirements
 
-The pipeline minimizes external dependencies so it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
+The pipeline minimises external dependencies so it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
 
-### 2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`)
+### 2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)
 - **Python Version**: **Python ≥ 3.8** (uses `statistics.NormalDist()` for ROS normal quantiles).
-- **Third-Party Packages**: **None (Zero `pip` or `conda` dependencies)** — uses only Python standard library modules (`sqlite3`, `struct`, `statistics`, `math`, `collections`, `csv`, `json`, `argparse`, `os`, `time`).
+- **Third-Party Packages**: **None required** for core GeoPackage (`.gpkg`) and CSV preprocessing (uses standard library modules `sqlite3`, `struct`, `statistics`, `math`, `csv`, `json`, `argparse`).
+  - Optional packages: `pyarrow` (or system `libgdal`) for GeoParquet `.parquet` networks, `pyproj` (or `osgeo.osr`) for CRS auto-reprojection in `format_custom_data.py`, and `Pillow` for WebP asset generation in `build_showcase.py`.
 
 ### 2.2 R Environment
 - **R Version**: **R ≥ 3.5.0**.
 - **Required R Packages**:
   | Package | Source | Purpose |
   | :--- | :--- | :--- |
-  | **`S3N`** | GitHub (`remotes::install_github("jpierkunke/S3N")`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`). |
+  | **`S3N`** | GitHub (`remotes::install_github("jpierkunke/S3N")`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`). *(Recommended for standard exponential fits; C++ fallback handles custom kernels/ME/missing `S3N`.)* |
   | `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr` | CRAN | Runtime dependencies of `jpierkunke/S3N`. |
   | `jsonlite` *(optional / recommended)* | CRAN | Fast JSON parsing for `configs/*.json` and `network_metadata.json` (with built-in base-R fallback in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
-  | `data.table` *(optional / strongly recommended)* | CRAN | Multi-threaded `fread()` / `fwrite()` CSV I/O (`5–15x` faster on large sample files and ~93k-reach prediction outputs, with automatic base-R `read.csv()` / `write.csv()` fallback via `fast_read_csv()` / `fast_write_csv()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
-  | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG plotting (`type = "cairo"`). |
+  | `data.table` *(optional / strongly recommended)* | CRAN | Multi-threaded `fread()` / `fwrite()` CSV I/O (`5–15x` faster on large sample files and ~91k-reach prediction outputs, with automatic base-R `read.csv()` / `write.csv()` fallback via `fast_read_csv()` / `fast_write_csv()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
+  | `splines`, `mgcv`, `rpart` | Bundled with standard R | Used when `--trend=spline\|gam\|rf\|gbm` is enabled (automatic fallback to `spline`/`linear` if unavailable). |
+  | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG/PDF/SVG plotting (`type = "cairo"`). |
 
 ### 2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)
-R scripts dynamically load `src/s3n_fast_neighbors.so`. [`src/Makevars`](../src/Makevars) already configures `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root with:
+R scripts dynamically load `src/s3n_fast_neighbors.so` (Linux/macOS) or `src/s3n_fast_neighbors.dll` (Windows via Rtools). [`src/Makevars`](../src/Makevars) and [`src/Makevars.win`](../src/Makevars.win) already configure `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root with:
 
 ```bash
 R CMD SHLIB src/s3n_fast_neighbors.cpp
 ```
+*(A precompiled Linux `x86_64` `.so` is included; recompile after modifying C++ code, on Windows/macOS, or if hitting a distro ABI mismatch.)*
 
 ### 2.4 Linux System Dependencies
 | Dependency | Fedora / RHEL | Ubuntu / Debian | Purpose |
 | :--- | :--- | :--- | :--- |
 | **C/C++ Compiler & OpenMP** | `gcc`, `gcc-c++`, `libgomp` | `build-essential`, `libomp-dev` | Compiling `src/s3n_fast_neighbors.cpp` and `S3N`. |
 | **R Dev Headers & BLAS/LAPACK** | `R-core-devel`, `openblas-devel`, `lapack-devel` | `r-base-dev`, `libopenblas-dev`, `liblapack-dev` | `<R.h>`, LAPACK, and BLAS headers. |
-| **Cairo Graphics** | `cairo`, `cairo-devel` | `libcairo2`, `libcairo2-dev` | Headless anti-aliased PNG rendering (`type = "cairo"`). |
+| **Cairo Graphics** | `cairo`, `cairo-devel` | `libcairo2`, `libcairo2-dev` | Headless anti-aliased PNG/SVG rendering (`type = "cairo"`). |
 | **SQLite3** | `sqlite-libs` | `libsqlite3-0` | Underlying C library used by Python `sqlite3` to read `.gpkg` files. |
 
 ### 2.5 Hardware Profile
 - **RAM**: ~1.5 GB peak memory for a full national run.
-- **CPU**: Defaults to `4` OpenMP threads (`--omp=4`); a full national + 3-basin ORN run with 5-fold CV and 4 figures completes in ~18–25 seconds.
+- **CPU**: Defaults to **`1` OpenMP thread** (`--omp=1` via `parse_n_omp_arg(..., default = 1L)`) for reproducible single-node runs; pass `--omp=4` (or higher) for multi-core speedups. With `--omp=4`, a full national + 3-basin ORN run with 5-fold CV and 4 figures completes in ~18–25 seconds.
 
 ---
 
@@ -161,7 +169,7 @@ On first run, [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) 
 
 ## 4. Running the Automated Test Suite
 
-The `tests/` directory contains fast unit tests covering Python preprocessing/formatting utilities, R configuration/covariate/transform helpers, and the compiled C++ OpenMP neighbor engine:
+The `tests/` directory contains fast unit tests covering Python preprocessing/formatting utilities, R configuration/covariate/transform helpers, and the compiled C++ OpenMP neighbour engine:
 
 ```bash
 # 1. Python unit tests (WKB decoding, ROS imputation, source tags, custom data formatting)

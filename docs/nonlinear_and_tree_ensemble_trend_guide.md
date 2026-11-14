@@ -1,6 +1,6 @@
 # Non-Linear Spline (`GAM + S3N`) & Tree-Ensemble (`RF / GBM + S3N`) Regression Kriging Guide
 
-> **Quick Summary**: The `--trend=linear|spline|gam|rf|gbm` option replaces the linear fixed-effects mean $x(s)^\top\beta$ with penalized splines, Generalized Additive Models, Random Forests, or Gradient Boosted Regression Trees prior to S3N stream-network kriging. It works directly on **standard raw/preprocessed data**, requires **zero external CRAN packages**, and can be freely combined with `--kernel=`, `--combine=`, `--afv=`, and `--meas-error`.
+> **Quick Summary**: The `--trend=linear|spline|gam|rf|gbm` option replaces the linear fixed-effects mean $x(s)^\top\beta$ with penalised splines, Generalised Additive Models, Random Forests, or Gradient Boosted Regression Trees prior to S3N stream-network kriging. It works directly on **standard raw/preprocessed data**, requires **zero external CRAN packages**, and combines cleanly with `--kernel=`, `--combine=`, `--afv=`, and `--meas-error`.
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## 1. Key Distinction: `--trend=gam` vs. Two-Stage `meas_method="gam"`
 
-Because both features involve Generalized Additive Models, it is important not to confuse them:
+Because both features use Generalised Additive Models, keep their distinct roles clear:
 
 | Feature | CLI / Config Trigger | Data Requirement | What It Models | Where It Acts in S3N |
 | :--- | :--- | :--- | :--- | :--- |
@@ -25,7 +25,7 @@ Because both features involve Generalized Additive Models, it is important not t
 | **Two-Stage GAM Measurement-Error Kriging** | `meas_method="gam"` or `--meas-error` | Preprocessed dataset containing site-level `meas_uncertainty` | **Temporal / site-level observation uncertainty** ($v_{\text{meas}, i}$) estimated from stage-1 site time-series | Nugget / covariance diagonal ($\tau^2_{\text{micro}} + v_{\text{meas}, i}$) |
 
 **Can they be used together?**  
-Yes. You can run `--trend=gam` (or `rf` / `gbm`) on **standard raw data** without `--meas-error`, **or** you can combine `--trend=gam --meas-error` on a Two-Stage GAM dataset so that stage-1 temporal uncertainty is propagated into the spatial nugget while stage-2 landscape covariates are modeled non-linearly.
+Yes. You can run `--trend=gam` (or `rf` / `gbm`) on **standard raw data** without `--meas-error`, **or** combine `--trend=gam --meas-error` on a Two-Stage GAM dataset so stage-1 temporal uncertainty enters the spatial nugget while stage-2 landscape covariates are modelled non-linearly.
 
 See [`./two_stage_gam_measurement_error_kriging_guide.md`](./two_stage_gam_measurement_error_kriging_guide.md) for details on stage-1 measurement-error propagation.
 
@@ -38,8 +38,8 @@ None of the `--trend=` engines require third-party CRAN packages such as `random
 | Trend Mode | Engine Used | Package Status in R | Automatic Fallback |
 | :--- | :--- | :--- | :--- |
 | **`linear`** *(default)* | QR / GLS linear regression | **Base R** (`stats`) | — |
-| **`spline`** | Orthogonalized natural cubic B-splines (`splines::ns`) + analytic LOO-GCV ridge selection (`chol2inv`) | **Base R** (`splines`) | Falls back to `linear` if `n_obs < 12` |
-| **`gam`** | REML-penalized cubic regression splines (`mgcv::gam(..., bs='cr', method='REML')`) | **Recommended** (`mgcv`, bundled with standard R) | Automatically falls back to `spline` if `mgcv` is unavailable or `n_obs` is too small for REML smooths |
+| **`spline`** | Orthogonalised natural cubic B-splines (`splines::ns`) + analytic LOO-GCV ridge selection (`chol2inv`) | **Base R** (`splines`) | Falls back to `linear` if `n_obs < 12` |
+| **`gam`** | REML-penalised cubic regression splines (`mgcv::gam(..., bs='cr', method='REML')`) | **Recommended** (`mgcv`, bundled with standard R) | Automatically falls back to `spline` if `mgcv` is unavailable or `n_obs` is too small for REML smooths |
 | **`rf`** | Bagged random-subspace decision-tree forest (`rpart::rpart`, `mtry = 0.7p`) with Out-of-Bag (`OOB`) evaluation | **Recommended** (`rpart`, bundled with standard R) | Falls back to `linear` if `n_obs < 12` |
 | **`gbm`** | Stochastic gradient-boosted trees (`rpart::rpart`, `maxdepth = 3`, $\nu = 0.06$, `0.8` subsampling) with 5-fold cross-fitting | **Recommended** (`rpart`, bundled with standard R) | Falls back to `linear` if `n_obs < 12` |
 
@@ -52,7 +52,7 @@ Run `Rscript scripts/run_s3n_determinand.R --list-trends` at any time to print t
 | Mode (`--trend=`) | Shorthand Flag | Tuning Flags | Mathematical Formulation | Best Use Case |
 | :--- | :--- | :--- | :--- | :--- |
 | **`linear`** | *(default)* | — | $\mu(s) = x(s)^\top \beta$ | Fast baseline; linear/monotonic relationships on the transformed scale; clean parametric slopes. |
-| **`spline`** | `--spline` | `--spline-df=3` *(range `2..10`)* | $\mu(s) = x(s)^\top\beta + \sum_j \tilde{B}_j(x_j)^\top \gamma_j$, penalized by LOO-GCV $\lambda$ | Smooth univariate non-linearities with lightweight matrix algebra and guaranteed stability on small basins. |
+| **`spline`** | `--spline` | `--spline-df=3` *(range `2..10`)* | $\mu(s) = x(s)^\top\beta + \sum_j \tilde{B}_j(x_j)^\top \gamma_j$, penalised by LOO-GCV $\lambda$ | Smooth univariate non-linearities with lightweight matrix algebra and guaranteed stability on small basins. |
 | **`gam`** | `--gam-s3n` | `--spline-df=3` *(sets basis $k = \text{df} + 2$)* | $\mu(s) = \beta_0 + \sum_{j \in \text{cont}} s_j(x_j) + \sum_{l \in \text{disc}} \beta_l x_l$ via REML | Data-adaptive smooth curves (e.g., upland-to-lowland thresholds, dilution plateaus) with automatic EDF selection. |
 | **`rf`** | `--rf`, `--rf-s3n` | `--trees=100` *(range `10..2000`)* | $\hat{f}_{\text{RF}}(s) = \frac{1}{B}\sum_{b=1}^B T_b(x(s))$ (`mtry = 0.7p`, `maxdepth = 6`) | Strong **covariate interactions** (e.g., Chalk Aquifer × Low Elevation × Eastern Region) and non-smooth thresholds. |
 | **`gbm`** | `--gbm`, `--gbm-s3n` | `--trees=100` *(capped at `250` rounds)* | $\hat{f}_{\text{GBM}}(s) = \bar{y} + \sum_{m=1}^{M^*} 0.06 \, T_m(x(s))$ (`maxdepth = 3`) | High predictive accuracy via sequential boosting with automatic 5-fold early stopping ($M^*$). |
@@ -60,6 +60,8 @@ Run `Rscript scripts/run_s3n_determinand.R --list-trends` at any time to print t
 ---
 
 ## 4. How Orthogonal Out-of-Fold Residual Kriging Works
+
+> **In plain English:** Fitting a flexible tree or spline directly to station points can soak up all local variation in-sample, leaving zero residual variance for S3N kriging. Evaluating the non-linear model out-of-fold—and projecting out its linear part (`X`)—preserves genuine river-network covariance and standard GLS slope estimates.
 
 A naive "fit Random Forest/GAM, then krige the in-sample residuals" approach fails in spatial statistics for two reasons:
 1. **In-sample variance collapse**: A flexible tree ensemble can fit observed training stations so closely that in-sample residuals $y_i - \hat{f}(x_i)$ approach zero, tricking NNGP into estimating $\hat{\sigma}^2 \approx 0$ and disabling spatial kriging on unmonitored reaches.
@@ -69,7 +71,7 @@ A naive "fit Random Forest/GAM, then krige the in-sample residuals" approach fai
 
 1. **Strictly Out-of-Sample Trend Values at Observed Stations ($\hat{f}_{\text{OOF}}$)**:
    - **`rf`**: Each station's trend prediction $\hat{f}_{\text{OOF}}(s_i)$ is averaged **only over bootstrap trees that did not contain station $i$** (Out-of-Bag).
-   - **`gbm`**: Uses **5-fold cross-fitting** on the training stations so each station is predicted by a boosted ensemble that never saw it, while also selecting the optimal stopping iteration $M^*$ by minimizing OOF MSE.
+   - **`gbm`**: Uses **5-fold cross-fitting** on the training stations so each station is predicted by a boosted ensemble that never saw it, while selecting the optimal stopping iteration $M^*$ by minimising OOF MSE.
    - **`gam` / `spline`**: Applies exact Leave-One-Out hat-matrix adjustment:
 
      $$
@@ -141,5 +143,5 @@ Rscript scripts/04_compare_model_runs.R \
    - Appends a `S3N Trend (...)` diagnostic block:
      - **`spline`**: `Spline_NL:<var>` (L2 norm of orthogonal non-linear spline coefficients) and `Spline_Total_EDF`.
      - **`gam`**: `GAM_EDF:<var>` (Effective Degrees of Freedom; `≈ 1.0` indicates a linear relationship, `> 2.0` indicates strong curvature).
-     - **`rf` / `gbm`**: `RF_VarImp(%):<var>` or `GBM_VarImp(%):<var>` (normalized variable importance summing to `100%`) plus `GBM_Best_Trees` (optimal early-stopping round $M^*$).
+     - **`rf` / `gbm`**: `RF_VarImp(%):<var>` or `GBM_VarImp(%):<var>` (normalised variable importance summing to `100%`) plus `GBM_Best_Trees` (optimal early-stopping round $M^*$).
      - **All modes**: `Trend_CV_RMSE` and `Trend_CV_R2` (5-fold out-of-sample skill of the non-spatial trend model alone).

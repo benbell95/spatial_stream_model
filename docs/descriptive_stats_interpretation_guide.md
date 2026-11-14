@@ -15,7 +15,7 @@
 - [4. Visual Diagnostic Guide: Interpreting the Figures](#4-visual-diagnostic-guide-interpreting-the-figures)
   - [4.1 Figure 1: `fig_desc1_distributions_and_representativeness.png`](#41-figure-1-fig_desc1_distributions_and_representativenesspng)
   - [4.2 Figure 2: `fig_desc2_stratified_gradients.png`](#42-figure-2-fig_desc2_stratified_gradientspng)
-- [5. Worked Empirical Summary: Nitrate (`0117`) on ORN v2 (`output/results/det_0117_orn_rsn/descriptives/`)](#5-worked-empirical-summary-nitrate-0117-on-orn-v2-outputresultsdet_0117_orn_rsndescriptives)
+- [5. Worked Empirical Summary *(Illustrative Baseline Example: Nitrate `0117`)*](#5-worked-empirical-summary-illustrative-baseline-example-nitrate-0117)
 - [6. Related Documentation](#6-related-documentation)
 
 ---
@@ -26,10 +26,10 @@ The **Single-Output Descriptive Statistics & Environmental Gradient Analysis** s
 
 While standard model-fitting output focuses on parameter estimates and station cross-validation accuracy, river management and scientific interpretation require understanding what the model actually predicts across the **entire river network**—including the **75%–95% of stream reaches that have no monitoring station**. Specifically, [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) answers five core questions:
 
-1. **Distributional Structure**: What is the central tendency, spread, skewness, and tail behavior of predicted concentrations or ecological scores across all river reaches?
+1. **Distributional Structure**: What is the central tendency, spread, skewness, and tail behaviour of predicted concentrations or ecological scores across all river reaches?
 2. **Monitoring Network Representativeness**: Are regulatory monitoring stations (such as the Environment Agency's River Surveillance Network) statistically representative of the river network as a whole, or are they biased toward specific landscape positions (e.g., accessible lowland mainstems)?
 3. **Environmental & Topological Stratification**: How do predicted concentrations and prediction uncertainties vary across **topography** (Upland vs. Lowland), **hydrogeology** (Principal Aquifers vs. Non-Aquifers), **Strahler stream order** (headwaters to mainstems), and **major river basins**?
-4. **Spatial Covariance & Model Component Behavior**: Does incorporating branching river-network topology (`S3N Combined`) statistically outperform standard non-spatial regression (`OLS`) or single-component (`Tail-Up` / `Tail-Down`) models at held-out stations, and how closely do flow-connected (`Tail-Up`) and hydrologic-distance (`Tail-Down`) predictions agree?
+4. **Spatial Covariance & Model Component Behaviour**: Does incorporating branching river-network topology (`S3N Combined`) statistically outperform standard non-spatial regression (`OLS`) or single-component (`Tail-Up` / `Tail-Down`) models at held-out stations, and how closely do flow-connected (`Tail-Up`) and hydrologic-distance (`Tail-Down`) predictions agree?
 5. **Kriging Uncertainty Drivers**: Where in the river network is prediction uncertainty (`Kriging SE`) lowest and highest, and how strongly do monitoring station density and stream order control uncertainty?
 
 ---
@@ -51,10 +51,11 @@ Rscript scripts/05_descriptive_stats.R \
   output/results/det_0180_orn_rsn \
   output/results/det_whpt_aspt_orn_rsn
 
-# Custom workspace directories and custom output subfolder
+# Custom workspace directories, figure format, and custom output subfolder
 Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn \
   --label="Nitrate (ORN + RSN)" \
   --gis-dir=gis --data-dir=data --processed-dir=data/processed --output-dir=output \
+  --fig-format=pdf --dpi=300 --fig-size=90 \
   --out=output/results/det_0117_orn_rsn/descriptives
 ```
 
@@ -76,14 +77,14 @@ Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn \
 
 ### 3.1 Section 1: Comprehensive Distributional Statistics (`descriptive_stats_summary.csv`)
 
-Section 1 summarizes seven distinct subsets/components of the model output so you can compare observations, predictions, spatial components, and uncertainty side by side.
+Section 1 summarises seven distinct subsets/components of the model output so you can compare observations, predictions, spatial components, and uncertainty side by side.
 
 #### A. The 7 Variable Groups Explained
 
 | Variable Group | Source Column in `predictions_*.csv` | Filter / Subset | What It Represents & Why It Matters |
 | :--- | :--- | :--- | :--- |
 | **`Observed Stations (Raw)`** | `obs_value` | `has_obs == 1` | True empirical values measured at monitoring stations on the natural physical scale (e.g., `mg/L` or ecological score). Serves as the empirical ground-truth benchmark. |
-| **`S3N Combined Predictions (Raw)`** | `pred_combined` | All reaches (`N` total) | The primary variance-weighted `S3N` prediction across every reach in the network, back-transformed (with Taylor / Duan smearing adjustment according to `--transform`) to the natural scale. |
+| **`S3N Combined Predictions (Raw)`** | `pred_combined` | All reaches (`N` total) | The primary `S3N` prediction across every reach in the network (Joint Additive NNGP under default `--combine=joint`, or precision-weighted TU+TD under `--combine=precision`), mapped to the natural scale via the exact analytical inverse $f^{-1}(\hat{z})$ defined by `--transform`. |
 | **`Unmonitored Reach Predictions (Raw)`** | `pred_combined` | `has_obs == 0` | Predictions restricted strictly to reaches **without** a monitoring station. Comparing this against `Observed Stations (Raw)` reveals how unmonitored reaches (mostly headwaters) differ from monitored reaches. |
 | **`S3N Tail-Up Predictions (Raw)`** | `pred_tu` | All reaches | Predictions generated solely by the **flow-connected (`Tail-Up`)** moving-average spatial model, where spatial autocorrelation only propagates along flow-connected pathways and splits at confluences using stream-order / AFV weights. |
 | **`S3N Tail-Down Predictions (Raw)`** | `pred_td` | All reaches | Predictions generated solely by the **hydrologic-distance (`Tail-Down`)** spatial model, which allows spatial covariance between both flow-connected and flow-unconnected reaches sharing a common downstream junction. |
@@ -100,7 +101,7 @@ Water quality concentrations (such as Nitrate and Orthophosphate) are typically 
 | **`Mean ± SD`** | Arithmetic mean `μ` and standard deviation `σ` | Best for symmetric variables (`WHPT`, `HQA`). For right-skewed nutrients, `Mean` is pulled upward by extreme point-source or agricultural hotspots (`Mean > Median`). |
 | **`CV (%)`** | Coefficient of Variation: `100 × (SD / |Mean|)` | Dimensionless measure of relative dispersion:<ul><li>`< 25%`: Low spatial variability (homogeneous across the network, e.g., `WHPT ASPT` or `HQA`).</li><li>`25% – 75%`: Moderate spatial variability.</li><li>`> 75%`: High spatial variability driven by strong landscape contrasts or point-source hotspots (typical of `Nitrate` and `Orthophosphate`).</li></ul> |
 | **`Geom Mean`** | Geometric Mean: `exp(mean(log(x[x > 0])))` | Natural central tendency for log-normally distributed water quality variables. For a pure log-normal distribution, `Geom Mean ≈ Median`. |
-| **`Skewness`** | Third standardized central moment: `E[(X - μ)³] / σ³` | Measures asymmetry:<ul><li>`≈ 0` (`-0.5` to `+0.5`): Approximately symmetric.</li><li>`> +1.0`: Strongly right-skewed (long tail of high-concentration reaches).</li><li>`< -1.0`: Strongly left-skewed (tail of degraded low-score reaches).</li></ul> |
+| **`Skewness`** | Third standardised central moment: `E[(X - μ)³] / σ³` | Measures asymmetry:<ul><li>`≈ 0` (`-0.5` to `+0.5`): Approximately symmetric.</li><li>`> +1.0`: Strongly right-skewed (long tail of high-concentration reaches).</li><li>`< -1.0`: Strongly left-skewed (tail of degraded low-score reaches).</li></ul> |
 | **`Kurtosis`** | Excess Kurtosis: `(E[(X - μ)⁴] / σ⁴) - 3` | Measures tail heaviness relative to a normal distribution (`0`):<ul><li>`≈ 0`: Mesokurtic (normal tails).</li><li>`> +1.0`: Leptokurtic (heavy tails / frequent extreme outlier hotspots).</li><li>`< -0.5`: Platykurtic (light tails / bounded uniform-like spread).</li></ul> |
 | **`Min`, `P05`, `Q25`, `Median`, `Q75`, `P95`, `Max`** | Empirical quantiles (`0%`, `5%`, `25%`, `50%`, `75%`, `95%`, `100%`) | `Median` (`50%`) is the most robust measure of typical river condition. `P05–P95` defines the central `90%` environmental range across the network while excluding the top/bottom `5%` extremes. |
 | **`IQR`** | Interquartile Range: `Q75 - Q25` | Width of the middle `50%` of reaches. Insensitive to extreme outliers. |
@@ -158,7 +159,7 @@ Section 3 partitions every reach in the network across **five environmental and 
 | **`Obs Sites` & `Monitored (%)`** | Count of stations (`has_obs == 1`) and `100 × Obs Sites / Reaches (N)`. | Reveals **sampling density disparities**: e.g., on ORN v2 for Nitrate, only `12.6%` of `Headwaters (Order 1-2)` are monitored, compared with `57.9%` of `Medium Tributaries (Order 3-4)` and `60.2%` of `Mainstem Rivers (Order 5+)`. |
 | **`Pred Mean ± SD` & `Pred Median (IQR)`** | Parametric and non-parametric central tendency and spread within the stratum. | Compare across strata to see how physical geography shifts concentrations. |
 | **`Pred P95`** | 95th percentile within the stratum. | Identifies upper-tail hotspot intensity inside that landscape type. |
-| **`Mean Z-Score`** | Mean of global standardized scores: `Z_i = (Pred_i - μ_global) / σ_global`. | Measures how many global standard deviations a stratum sits above (`+`) or below (`-`) the network-wide mean:<ul><li>`+0.50` to `+1.00`: Strong positive enrichment (e.g., `Lowland Aquifer` has `Mean Z = +0.58` for Nitrate).</li><li>`-0.50` to `-1.00`: Strong negative depletion (e.g., `Upland (>=150m)` has `Mean Z = -0.82` for Nitrate).</li></ul> |
+| **`Mean Z-Score`** | Mean of global standardised scores: `Z_i = (Pred_i - μ_global) / σ_global`. | Measures how many global standard deviations a stratum sits above (`+`) or below (`-`) the network-wide mean:<ul><li>`+0.50` to `+1.00`: Strong positive enrichment (e.g., `Lowland Aquifer` has `Mean Z = +0.58` for Nitrate).</li><li>`-0.50` to `-1.00`: Strong negative depletion (e.g., `Upland (>=150m)` has `Mean Z = -0.82` for Nitrate).</li></ul> |
 | **`Kriging SE Med`** | Median universal kriging standard error (`se_model_sc`) in that stratum. | Quantifies prediction uncertainty in each stratum. Strata with low `Monitored (%)` (such as `Upland` and `Headwaters`) systematically exhibit higher `Kriging SE Med`. |
 | **`Fold Ratio vs Ref`** | `Median(Stratum) / Median(Reference Stratum)` (where the first stratum in each dimension has `1.00x (ref)`). | Gives an intuitive multiplicative effect size: e.g., in `Landscape Regime` for Nitrate, using `Upland (>=150m)` (`0.843 mg/L`) as `1.00x (ref)`, `Lowland Non-Aquifer` is **`2.79x`** higher (`2.353 mg/L`) and `Lowland Aquifer` is **`4.30x`** higher (`3.621 mg/L`). |
 
@@ -170,11 +171,11 @@ Directly below the table in Section 3, the script prints automatic **Within-Run 
 
 ### 3.4 Section 4: Within-Run Statistical Hypothesis Tests (`within_run_statistical_tests.csv`)
 
-Section 4 conducts up to **10 formal statistical hypothesis tests** across four analytical categories to validate internal model performance and spatial behavior.
+Section 4 conducts up to **10 formal statistical hypothesis tests** across four analytical categories to check internal model performance and spatial behaviour.
 
 | Category | Test Name | Null Hypothesis (`H₀`) | Statistic Reported | How to Interpret the Result |
 | :--- | :--- | :--- | :--- | :--- |
-| **`Cross-Validation`** | **Paired Student's t-test on Squared CV Error (`S3N Combined` vs `OLS` / `Tail-Up` / `Tail-Down`)** | Both models have equal Mean Squared Error (`MSE`) across held-out 5-fold CV stations (`E[e₁² - e₂²] = 0`). Equivalent to a Diebold–Mariano test for nested/competing spatial predictors. | `t = X` (`% RMSE Reduction`) | A negative `t`-statistic with `p < 0.05` (`*`, `**`, `***`) proves that `S3N Combined` achieves a **statistically significant reduction in squared prediction error** at the exact same monitoring stations compared to `OLS` or single-component models. |
+| **`Cross-Validation`** | **Paired Student's t-test on Squared CV Error (`S3N Combined` vs `OLS` / `Tail-Up` / `Tail-Down`)** | Both models have equal Mean Squared Error (`MSE`) across held-out 5-fold CV stations (`E[e₁² - e₂²] = 0`). Equivalent to a Diebold–Mariano test for nested/competing spatial predictors. | `t = X` (`% RMSE Reduction`) | A negative `t`-statistic with `p < 0.05` (`*`, `**`, `***`) shows that `S3N Combined` achieves a **statistically significant reduction in squared prediction error** at the same monitoring stations compared to `OLS` or single-component models. |
 | **`Cross-Validation`** | **Paired Wilcoxon Signed-Rank Test on Absolute CV Error (`|e|`)** | Median absolute CV error (`MAE`) is identical between `S3N Combined` and the competing model. | `V = X` (`ΔMAE`) | Non-parametric counterpart to the paired `t`-test on `MSE`. Because squared errors can be dominated by 1–2 extreme outliers, a significant Wilcoxon `p < 0.05` confirms that `S3N Combined` improves accuracy across the **majority of typical stations**, not just extreme sites. |
 | **`Spatial Components`** | **Tail-Up vs. Tail-Down Reach Correlation** | Flow-connected (`Tail-Up`) and hydrologic-distance (`Tail-Down`) reach predictions are uncorrelated across the network. | `r` (Pearson), `ρ` (Spearman) | <ul><li>`r > 0.90`: Very strong agreement—the fixed-effect covariates and dense station network constrain both spatial structures similarly.</li><li>`0.70 ≤ r ≤ 0.90`: Moderate divergence—flow-connected weighting at confluences (`Tail-Up`) produces noticeably different predictions in unmonitored tributaries compared to radial hydrologic distance (`Tail-Down`).</li></ul> |
 | **`Kriging Uncertainty`** | **Mann–Whitney U Test (`Unmonitored` vs. `Monitored Reaches`)** | Kriging standard error (`se_model_sc`) has the same median on unmonitored reaches (`has_obs == 0`) and monitored reaches (`has_obs == 1`). | `W = X` (`Ratio = SE_unmon / SE_mon`) | Always expected to be highly significant (`p < 1e-16`, `Ratio > 1.0x`, e.g., `1.13x`). Confirms that universal kriging properly honors local station conditioning: uncertainty shrinks near observed stations and expands in unmonitored headwaters. |
@@ -186,7 +187,7 @@ Section 4 conducts up to **10 formal statistical hypothesis tests** across four 
 
 Section 5 tabulates the 5-fold out-of-sample cross-validation metrics across each spatial domain (`All England`, `Humber`, `Thames`, `Severn`):
 - **`CV R²`**: Out-of-sample coefficient of determination (`1 - SSE / SST`) on the model scale. Values `> 0.50` indicate strong predictive skill; comparing `S3N Combined` vs. `OLS` shows the exact fraction of variance explained by river-network spatial autocorrelation (`ΔR² = R²_S3N - R²_OLS`).
-- **`CV RMSE` & `CV MAE`**: Root Mean Squared Error and Mean Absolute Error on the model scale. `RMSE` penalizes large errors heavily; `MAE` reflects typical station error.
+- **`CV RMSE` & `CV MAE`**: Root Mean Squared Error and Mean Absolute Error on the model scale. `RMSE` penalises large errors heavily; `MAE` reflects typical station error.
 
 ---
 
@@ -201,7 +202,7 @@ This 4-panel figure (`2×2` grid) diagnoses distributional shape, monitoring bia
    - *What to look for*: If the red dotted curve (`Observed Stations`) is shifted to the right of the blue/green curves, monitoring stations are biased toward higher-concentration lowland/mainstem reaches.
 2. **Panel B — Empirical Cumulative Distribution Functions (ECDF)**:
    - Plots `F(x)` from `0.0` to `1.0` for `S3N Combined`, `S3N Tail-Up`, `S3N Tail-Down`, and `Observed Stations`, annotated with the **Two-Sample KS `D`-statistic** and **`Pred / Obs Median Ratio`**.
-   - *What to look for*: Horizontal separation between the blue (`S3N Combined`) and red (`Observed`) curves at `F(x) = 0.50` directly visualizes the median monitoring bias. Separation between `Tail-Up` (green) and `Tail-Down` (purple) shows whether flow-connected vs. tail-down covariance alters the overall network distribution.
+   - *What to look for*: Horizontal separation between the blue (`S3N Combined`) and red (`Observed`) curves at `F(x) = 0.50` directly visualises the median monitoring bias. Separation between `Tail-Up` (green) and `Tail-Down` (purple) shows whether flow-connected vs. tail-down covariance alters the overall network distribution.
 3. **Panel C — Tail-Up vs. Tail-Down Component Agreement**:
    - Bivariate scatterplot of `pred_td_sc` vs. `pred_tu_sc` (or `pred_td` vs. `pred_tu`) across up to `8,500` randomly subsampled reaches, with the `1:1` identity line (dashed red) and fitted OLS regression line (solid black), annotated with Pearson `r` and Spearman `ρ`.
    - *What to look for*: Tight clustering along the `1:1` line indicates high robustness to spatial covariance specification. Scatter away from the `1:1` line occurs primarily in unmonitored tributaries joining large mainstems (where `Tail-Down` borrows strength from the mainstem, whereas `Tail-Up` isolates the unmonitored tributary).
@@ -211,7 +212,7 @@ This 4-panel figure (`2×2` grid) diagnoses distributional shape, monitoring bia
 
 ### 4.2 Figure 2: `fig_desc2_stratified_gradients.png`
 
-This 4-panel figure (`2×2` grid) visualizes how physical geography and river topology shape the determinand across the network:
+This 4-panel figure (`2×2` grid) visualises how physical geography and river topology shape the determinand across the network:
 
 1. **Panel A — Predictions by Landscape & Hydrogeology Regime**:
    - Boxplots across `Upland (>=150m)`, `Lowland Non-Aq`, and `Lowland Aquifer`, with the global network median shown as a horizontal dashed red line and Kruskal–Wallis `χ²` in the header.
@@ -228,9 +229,9 @@ This 4-panel figure (`2×2` grid) visualizes how physical geography and river to
 
 ---
 
-## 5. Worked Empirical Summary: Nitrate (`0117`) on ORN v2 (`output/results/det_0117_orn_rsn/descriptives/`)
+## 5. Worked Empirical Summary *(Illustrative Baseline Example: Nitrate `0117`)*
 
-Below is a concise reference summary illustrating how to synthesize the outputs of [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) for a real model run (**Nitrate as N, `0117`, across `37,396` reaches and `8,401` observed stations on ORN v2**):
+Below is an illustrative reference summary showing how to synthesize the outputs of [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) from an earlier **ORN v1 national Nitrate (`0117`) baseline (`37,396` reaches and `8,401` observed stations)**. *(Note: the current `ORN v2` RSN dataset spans `90,876` reaches and `1,210` observed reaches; exact counts and metrics will differ on your run.)*
 
 1. **Distributional Structure (Section 1)**:
    - Across all `37,396` reaches in England, predicted Nitrate (`S3N Combined`) has a **Mean ± SD of `2.707 ± 1.981 mg/L`** (`CV = 73.2%`), a **Median of `2.344 mg/L` (`IQR = 2.671 mg/L`)**, and a **Geometric Mean of `1.881 mg/L`**.
@@ -243,7 +244,7 @@ Below is a concise reference summary illustrating how to synthesize the outputs 
 3. **Environmental & Topological Gradients (Section 3)**:
    - **Topography**: Lowland reaches (`< 150 m`, `80.6%` of network) have a median Nitrate of **`2.790 mg/L` (`Mean Z = +0.20`)**, which is **`3.31x` higher** (`p < 1e-16`) than Upland reaches (`≥ 150 m`, `19.4%` of network, median **`0.843 mg/L`**, `Mean Z = -0.82`).
    - **Hydrogeology**: Principal Aquifer reaches (`22.4%` of network) have a median of **`3.448 mg/L` (`Mean Z = +0.44`)**, **`1.66x` higher** (`p < 1e-16`) than Non-Aquifer reaches (**`2.075 mg/L`**), reflecting long-residence-time nitrate accumulation in Chalk, Limestone, and Sandstone groundwater.
-   - **Combined Landscape Regime**: Moving from `Upland (>=150m)` (`0.843 mg/L`, `1.00x ref`) to `Lowland Non-Aquifer` (`2.353 mg/L`, **`2.79x`**) and `Lowland Aquifer` (`3.621 mg/L`, **`4.30x`**) explains massive hydrochemical variance (`Kruskal–Wallis χ² = 8,925.5`, `p < 1e-16`).
+   - **Combined Landscape Regime**: Moving from `Upland (>=150m)` (`0.843 mg/L`, `1.00x ref`) to `Lowland Non-Aquifer` (`2.353 mg/L`, **`2.79x`**) and `Lowland Aquifer` (`3.621 mg/L`, **`4.30x`**) explains substantial hydrochemical variance (`Kruskal–Wallis χ² = 8,925.5`, `p < 1e-16`).
    - **Stream Order & Uncertainty**: Median Nitrate rises steadily from **`2.129 mg/L` in Headwaters (`Order 1–2`)** to **`3.112 mg/L` (`1.46x`) in Medium Tributaries (`Order 3–4`)** and **`3.591 mg/L` (`1.69x`) in Mainstem Rivers (`Order 5+`)**. Simultaneously, median `Kriging SE` drops from **`0.517` in Headwaters** to **`0.464` in Mainstems** because station density increases nearly five-fold downstream (`12.6%` to `60.2%`).
 4. **Within-Run Hypothesis Tests & Spatial Components (Sections 4 & 5)**:
    - In 5-fold cross-validation (`All England`), `S3N Combined` achieves **`CV R² = 0.5658`** (`RMSE = 0.5067`), outperforming non-spatial `OLS` (`CV R² = 0.4252`, `RMSE = 0.5830`) by **`ΔR² = +0.1406`**.

@@ -13,7 +13,7 @@ Databricks notebooks are well suited to this hybrid pipeline because they native
   - [Cell 3: GIS & Data Preprocessing (`%python`)](#cell-3-gis--data-preprocessing-python)
   - [Cell 4: S3N Modelling & Interactive Inspection (`%r`)](#cell-4-s3n-modelling--interactive-inspection-r)
   - [Cell 5: Model Comparison & Diagnostics (`%r`)](#cell-5-model-comparison--diagnostics-r)
-  - [Cell 6: Inline Visualization (`%python`)](#cell-6-inline-visualization-python)
+  - [Cell 6: Inline Visualisation (`%python`)](#cell-6-inline-visualisation-python)
 - [3. Databricks-Specific Advantages](#3-databricks-specific-advantages)
 
 ---
@@ -32,7 +32,7 @@ Set the notebook default language to **R** (or **Python**) and transition betwee
 
 ### Cell 1: Compile C++ Engine & Check Dependencies (`%sh` and `%r`)
 
-`scripts/01_preprocess_orn.py` uses only the Python standard library (zero `pip` dependencies). On the R side, ensure `S3N` and its CRAN dependencies are installed and compile `src/s3n_fast_neighbors.so` on the driver node:
+`scripts/01_preprocess_orn.py` uses only the Python standard library for `.gpkg`/CSV preprocessing (optional `pyarrow`/`pyproj` for GeoParquet or CRS reprojection). On the R side, install `S3N`, its CRAN dependencies, recommended `data.table` (fast CSV I/O), and `mgcv`/`rpart` (if using `--trend=gam|rf|gbm`), and compile `src/s3n_fast_neighbors.so` on the driver node:
 
 ```sh
 %sh
@@ -40,10 +40,11 @@ R CMD SHLIB src/s3n_fast_neighbors.cpp
 ```
 
 ```r
-# Optional/recommended for JSON config parsing and required S3N dependencies
-required_pkgs <- c("RANN", "rdist", "matrixStats", "pbapply", "dplyr", "jsonlite")
+required_pkgs <- c("RANN", "rdist", "matrixStats", "pbapply", "dplyr",
+                   "jsonlite", "data.table", "remotes", "mgcv", "rpart")
 new_pkgs <- required_pkgs[!required_pkgs %in% installed.packages()[, "Package"]]
 if (length(new_pkgs) > 0) install.packages(new_pkgs, repos = "https://cloud.r-project.org")
+if (!requireNamespace("S3N", quietly = TRUE)) remotes::install_github("jpierkunke/S3N")
 ```
 
 *(See [`./setup_and_architecture.md`](./setup_and_architecture.md) for full Linux OS and `jpierkunke/S3N` installation details.)*
@@ -133,7 +134,7 @@ display(comp$stat_tests)
 
 ---
 
-### Cell 6: Inline Visualization (`%python`)
+### Cell 6: Inline Visualisation (`%python`)
 
 ```python
 %python
@@ -149,4 +150,4 @@ display(Image(filename="/Volumes/main_catalog/water_monitoring/output/comparison
 
 1. **`display()` Support**: Wrapping data frames in `display(df)` in `%r` cells provides interactive search, column sorting, pagination, and quick charts without extra plotting code.
 2. **Unity Catalog Governance**: Pointing `"output_dir"` to a Unity Catalog Volume (`/Volumes/...`) stores all predictions (`predictions_*.csv`), parameter tables, and comparison reports as governed cloud assets.
-3. **Cluster Scaling**: For multi-period batch runs (`--by=year`, `--by=month`) or 100k+ reach networks, compute-optimized multi-core driver nodes can be used with `--omp=<cores>` while keeping the exact same notebook code.
+3. **Cluster Scaling**: For multi-period batch runs (`--by=year`, `--by=month`) or 100k+ reach networks, compute-optimised multi-core driver nodes can be used with `--omp=<cores>` while keeping the same notebook code.

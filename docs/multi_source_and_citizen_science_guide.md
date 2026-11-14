@@ -2,7 +2,7 @@
 
 > **Supplementing Statutory River Monitoring Networks (`RSN` / `SSN`) with Citizen Science, Telemetry Sensors, and Local Campaigns**
 
-Statutory monitoring networks such as the Environment Agency **River Surveillance Network (`RSN`)** and **Small Streams Network (`SSN`)** provide high-precision, laboratory-accredited analytical measurements, yet they leave vast stretches of tributaries, headwaters, and local catchments unsampled in any given season or year. Conversely, **citizen-science campaigns** (e.g., WaterBlitz, Anglers' Riverfly Monitoring Initiative), catchment-partnership grab samples, and continuous sondes offer dense spatial or temporal coverage, often with coarser precision, colorimetric range kits, or different measurement protocols.
+Statutory monitoring networks such as the Environment Agency **River Surveillance Network (`RSN`)** and **Small Streams Network (`SSN`)** provide laboratory-accredited analytical measurements, yet vast stretches of tributaries, headwaters, and local catchments remain unsampled in any given season or year. **Citizen-science campaigns** (e.g., WaterBlitz, Anglers' Riverfly Monitoring Initiative), catchment-partnership grab samples, and continuous sondes offer denser spatial or temporal coverage, often with coarser precision, colorimetric range kits, or different measurement protocols.
 
 This guide explains **when** to keep networks as separate co-kriged variables versus **when** to pool them with explicit source priority and precision weighting, documents every multi-source CLI option (`--prefer-source`, `--source-weight`, `--source-se`, `--method=lmc|colocated`), and walks through a complete end-to-end workflow.
 
@@ -47,10 +47,10 @@ Simply appending citizen-science or campaign readings into the same target varia
 | :--- | :--- | :--- | :--- |
 | **Separate-Target Multivariate Co-Kriging (`Factor-LMC`)** | [`scripts/run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R)<br>`--targets=0117,wb_no3` `--method=lmc` | **Default recommendation** when citizen data uses a different kit, range scale, proxy metric (e.g. Riverfly vs. `whpt_aspt`), or systematic offset relative to RSN. | Fits separate intercepts, covariate slopes $\boldsymbol{\beta}_p$, transforms, and error variances $\tau_p^2$ per source variable, while borrowing spatial signal through learned **Tail-Up**, **Tail-Down**, and **Co-Located Nugget** cross-correlations. |
 | **Colocated Residual Co-Kriging (`RSN`-Anchored)** | [`scripts/run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R)<br>`--targets=0117,wb_no3` `--method=colocated` | When you want strict statutory primacy: predictions on the primary target (`0117`) are anchored directly to the `RSN` univariate model and adjusted only where correlated auxiliary networks provide verified residual signal. | Fits Target 1 (`RSN`) independently first, then updates predictions via weighted residual conditioning (`lm.wfit` + auxiliary differences), guaranteeing zero likelihood contamination of `RSN` parameters. |
-| **Pooled Single-Determinand with Priority & Reliability Weights** | [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)<br>`--source=rsn+survey` + `--prefer-source` / `--source-weight` / `--source-se` | When both sources measure the **exact same determinand and lab/calibrated method** (e.g., EA `RSN` + catchment trust lab-accredited Nitrate, or `RSN` + `SSN`), and you want one unified surface while still trusting `RSN` on shared reaches. | Enforces per-reach source priority (`--prefer-source`), aggregates shared reaches **within each `data_source` first** so repeat counts never drown out `RSN`, and down-weights noisy/secondary sources analytically via penalty variance and/or physical measurement SE. |
+| **Pooled Single-Determinand with Priority & Reliability Weights** | [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)<br>`--source=rsn+survey` + `--prefer-source` / `--source-weight` / `--source-se` | When both sources measure the **same determinand and lab/calibrated method** (e.g., EA `RSN` + catchment trust lab-accredited Nitrate, or `RSN` + `SSN`), and you want one unified surface while still trusting `RSN` on shared reaches. | Enforces per-reach source priority (`--prefer-source`), aggregates shared reaches **within each `data_source` first** so repeat counts never drown out `RSN`, and down-weights noisy/secondary sources analytically via penalty variance and/or physical measurement SE. |
 
 > [!TIP]
-> You can combine both worlds: pass `--source=rsn+waterblitz` into `run_s3n_cokriging.R` with separate targets (`--targets=0117,wb_no3`) **and** still apply `--source-weight=rsn:1,waterblitz:0.4` or `--source-se=rsn:0.02,waterblitz:0.5` so noisy volunteer points are smoothed appropriately while still contributing regional spatial structure!
+> You can combine both worlds: pass `--source=rsn+waterblitz` into `run_s3n_cokriging.R` with separate targets (`--targets=0117,wb_no3`) **and** still apply `--source-weight=rsn:1,waterblitz:0.4` or `--source-se=rsn:0.02,waterblitz:0.5` so noisy volunteer points are smoothed appropriately while still contributing regional spatial structure.
 
 ---
 
@@ -64,7 +64,7 @@ All three preference/weighting flags work uniformly across both **single-determi
 | :--- | :--- | :--- |
 | `--source=<s1>+<s2>` | `--source=rsn+waterblitz` | Merges the preprocessed observations and spatial reach sets of multiple registered or custom sources. |
 | `--prefer-source=<s1,s2>` | `--prefer-source=rsn` or `--prefer-source=rsn,ssn,campaign` | **Hard reach-level priority**: on any stream reach (`RivID`) observed by a higher-priority source, samples from lower-priority sources on that exact reach are excluded; lower-priority sources are retained everywhere else. |
-| `--source-weight=<s:w,...>` | `--source-weight=rsn:1,waterblitz:0.25` (or `rsn:4,waterblitz:1`) | **Soft continuous down-weighting**: assigns relative reliability weights $w_s \in (0, 1]$ per `data_source` (automatically normalized by $\max_s w_s$ if values exceed `1`). Governs cross-source reach averaging, OLS/GLS trend estimation, spatial covariance inference, kriging predictions, SE, and CV. |
+| `--source-weight=<s:w,...>` | `--source-weight=rsn:1,waterblitz:0.25` (or `rsn:4,waterblitz:1`) | **Soft continuous down-weighting**: assigns relative reliability weights $w_s \in (0, 1]$ per `data_source` (automatically normalised by $\max_s w_s$ if values exceed `1`). Governs cross-source reach averaging, OLS/GLS trend estimation, spatial covariance inference, kriging predictions, SE, and CV. |
 | `--source-se=<s:sd,...>` | `--source-se=rsn:0.02,waterblitz:0.5` | **Explicit physical measurement SE** (in the determinand's **raw measurement units**): attaches `meas_uncertainty` to every sample from source $s$, converts it onto the model transform scale via the Delta Method, activates Approach A measurement-error kriging automatically, and propagates uncertainty into reach predictions and SE maps. |
 
 ---
@@ -79,13 +79,13 @@ $$
 \bar{y}_r = \sum_{s \in \mathcal{S}_r} \tilde{w}_s \, \bar{y}_{r,s}, \qquad v_{r,\text{phys}} = \sum_{s \in \mathcal{S}_r} \tilde{w}_s^2 \left( \frac{\sum_{i \in r,s} \mathrm{SE}_i^2}{n_{r,s}^2} \right)
 $$
 
-Because aggregation happens **by source first**, 50 volunteer dip-strip readings on reach $r$ cannot override 1 statutory `RSN` station by sheer sample count. Meanwhile, the reach's effective observation weight is carried forward as $w_r = \sum_{s \in \mathcal{S}_r} \tilde{w}_s \, w_s$ (which reduces cleanly to $w_s$ on single-source reaches).
+Because aggregation happens **by source first**, 50 volunteer dip-strip readings on reach $r$ cannot override 1 statutory `RSN` station by sheer sample count. Sample standard errors combine in quadrature within each source ($s_{u,r,s} = \frac{1}{n_{r,s}}\sqrt{\sum_{i \in r,s} \mathrm{SE}_i^2}$) and across sources ($\sqrt{\sum_{s \in \mathcal{S}_r} (\tilde{w}_s s_{u,r,s})^2}$), while the reach's effective observation weight is carried forward as $w_r = \max_{s \in \mathcal{S}_r} w_s$.
 
 #### 2. Observation-Error Variance Decomposition in S3N & Factor-LMC NNGP
 
 For any observed reach $i$ and target $p$, two sources of diagonal observation variance combine without biasing physical nugget estimation:
 
-- **Physical Measurement-Error Variance** ($V_{\text{phys}, ip}$): supplied either by per-sample uncertainty columns (e.g., GAM Stage-1 SE via `--meas-error`) or by `--source-se`, transformed onto the model scale using the exact Delta-Method derivative [`calc_response_meas_variance()`](../scripts/s3n_config.R):
+- **Physical Measurement-Error Variance** ($V_{\text{phys}, ip}$): supplied either by per-sample uncertainty columns (e.g., GAM Stage-1 SE via `--meas-error`, or interval Tobit/source SEs) or by `--source-se`, transformed onto the model scale using the exact Delta-Method derivative [`calc_response_meas_variance()`](../scripts/s3n_transforms.R):
 
 $$
 V_{\text{phys}, ip} \approx \frac{\left(g_p'(\mu_{ip}) \, \mathrm{SE}_{ip}\right)^2}{\mathrm{SD}_p^2}
@@ -175,7 +175,7 @@ This complete walk-through assumes you have raw EA `RSN` data under `data/` and 
 
 ### Step 1: Standardise Citizen Science Data (with Tobit Range & Site Grouping)
 
-First convert the WaterBlitz CSVs into the S3N custom schema (`data/custom/waterblitz/sites.csv`, `samples.csv`) and auto-generate `configs/sources/waterblitz.json`:
+Convert the WaterBlitz CSV into `data/custom/waterblitz_tobit/` (`sites.csv`, `samples.csv`) and auto-generate `configs/sources/waterblitz_tobit.json` (see [`docs/custom_data_sources_guide.md`](./custom_data_sources_guide.md) for all formatter flags):
 
 ```bash
 # 1a. Format Nitrate (code: wb_no3)
@@ -205,7 +205,7 @@ python3 scripts/01_preprocess_orn.py --list-sources
 
 ### Step 2: Snap Both Networks to the Stream Network (`ORN v2`)
 
-Run the spatial/topological preprocessor once for the combined composite source `rsn+waterblitz`. This assigns every `RSN` and `WaterBlitz` station to the exact same stream network (`RivID`), computes spatial stream coordinates, and writes `data/processed/orn_rsn+waterblitz/`:
+Run the preprocessor once for `rsn+waterblitz` (auto-suffixed to `data/processed/orn_rsn+waterblitz_tobit/` when Tobit intervals are present):
 
 ```bash
 python3 scripts/01_preprocess_orn.py \
@@ -215,24 +215,15 @@ python3 scripts/01_preprocess_orn.py \
 ```
 
 > [!NOTE]
-> Statutory `RSN` coordinates are typically accurate to 10–50 m (`--max-snap-dist=250` default). Smartphone GPS locations logged by volunteers on riverbanks or bridges can be slightly offset; increasing `--max-snap-dist=350` (or `500`) recovers legitimate volunteer readings without snapping sites onto unrelated distant catchments.
+> Statutory `RSN` coordinates are accurate to ~10–50 m (`--max-snap-dist=250` default); smartphone GPS readings on riverbanks/bridges often benefit from `--max-snap-dist=350` or `500`.
 
 ### Step 3: Verify Station Snapping Quality
 
-Always inspect snapping distances before fitting spatial models to confirm volunteer sites snapped onto the intended rivers rather than parallel ditches:
-
-```bash
-Rscript scripts/06_station_snapping_diagnostics.R \
-  --network=orn \
-  --source=rsn+waterblitz \
-  --catchment=Thames
-```
-
-Open `output/station_snapping/orn_rsn+waterblitz/station_snapping_report.md` and `fig_snap_catchment_*.png` to inspect `snap_dist_m` quantiles and zoomed reach insets.
+Inspect `output/station_snapping/orn_rsn+waterblitz_tobit/` via [`scripts/06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R) (e.g., `--network=orn --source=rsn+waterblitz --catchment=Thames`) to confirm sites snapped onto the intended rivers rather than parallel ditches.
 
 ### Step 4: Run Baseline Univariate `RSN` vs. Co-Kriged Multi-Source Model
 
-First inspect seasonal coverage, then run joint 4-target **Factor-LMC Co-Kriging** combining statutory `RSN` (`0117`, `0180`) with citizen `WaterBlitz` (`wb_no3`, `wb_po4`), giving higher reliability weight to `RSN` and realistic physical measurement error:
+Run joint 4-target **Factor-LMC Co-Kriging** combining statutory `RSN` (`0117`, `0180`) with citizen `WaterBlitz` (`wb_no3`, `wb_po4`), using `--cv-mode=spatial` (alias for `spatial_block`), reliability weights, and physical SEs:
 
 ```bash
 Rscript scripts/run_s3n_cokriging.R \
@@ -276,11 +267,11 @@ Rscript scripts/run_s3n_determinand.R 0117 \
 
 ### Step 6: Evaluate Added Value & Inspect Diagnostics
 
-Inspect the generated outputs in `output/results/cokrig_0117_0180_wb_no3_wb_po4_orn_rsn+waterblitz/`:
+Inspect the generated outputs in `output/results/cokrig_0117_0180_wb_no3_wb_po4_orn_rsn+waterblitz_tobit/`:
 
 1. **`cokriging_evaluation_report.md`**: Check whether the pipeline verdict rates multi-source co-kriging as `Strong Benefit`, `Moderate Benefit`, or `Marginal/Parity` on out-of-sample `RSN` prediction.
 2. **`cv_univariate_vs_cokriging.csv`**: Compare **Univariate S3N** vs. **Co-Kriging (All-Holdout)** vs. **Co-Kriging (Aux-Aided)** RMSE and $R^2$ for `0117` and `0180`.
-   - Look for positive **Aux-Aided $R^2$ gain**: this proves that where a reach has WaterBlitz data (`wb_no3`) but lacks `RSN`, knowing the citizen reading reduces prediction error on statutory Nitrate.
+   - Look for positive **Aux-Aided $R^2$ gain**: this demonstrates that where a reach has WaterBlitz data (`wb_no3`) but lacks `RSN`, knowing the citizen reading reduces prediction error on statutory Nitrate.
    - Look at **All-Holdout $R^2$**: even on completely unmonitored reaches, a gain confirms WaterBlitz sharpened the underlying spatial stream fields (`Tail-Up` / `Tail-Down`).
 3. **`cokriging_cross_covariance.csv` & `fig_cokrig_cross_correlation.png`**: Inspect `Corr_TU`, `Corr_TD`, and `Corr_Nugget` between `0117` and `wb_no3`. If cross-correlations are near zero (e.g., an uncalibrated kit dominated by noise or wrong season), co-kriging automatically shrinks cross-variable influence toward zero rather than corrupting `RSN`.
 4. **`fig_cokrig_england_0117.png`**: Compare Panel B (Co-Kriging SE) against a standalone `RSN`-only run (`run_s3n_determinand.R 0117 --source=rsn`) to confirm uncertainty shrinks meaningfully in citizen-sampled sub-catchments without introducing salt-and-pepper artefacts.
@@ -289,7 +280,7 @@ Inspect the generated outputs in `output/results/cokrig_0117_0180_wb_no3_wb_po4_
 
 ## 5. Practical Caveats & Checklist Before Trusting a Fused Map
 
-- **Include Overlapping Calibration Sites**: For `Factor-LMC` co-kriging to estimate `Corr_Nugget` accurately between `0117` and `wb_no3`, at least some citizen-science readings (typically `>= 20–50` reaches) should fall on or immediately adjacent to `RSN` reaches during comparable hydrological conditions. Having volunteers sample right next to existing EA gauges during a blitz provides high-value empirical calibration!
+- **Include Overlapping Calibration Sites**: For `Factor-LMC` co-kriging to estimate `Corr_Nugget` accurately between `0117` and `wb_no3`, at least some citizen-science readings (typically `>= 20–50` reaches) should fall on or immediately adjacent to `RSN` reaches during comparable hydrological conditions. Having volunteers sample right next to existing EA gauges during a blitz provides high-value empirical calibration.
 - **Match Seasons or Flow Regimes**: A single **summer** weekend WaterBlitz has very different dilution and biological uptake than **winter** nitrate peaks. Filter both networks consistently with `--season=spring` / `--season=summer` or `--year=2024` (or check temporal balance in `05_descriptive_stats.R`) so seasonal contrast does not mimic spatial pollution hotspots.
 - **Avoid Arbitrary Weights Without Inspection**: Check both `--source-weight` and `--source-se` against out-of-sample CV (`cv_univariate_vs_cokriging.csv` or `cv_diagnostics` in univariate runs). Start with conservative reliability weights (e.g. `0.25–0.5` for uncalibrated field kits, `0.6–0.8` for accredited partner labs) and verify that `RSN` holdout RMSE decreases or holds steady.
 - **Keep Distinct Determinand Codes When Scales Differ**: Never merge citizen colorimetric strips or surrogate indices into `0117` with `--source-weight` alone if there is systematic multiplicative or additive bias—keep them as `wb_no3` and let `run_s3n_cokriging.R` absorb offset and scale differences through target-specific $\boldsymbol{\beta}_p$ and $\tau_p^2$.

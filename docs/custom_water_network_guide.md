@@ -18,7 +18,7 @@ This guide explains what is required in a river/stream network dataset to work w
   - [Step 2: Create a Network Profile in `configs/networks/<abbr>.json`](#step-2-create-a-network-profile-in-configsnetworksabbrjson)
   - [Step 3: Run the Preprocessor on Your Network](#step-3-run-the-preprocessor-on-your-network)
   - [Step 4: Run S3N Models with Your Water Network](#step-4-run-s3n-models-with-your-water-network)
-  - [Step 5: Re-Generate or Customize Plots](#step-5-re-generate-or-customize-plots)
+  - [Step 5: Re-Generate or Customise Plots](#step-5-re-generate-or-customise-plots)
 - [4. Ad-Hoc Usage (Running Directly on a `.parquet` or `.gpkg` File Without a Config File)](#4-ad-hoc-usage-running-directly-on-a-parquet-or-gpkg-file-without-a-config-file)
 - [5. Troubleshooting & Validation Checklist](#5-troubleshooting--validation-checklist)
 
@@ -31,8 +31,8 @@ The `S3N` R package models spatial autocorrelation along river networks using tw
 - **Tail-Down (TD)**: Flow-connected and flow-unconnected covariance that requires the **hydrologic distance to the catchment outlet (`Dist2Mth_km`)** for every reach.
 
 To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS Open Rivers Network `ORN_v2.gpkg` or Copernicus `EU-Hydro`), the pipeline uses:
-1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native GeoPackage (`.gpkg`) or GeoParquet (`.parquet` / `.geoparquet`) file paths, layer names, CRS, topology columns, and attribute names to the standardized `S3N` schema (`configs/networks/orn.json` is included out of the box; custom profiles can be added alongside it).
-2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage or GeoParquet file(s), repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA monitoring stations (or custom sources), and writes standardized CSV tables to `data/processed/<abbr>_<source>/`.
+1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native GeoPackage (`.gpkg`) or GeoParquet (`.parquet` / `.geoparquet`) file paths, layer names, CRS, topology columns, and attribute names to the standardised `S3N` schema (`configs/networks/orn.json` is included out of the box; custom profiles can be added alongside it).
+2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage or GeoParquet file(s), repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA monitoring stations (or custom sources), and writes standardised CSV tables to `data/processed/<abbr>_<source>/`.
 3. **Network-Aware Modelling & Plotting (`scripts/run_s3n_determinand.R`, `scripts/02_fit_s3n_models.R`, `scripts/03_generate_plots.R`)**: Reads `data/processed/<abbr>_<source>/`, writes run outputs to `output/results/<run_tag>/` (e.g. `output/results/det_0117_my_net_rsn/`), and stamps all figures with the network's human-readable label.
 
 ---
@@ -64,15 +64,15 @@ To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS 
 - **Geometry Type**: `LineString` or `MultiLineString` in standard OGC WKB or ISO WKB:
   - **2D (`XY`)**: Supported. Reach lengths, sinuosity, and endpoint coordinates are computed directly from the 2D vertices.
   - **3D (`XYZ` / `XYM`) & 4D (`XYZM`)**: Supported (e.g., EU-Hydro uses ISO `MultiLineStringZM`, WKB type `3005`). When `Z` coordinates are present on vertices, the preprocessor automatically extracts mean reach `Elevation` (m) and channel `Slope` (%).
-- **Digitized Flow Direction**: Polylines should ideally be digitized **upstream → downstream** (first vertex = upstream start node, last vertex = downstream end node).
-  - *Automatic Orientation Repair*: If your dataset has any reaches digitized backwards relative to its topology pointers/nodes, `scripts/01_preprocess_orn.py` automatically detects when the start vertex is closer to the downstream reach than the end vertex and flips the vertex order.
+- **Digitised Flow Direction**: Polylines should ideally be digitised **upstream → downstream** (first vertex = upstream start node, last vertex = downstream end node).
+  - *Automatic Orientation Repair*: If your dataset has any reaches digitised backwards relative to its topology pointers/nodes, `scripts/01_preprocess_orn.py` automatically detects when the start vertex is closer to the downstream reach than the end vertex and flips the vertex order.
 
 ### 2.3 Coordinate Reference System (CRS)
-- **Supported CRS**: Any projected planar CRS (in meters) with an EPSG code recognized by `PROJ` / `/usr/bin/cs2cs` (for example, `EPSG:27700` British National Grid or `EPSG:3035` ETRS89-LAEA Europe).
+- **Supported CRS**: Any projected planar CRS (in metres) with an EPSG code recognised by `PROJ` / `/usr/bin/cs2cs` (for example, `EPSG:27700` British National Grid or `EPSG:3035` ETRS89-LAEA Europe).
 - **How CRS Transformation Works**:
-  1. EA RSN monitoring station coordinates (`Eastings`, `Northings` in `EPSG:27700`) are transformed into the water network's native CRS (`crs_epsg`) so station-to-reach perpendicular distance snapping is performed in the network's native planar meters.
+  1. EA RSN monitoring station coordinates (`Eastings`, `Northings` in `EPSG:27700`) are transformed into the water network's native CRS (`crs_epsg`) so station-to-reach perpendicular distance snapping is performed in the network's native planar metres.
   2. Reach coordinates (`start_X`, `start_Y`, `mid_X`, `mid_Y`, `end_X`, `end_Y`) are transformed into `EPSG:27700` so all England and basin maps share a consistent projection.
-- *Note*: If your raw network is in geographic coordinates (`EPSG:4326` lat/lon degrees), reproject it to a metric CRS (`EPSG:27700` or `EPSG:3035`) with `ogr2ogr -t_srs EPSG:27700` before running the preprocessor so reach lengths and snap distances are in meters.
+- *Note*: If your raw network is in geographic coordinates (`EPSG:4326` lat/lon degrees), reproject it to a metric CRS (`EPSG:27700` or `EPSG:3035`) with `ogr2ogr -t_srs EPSG:27700` before running the preprocessor so reach lengths and snap distances are in metres.
 
 ### 2.4 Flow Routing & Topology Requirements
 Your dataset must provide **at least one** of the following three ways to determine which reach flows into which downstream reach (`topology.mode`):
@@ -96,11 +96,11 @@ Your dataset must provide **at least one** of the following three ways to determ
 
 You do **not** need pre-computed Strahler orders, Shreve orders, distances to mouth, or catchment IDs in your GIS dataset. Anything missing is automatically computed from the geometry and tree topology:
 
-| Standardized Output Column | Used By | Strictly Required in GIS? | Native Column Mapping (`attributes`) | Fallback / Automatic Computation if `null` or Missing |
+| Standardised Output Column | Used By | Strictly Required in GIS? | Native Column Mapping (`attributes`) | Fallback / Automatic Computation if `null` or Missing |
 | :--- | :--- | :---: | :--- | :--- |
 | **`RivID`** (`1..N`) | S3N graph & joins | No | `topology.id_col` | Assigned sequential integer IDs `1..N` |
 | **`parent_dn`** | S3N adjacency & tree | **Yes** (via `nodes`, `pointer`, or `geometry`) | `from_node_col`/`to_node_col` or `next_down_col` | Built from node matching, pointer lookup, or endpoint coordinate snapping |
-| **`CatchID`** | Catchment grouping | No | `topology.catch_id_col` | Weakly connected tree components are automatically assigned integer `CatchID`s |
+| **`CatchID`** | Catchment grouping | No | `topology.catch_id_col` | Weakly connected tree components rooted at each mouth are assigned integer `CatchID`s (pruned to monitored trees when stations exist) |
 | **`length_km`** | Routing & `US_Accum_km` | No | Computed from WKB polyline | Exact 2D/3D polyline arc length converted to km |
 | **`Dist2Mth_km`** | **Tail-Down** distances | No | `attributes.dist_to_mouth_col` | Computed via root-to-leaf tree traversal: `Dist2Mth(u) = Dist2Mth(down(u)) + Length(u)` |
 | **`US_Accum_km`** | **Tail-Up** `log_AFV` & OLS | No | `attributes.afv_weight_col` | Computed via leaf-to-root tree traversal: `US_Accum(u) = Length(u) + sum(US_Accum(p) for p in up(u))` |
@@ -206,20 +206,20 @@ Create a new JSON configuration file in [`configs/networks/`](../configs/network
 - **`geom_col`**: Name of the WKB geometry column (typically `"Shape"`, `"geometry"`, or `"geom"`; auto-detected from the GeoParquet `"geo"` metadata footer if omitted).
 - **`crs_epsg`**: Integer EPSG code of the layer's native CRS (e.g., `27700` for British National Grid, `3035` for ETRS89-LAEA Europe; auto-detected from GeoParquet PROJJSON metadata when running ad-hoc).
 - **`topology`**:
-  - `mode`: `"nodes"` (matches `to_node_col` → `from_node_col`), `"pointer"` (matches `next_down_col` → `id_col`), `"geometry"` (snaps reach endpoints within `snap_tol_m` meters), or `"auto"`.
+  - `mode`: `"nodes"` (matches `to_node_col` → `from_node_col`), `"pointer"` (matches `next_down_col` → `id_col`), `"geometry"` (snaps reach endpoints within `snap_tol_m` metres), or `"auto"`.
   - `id_col`, `from_node_col`, `to_node_col`, `next_down_col`, `catch_id_col`: Column names in the GIS table (set any unused column to `null`).
 - **`attributes`**:
   - Set any attribute column that exists in your GIS layer, or set to `null` to have the preprocessor compute it automatically from the network tree and 3D geometry.
   - `dist_to_mouth_unit` / `afv_weight_unit`: `"m"` (automatically converted to `"km"` in `Dist2Mth_km` and `US_Accum_km`) or `"km"`.
-- **`nodes_table`**: Optional lookup table containing node elevations (`elev_col`) or distances to mouth (`dist_to_mouth_col`). Can be either a table inside a `.gpkg` (`{"table": "Nodes", ...}`) or a standalone `.parquet` / `.csv` file (`{"path": "gis/my_nodes.parquet", "id_col": "OBJECT_ID", "elev_col": "ELEV", "dist_to_mouth_col": "LEN_TOM"}`). Set to `null` if not applicable.
+- **`nodes_table`**: Optional lookup table containing node elevations (`elev_col`) or distances to mouth (`dist_to_mouth_col`), either inside a `.gpkg` (`{"table": "Nodes", ...}`) or as a standalone `.parquet`/`.csv` (`{"path": "gis/my_nodes.parquet", "id_col": "OBJECT_ID", "elev_col": "ELEV", "dist_to_mouth_col": "LEN_TOM"}`). When `elevation_col` or `dist_to_mouth_col` are `null`, node elevations and outlet distances are populated from this table before 3D-geometry or ORN-transfer fallbacks (set to `null` if unused).
 - **`core_basins`**: Optional integer `CatchID` overrides for the Humber, Thames, and Severn basins used in Figures 2 and 3. If set to `null`, the R scripts automatically identify the Humber, Thames, and Severn catchments from `rsn_catchments_lookup.csv` by river name (`Main_River`) or river basin district.
-- **`max_snap_dist_m`**: Maximum distance in meters (default `250.0`) for snapping EA RSN water quality and biological monitoring stations to their nearest river reach.
+- **`max_snap_dist_m`**: Maximum distance in metres (default `250.0`) for snapping EA RSN water quality and biological monitoring stations to their nearest river reach.
 
 ---
 
 ### Step 3: Run the Preprocessor on Your Network
 
- first verify that your profile appears in `--list-networks`, then run `scripts/01_preprocess_orn.py`:
+First verify that your profile appears in `--list-networks`, then run `scripts/01_preprocess_orn.py`:
 
 ```bash
 # Verify the network profile is registered
@@ -231,13 +231,13 @@ python3 scripts/01_preprocess_orn.py --network=my_net
 
 #### What `scripts/01_preprocess_orn.py --network=my_net` Produces
 All processed files are saved to `data/processed/my_net_rsn/` (or `data/processed/<abbr>_<source>/` for any monitoring source):
-1. **`england_rsn_reaches.csv`**: All reaches in monitored catchments with standardized topology (`RivID`, `CatchID`, `parent_dn`, `Dist2Mth_km`, `up_dist_mid_km`, `US_Accum_km`, `log_AFV`, `Shreve`, `Strahler`), coordinates (`start_X/Y`, `mid_X/Y`, `end_X/Y` in `EPSG:27700`), physical/geological covariates (`Elevation`, `Slope`, `Sinuosity`, `SrcElevation`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`), and canonical baseline observation columns (`has_obs`, `site_id`, `snap_dist_m`, `obs_up_dist_km`, `obs_mean`, `obs_median`, `trans_obs_mean`, `meas_uncertainty`, `meas_method`, `n_samples`).
+1. **`england_rsn_reaches.csv`**: All reaches in monitored catchments with standardised topology (`RivID`, `CatchID`, `parent_dn`, `Dist2Mth_km`, `up_dist_mid_km`, `US_Accum_km`, `log_AFV`, `Shreve`, `Strahler`), coordinates (`start_X/Y`, `mid_X/Y`, `end_X/Y` in `EPSG:27700`), physical/geological covariates (`Elevation`, `Slope`, `Sinuosity`, `SrcElevation`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`), and canonical baseline observation columns (`has_obs`, `site_id`, `snap_dist_m`, `obs_up_dist_km`, `obs_mean`, `obs_median`, `trans_obs_mean`, `meas_uncertainty`, `meas_method`, `n_samples`).
 2. **`rsn_sites.csv`**: Station-level snapping coordinates and observation summaries (`site_id`, `easting`, `northing`, `snap_dist_m`, `RivID`, `CatchID`, `obs_up_dist_km`, `n_samples`, `obs_mean`, `obs_median`, `obs_sd`, `trans_obs_mean`, `mean_trans_obs`, `meas_uncertainty`, `meas_method`, `included_250m`, `source`), used by `scripts/run_s3n_determinand.R` and `scripts/06_station_snapping_diagnostics.R`.
 3. **`rsn_reach_periods.csv`**: Reach-level observations aggregated across temporal slices (`all`, `year`, `season`, `month`, `year_season`).
 4. **`rsn_catchments_lookup.csv`**: Summary table of every monitored catchment (`CatchID`, `Main_River`, `RBD_ID`, `RBD_Name`, `n_reaches`, `n_obs_reaches`).
 5. **`network_metadata.json`**: Metadata record storing the network's `abbr`, `label`, `short_label`, `source`, reach/station counts, transform metadata, and resolved `core_basins` (`humber`, `thames`, `severn`).
 
-*(The C++ neighbor engine `src/s3n_fast_neighbors.cpp` builds the directed tree directly in memory from `parent_dn` without separate edge-list CSVs.)*
+*(The C++ neighbour engine `src/s3n_fast_neighbors.cpp` builds the directed tree directly in memory from `parent_dn` without separate edge-list CSVs.)*
 
 ---
 
@@ -263,7 +263,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --network=my_net --basin=Thames
 
 ---
 
-### Step 5: Re-Generate or Customize Plots
+### Step 5: Re-Generate or Customise Plots
 
 All output files are saved in a network- and source-specific folder under `output/results/` so runs never overwrite other configurations:
 - Standard covariates: `output/results/det_0117_<abbr>_<source>/` (e.g. `output/results/det_0117_my_net_rsn/`)
@@ -308,7 +308,7 @@ Available CLI overrides in [`scripts/01_preprocess_orn.py`](../scripts/01_prepro
 - `--convert-to-geoparquet=<out.parquet>`: Converts the selected `--network` GeoPackage layer(s) into a single OGC GeoParquet file.
 - `--topology-mode=auto|nodes|pointer|geometry`: Override how downstream reach connectivity is constructed.
 - `--afv-col=<col>`: Override the attribute column used to compute Tail-Up additive function weights (`afv`).
-- `--max-snap-dist=<meters>`: Override the maximum station-to-reach snapping distance (default `250`).
+- `--max-snap-dist=<metres>`: Override the maximum station-to-reach snapping distance (default `250`).
 - `--gis-dir=<dir>`: Custom directory containing `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` GIS files (defaults to `configs/directories.json` or `gis`).
 - `--data-dir=<dir>`: Custom root data directory containing RSN inputs and `processed/` outputs (defaults to `configs/directories.json` or `data`).
 - `--out-dir=<dir>` (or `--output-dir=<dir>`): Custom output directory for preprocessed network CSV tables (defaults to `<data-dir>/processed`).
@@ -319,7 +319,7 @@ Available CLI overrides in [`scripts/01_preprocess_orn.py`](../scripts/01_prepro
 
 1. **Too Few Observed RSN Stations Snapped (`n_obs_reaches` is low)**:
    - Verify that `"crs_epsg"` in your JSON config matches the actual coordinate reference system of the geometries in `gpkg_geometry_columns`.
-   - If your river network is generalized/coarse (e.g., 1:250,000 scale), increase `"max_snap_dist_m"` from `250.0` to `500.0` (or pass `--max-snap-dist=500`) so monitoring stations along small tributaries or wide floodplains snap to the nearest mapped mainstem.
+   - If your river network is generalised/coarse (e.g., 1:250,000 scale), increase `"max_snap_dist_m"` from `250.0` to `500.0` (or pass `--max-snap-dist=500`) so monitoring stations along small tributaries or wide floodplains snap to the nearest mapped mainstem.
 2. **Broken Trees or Unresolved `NEXTDOWNID` Pointers**:
    - Check the preprocessor console log for `Loaded ... total reaches | ... valid downstream links`.
    - If your network splits rivers and artificial connectors across separate layers (like EU-Hydro's `River_Net_l`, `Canals_l`, and `Ditches_l`), include all connected layers in the `"layers"` array of your JSON config so downstream pointers across layer boundaries resolve cleanly.

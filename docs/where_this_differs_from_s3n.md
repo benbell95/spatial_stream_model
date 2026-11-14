@@ -7,7 +7,7 @@
 - [2. Where This Pipeline Uses the `S3N` Package](#2-where-this-pipeline-uses-the-s3n-package)
 - [3. Where This Pipeline Replaces `S3N`](#3-where-this-pipeline-replaces-s3n)
   - [3.1 Zero-Dependency GIS Ingestion, Cycle Resolution & Station Snapping](#31-zero-dependency-gis-ingestion-cycle-resolution--station-snapping)
-  - [3.2 Sub-Second C++/OpenMP Euler-Tour Neighbor Engine](#32-sub-second-copenmp-euler-tour-neighbor-engine)
+  - [3.2 Sub-Second C++/OpenMP Euler-Tour Neighbour Engine](#32-sub-second-copenmp-euler-tour-neighbour-engine)
   - [3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting (`--afv=`)](#33-numerically-stable-log_afv--physical-confluence-weighting---afv)
   - [3.4 Combining `Tail-Up` & `Tail-Down`](#34-combining-tail-up--tail-down)
 - [4. Additional Features Available in This Pipeline](#4-additional-features-available-in-this-pipeline)
@@ -18,7 +18,7 @@
 
 ## Acknowledgements, Foundations & Attribution
 
-This pipeline is built upon and inspired by the **Scalable Spatial Stream Network (`S3N`)** statistical framework and its reference R implementation, [`jpierkunke/S3N`](https://github.com/jpierkunke/S3N). The key conceptual breakthrough—embedding dendritic river-network covariance structures inside a **Nearest-Neighbor Gaussian Process (`NNGP`)** so that likelihood evaluation and kriging scale linearly $\mathcal{O}(n)$ rather than cubically $\mathcal{O}(n^3)$—originates directly with `S3N`.
+This pipeline is built upon and inspired by the **Scalable Spatial Stream Network (`S3N`)** statistical framework and its reference R implementation, [`jpierkunke/S3N`](https://github.com/jpierkunke/S3N). The core innovation—embedding dendritic river-network covariance structures inside a **Nearest-Neighbour Gaussian Process (`NNGP`)** so that likelihood evaluation and kriging scale linearly $\mathcal{O}(n)$ rather than cubically $\mathcal{O}(n^3)$—originates directly with `S3N`.
 
 Full credit belongs to the authors of the foundational packages and theory on which this repository stands:
 
@@ -43,11 +43,11 @@ In this repository, `S3N` is used for standard univariate exponential model fitt
 | :--- | :--- | :--- |
 | **Scope** | Univariate spatial estimation, bootstrap, and kriging functions in R (`S3N`). | End-to-end headless CLI pipeline (Python + R + OpenMP C++) from raw GIS/CSVs to maps and reports. |
 | **GIS & Topology Prep** | Expects pre-processed, pre-snapped stream network topology/order tables prepared externally (e.g. via GIS/`SSN2`). | Zero-GIS Python extractor (`01_preprocess_orn.py`) reading `.gpkg`/`.parquet`, breaking braids/canal loops, and orthogonally snapping stations. |
-| **Neighbor Construction** | R-level `order_stream()` and `get_neighbor_stream()` tree walks. | Sub-second OpenMP C++ Euler-tour LCA & `std::partial_sort` neighbor engine (`src/s3n_fast_neighbors.cpp`). |
+| **Neighbour Construction** | R-level `order_stream()` and `get_neighbor_stream()` tree walks. | Sub-second OpenMP C++ Euler-tour LCA & `std::partial_sort` neighbour engine (`src/s3n_fast_neighbors.cpp`). |
 | **Covariance Structure** | Single-component `Tail-Up` or `Tail-Down` exponential NNGP at a time. | 4 stream kernels (`exponential`, `spherical`, `mariah`, `linear`, plus AIC `auto`), plus **Joint Additive `Tail-Up + Tail-Down + Euclidean` NNGP**. |
 | **Multivariate Targets** | Not supported (univariate only). | Dedicated **Factor-LMC Joint NNGP Co-Kriging** (`scripts/run_s3n_cokriging.R`) for $P \ge 2$ heterotopic variables. |
 | **Uncertainty & Censoring** | Assumes uncensored, homoskedastic responses. | Multi-threshold Lognormal **ROS**, **Spatial Tobit EM** kriging, and **Two-Stage GAM Measurement-Error Kriging**. |
-| **Mean Trend (`Xβ`)** | Parametric linear fixed effects. | Linear GLS plus orthogonalized **GCV Splines**, **REML GAMs**, **OOB Random Forests**, and **OOF Gradient Boosted Trees**. |
+| **Mean Trend (`Xβ`)** | Parametric linear fixed effects. | Linear GLS plus orthogonalised **GCV Splines**, **REML GAMs**, **OOB Random Forests**, and **OOF Gradient Boosted Trees**. |
 | **Decision Support** | Raw point predictions & prediction intervals. | Temporal batching + dynamic borrowing (`--by=`, `--st-borrow`), threshold exceedance probabilities (`--threshold=uk`), and C++ optimal station design (`--design-sites=`). |
 
 ---
@@ -68,19 +68,21 @@ the pipeline delegates individual `Tail-Up` and `Tail-Down` component fitting an
 | `BRISC_prediction_stream()` | Computes universal stream kriging point predictions (`$prediction`) and 95% prediction intervals (`$prediction.ci`) across all `q_tot` reaches for `Tail-Up` and `Tail-Down`. | [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`predict_component()`) |
 
 > [!NOTE]
-> **Recommended `S3N` Usage & Automatic C++ Fallback**: While the pipeline runs cleanly without `S3N` installed via our custom OpenMP C++ NNGP fallback (`fit_nngp_cpp()`, `bootstrap_nngp_cpp()`, `C_s3n_predict_meas_error()`—which also powers non-exponential kernels, measurement-error kriging, `C_s3n_joint_nngp()`, and `C_s3n_multivariate_nngp()` in [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)), **installing and running with the `S3N` package is recommended** for standard exponential models. In that mode, `BRISC_estimation_stream()` provides `L-BFGS-B` optimization and `BRISC_bootstrap()` provides full **Monte Carlo parametric bootstrap 95% confidence intervals** for both fixed effects (`Beta`) and spatial covariance parameters (`sigma.sq`, `tau.sq`, `phi`), whereas the C++ fallback (`bootstrap_nngp_cpp()`) uses analytical GLS asymptotic CIs for `Beta` and sample-size-based log-normal approximations for variance parameters.
+> **Recommended `S3N` Usage & Automatic C++ Fallback**: The default `--combine=joint` solver runs via [`C_s3n_joint_nngp()`](../src/s3n_fast_neighbors.cpp). Upstream `S3N` (`BRISC_estimation_stream()`, `BRISC_bootstrap()`, `BRISC_prediction_stream()`) still handles individual `Tail-Up` / `Tail-Down` exponential component fits, Monte Carlo parametric bootstrap CIs (`--boot=`), and `--combine=precision`.
+>
+> Without `S3N` installed, the OpenMP C++ fallback (`fit_nngp_cpp()`, `bootstrap_nngp_cpp()`, `C_s3n_predict_meas_error()`) runs all models automatically using analytical GLS asymptotic CIs for `Beta` and log-normal approximations for variance parameters; **installing `S3N` is recommended** for full Monte Carlo parametric bootstrap CIs.
 
 ---
 
 ## 3. Where This Pipeline Replaces `S3N`
 
 ### 3.1 Zero-Dependency GIS Ingestion, Cycle Resolution & Station Snapping
-Upstream `S3N` operates on already-cleaned stream topology and distance tables. [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) eliminates heavy GIS dependencies (`GDAL`, `geopandas`, `sf`, `SSN2`) by parsing multi-gigabyte OGC GeoPackages (`.gpkg`) and GeoParquet networks using Python's standard library (`sqlite3` + binary WKB decoding), enforcing strict directed rooted trees (resolving braided channels and canal loops via shortest-path-to-mouth and BFS cycle breaking), computing Strahler/Shreve orders, and snapping monitoring stations orthogonally (`<= 250 m`) to exact along-reach river mouth distances (`obs_up_dist_km`).
+Upstream `S3N` operates on already-cleaned stream topology and distance tables. [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) avoids heavy GIS dependencies (`GDAL`, `geopandas`, `sf`, `SSN2`) by parsing multi-gigabyte OGC GeoPackages (`.gpkg`) and GeoParquet networks using Python's standard library (`sqlite3` + binary WKB decoding). It enforces strict directed rooted trees (resolving braided channels and canal loops via shortest-path-to-mouth and BFS cycle breaking), computes Strahler and Shreve orders, and snaps monitoring stations orthogonally (`<= 250 m`) to exact along-reach river mouth distances (`obs_up_dist_km`).
 
-### 3.2 Sub-Second C++/OpenMP Euler-Tour Neighbor Engine
+### 3.2 Sub-Second C++/OpenMP Euler-Tour Neighbour Engine
 Instead of calling `S3N`'s R-level `order_stream()` and `get_neighbor_stream()`, [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) builds the exact `obs_neighbors`, `pred_neighbors`, `obsobs_dist`, and `obsobs_wt` structures in compiled C++:
 - **`C_build_tree_tin_tout()`**: Runs a single $\mathcal{O}(q_{\text{tot}})$ DFS Euler tour storing entry/exit timestamps (`tin`, `tout`), reducing every flow-connectedness test `FC(a, b)` to an $\mathcal{O}(1)$ integer interval check (`tin[a] <= tin[b] && tout[b] <= tout[a]`).
-- **`C_compute_s3n_neighbors()`**: Uses OpenMP threads and `std::partial_sort` to construct `m = 15` nearest stream-network neighborhoods across ~91,000 reaches in under a second (`100×–300×` faster than R tree walks).
+- **`C_compute_s3n_neighbors()`**: Uses OpenMP threads and `std::partial_sort` to construct `m = 15` nearest stream-network neighbourhoods across ~91,000 reaches in under a second (`100×–300×` faster than R tree walks).
 
 ### 3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting (`--afv=`)
 In large national catchments (e.g., Humber or Thames), raw multiplicative Additive Function Values (`AFV`) can underflow floating-point precision after `40–70` headwater bifurcations. [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and `C_compute_log_afv()` in [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) accumulate `log_AFV` additively in double precision and allow switching dynamically among three physical confluence-mixing schemes:
@@ -106,9 +108,9 @@ Alongside the core `S3N` workflow, this codebase provides the following modellin
 4. **Two-Stage GAM & Heteroskedastic Measurement-Error Kriging (`--meas-error` / `--gam`)**:
    Converts first-stage station-level standard errors (`meas_uncertainty`) onto the transformed model scale via the Delta Method, decomposes total nugget variance into $\tau^2_{\text{micro}} + \bar{v}$, and solves the heteroskedastic NNGP kriging system in `C_s3n_predict_meas_error()` (and `C_s3n_joint_nngp()`).
 5. **Non-Linear Spline & Tree-Ensemble Regression Kriging (`--trend=spline|gam|rf|gbm`)**:
-   Replaces strictly linear covariates with orthogonalized GCV natural cubic splines, REML-penalized GAMs, Out-of-Bag Random Forests, or 5-fold cross-fitted Gradient Boosted Trees prior to S3N residual kriging, preserving spatial GLS inference without overfitting residuals.
+   Replaces strictly linear covariates with orthogonalised GCV natural cubic splines, REML-penalised GAMs, Out-of-Bag Random Forests, or 5-fold cross-fitted Gradient Boosted Trees prior to S3N residual kriging, preserving spatial GLS inference without overfitting residuals.
 6. **Left-Censored & Interval-Range Imputation (`--censor=ros|em|tobit|half_lod`, `--range-mode=`)**:
-   Handles `<LOD` nondetects via multi-threshold Robust Lognormal ROS or iterative **Spatial Tobit EM Kriging** (truncated-normal E-steps conditioned on stream neighbors), plus custom interval-range modes (`tobit`, `geometric`, `midpoint`, `ros_site`, etc.).
+   Handles `<LOD` nondetects via multi-threshold Robust Lognormal ROS or iterative **Spatial Tobit EM Kriging** (truncated-normal E-steps conditioned on stream neighbours), plus custom interval-range modes (`tobit`, `geometric`, `midpoint`, `ros_site`, etc.).
 7. **Spatio-Temporal Batching, Dynamic Borrowing & Trend Mapping (`--by=year|season|month`, `--st-borrow`)**:
    Fits ordered time slices, borrows precision-weighted spatial strength across sparsely monitored periods using estimated lag-1 temporal correlation $\hat{\rho}_t$, and computes reach-level WLS temporal trend significance maps (`fig6` / `fig7`).
 8. **Regulatory Exceedance & Threshold Risk Mapping (`--threshold=uk|<val>`)**:
@@ -118,7 +120,7 @@ Alongside the core `S3N` workflow, this codebase provides the following modellin
 10. **Full Operational Workflow, Hydrological Validation & Diagnostics**:
     - **4 Hydrological CV Modes (`--cv-mode=`)**: `random`, `catchment` (Leave-Catchment-Out), `strahler` (mainstem-to-headwater extrapolation), and `spatial_block`.
     - **12 Response Transforms & 4 Normalisations**: Profile-MLE `boxcox`/`yeojohnson`, `sqrt`, `log`, `log1p`, `asin`, `logit`, etc., plus `zscore`, `robust_zscore`, `minmax`, and `percentile` outputs.
-    - **Custom Data & Networks**: Combine built-in (`rsn`, `ssn`, `rss`) and user CSV sources (`+`), bring custom river networks (`BYOWN`), and customize 15 covariates via `--vars=`.
+    - **Custom Data & Networks**: Combine built-in (`rsn`, `ssn`, `rss`) and user CSV sources (`+`), bring custom river networks (`BYOWN`), and customise 15 covariates via `--vars=`.
     - **Diagnostics & Re-Plottable Multi-Format Figures**: Automated station snapping diagnostics (`06_station_snapping_diagnostics.R`), descriptive environmental gradient reports (`05_descriptive_stats.R`), multi-run / `N:P` stoichiometry comparisons (`04_compare_model_runs.R`), and standalone re-plotting (`03_generate_plots.R`) in `png`, Cairo `pdf`, and `svg` with `--dpi` and `--fig-size`.
 
 ---
@@ -132,6 +134,6 @@ Consistent with `S3N` (`GPL-3`) and `BRISC` (`GPL-2 | GPL-3`), all code in this 
 ## 6. Related Documentation
 
 - [**S3N Modelling & Kriging Theory**](./s3n_modelling_and_kriging_guide.md) — Mathematical derivations of Tail-Up, Tail-Down, Joint NNGP, ROS, hydrological CV, and optimal monitoring design.
-- [**Preprocessing & C++ Neighbor Engine**](./preprocessing_pipeline.md) — Deep dive into `01_preprocess_orn.py`, Euler-tour DFS timestamps, and `src/s3n_fast_neighbors.cpp`.
+- [**Preprocessing & C++ Neighbour Engine**](./preprocessing_pipeline.md) — Deep dive into `01_preprocess_orn.py`, Euler-tour DFS timestamps, and `src/s3n_fast_neighbors.cpp`.
 - [**Multivariate Stream Co-Kriging (Factor-LMC)**](./multivariate_cokriging_guide.md) — Joint $P \ge 2$ modelling via `scripts/run_s3n_cokriging.R`.
 - [**End-to-End Usage Guide**](./usage_guide.md) — Complete CLI flag reference and workflow examples.
