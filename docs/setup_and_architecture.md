@@ -6,96 +6,36 @@ This guide is the single reference for repository layout, environment dependenci
 
 ## Table of Contents
 
-- [1. Repository & Output Layout](#1-repository--output-layout)
-- [2. Software & Hardware Requirements](#2-software--hardware-requirements)
-  - [2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)](#21-python-environment-01_preprocess_ornpy-format_custom_datapy-build_showcasepy)
-  - [2.2 R Environment](#22-r-environment)
-  - [2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)](#23-compiled-c--openmp-library-srcs3n_fast_neighborscpp)
-  - [2.4 System Dependencies (Linux, macOS & Windows)](#24-system-dependencies-linux-macos--windows)
-  - [2.5 Hardware Profile](#25-hardware-profile)
-- [3. Obtaining & Placing the Required Data](#3-obtaining--placing-the-required-data)
-  - [3.1 Dataset Downloads & Locations](#31-dataset-downloads--locations)
-  - [3.2 Unzipping & Expected Directory Layout](#32-unzipping--expected-directory-layout)
-  - [3.3 Verifying the Layout & Custom Locations](#33-verifying-the-layout--custom-locations)
-  - [3.4 Additional River Networks & Citizen Science Data Sources](#34-additional-river-networks--citizen-science-data-sources)
-- [4. Configuration Files & Environment Variables](#4-configuration-files--environment-variables)
-  - [4.1 Directory Paths (`configs/directories.json`)](#41-directory-paths-configsdirectoriesjson)
-  - [4.2 Determinand Metadata Catalog (`configs/determinands.json`)](#42-determinand-metadata-catalog-configsdeterminandsjson)
-- [5. Running the Automated Test Suite](#5-running-the-automated-test-suite)
-- [6. License](#6-license)
+- [1. Software & Hardware Requirements](#1-software--hardware-requirements)
+  - [1.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)](#11-python-environment-01_preprocess_ornpy-format_custom_datapy-build_showcasepy)
+  - [1.2 R Environment](#12-r-environment)
+  - [1.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)](#13-compiled-c--openmp-library-srcs3n_fast_neighborscpp)
+  - [1.4 System Dependencies (Linux, macOS & Windows)](#14-system-dependencies-linux-macos--windows)
+  - [1.5 Hardware Profile](#15-hardware-profile)
+- [2. Obtaining & Placing the Required Data](#2-obtaining--placing-the-required-data)
+  - [2.1 Dataset Downloads & Locations](#21-dataset-downloads--locations)
+  - [2.2 Unzipping & Expected Directory Layout](#22-unzipping--expected-directory-layout)
+  - [2.3 Verifying the Layout & Custom Locations](#23-verifying-the-layout--custom-locations)
+  - [2.4 Additional River Networks & Citizen Science Data Sources](#24-additional-river-networks--citizen-science-data-sources)
+- [3. Configuration Files & Environment Variables](#3-configuration-files--environment-variables)
+  - [3.1 Directory Paths (`configs/directories.json`)](#31-directory-paths-configsdirectoriesjson)
+  - [3.2 Determinand Metadata Catalog (`configs/determinands.json`)](#32-determinand-metadata-catalog-configsdeterminandsjson)
+- [4. Running the Automated Test Suite](#4-running-the-automated-test-suite)
+- [5. License](#5-license)
+- [6. Repository & Output Layout](#6-repository--output-layout)
 
 ---
 
-## 1. Repository & Output Layout
-
-```text
-spatial_stream_model/
-├── cli_workbench/                    # Standalone offline CLI command builder (open index.html)
-├── configs/
-│   ├── directories.json              # Default data, gis, processed, and output roots
-│   ├── determinands.json             # (Optional user file) Determinand labels & units
-│   ├── networks/
-│   │   └── orn.json                  # Built-in ORN v2 network profile
-│   └── sources/
-│       ├── rsn.json                  # Environment Agency River Surveillance Network
-│       ├── ssn.json                  # Environment Agency Small Streams Network
-│       └── composites.json           # Built-in composite sources (rss, all)
-├── data/
-│   ├── NCEA_River_Surveillance_Network_ARD_Open/
-│   ├── NCEA_Small_Streams_Network_ARD_Open/
-│   └── processed/
-│       └── <net>_<source>/           # Standardised 5-file output from 01_preprocess_orn.py
-├── gis/
-│   └── ORN_v2.gpkg                   # National river network GeoPackage (~10.4 GB)
-├── modelling_dashboard/              # Interactive offline case-study explorer & results dashboard
-├── output/
-│   ├── results/
-│   │   └── det_<code>_<net>_<src>.../# Model predictions, CV tables, parameters, fig1–fig5
-│   │       └── descriptives/         # Single-run report & figures from 05_descriptive_stats.R
-│   ├── station_snapping/
-│   │   └── <net>_<source>/           # Snapping tables & maps from 06_station_snapping_diagnostics.R
-│   └── comparisons/
-│       └── <comparison_slug>/        # Multi-run reports & figures from 04_compare_model_runs.R
-├── scripts/
-│   ├── 01_preprocess_orn.py          # Network extraction, ROS imputation, station snapping
-│   ├── format_custom_data.py         # Helper to convert user CSVs into source format + JSON
-│   ├── build_showcase.py             # Stages WebP/SVG figures & data.js for modelling_dashboard/
-│   ├── run_s3n_determinand.R         # Main end-to-end R runner (fit + CV + kriging + plots)
-│   ├── run_s3n_cokriging.R           # Multivariate Factor-LMC / colocated co-kriging runner
-│   ├── 02_fit_s3n_models.R           # Standalone model fitting step (saves .rds checkpoint)
-│   ├── 03_generate_plots.R           # Standalone plotting step (reads .rds checkpoint)
-│   ├── 04_compare_model_runs.R       # Multi-run & cross-determinand comparison
-│   ├── 05_descriptive_stats.R        # Single-run descriptive stats & gradient tests
-│   ├── 06_station_snapping_diagnostics.R
-│   ├── 07_compare_cokriging_runs.R   # Equal vs. source-weighted co-kriging comparison
-│   ├── 08_compare_transforms.R       # Multi-transform (none/log/sqrt/boxcox) benchmark
-│   ├── s3n_py_utils.py               # Shared Python utilities (WKB, ROS, config, snapping)
-│   └── s3n_*.R                       # Shared R modules (config, covariates, transforms, model, multivariate, plot, stats)
-├── src/
-│   ├── Makevars                      # OpenMP compiler flags for Linux/macOS R CMD SHLIB
-│   ├── Makevars.win                  # OpenMP compiler flags for Windows Rtools R CMD SHLIB
-│   └── s3n_fast_neighbors.cpp        # OpenMP C++ Euler-tour & NNGP neighbor engine
-├── tests/
-│   ├── test_python_utils.py          # Python unit tests
-│   └── test_r_and_cpp.R              # R modules + C++ shared library unit tests
-└── docs/                             # Documentation (see docs/README.md)
-```
-
-> [!TIP]
-> **Generating Commands Visually:** Open [`cli_workbench/index.html`](../cli_workbench/index.html) locally in any browser for a standalone point-and-click command builder supporting **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (including an optional full `Rscript.exe` path & R-version selector when R is not on Windows `PATH`).
-
----
-
-## 2. Software & Hardware Requirements
+## 1. Software & Hardware Requirements
 
 The pipeline minimises external dependencies so it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
 
-### 2.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)
+### 1.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)
 - **Python Version**: **Python ≥ 3.8** (uses `statistics.NormalDist()` for ROS normal quantiles).
 - **Third-Party Packages**: **None required** for core GeoPackage (`.gpkg`) and CSV preprocessing (uses standard library modules `sqlite3`, `struct`, `statistics`, `math`, `csv`, `json`, `argparse`).
   - Optional packages: `pyarrow` (or system `libgdal`) for GeoParquet `.parquet` networks, `pyproj` (or `osgeo.osr`) for CRS auto-reprojection in `format_custom_data.py`, and `Pillow` for WebP asset generation in `build_showcase.py`.
 
-### 2.2 R Environment
+### 1.2 R Environment
 - **R Version**: **R ≥ 3.5.0**.
 - **Required R Packages**:
   | Package | Source | Purpose |
@@ -107,15 +47,20 @@ The pipeline minimises external dependencies so it runs reliably in headless Lin
   | `splines`, `mgcv`, `rpart` | Bundled with standard R | Used when `--trend=spline\|gam\|rf\|gbm` is enabled (automatic fallback to `spline`/`linear` if unavailable). |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG/PDF/SVG plotting (`type = "cairo"`). |
 
-### 2.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)
-R scripts dynamically load `src/s3n_fast_neighbors.so` (Linux/macOS) or `src/s3n_fast_neighbors.dll` (Windows via Rtools). [`src/Makevars`](../src/Makevars) and [`src/Makevars.win`](../src/Makevars.win) already configure `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root with:
+### 1.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)
+R scripts dynamically load `src/s3n_fast_neighbors.so` (Linux/macOS) or `src/s3n_fast_neighbors.dll` (Windows via Rtools). [`src/Makevars`](../src/Makevars) and [`src/Makevars.win`](../src/Makevars.win) already configure `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root:
 
 ```bash
-R CMD SHLIB src/s3n_fast_neighbors.cpp
+# Linux / macOS (--preclean ensures any prebuilt Linux .so is rebuilt cleanly)
+R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp
 ```
-*(A precompiled Linux `x86_64` `.so` is included; recompile after modifying C++ code, on Windows/macOS, or if hitting a distro ABI mismatch.)*
+```powershell
+# Windows PowerShell (omit full path if R's bin\x64 directory is on PATH; requires Rtools)
+& "C:\Program Files\R\R-<ver>\bin\x64\R.exe" CMD SHLIB src/s3n_fast_neighbors.cpp
+```
+*(Alternatively, run `system2(file.path(R.home("bin"), "R"), c("CMD", "SHLIB", "src/s3n_fast_neighbors.cpp"))` directly from an R or RStudio console without configuring `PATH`. A precompiled Linux `x86_64` `.so` is included; recompile on Windows/macOS, after editing C++ code, or on Linux distro ABI mismatches.)*
 
-### 2.4 System Dependencies (Linux, macOS & Windows)
+### 1.4 System Dependencies (Linux, macOS & Windows)
 | Dependency | Fedora / RHEL | Ubuntu / Debian | Purpose |
 | :--- | :--- | :--- | :--- |
 | **C/C++ Compiler & OpenMP** | `gcc`, `gcc-c++`, `libgomp` | `build-essential`, `libomp-dev` | Compiling `src/s3n_fast_neighbors.cpp` and `S3N`. |
@@ -124,28 +69,28 @@ R CMD SHLIB src/s3n_fast_neighbors.cpp
 | **SQLite3** | `sqlite-libs` | `libsqlite3-0` | Underlying C library used by Python `sqlite3` to read `.gpkg` files. |
 
 #### macOS Notes (Intel & Apple Silicon)
-- **Compiler & C++ Recompile**: Install Xcode Command Line Tools (`xcode-select --install`) and run `R CMD SHLIB src/s3n_fast_neighbors.cpp` from the repository root (replacing the precompiled Linux binary).
+- **Compiler & C++ Recompile**: Install **Xcode Command Line Tools** (`xcode-select --install`, macOS's build-tool prerequisite analogous to Windows Rtools), then run `R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp` from the repository root so the prebuilt Linux `.so` is replaced with a macOS build.
 - **OpenMP (`--omp=N`)**: Stock Apple Clang + CRAN R compiles cleanly without OpenMP (running single-threaded). To enable multi-threaded C++ and `S3N`, install `brew install libomp` and add the corresponding `-Xpreprocessor -fopenmp` / `-lomp` flags in `~/.R/Makevars`.
 - **Graphics Devices**: `PNG` (default) and `PDF` fall back automatically to native macOS Quartz/PDF devices when Cairo is unavailable. `SVG` output (`--fig-format=svg` or [`scripts/07_compare_cokriging_runs.R`](../scripts/07_compare_cokriging_runs.R)) requires XQuartz (`capabilities("cairo") == TRUE`).
 - **GeoParquet & Arbitrary CRS Transforms**: Standard `.gpkg` and CSV preprocessing need no extra packages. For `.parquet`/`.geoparquet` files, install `pyarrow` (`pip install pyarrow`) or Homebrew `gdal` (`brew install gdal`, searched via `libgdal.dylib` / `/opt/homebrew/lib/libgdal.dylib`); for non-BNG EPSG CRS transforms, install `pyproj` or `brew install proj` (`cs2cs`).
 
 #### Windows Notes
-- **Rtools & C++ Recompile**: Install **Rtools** matching your R version so `R CMD SHLIB src/s3n_fast_neighbors.cpp` (and building `S3N` from GitHub) compiles `src/s3n_fast_neighbors.dll` with OpenMP support via [`src/Makevars.win`](../src/Makevars.win).
-- **`Rscript.exe` on `PATH`**: CRAN's Windows installer does not add `Rscript.exe` to `PATH` automatically. Either add `C:\Program Files\R\R-<ver>\bin\x64\` to `PATH`, invoke the full `Rscript.exe` path, or use [`cli_workbench/index.html`](../cli_workbench/index.html) (which emits PowerShell and Command Prompt commands with an R-version path selector).
+- **Rtools & C++ Recompile**: Install **Rtools** matching your R version so `R CMD SHLIB` (and building `S3N` from GitHub) compiles `src/s3n_fast_neighbors.dll` with OpenMP support via [`src/Makevars.win`](../src/Makevars.win).
+- **`R.exe` / `Rscript.exe` on `PATH`**: CRAN's Windows installer does not add R to `PATH` automatically. Either add `C:\Program Files\R\R-<ver>\bin\x64\` to `PATH`, invoke the full `R.exe` / `Rscript.exe` path in PowerShell (`& "..."`) or Command Prompt, compile from the R/RStudio console via `system2(...)` (Section 1.3), or use [`cli_workbench/index.html`](../cli_workbench/index.html) (which includes an R-version path selector).
 - **Python Auto-Preprocessing**: Install Python 3 from `python.org` (or Conda); [`resolve_python_bin()`](../scripts/s3n_config.R#L64-L78) automatically skips Windows' `WindowsApps` Store stub and falls back to `py -3`.
 - **GeoParquet & Arbitrary CRS Transforms**: Standard `.gpkg` and CSV preprocessing work out of the box (SQLite3 is bundled with Python for Windows). For `.parquet`/`.geoparquet` files, install `pyarrow` (`pip install pyarrow`) or ensure OSGeo4W/Conda `gdal*.dll` is on `PATH`; for non-BNG EPSG CRS transforms, install `pyproj` (or ensure `cs2cs` is on `PATH`).
 
-### 2.5 Hardware Profile
+### 1.5 Hardware Profile
 - **RAM**: ~1.5 GB peak memory for a full national run.
 - **CPU**: Defaults to **`1` OpenMP thread** (`--omp=1` via `parse_n_omp_arg(..., default = 1L)`) for reproducible single-node runs; pass `--omp=4` (or higher) for multi-core speedups. With `--omp=4`, a full national + 3-basin ORN run with 5-fold CV and 4 figures completes in ~18–25 seconds.
 
 ---
 
-## 3. Obtaining & Placing the Required Data
+## 2. Obtaining & Placing the Required Data
 
 External river-network and monitoring datasets are not tracked in the Git repository and must be downloaded separately before running preprocessing (`scripts/01_preprocess_orn.py`) or modelling (`scripts/run_s3n_determinand.R` / `scripts/run_s3n_cokriging.R`).
 
-### 3.1 Dataset Downloads & Locations
+### 2.1 Dataset Downloads & Locations
 
 | Dataset | Status | Download Source & Required Format / Archive | Target Extracted Path | Config Definition |
 | :--- | :--- | :--- | :--- | :--- |
@@ -157,7 +102,7 @@ External river-network and monitoring datasets are not tracked in the Git reposi
 - **RSN (`NCEA_River_Surveillance_Network_ARD_Open.zip`)**: Required by default for water-quality (`RSN Water Quality Samples.csv`, `RSN Water Quality Sample Points.csv`), LCMS/GCMS (`RSN LCMS GCMS Samples.csv`), and ecological survey tables (`RSN Macroinvertebrate Samples.csv`, `RSN Diatom Samples.csv`, `RSN Macrophyte Samples.csv`, `RSN River Habitat Surveys.csv`).
 - **SSN (`NCEA_Small_Streams_Network_ARD_Open.zip`)**: Optional but recommended because it adds headwater stream observations (`--source=rsn+ssn`, the default combined run). If only `RSN` is downloaded, pass `--source=rsn` when running preprocessing and models.
 
-### 3.2 Unzipping & Expected Directory Layout
+### 2.2 Unzipping & Expected Directory Layout
 
 Create `gis/` and the two dataset subdirectories inside `data/` at the repository root, then extract each archive so that `ORN_v2.gpkg` and the `.csv` files sit directly in their target folders (without an extra nested subfolder of the same name).
 
@@ -219,7 +164,7 @@ spatial_stream_model/
         └── ...
 ```
 
-### 3.3 Verifying the Layout & Custom Locations
+### 2.3 Verifying the Layout & Custom Locations
 
 Once extracted, verify that Python discovers the expected network and monitoring sources before running a full model:
 
@@ -227,10 +172,10 @@ Once extracted, verify that Python discovers the expected network and monitoring
 python3 scripts/01_preprocess_orn.py --list-sources
 ```
 
-- **Alternate folders**: If `gis/` or `data/` live outside the repository root (for example, on a shared drive or cloud volume), update [`configs/directories.json`](../configs/directories.json), set `S3N_GIS_DIR` / `S3N_DATA_DIR`, or pass `--gis-dir=` / `--data-dir=` (see [Section 4.1](#41-directory-paths-configsdirectoriesjson)).
+- **Alternate folders**: If `gis/` or `data/` live outside the repository root (for example, on a shared drive or cloud volume), update [`configs/directories.json`](../configs/directories.json), set `S3N_GIS_DIR` / `S3N_DATA_DIR`, or pass `--gis-dir=` / `--data-dir=` (see [Section 3.1](#31-directory-paths-configsdirectoriesjson)).
 - **Custom monitoring or river networks**: To ingest non-EA monitoring tables or a non-UK hydrography network instead of `ORN`/`RSN`/`SSN`, see [`./custom_data_sources_guide.md`](./custom_data_sources_guide.md) and [`./custom_water_network_guide.md`](./custom_water_network_guide.md).
 
-### 3.4 Additional River Networks & Citizen Science Data Sources
+### 2.4 Additional River Networks & Citizen Science Data Sources
 
 Beyond the core `ORN` + `RSN`/`SSN` setup, the repository supports additional external river hydrography and citizen science monitoring datasets through custom network profiles (`configs/networks/*.json`), `scripts/format_custom_data.py`, and multi-source co-kriging:
 
@@ -242,9 +187,9 @@ Beyond the core `ORN` + `RSN`/`SSN` setup, the repository supports additional ex
 
 ---
 
-## 4. Configuration Files & Environment Variables
+## 3. Configuration Files & Environment Variables
 
-### 4.1 Directory Paths (`configs/directories.json`)
+### 3.1 Directory Paths (`configs/directories.json`)
 All Python and R scripts resolve root paths in this precedence order (highest to lowest):
 1. **CLI flags**: `--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`
 2. **Environment variables**: `S3N_GIS_DIR`, `S3N_DATA_DIR`, `S3N_PROCESSED_DIR`, `S3N_OUTPUT_DIR`
@@ -258,7 +203,7 @@ All Python and R scripts resolve root paths in this precedence order (highest to
    }
    ```
 
-### 4.2 Determinand Metadata Catalog (`configs/determinands.json`)
+### 3.2 Determinand Metadata Catalog (`configs/determinands.json`)
 `load_determinand_catalog()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R) and [`scripts/s3n_py_utils.py`](../scripts/s3n_py_utils.py) reads `configs/determinands.json` to map determinand codes (e.g., `"0117"`, `"whpt_aspt"`) to human-readable plot titles, short labels, and units.
 
 On first run, [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) automatically generates `configs/determinands.json` by scanning available RSN/SSN Water Quality and LCMS/GCMS CSVs alongside the built-in ecological index definitions (preserving any manual edits on later runs; pass `--update-determinands` to rescan for new codes):
@@ -285,7 +230,7 @@ On first run, [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) 
 
 ---
 
-## 5. Running the Automated Test Suite
+## 4. Running the Automated Test Suite
 
 The `tests/` directory contains fast unit tests covering Python preprocessing/formatting utilities, R configuration/covariate/transform helpers, and the compiled C++ OpenMP neighbour engine:
 
@@ -302,6 +247,71 @@ Rscript tests/test_r_and_cpp.R
 
 ---
 
-## 6. License
+## 5. License
 
 This repository's source code is licensed under the **GNU General Public License v3.0 (`GPL-3.0`)** — see [`LICENSE`](../LICENSE). External river networks and monitoring datasets placed under `gis/` and `data/` are downloaded separately from their upstream providers and remain governed by their own licences and attribution terms.
+
+---
+
+## 6. Repository & Output Layout
+
+<details>
+<summary>Expand repository &amp; output directory tree</summary>
+
+```text
+spatial_stream_model/
+├── cli_workbench/                    # Standalone offline CLI command builder (open index.html)
+├── configs/
+│   ├── directories.json              # Default data, gis, processed, and output roots
+│   ├── determinands.json             # (Optional user file) Determinand labels & units
+│   ├── networks/
+│   │   └── orn.json                  # Built-in ORN v2 network profile
+│   └── sources/
+│       ├── rsn.json                  # Environment Agency River Surveillance Network
+│       ├── ssn.json                  # Environment Agency Small Streams Network
+│       └── composites.json           # Built-in composite sources (rss, all)
+├── data/
+│   ├── NCEA_River_Surveillance_Network_ARD_Open/
+│   ├── NCEA_Small_Streams_Network_ARD_Open/
+│   └── processed/
+│       └── <net>_<source>/           # Standardised 5-file output from 01_preprocess_orn.py
+├── gis/
+│   └── ORN_v2.gpkg                   # National river network GeoPackage (~10.4 GB)
+├── modelling_dashboard/              # Interactive offline case-study explorer & results dashboard
+├── output/
+│   ├── results/
+│   │   └── det_<code>_<net>_<src>.../# Model predictions, CV tables, parameters, fig1–fig5
+│   │       └── descriptives/         # Single-run report & figures from 05_descriptive_stats.R
+│   ├── station_snapping/
+│   │   └── <net>_<source>/           # Snapping tables & maps from 06_station_snapping_diagnostics.R
+│   └── comparisons/
+│       └── <comparison_slug>/        # Multi-run reports & figures from 04_compare_model_runs.R
+├── scripts/
+│   ├── 01_preprocess_orn.py          # Network extraction, ROS imputation, station snapping
+│   ├── format_custom_data.py         # Helper to convert user CSVs into source format + JSON
+│   ├── build_showcase.py             # Stages WebP/SVG figures & data.js for modelling_dashboard/
+│   ├── run_s3n_determinand.R         # Main end-to-end R runner (fit + CV + kriging + plots)
+│   ├── run_s3n_cokriging.R           # Multivariate Factor-LMC / colocated co-kriging runner
+│   ├── 02_fit_s3n_models.R           # Standalone model fitting step (saves .rds checkpoint)
+│   ├── 03_generate_plots.R           # Standalone plotting step (reads .rds checkpoint)
+│   ├── 04_compare_model_runs.R       # Multi-run & cross-determinand comparison
+│   ├── 05_descriptive_stats.R        # Single-run descriptive stats & gradient tests
+│   ├── 06_station_snapping_diagnostics.R
+│   ├── 07_compare_cokriging_runs.R   # Equal vs. source-weighted co-kriging comparison
+│   ├── 08_compare_transforms.R       # Multi-transform (none/log/sqrt/boxcox) benchmark
+│   ├── s3n_py_utils.py               # Shared Python utilities (WKB, ROS, config, snapping)
+│   └── s3n_*.R                       # Shared R modules (config, covariates, transforms, model, multivariate, plot, stats)
+├── src/
+│   ├── Makevars                      # OpenMP compiler flags for Linux/macOS R CMD SHLIB
+│   ├── Makevars.win                  # OpenMP compiler flags for Windows Rtools R CMD SHLIB
+│   └── s3n_fast_neighbors.cpp        # OpenMP C++ Euler-tour & NNGP neighbor engine
+├── tests/
+│   ├── test_python_utils.py          # Python unit tests
+│   └── test_r_and_cpp.R              # R modules + C++ shared library unit tests
+└── docs/                             # Documentation (see docs/README.md)
+```
+
+</details>
+
+> [!TIP]
+> **Generating Commands Visually:** Open [`cli_workbench/index.html`](../cli_workbench/index.html) locally in any browser for a standalone point-and-click command builder supporting **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (including an optional full `Rscript.exe` path & R-version selector when R is not on Windows `PATH`).

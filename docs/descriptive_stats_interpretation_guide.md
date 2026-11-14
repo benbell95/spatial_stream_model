@@ -1,4 +1,4 @@
-# S3N Descriptive Statistics & Environmental Gradient Analysis — Interpretation Guide
+# Descriptive Statistics & Environmental Gradient Analysis — Interpretation Guide
 
 ## Table of Contents
 

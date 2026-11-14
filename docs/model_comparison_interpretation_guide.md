@@ -1,4 +1,4 @@
-# S3N Multi-Run & Cross-Determinand Model Comparison — Interpretation Guide
+# Multi-Run & Cross-Determinand Model Comparison — Interpretation Guide
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@
 
 ## 1. Overview & Supported Comparison Modes
 
-The **S3N Model Run Comparison & Statistical Evaluation** script ([`../scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R)) performs statistical hypothesis testing, reach-by-reach spatial co-location analysis, environmental gradient comparison, parameter stability testing, and base-R visualisation across **two or more completed `S3N` model output directories**. Internally, it also calls [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) to compute unified descriptive and stratified statistics for each run.
+The **Model Run Comparison & Statistical Evaluation** script ([`../scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R)) performs statistical hypothesis testing, reach-by-reach spatial co-location analysis, environmental gradient comparison, parameter stability testing, and base-R visualisation across **two or more completed model output directories**. Internally, it also calls [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R) to compute unified descriptive and stratified statistics for each run.
 
 [`../scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R) supports **four primary comparison workflows**:
 

@@ -414,7 +414,7 @@ Then simply use `--source=my_combined`.
 When integrating new monitoring sources with stream network models, keep these four domain considerations in mind:
 
 ### 5.1 Snapping Distance & Unrepresented Headwaters
-The S3N preprocessor projects stations orthogonally onto the nearest stream reach segment:
+The preprocessor ([`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)) projects stations orthogonally onto the nearest stream reach segment:
 - **Default threshold**: Stations within `max_snap_dist <= 250 m` are retained and assigned to a reach `RivID` and exact hydrologic outlet distance `obs_up_dist_km`.
 - **Ditch / Small Tributary Gotcha**: If your custom dataset samples agricultural drainage ditches or upland springs that do not exist in the Ordnance Survey Open Rivers Network (`ORN v2`), the stations will fall $> 250\text{ m}$ from any reach polyline and be excluded.
 - **Diagnostics & Solution**: Run `scripts/06_station_snapping_diagnostics.R --source=<your_source>` to view excluded stations. If appropriate, relax the threshold:
@@ -429,7 +429,7 @@ The preprocessor subsets the national water network to **only the catchments con
 ### 5.3 Sampling Frequency Imbalance & Aggregation
 If your custom data consists of high-frequency telemetry sondes (e.g. 15-minute readings: ~35,000 samples/station/year) while national RSN data is monthly grab sampling (~12 samples/station/year):
 - **Why this matters**: In unweighted maximum likelihood estimation, a station with 35,000 observations would overwhelm the likelihood function relative to stations with 12 observations.
-- **How S3N handles this**: In [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), observations are aggregated to **reach-level means** (`obs_mean` raw and `obs_y = mean(fwd(y))` transformed) for the active modelling period (`all`, `year`, `season`, `month`) before conditioning the NNGP likelihood. For cross-source pooling options (`--prefer-source`, `--source-weight`, `--source-se`), see [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md).
+- **How the pipeline handles this**: In [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), observations are aggregated to **reach-level means** (`obs_mean` raw and `obs_y = mean(fwd(y))` transformed) for the active modelling period (`all`, `year`, `season`, `month`) before conditioning the NNGP likelihood. For cross-source pooling options (`--prefer-source`, `--source-weight`, `--source-se`), see [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md).
 
 ### 5.4 Left-Censored Values & Detection Limits (`< LOD`)
 If your custom dataset contains values reported below the Limit of Detection (e.g. `< 0.05 mg/L`):

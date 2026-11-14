@@ -1,4 +1,4 @@
-# Running the S3N Pipeline on Databricks
+# Running the Pipeline on Databricks
 
 Databricks notebooks are well suited to this hybrid pipeline because they natively support **multi-language execution (`%python`, `%r`, `%sh`) in the same notebook**.
 
@@ -11,7 +11,7 @@ Databricks notebooks are well suited to this hybrid pipeline because they native
   - [Cell 1: Compile C++ Engine & Check Dependencies (`%sh` and `%r`)](#cell-1-compile-c-engine--check-dependencies-sh-and-r)
   - [Cell 2: Configure Large Data Storage (Unity Catalog Volumes)](#cell-2-configure-large-data-storage-unity-catalog-volumes)
   - [Cell 3: GIS & Data Preprocessing (`%python`)](#cell-3-gis--data-preprocessing-python)
-  - [Cell 4: S3N Modelling & Interactive Inspection (`%r`)](#cell-4-s3n-modelling--interactive-inspection-r)
+  - [Cell 4: Stream Network Modelling & Interactive Inspection (`%r`)](#cell-4-stream-network-modelling--interactive-inspection-r)
   - [Cell 5: Model Comparison & Diagnostics (`%r`)](#cell-5-model-comparison--diagnostics-r)
   - [Cell 6: Inline Visualisation (`%python`)](#cell-6-inline-visualisation-python)
 - [3. Databricks-Specific Advantages](#3-databricks-specific-advantages)
@@ -91,7 +91,7 @@ if res.stderr:
 
 ---
 
-### Cell 4: S3N Modelling & Interactive Inspection (`%r`)
+### Cell 4: Stream Network Modelling & Interactive Inspection (`%r`)
 
 Fit a model via `scripts/run_s3n_determinand.R` (or source `scripts/s3n_plot_functions.R` / `scripts/s3n_stats_functions.R`) and inspect results using Databricks' native `display()`:
 

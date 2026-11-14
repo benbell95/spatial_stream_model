@@ -98,8 +98,8 @@ You do **not** need pre-computed Strahler orders, Shreve orders, distances to mo
 
 | Standardised Output Column | Used By | Strictly Required in GIS? | Native Column Mapping (`attributes`) | Fallback / Automatic Computation if `null` or Missing |
 | :--- | :--- | :---: | :--- | :--- |
-| **`RivID`** (`1..N`) | S3N graph & joins | No | `topology.id_col` | Assigned sequential integer IDs `1..N` |
-| **`parent_dn`** | S3N adjacency & tree | **Yes** (via `nodes`, `pointer`, or `geometry`) | `from_node_col`/`to_node_col` or `next_down_col` | Built from node matching, pointer lookup, or endpoint coordinate snapping |
+| **`RivID`** (`1..N`) | Reach graph & joins | No | `topology.id_col` | Assigned sequential integer IDs `1..N` |
+| **`parent_dn`** | Reach adjacency & tree | **Yes** (via `nodes`, `pointer`, or `geometry`) | `from_node_col`/`to_node_col` or `next_down_col` | Built from node matching, pointer lookup, or endpoint coordinate snapping |
 | **`CatchID`** | Catchment grouping | No | `topology.catch_id_col` | Weakly connected tree components rooted at each mouth are assigned integer `CatchID`s (pruned to monitored trees when stations exist) |
 | **`length_km`** | Routing & `US_Accum_km` | No | Computed from WKB polyline | Exact 2D/3D polyline arc length converted to km |
 | **`Dist2Mth_km`** | **Tail-Down** distances | No | `attributes.dist_to_mouth_col` | Computed via root-to-leaf tree traversal: `Dist2Mth(u) = Dist2Mth(down(u)) + Length(u)` |

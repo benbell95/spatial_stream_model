@@ -1,4 +1,4 @@
-# S3N Documentation Index
+# Documentation Index
 
 Use this index to find the right guide for your task.
 
