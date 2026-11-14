@@ -8,6 +8,13 @@ This guide documents all scripts, command-line options, output directory convent
 >
 > **Interactive CLI Workbench**: If you prefer a friendly visual builder instead of assembling flags by hand, open [`cli_workbench/index.html`](../cli_workbench/index.html) directly in your browser (works completely offline). It groups all workflow flags into clean dropdowns with `i` hover tooltips and switches cleanly between **Bash**, **Windows PowerShell**, and **Windows Command Prompt** (with an optional full `Rscript.exe` path & R-version picker).
 
+> [!NOTE]
+> ℹ️ **Run from your system terminal, not inside an interactive R or Python prompt:** All `Rscript` and `python3` commands in this guide are **command-line (CLI) scripts** meant to be run from your OS terminal (Linux/macOS Bash, Windows PowerShell / Command Prompt, or the RStudio **Terminal** tab) in the repository root — not pasted into an interactive `R>` console or `>>>` Python REPL.
+>
+> If you prefer to launch a run from inside an R/RStudio script or console, invoke it via `system2()`, for example:
+> `system2(file.path(R.home("bin"), "Rscript"), c("scripts/run_s3n_determinand.R", "0117", "--transform=sqrt"))`
+> *(On Windows, if `Rscript.exe` is not on `PATH`, either use its full path or generate ready-to-paste commands in [`cli_workbench/index.html`](../cli_workbench/index.html).)*
+
 ---
 
 ## Table of Contents
