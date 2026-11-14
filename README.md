@@ -46,8 +46,8 @@ Also supports using other environmental (river) datasets including citizen scien
 - 🐍 Low-Dependency Python GIS Extractor 
 - 🧪 Censored & Interval-Range Imputation 
 - 📐 12 Response Transformations & 4 Normalisation Methods
-- 🔗 Univariate and Multivariate Stream Co-Kriging
-- 📉 Two-Stage GAM & Measurement-Error Kriging, Non-Linear Spline & Tree-Ensemble Regression Kriging
+- 🔗 Univariate Kriging and Multivariate Co-Kriging
+- 📉 Non-Linear Spline & Tree-Ensemble Regression Kriging, and Two-Stage GAM & Measurement-Error Kriging
 - 🗺️ Multi-Source, Multi-Network & Temporal Batching (Combine built-in (`rsn`, `ssn`) and custom data sources)
 - 📊 Automated Diagnostics, Statistics & Maps
 
@@ -97,6 +97,8 @@ See [Section 2 of Setup, Architecture & Testing](docs/setup_and_architecture.md#
 
 
 ## 🚀 Quickstart
+
+ℹ️ These scripts are designed to run "headless" and are called from the terminal, rather than from inside R or Python environments. Run these commands from your terminal. Windows users will need to ensure R is on PATH to use these commands. Alternatively, you may run from inside R/Python if you prefer, see the [Running on Databricks](docs/databricks_guide.md) guide for details (this can be adapted for your personal machine/setup).
 
 > [!TIP]
 > Open [`cli_workbench/index.html`](cli_workbench/index.html) for a visual command builder directly in your web browser. Pick your analysis options from grouped dropdowns and copy ready-to-run commands formatted for **Bash**, **Windows PowerShell**, or **Windows Command Prompt**.
