@@ -39,7 +39,7 @@ The `S3N` pipeline models spatial autocorrelation along river networks using mov
 - **Tail-Up (TU)**: Models unidirectional downstream advective transport and dilution across stream confluences using additive function values ($\pi_i$).
 - **Tail-Down (TD)**: Models bidirectional mass exchange (advective downstream plus biological upstream movement/borrowing) conditioned on exact hydrologic distance to the river mouth (`Dist2Mth_km`).
 
-Regardless of whether observations originate from the Environment Agency's official River Surveillance Network (`RSN`), the Small Streams Network (`SSN`), water utility compliance sampling, academic sensor telemetry, or citizen science surveys (such as the Anglers' Riverfly Monitoring Initiative), the pipeline requires only **two core data inputs**:
+Regardless of whether observations originate from the Environment Agency's statistically designed River Surveillance Network (`RSN`), the Small Streams Network (`SSN`), water utility compliance sampling, academic sensor telemetry, or citizen science surveys (such as the Anglers' Riverfly Monitoring Initiative), the pipeline requires only **two core data inputs**:
 
 ```mermaid
 flowchart TD
@@ -87,7 +87,7 @@ The pipeline supports four flexible ways to ingest custom or additional data sou
 | **Method 1: Drop-In Directory** | Quickest way to add a custom project folder | None (auto-discovered) | `--source=my_project` |
 | **Method 2: Ad-Hoc CLI Flags** | One-off runs on arbitrary CSV paths anywhere on disk | None | `--custom-sites=path/to/sites.csv --custom-samples=path/to/samples.csv` |
 | **Method 3: Declarative JSON Profile** | Permanent registration of recurring external datasets | `configs/sources/<name>.json` | `--source=my_survey` (e.g. `configs/sources/rsn.json`) |
-| **Method 4: Delimiter Combinations** | Merging custom datasets with official EA networks | None (on-the-fly syntax) | `--source=rsn+my_project` or `--source=rsn,ssn,my_project` |
+| **Method 4: Delimiter Combinations** | Merging custom datasets with EA surveillance networks | None (on-the-fly syntax) | `--source=rsn+my_project` or `--source=rsn,ssn,my_project` |
 
 Built-in profiles in `configs/sources/` include `rsn.json`, `ssn.json`, and `composites.json` (`rss`, `all`). Multi-source tokens joined with `,` or `+` are normalised internally with `+` (preserving hyphens inside custom source names such as `waterblitz-tobit`).
 
@@ -374,7 +374,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=river_guardians
 
 ### Method 4: Multi-Source Combination & Composites (`--source=rsn+custom`)
 
-To combine official baseline networks with your custom data, use the delimiter syntax (`+` or `,`):
+To combine EA surveillance baseline networks with your custom data, use the delimiter syntax (`+` or `,`):
 
 ```bash
 # 1. Combine River Surveillance Network (RSN) with your custom study
@@ -530,4 +530,4 @@ Rscript scripts/04_compare_model_runs.R \
 | `Could not find ID and Easting/Northing columns` | Column names do not match any recognised variant. | Rename columns to `site_id`, `easting`, `northing` or configure mappings in `configs/sources/<name>.json`. |
 | `Stations snapped (0 active reaches)` | Monitoring points are $> 250\text{ m}$ from any reach polyline in the river network. | Inspect locations via `06_station_snapping_diagnostics.R` and rerun with `--max-snap-dist 500`. |
 | Coordinates snapped to sea or wrong coast | Coordinates were given in Lat/Lon degrees without detection, or inverted $(y, x)$. | Ensure coordinates are `(easting, northing)` or pass `--custom-crs=4326`. |
-| `Skipping separate fit (only N observed reaches)` | Custom source has $< 15$ observed reaches and S3N requires $m = 15$ nearest neighbours. | Combine with official surveillance data using `--source=rsn+<custom>` so the model has sufficient spatial observations for NNGP estimation. |
+| `Skipping separate fit (only N observed reaches)` | Custom source has $< 15$ observed reaches and S3N requires $m = 15$ nearest neighbours. | Combine with EA surveillance data using `--source=rsn+<custom>` so the model has sufficient spatial observations for NNGP estimation. |

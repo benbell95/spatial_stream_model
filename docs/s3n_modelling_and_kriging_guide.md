@@ -124,7 +124,7 @@ flowchart TD
 
 ### 2.1 Multi-Network Monitoring Data Sources & Domain Naming Conventions
 
-The S3N modelling framework supports official statutory networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
+The S3N modelling framework supports EA surveillance networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
 1. **`rsn` (*default*)**: Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 stations across mainstems and major tributaries (1,210 snapped reaches on ORN v2; 90,876 reaches in 141 monitored catchments). Output directory: `output/results/det_<code>_<net>_rsn/`.
 2. **`ssn`**: Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations with catchment areas < 20 km² (177 snapped reaches on ORN v2; 76,242 reaches in 58 monitored catchments). Output directory: `output/results/det_<code>_<net>_ssn/`.
 3. **`rss`**: **Combined Surveillance + Small Streams Network** integrating both RSN and SSN (1,695 unique stations; 1,384 snapped reaches on ORN v2; 91,118 reaches in 150 monitored catchments). Output directory: `output/results/det_<code>_<net>_rss/`.

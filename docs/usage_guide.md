@@ -235,7 +235,7 @@ Rscript scripts/run_s3n_determinand.R --list-transforms
 
 ### 2.7 Multi-Network Monitoring Data Sources & Custom Datasets (`--source=<name>`)
 
-The pipeline supports official statutory networks, custom field campaigns, and arbitrary multi-network combinations via `--source=<name>`:
+The pipeline supports EA surveillance networks, custom field campaigns, and arbitrary multi-network combinations via `--source=<name>`:
 
 | Source Flag | Abbreviation | Monitoring Network | Focus / Character | Total Stations | Snapped Reaches (ORN v2) | Total Reaches | Output Folder Tag |
 | :---: | :---: | :--- | :--- | ---: | ---: | ---: | :--- |

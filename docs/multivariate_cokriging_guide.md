@@ -58,7 +58,7 @@ Even though catchment covariates explain part of both Nitrate and Orthophosphate
 | **Coupled Nutrient & Eutrophication Mapping** | `--targets=0117,0180,0111 --threshold=uk` | Exploits co-movement of Nitrate, Orthophosphate, and Ammonia to track agricultural vs. sewage plumes and sharpen UK EQS classifications. |
 | **Dense Sonde / Easy Proxy $\rightarrow$ Sparse Lab Target** | `--targets=0077,6396,0180` or `--targets=wq:0077,wq:0301,lcms:<cas>` | Uses high-coverage Conductivity (`0077`), Turbidity (`6396`), or DOC (`0301`) to interpolate sparser nutrients or trace LCMS organics. |
 | **Chemistry + Ecology Cross-Trophic Synthesis** | `--targets=inverts:whpt_aspt,wq:0117,wq:0180,wq:9924` | Biological indices (`whpt_aspt`, `tdi4`, `rmni`) integrate chronic multi-month water quality and oxygenation stress where spot chemistry was missed—and chemistry informs unmonitored biology reaches. |
-| **Multi-Network / Citizen-Science Fusion** | `--targets=0117,0180 --source=rsn+my_study` | Fuses statutory EA monitoring (full suites) with local campaigns or citizen-science monitors that sampled only a subset of determinands. |
+| **Multi-Network / Citizen-Science Fusion** | `--targets=0117,0180 --source=rsn+my_study` | Fuses EA surveillance monitoring (full suites) with local campaigns or citizen-science monitors that sampled only a subset of determinands. |
 | **Multi-Stressor Syndrome Screening ($P \ge 5$)** | `--targets=0117,0180,0111,0301,0077,inverts:whpt_aspt --factors=3` | Summarises 5–10+ correlated stressors via $K=3$ latent Tail-Up/Tail-Down factors without overfitting. |
 
 ---
@@ -229,7 +229,7 @@ Each target determinand produces a national two-panel Figure 1 (`fig_cokrig_engl
 ---
 
 ## Related Guides
-- [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md) — Supplementing statutory `RSN` with citizen science or local campaigns (`--prefer-source`, `--source-weight`, `--source-se`), workflow & pitfalls.
+- [`docs/multi_source_and_citizen_science_guide.md`](./multi_source_and_citizen_science_guide.md) — Supplementing EA surveillance `RSN` with citizen science or local campaigns (`--prefer-source`, `--source-weight`, `--source-se`), workflow & pitfalls.
 - [`docs/s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md) — Univariate S3N NNGP theory, multi-kernel options, CV modes, and optimal design.
 - [`docs/usage_guide.md`](./usage_guide.md) — Full CLI flag reference for single-determinand modelling.
 - [`docs/regulatory_exceedance_mapping_guide.md`](./regulatory_exceedance_mapping_guide.md) — Indicative UK exceedance threshold presets and 5-tier management mapping.

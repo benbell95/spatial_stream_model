@@ -7,7 +7,8 @@
     if (!btn) return;
     function apply(theme) {
       root.setAttribute("data-theme", theme);
-      btn.textContent = theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode";
+      btn.textContent = theme === "dark" ? "☀️" : "🌙";
+      btn.title = theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
       try { localStorage.setItem("modelling_dashboard_theme", theme); } catch (e) {}
     }
     let saved = "dark";

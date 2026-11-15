@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Spatial Stream Network Modelling Dashboard</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>Scalable Spatial Stream Network Modelling Dashboard</title>
+  <link rel="stylesheet" href="styles.css?v=20261115" />
 </head>
 <body>
 
@@ -20,8 +20,8 @@
           </svg>
         </div>
         <div>
-          <h1 class="brand-title">Spatial Stream Network Modelling Dashboard</h1>
-          <p class="brand-sub">90,876 ORN v2 Reaches &middot; Zero-Server Offline Case-Study Atlas &middot; Click any figure to zoom</p>
+          <h1 class="brand-title">Scalable Spatial Stream Network Modelling Dashboard</h1>
+          <p class="brand-sub">Reproducible showcase of spatial modelling using EA data across England ORN.</p>
         </div>
       </div>
 
@@ -31,32 +31,41 @@
           <div id="searchDropdown" class="search-dropdown"></div>
         </div>
         <a class="btn btn-primary btn-workbench-nav" href="../cli_workbench/index.html" title="Open Standalone CLI Command Builder">CLI Workbench &rarr;</a>
-        <button id="themeToggleBtn" class="btn" type="button" title="Toggle Dark / Light Theme">☀️ Light Mode</button>
+        <a class="btn btn-icon" href="https://github.com/benbell95/spatial_stream_model" target="_blank" rel="noopener noreferrer" title="GitHub Repository (benbell95/spatial_stream_model)" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+        </a>
+        <button id="themeToggleBtn" class="btn btn-icon" type="button" title="Toggle Dark / Light Theme" aria-label="Toggle Dark / Light Theme">☀️</button>
       </div>
     </div>
 
     <nav class="tab-strip tab-groups" role="tablist" aria-label="Dashboard Topic Groups">
-      <button class="group-btn active" data-group="overview" data-default-tab="overview" role="tab">Overview &amp; Engine</button>
-      <button class="group-btn" data-group="univariate" data-default-tab="cs1" role="tab">Univariate &amp; Ecology <span class="group-count">3</span></button>
-      <button class="group-btn" data-group="synthesis" data-default-tab="cs10" role="tab">Synthesis &amp; Co-Kriging <span class="group-count">3</span></button>
-      <button class="group-btn" data-group="methods" data-default-tab="cs3" role="tab">Time, Methods &amp; Design <span class="group-count">4</span></button>
-      <button class="group-btn" data-group="northwest" data-default-tab="cs11" role="tab">Regional: North West <span class="group-count">4</span></button>
+      <button class="group-btn active" data-group="overview" data-default-tab="overview" role="tab">Overview</button>
+      <button class="group-btn" data-group="how-it-works" data-default-tab="how-it-works" role="tab">How It Works</button>
+      <button class="group-btn" data-group="univariate" data-default-tab="cs1" role="tab">Single-Target Models <span class="group-count">4</span></button>
+      <button class="group-btn" data-group="synthesis" data-default-tab="cs4" role="tab">Multivariate Models <span class="group-count">3</span></button>
+      <button class="group-btn" data-group="temporal" data-default-tab="cs3" role="tab">Temporal &amp; Risk <span class="group-count">2</span></button>
+      <button class="group-btn" data-group="network" data-default-tab="cs5" role="tab">Network Design <span class="group-count">3</span></button>
+      <button class="group-btn" data-group="northwest" data-default-tab="cs11" role="tab">Regional <span class="group-count">4</span></button>
     </nav>
     <nav id="subtabStrip" class="subtab-strip hidden" role="tablist" aria-label="Case Studies in Group">
       <button class="tab-btn" data-group="univariate" data-tab="cs1" role="tab">CS1: Nitrate &amp; GAM</button>
-      <button class="tab-btn" data-group="univariate" data-tab="cs9" role="tab">CS2: Inverts N-Taxa</button>
-      <button class="tab-btn" data-group="univariate" data-tab="cs2" role="tab">CS3: Ecology &amp; Risk</button>
-      <button class="tab-btn" data-group="synthesis" data-tab="cs10" role="tab">CS4: Eutrophication</button>
+      <button class="tab-btn" data-group="univariate" data-tab="cs7" role="tab">CS2: Data Transforms</button>
+      <button class="tab-btn" data-group="univariate" data-tab="cs9" role="tab">CS3: Inverts N-Taxa</button>
+      <button class="tab-btn" data-group="univariate" data-tab="cs2" role="tab">CS4: WHPT ASPT Ecology</button>
       <button class="tab-btn" data-group="synthesis" data-tab="cs4" role="tab">CS5: Co-Kriging &amp; Multi-Source</button>
       <button class="tab-btn" data-group="synthesis" data-tab="cs6" role="tab">CS6: WaterBlitz Fusion</button>
-      <button class="tab-btn" data-group="methods" data-tab="cs3" role="tab">CS7: Temporal Trends</button>
-      <button class="tab-btn" data-group="methods" data-tab="cs7" role="tab">CS8: Data Transforms</button>
-      <button class="tab-btn" data-group="methods" data-tab="cs5" role="tab">CS9: Audits &amp; N:P</button>
-      <button class="tab-btn" data-group="methods" data-tab="cs8" role="tab">CS10: Monitoring Design</button>
-      <button class="tab-btn" data-group="northwest" data-tab="cs11" role="tab">CS11: NW Nitrate &amp; Trends</button>
-      <button class="tab-btn" data-group="northwest" data-tab="cs12" role="tab">CS12: NW Inverts N-Taxa</button>
-      <button class="tab-btn" data-group="northwest" data-tab="cs13" role="tab">CS13: NW Station Snapping</button>
-      <button class="tab-btn" data-group="northwest" data-tab="cs14" role="tab">CS14: NW Monitoring Design</button>
+      <button class="tab-btn" data-group="synthesis" data-tab="cs10" role="tab">CS7: Eutrophication</button>
+      <button class="tab-btn" data-group="temporal" data-tab="cs3" role="tab">CS8: Temporal Trends</button>
+      <button class="tab-btn" data-group="temporal" data-tab="cs15" role="tab">CS9: Threshold Exceedance Risk</button>
+      <button class="tab-btn" data-group="network" data-tab="cs5" role="tab">CS10: Descriptives &amp; N:P</button>
+      <button class="tab-btn" data-group="network" data-tab="cs16" role="tab">CS11: Station Snapping</button>
+      <button class="tab-btn" data-group="network" data-tab="cs8" role="tab">CS12: Monitoring Design</button>
+      <button class="tab-btn" data-group="northwest" data-tab="cs11" role="tab">CS13: NW Nitrate &amp; Trends</button>
+      <button class="tab-btn" data-group="northwest" data-tab="cs12" role="tab">CS14: NW Inverts N-Taxa</button>
+      <button class="tab-btn" data-group="northwest" data-tab="cs13" role="tab">CS15: NW Station Snapping</button>
+      <button class="tab-btn" data-group="northwest" data-tab="cs14" role="tab">CS16: NW Monitoring Design</button>
     </nav>
   </header>
 
@@ -70,96 +79,72 @@
         <span class="hero-eyebrow">High-Speed Dendritic River Geostatistics</span>
         <h2>National &amp; Basin Stream Water Quality &amp; Ecological Modelling</h2>
         <p>
-          An offline, reproducible showcase of real pipeline executions across England's Ordnance Survey Open Rivers Network (<code>ORN v2</code>). Built with a pure-stdlib Python GIS/WKB preprocessor, an OpenMP C++ Euler-tour Nearest-Neighbor Gaussian Process (<code>NNGP</code>) engine, and pure Base-R cartographic &amp; diagnostic visualisations—inspired by the <code>S3N</code> (Kunke et al., 2025) and <code>BRISC</code> (Saha &amp; Datta, 2018) frameworks.
+          This dashboard is a showcase of <strong>16 reproducible river-network modelling case studies</strong> built on Environment Agency River Surveillance Network (<code>RSN</code>) and Small Streams Network (<code>SSN</code>) monitoring data (plus <code>WaterBlitz</code> citizen science) across England's Ordnance Survey Open Rivers Network (<code>ORN v2</code>, <code>90,876</code> reaches). It is based on the <a href="https://github.com/benbell95/spatial_stream_model" target="_blank" rel="noopener noreferrer"><code>spatial_stream_model</code></a> repository, which pairs a pure-stdlib Python GIS preprocessor with an OpenMP C++ and R spatial stream modelling engine. Explore single-target water quality and ecology (<code>CS1&ndash;CS4</code>), multivariate &amp; citizen-science data fusion (<code>CS5&ndash;CS7</code>), temporal trends &amp; threshold exceedance risk (<code>CS8&ndash;CS9</code>), network audits &amp; active-learning design (<code>CS10&ndash;CS12</code>), and a North West regional deep dive (<code>CS13&ndash;CS16</code>).
         </p>
-      </div>
-
-      <div class="kpi-grid">
-        <div class="kpi-card">
-          <div class="kpi-label">ORN v2 Network Scale</div>
-          <div class="kpi-val">90,876 reaches</div>
-          <div class="kpi-note">141 monitored catchments (`RSN`) · 91,118 reaches (`RSN+SSN`)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Univariate Nitrate CV R²</div>
-          <div class="kpi-val pos">0.6784</div>
-          <div class="kpi-note">Up from 0.4658 OLS (+0.2126 gain via Joint TU+TD+Euc)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Co-Kriging Aux-Aided R²</div>
-          <div class="kpi-val pos">0.7012</div>
-          <div class="kpi-note">Nitrate+Orthophosphate LMC (−22.3% RMSE at gapped reaches)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Ecological WHPT ASPT R²</div>
-          <div class="kpi-val pos">0.6402</div>
-          <div class="kpi-note">1,160 macroinvertebrate reaches (vs 0.4932 non-spatial OLS)</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Monitoring Bias Ratio</div>
-          <div class="kpi-val">0.615&times;</div>
-          <div class="kpi-note">Full network median (2.06) vs monitored stations (3.35 mg/L)</div>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>What is Scalable Spatial Stream Modelling?</h4>
+          <ul>
+            <li><strong>Hydrological Connectivity:</strong> Unlike standard 2D mapping that only uses straight-line distance, stream-network geostatistics models water flowing through branching river trees&mdash;combining flow-connected <strong>Tail-Up</strong> (confluence-weighted), <strong>Tail-Down</strong> (along-channel), and overland <strong>Euclidean</strong> spatial covariance.</li>
+            <li><strong>Linear <code>O(n)</code> Scaling (<code>S3N</code> + <code>NNGP</code>):</strong> Classical <code>SSN</code> models scale cubically (<code>O(n&sup3;)</code>) and stall on large catchments. Embedding stream kernels inside a Nearest-Neighbour Gaussian Process (<code>NNGP</code>) with an OpenMP C++ Euler-tour solver reduces national-scale fitting and kriging across <code>90,000+</code> reaches to seconds.</li>
+            <li><strong>Beyond Univariate Kriging:</strong> Extends <code>S3N</code> (Kunke et al., 2025) and <code>BRISC</code> (Saha &amp; Datta, 2018) with non-linear <code>GAM</code>/ML trends, detection-limit censoring, multivariate Factor-LMC co-kriging, multi-source reliability weighting, and Schur-complement monitoring design.</li>
+          </ul>
         </div>
       </div>
 
-      <!-- Interactive 3-Stage Architecture Diagram -->
+      <!-- Interactive 4-Stage Architecture Diagram -->
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Interactive End-to-End Architecture Diagram (Click Any Stage)</h3>
-          <span class="pill pill-blue">Pure Inline Vector SVG</span>
+          <h3 class="card-title">Interactive End-to-End Architecture Diagram (Hover or Click Any Stage)</h3>
         </div>
         <div class="svg-panel">
-          <svg class="pipeline-svg" viewBox="0 0 1120 210" width="100%" style="min-width:760px;">
+          <svg class="pipeline-svg" viewBox="0 0 1120 185" width="100%" style="min-width:760px;">
             <defs>
               <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
               </marker>
             </defs>
             <!-- Stage 1 -->
-            <g class="pipe-node" data-jump="cs5" style="cursor:pointer">
-              <rect x="12" y="25" width="235" height="150" rx="12" fill="#1a2333" stroke="#38bdf8" stroke-width="1.8"/>
-              <text x="28" y="54" fill="#38bdf8" font-size="11" font-weight="700">STAGE 1 · PYTHON STDLIB</text>
-              <text x="28" y="77" fill="#e6edf7" font-size="14" font-weight="700">GIS, ROS &amp; Snapping</text>
-              <text x="28" y="102" fill="#9fb0c9" font-size="11">• Pure SQLite + WKB GeoPackage</text>
-              <text x="28" y="120" fill="#9fb0c9" font-size="11">• Lognormal ROS &amp; Tobit ranges</text>
-              <text x="28" y="138" fill="#9fb0c9" font-size="11">• BYOWN &amp; custom CSV ingest</text>
-              <text x="28" y="158" fill="#34d399" font-size="11" font-weight="600">01_preprocess_orn.py (~8–15s)</text>
+            <g class="pipe-node active" data-stage="1" tabindex="0" role="button" style="cursor:pointer">
+              <rect x="12" y="20" width="235" height="140" rx="12" fill="#1a2333" stroke="#38bdf8" stroke-width="1.8"/>
+              <text x="28" y="49" fill="#38bdf8" font-size="11" font-weight="700">STAGE 1 · PYTHON STDLIB</text>
+              <text x="28" y="72" fill="#e6edf7" font-size="14" font-weight="700">GIS, ROS &amp; Snapping</text>
+              <text x="28" y="99" fill="#9fb0c9" font-size="11">• Pure SQLite + WKB GeoPackage</text>
+              <text x="28" y="118" fill="#9fb0c9" font-size="11">• Lognormal ROS &amp; Tobit ranges</text>
+              <text x="28" y="137" fill="#9fb0c9" font-size="11">• BYOWN &amp; custom CSV ingest</text>
             </g>
-            <line x1="252" y1="100" x2="288" y2="100" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="252" y1="90" x2="288" y2="90" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
             <!-- Stage 2 -->
-            <g class="pipe-node" data-jump="cs1" style="cursor:pointer">
-              <rect x="294" y="25" width="255" height="150" rx="12" fill="#1a2333" stroke="#34d399" stroke-width="1.8"/>
-              <text x="310" y="54" fill="#34d399" font-size="11" font-weight="700">STAGE 2 · C++ / OPENMP ENGINE</text>
-              <text x="310" y="77" fill="#e6edf7" font-size="14" font-weight="700">Euler-Tour Stream NNGP</text>
-              <text x="310" y="102" fill="#9fb0c9" font-size="11">• O(n) Tail-Up + Tail-Down + Euc</text>
-              <text x="310" y="120" fill="#9fb0c9" font-size="11">• 5 kernels + 3 AFV schemes</text>
-              <text x="310" y="138" fill="#9fb0c9" font-size="11">• Linear / GAM / RF / GBM trends</text>
-              <text x="310" y="158" fill="#38bdf8" font-size="11" font-weight="600">src/s3n_fast_neighbors.cpp (&lt;1s)</text>
+            <g class="pipe-node" data-stage="2" tabindex="0" role="button" style="cursor:pointer">
+              <rect x="294" y="20" width="255" height="140" rx="12" fill="#1a2333" stroke="#34d399" stroke-width="1.8"/>
+              <text x="310" y="49" fill="#34d399" font-size="11" font-weight="700">STAGE 2 · C++ / OPENMP ENGINE</text>
+              <text x="310" y="72" fill="#e6edf7" font-size="14" font-weight="700">Euler-Tour Stream NNGP</text>
+              <text x="310" y="99" fill="#9fb0c9" font-size="11">• O(n) Tail-Up + Tail-Down + Euc</text>
+              <text x="310" y="118" fill="#9fb0c9" font-size="11">• 5 kernels + 3 AFV schemes</text>
+              <text x="310" y="137" fill="#9fb0c9" font-size="11">• Linear / GAM / RF / GBM trends</text>
             </g>
-            <line x1="554" y1="100" x2="590" y2="100" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="554" y1="90" x2="590" y2="90" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
             <!-- Stage 3 -->
-            <g class="pipe-node" data-jump="cs4" style="cursor:pointer">
-              <rect x="596" y="25" width="248" height="150" rx="12" fill="#1a2333" stroke="#a78bfa" stroke-width="1.8"/>
-              <text x="612" y="54" fill="#a78bfa" font-size="11" font-weight="700">STAGE 3 · FUSION &amp; TEMPORAL</text>
-              <text x="612" y="77" fill="#e6edf7" font-size="14" font-weight="700">Co-Kriging &amp; Borrowing</text>
-              <text x="612" y="102" fill="#9fb0c9" font-size="11">• Factor-LMC &amp; Colocated NNGP</text>
-              <text x="612" y="120" fill="#9fb0c9" font-size="11">• Prefer-Source / Weight / SE</text>
-              <text x="612" y="138" fill="#9fb0c9" font-size="11">• Year/Season/Month --st-borrow</text>
-              <text x="612" y="158" fill="#34d399" font-size="11" font-weight="600">run_s3n_cokriging.R / --by=</text>
+            <g class="pipe-node" data-stage="3" tabindex="0" role="button" style="cursor:pointer">
+              <rect x="596" y="20" width="248" height="140" rx="12" fill="#1a2333" stroke="#a78bfa" stroke-width="1.8"/>
+              <text x="612" y="49" fill="#a78bfa" font-size="11" font-weight="700">STAGE 3 · STREAM MODELLING</text>
+              <text x="612" y="72" fill="#e6edf7" font-size="14" font-weight="700">Univariate &amp; Co-Kriging</text>
+              <text x="612" y="99" fill="#9fb0c9" font-size="11">• Univariate S3N (WQ &amp; ecology)</text>
+              <text x="612" y="118" fill="#9fb0c9" font-size="11">• Factor-LMC &amp; colocated Co-Kriging</text>
+              <text x="612" y="137" fill="#9fb0c9" font-size="11">• Temporal &amp; multi-source fusion</text>
             </g>
-            <line x1="849" y1="100" x2="885" y2="100" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="849" y1="90" x2="885" y2="90" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
             <!-- Stage 4 -->
-            <g class="pipe-node" data-jump="cs2" style="cursor:pointer">
-              <rect x="891" y="25" width="217" height="150" rx="12" fill="#1a2333" stroke="#fbbf24" stroke-width="1.8"/>
-              <text x="907" y="54" fill="#fbbf24" font-size="11" font-weight="700">STAGE 4 · RISK &amp; AUDITS</text>
-              <text x="907" y="77" fill="#e6edf7" font-size="14" font-weight="700">Risk Maps, CV &amp; N:P</text>
-              <text x="907" y="102" fill="#9fb0c9" font-size="11">• 5-tier threshold exceedance</text>
-              <text x="907" y="120" fill="#9fb0c9" font-size="11">• Representativeness bias tests</text>
-              <text x="907" y="138" fill="#9fb0c9" font-size="11">• Multi-run stoichiometry diffs</text>
-              <text x="907" y="158" fill="#38bdf8" font-size="11" font-weight="600">03 / 04 / 05 / 06 Post-Scripts</text>
+            <g class="pipe-node" data-stage="4" tabindex="0" role="button" style="cursor:pointer">
+              <rect x="891" y="20" width="217" height="140" rx="12" fill="#1a2333" stroke="#fbbf24" stroke-width="1.8"/>
+              <text x="907" y="49" fill="#fbbf24" font-size="11" font-weight="700">STAGE 4 · DIAGNOSTICS &amp; QC</text>
+              <text x="907" y="72" fill="#e6edf7" font-size="14" font-weight="700">Thresholds, Snapping &amp; CV</text>
+              <text x="907" y="99" fill="#9fb0c9" font-size="11">• 5-tier threshold exceedance</text>
+              <text x="907" y="118" fill="#9fb0c9" font-size="11">• Station snapping &amp; outlier QC</text>
+              <text x="907" y="137" fill="#9fb0c9" font-size="11">• Representativeness &amp; N:P audits</text>
             </g>
           </svg>
         </div>
+        <div id="pipelineStageExplainer" class="interp-box" style="margin-top:14px;"></div>
       </div>
 
       <!-- Complete Feature Inventory -->
@@ -167,12 +152,38 @@
         <div class="card-header">
           <h3 class="card-title">Complete Feature Coverage Catalog (Major &amp; Minor Capabilities)</h3>
           <div class="feature-filter-row" id="featureFilterBtns">
+            <input id="catalogSearch" class="catalog-search-input" type="search" placeholder="Filter by determinand or method..." aria-label="Filter feature catalog" />
             <button class="fig-toggle-btn active" data-fcat="all">All Features</button>
             <button class="fig-toggle-btn" data-fcat="major">Major Workflows</button>
             <button class="fig-toggle-btn" data-fcat="minor">Minor &amp; Power Flags</button>
           </div>
         </div>
         <div id="featureCatalogGrid" class="feature-grid"></div>
+      </div>
+
+      <!-- Cross-Study Accuracy Summary -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Cross-Study 5-Fold CV Accuracy Benchmark (OLS vs. S3N Combined)</h3>
+          <span class="pill pill-green">Higher CV R&sup2; &amp; Lower RMSE = Better</span>
+        </div>
+        <div id="overview-benchmark-table" class="table-wrap"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Repository &amp; Open Data Sources</h3></div>
+        <div class="grid-2" style="margin-top:0;">
+          <ul style="font-size:0.84rem; color:var(--text-primary); padding-left:18px; margin:0;">
+            <li><strong>GitHub Repository:</strong> <a href="https://github.com/benbell95/spatial_stream_model" target="_blank" rel="noopener noreferrer">github.com/benbell95/spatial_stream_model</a></li>
+            <li><strong>River Network (<code>ORN v2.0</code>):</strong> <a href="https://openrivers.net/download/" target="_blank" rel="noopener noreferrer">OS Open Rivers Network Download</a></li>
+            <li><strong>Alternative EU Network:</strong> <a href="https://land.copernicus.eu/en/products/eu-hydro/eu-hydro-river-network-database#download" target="_blank" rel="noopener noreferrer">Copernicus EU-Hydro River Network Database</a></li>
+          </ul>
+          <ul style="font-size:0.84rem; color:var(--text-primary); padding-left:18px; margin:0;">
+            <li><strong>River Surveillance Network (<code>RSN</code>):</strong> <a href="https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#access" target="_blank" rel="noopener noreferrer">Environment Agency NCEA Analysis Ready Data</a></li>
+            <li><strong>Small Streams Network (<code>SSN</code>):</strong> <a href="https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/98aca14e-3736-4329-b4b6-ae7c36fa5db1?q=small+streams+network&amp;jry=qs&amp;pg=1&amp;rpp=20&amp;srt=most_relevant#access" target="_blank" rel="noopener noreferrer">Environment Agency NCEA Small Streams Data</a></li>
+            <li><strong>Citizen Science Dataset:</strong> <a href="https://www.freshwaterwatch.org/pages/explore-our-data" target="_blank" rel="noopener noreferrer">Earthwatch FreshWater Watch / WaterBlitz</a></li>
+          </ul>
+        </div>
       </div>
 
       <div class="grid-2">
@@ -182,7 +193,7 @@
             This platform builds upon and extends the linear-scaling NNGP river-network framework:
           </p>
           <ul style="font-size:0.84rem; color:var(--text-primary); padding-left:18px;">
-            <li><strong>S3N R Package:</strong> Kunke, J. P., Olden, J. D., &amp; McCormick, T. H. (2025). <em>Scalable Spatial Stream Network (S3N) Models</em>. <code>arXiv:2512.12398</code>.</li>
+            <li><strong>S3N R Package (<a href="https://github.com/jpierkunke/S3N" target="_blank" rel="noopener noreferrer"><code>jpierkunke/S3N</code></a>):</strong> Kunke, J. P., Olden, J. D., &amp; McCormick, T. H. (2025). <em>Scalable Spatial Stream Network (S3N) Models</em>. <a href="https://arxiv.org/abs/2512.12398" target="_blank" rel="noopener noreferrer"><code>arXiv:2512.12398</code></a>.</li>
             <li><strong>BRISC R Package:</strong> Saha, A., &amp; Datta, A. (2018). <em>BRISC: Bootstrap for Rapid Inference on Spatial Covariances</em>. <em>Stat</em>, 7(1), e184.</li>
             <li><strong>Custom C++/R/Python Extensions:</strong> OpenMP Euler-tour LCA NNGP, joint <code>TU+TD+Euc</code> solver, Factor-LMC Co-Kriging, <code>GAM/RF/GBM</code> trends, Tobit EM censoring, and source-weighted multi-network fusion.</li>
           </ul>
@@ -190,11 +201,404 @@
         <div class="card">
           <div class="card-header"><h3 class="card-title">AI Disclosure &amp; Licensing</h3></div>
           <ul style="font-size:0.84rem; color:var(--text-primary); padding-left:18px; margin-top:0;">
+            <li><strong>Source Repository:</strong> <a href="https://github.com/benbell95/spatial_stream_model" target="_blank" rel="noopener noreferrer"><code>benbell95/spatial_stream_model</code></a></li>
             <li><strong>Coding Assistant:</strong> Google DeepMind Antigravity</li>
             <li><strong>Models Used:</strong> Gemini 4 Argon, Gemini 4 Hydrogen</li>
             <li><strong>Human Oversight:</strong> All code, statistical derivations, tests, and documentation reviewed and verified by a human maintainer.</li>
             <li><strong>License:</strong> GNU General Public License v3.0 (<code>GPL-3.0</code>).</li>
           </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 1B: HOW IT WORKS & DATASETS (PLAIN-ENGLISH GUIDE)
+         =================================================================== -->
+    <section id="tab-how-it-works" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Plain-English Reference · Datasets, Kriging &amp; Methods</span>
+        <h2>How Scalable Spatial Stream Modelling Works</h2>
+        <p>
+          A plain-English guide to the river networks, monitoring datasets, and geostatistical methods behind the 16 case studies in this dashboard&mdash;showing how observations from ~<code>1,200</code> monitoring sites are turned into reach-by-reach predictions and uncertainty maps across all <code>90,876</code> reaches of England's <code>ORN v2</code> river network.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">1. The Datasets Behind the Models</h3>
+          <span class="pill pill-blue">Network &amp; Monitoring Inputs</span>
+        </div>
+        <div class="grid-2" style="margin-top:0;">
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #38bdf8; background:rgba(56, 189, 248, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+              <strong>OS Open Rivers Network (<code>ORN v2.0</code>) &amp; Covariates</strong>
+              <span class="pill pill-blue">90,876 Reaches</span>
+            </div>
+            <ul>
+              <li><strong>Role:</strong> Directed river-tree geometry and landscape trend predictors across <code>141</code> monitored England catchments (<code>91,118</code> with <code>SSN</code>; <code>95,773</code> with <code>WaterBlitz</code>).</li>
+              <li><strong>Hydrologic Topology:</strong> Every reach carries upstream-to-downstream direction (<code>Fnode &rarr; Tnode</code>) and distance to the tidal mouth (<code>Dist2Mth</code>) so the solver can trace flow-connectedness.</li>
+              <li><strong>Reach Covariates:</strong> Elevation, slope, baseflow index (<code>BFIHOST</code>), soil permeability, and arable/urban land cover attached to every reach for linear or <code>GAM</code>/ML trends.</li>
+            </ul>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #34d399; background:rgba(52, 211, 153, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+              <strong>EA River Surveillance Network (<code>RSN</code>)</strong>
+              <span class="pill pill-green">1,210 WQ Reaches</span>
+            </div>
+            <ul>
+              <li><strong>Role:</strong> Primary water quality (<code>1,210</code> snapped reaches, e.g. <code>18,462</code> Nitrate samples) and macroinvertebrate ecology (<code>1,160</code> reaches) training data.</li>
+              <li><strong>Network Design:</strong> A statistically designed national monitoring network consisting of an unbiased, representative set of sites across English rivers, supporting long-term measurement and detection of change.</li>
+            </ul>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #a78bfa; background:rgba(167, 139, 250, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+              <strong>EA Small Streams Network (<code>SSN</code>)</strong>
+              <span class="pill" style="color:#a78bfa; border-color:rgba(167, 139, 250, 0.35); background:rgba(167, 139, 250, 0.1);">177 Headwater Reaches</span>
+            </div>
+            <ul>
+              <li><strong>Role:</strong> Supplements <code>RSN</code> with <code>177</code> snapped small-stream reaches across <code>58</code> catchments that are underrepresented in routine main-stem sampling.</li>
+              <li><strong>Multi-Source Fusion:</strong> Combined with <code>RSN</code> via source preference (<code>--prefer-source</code>) and reliability weighting (<code>--source-weight</code>) to improve headwater extrapolation.</li>
+            </ul>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #fbbf24; background:rgba(251, 191, 36, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+              <strong>Citizen Science (<code>Earthwatch WaterBlitz</code>)</strong>
+              <span class="pill pill-amber">44,982 Observations</span>
+            </div>
+            <ul>
+              <li><strong>Role:</strong> High-density spatial gap-filling from <code>36,956</code> Earthwatch WaterBlitz <a class="wiki-inline" href="https://en.wikipedia.org/wiki/Citizen_science" target="_blank" rel="noopener noreferrer">citizen science</a> sites (<code>8,346</code> active fused reaches).</li>
+              <li><strong>Interval Censoring &amp; Weighting:</strong> Colorimetric test-strip brackets (e.g. <code>0.2&ndash;0.5</code>, <code>&lt;0.2</code>) are converted via Tobit censoring and soft-weighted (<code>w = 0.25</code>) so kit noise does not dilute lab-grade <code>RSN</code>/<code>SSN</code> anchors.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">2. Plain-English Guide to Stream-Network Kriging</h3>
+          <span class="pill pill-green">Linked to ORN v2</span>
+        </div>
+        <p style="font-size:0.9rem; color:var(--text-secondary); margin-top:0; margin-bottom:14px;">
+          <strong>What is Kriging?</strong> <a class="wiki-inline" href="https://en.wikipedia.org/wiki/Kriging" target="_blank" rel="noopener noreferrer">Kriging</a> is a geostatistical interpolation method that predicts values at unmonitored locations by taking a weighted average of nearby observations, where the weights come from how strongly locations correlate with one another. Unlike simple distance-based smoothing, <em>universal regression kriging</em> first accounts for landscape covariates (land use, soil, elevation) and then models the remaining spatial pattern&mdash;giving every unmonitored reach on <code>ORN v2</code> both a best-estimate prediction and a statistically rigorous uncertainty (<a class="wiki-inline" href="https://en.wikipedia.org/wiki/Standard_error" target="_blank" rel="noopener noreferrer">Standard Error</a>, <code>SE</code>).
+        </p>
+        <div class="grid-2" style="margin-top:0;">
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #38bdf8; background:rgba(56, 189, 248, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong>Step 1: Landscape Trend (<code>X&beta;</code> or <code>GAM</code>)</strong>
+              <span class="pill pill-blue">Baseline</span>
+            </div>
+            <p style="margin:0; font-size:0.84rem; color:var(--text-primary);">
+              First, the model predicts each reach's baseline water quality from its catchment characteristics (arable farming, urban cover, soil, elevation, baseflow). What is left over at monitored <code>RSN</code> sites is the <em>spatial residual</em>: local pollution or biological patterns that land cover alone cannot explain.
+            </p>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #34d399; background:rgba(52, 211, 153, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong>Step 2: Borrowing Along the River Tree</strong>
+              <span class="pill pill-green">TU + TD + Euc</span>
+            </div>
+            <p style="margin:0 0 6px 0; font-size:0.84rem; color:var(--text-primary);">
+              Standard 2D mapping only measures straight-line distance ("as the crow flies"), ignoring that water flows downhill. Stream kriging splits spatial correlation into three physical pathways across <code>ORN v2</code>:
+            </p>
+            <ul style="margin:0; font-size:0.83rem;">
+              <li><strong>Tail-Up (Flow-Connected + AFV):</strong> Models solutes carried downstream with river flow; only flow-connected reaches correlate, weighted at confluences by <em>Additive Function Values</em> (<code>AFV</code>).</li>
+              <li><strong>Tail-Down (Channel Distance):</strong> Links reaches along the stream channel even across confluence junctions (unconnected tributaries), capturing shared valley conditions.</li>
+              <li><strong><a class="wiki-inline" href="https://en.wikipedia.org/wiki/Euclidean_distance" target="_blank" rel="noopener noreferrer">Euclidean</a> (Overland):</strong> Captures regional proximity across watershed divides (shared geology, rainfall, or farming belts).</li>
+            </ul>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #fbbf24; background:rgba(251, 191, 36, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong>Step 3: Predictions + Uncertainty (<code>SE</code>)</strong>
+              <span class="pill pill-amber">Every Reach</span>
+            </div>
+            <p style="margin:0; font-size:0.84rem; color:var(--text-primary);">
+              Every unmonitored <code>ORN v2</code> reach receives both a best-estimate prediction and a <em>Kriging Standard Error</em> (<code>SE</code>) measuring how confident the model is given nearby gauges.
+            </p>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #a78bfa; background:rgba(167, 139, 250, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong>Why "Scalable" (<code>S3N</code> + <code>NNGP</code>)</strong>
+              <span class="pill" style="color:#a78bfa; border-color:rgba(167, 139, 250, 0.35); background:rgba(167, 139, 250, 0.1);">O(n) Speed</span>
+            </div>
+            <p style="margin:0; font-size:0.84rem; color:var(--text-primary);">
+              Exact kriging across <code>90,876</code> reaches requires inverting a <code>90,876 &times; 90,876</code> matrix (<code>O(n&sup3;)</code>), which stalls on national networks. Conditioning each reach only on its <code>m = 15</code> nearest stream neighbours via an OpenMP C++ Euler-tour index reduces fitting and prediction to linear <code>O(n)</code> time (&lt; 1 second).
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">How <code>ORN v2</code> Stream Covariance Connects Reaches</h3>
+          <span class="pill pill-blue">Visual Diagram</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <svg viewBox="0 0 760 376" width="100%" style="max-width:760px; display:block; margin:0 auto;" role="img" aria-label="Diagram showing Tail-Up, Tail-Down, and Euclidean stream network connections on ORN v2">
+            <defs>
+              <marker id="hw-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#0ea5e9"/>
+              </marker>
+            </defs>
+
+            <!-- Watershed divide -->
+            <path d="M 510 20 Q 490 165 522 308" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-dasharray="6 5" opacity="0.65"/>
+            <text x="530" y="36" fill="var(--text-secondary)" font-size="11.5" font-weight="600">Catchment Divide</text>
+
+            <!-- River network branches (Catchment 1) -->
+            <path d="M 95 72 L 263 166" fill="none" stroke="#0ea5e9" stroke-width="5.5" stroke-linecap="round" marker-end="url(#hw-arr)"/>
+            <path d="M 95 268 L 263 176" fill="none" stroke="#0ea5e9" stroke-width="3" stroke-linecap="round" marker-end="url(#hw-arr)"/>
+            <path d="M 274 171 L 468 171" fill="none" stroke="#0ea5e9" stroke-width="7.5" stroke-linecap="round" marker-end="url(#hw-arr)"/>
+            <text x="468" y="196" text-anchor="middle" fill="#0284c7" font-size="10.5" font-weight="700">Flow &rarr; Mouth</text>
+
+            <!-- Neighbouring catchment river -->
+            <path d="M 605 56 L 660 282" fill="none" stroke="var(--text-muted)" stroke-width="4.5" stroke-linecap="round" opacity="0.7"/>
+
+            <!-- AFV labels on tributaries (clear of lines) -->
+            <text x="170" y="150" text-anchor="middle" fill="#0284c7" font-size="10.5" font-weight="700">AFV = 0.65</text>
+            <text x="212" y="232" text-anchor="middle" fill="#0284c7" font-size="10.5" font-weight="700">AFV = 0.35</text>
+
+            <!-- Reach nodes -->
+            <circle cx="152" cy="105" r="18" fill="var(--bg-surface)" stroke="#10b981" stroke-width="2.8"/>
+            <text x="152" y="110" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="700">A</text>
+            <text x="148" y="28" text-anchor="middle" fill="var(--text-primary)" font-size="11.5" font-weight="700">Tributary A (RSN Gauge)</text>
+            <text x="148" y="43" text-anchor="middle" fill="#10b981" font-size="10.5" font-weight="600">Observed concentration</text>
+
+            <circle cx="152" cy="236" r="18" fill="var(--bg-surface)" stroke="#f59e0b" stroke-width="2.8"/>
+            <text x="152" y="241" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="700">B</text>
+            <text x="152" y="288" text-anchor="middle" fill="var(--text-primary)" font-size="11.5" font-weight="700">Tributary B (Unmonitored)</text>
+            <text x="152" y="303" text-anchor="middle" fill="#d97706" font-size="10.5" font-weight="600">Tail-Up from A = 0</text>
+
+            <!-- Confluence node in distinct orange-coral so it doesn't clash with sky-blue arrows -->
+            <circle cx="272" cy="171" r="7.5" fill="#f97316" stroke="var(--bg-surface)" stroke-width="2"/>
+            <text x="272" y="132" text-anchor="middle" fill="#f97316" font-size="11" font-weight="700">Confluence (AFV = 1.0)</text>
+
+            <circle cx="380" cy="171" r="18" fill="var(--bg-surface)" stroke="#0ea5e9" stroke-width="2.8"/>
+            <text x="380" y="176" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="700">C</text>
+            <text x="380" y="212" text-anchor="middle" fill="var(--text-primary)" font-size="11.5" font-weight="700">Main Stem C</text>
+            <text x="380" y="227" text-anchor="middle" fill="#0284c7" font-size="10.5" font-weight="600">Predicted (TU + TD)</text>
+
+            <circle cx="632" cy="166" r="18" fill="var(--bg-surface)" stroke="#8b5cf6" stroke-width="2.8"/>
+            <text x="632" y="171" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="700">D</text>
+            <text x="642" y="206" text-anchor="middle" fill="var(--text-primary)" font-size="11.5" font-weight="700">Neighbour Basin D</text>
+            <text x="642" y="221" text-anchor="middle" fill="#8b5cf6" font-size="10.5" font-weight="600">Linked via Euclidean</text>
+
+            <!-- Covariance arcs -->
+            <path d="M 168 94 Q 285 52 370 153" fill="none" stroke="#10b981" stroke-width="2.4" stroke-dasharray="5 3"/>
+            <text x="285" y="56" text-anchor="middle" fill="#10b981" font-size="11.5" font-weight="700">Tail-Up (A &rarr; C, weighted by AFV)</text>
+
+            <path d="M 134 115 Q 84 170 134 226" fill="none" stroke="#f59e0b" stroke-width="2.4" stroke-dasharray="5 3"/>
+            <text x="48" y="166" text-anchor="middle" fill="#d97706" font-size="11.5" font-weight="700">Tail-Down</text>
+            <text x="48" y="181" text-anchor="middle" fill="#d97706" font-size="10.5" font-weight="600">(A &harr; B)</text>
+
+            <line x1="398" y1="168" x2="614" y2="166" stroke="#8b5cf6" stroke-width="2.4" stroke-dasharray="5 3"/>
+            <text x="515" y="148" text-anchor="middle" fill="#8b5cf6" font-size="11.5" font-weight="700">Euclidean (C &harr; D)</text>
+
+            <!-- Compact Legend -->
+            <rect x="95" y="328" width="570" height="34" rx="8" fill="var(--bg-elevated)" stroke="var(--border-subtle)" stroke-width="1"/>
+            <line x1="115" y1="345" x2="145" y2="345" stroke="#10b981" stroke-width="2.4" stroke-dasharray="5 3"/>
+            <text x="152" y="349" fill="var(--text-primary)" font-size="11">Tail-Up (flow-connected)</text>
+            <line x1="300" y1="345" x2="330" y2="345" stroke="#f59e0b" stroke-width="2.4" stroke-dasharray="5 3"/>
+            <text x="337" y="349" fill="var(--text-primary)" font-size="11">Tail-Down (channel path)</text>
+            <line x1="485" y1="345" x2="515" y2="345" stroke="#8b5cf6" stroke-width="2.4" stroke-dasharray="5 3"/>
+            <text x="522" y="349" fill="var(--text-primary)" font-size="11">Euclidean (overland)</text>
+          </svg>
+        </div>
+        <div class="caveat-box" style="margin-top:12px;">
+          <strong>Reading the Diagram:</strong>
+          <ul style="margin:6px 0 0 18px; padding:0;">
+            <li><strong>Tail-Up (<code>A &rarr; C</code>, Green):</strong> Models solutes carried downstream with river flow (e.g. Nitrate or dissolved Phosphorus). At the confluence, Tributary A's influence on Main Stem C is scaled by its <em>Additive Function Value</em> (<code>AFV = 0.65</code> vs. <code>0.35</code> from B) to reflect dilution. Tail-Up correlation between A and B is <strong>strictly zero</strong> because water cannot flow uphill from A into B.</li>
+            <li><strong>Tail-Down (<code>A &harr; B</code> &amp; <code>A &harr; C</code>, Amber):</strong> Connects reaches along the stream channel even across confluence junctions (such as unconnected Tributaries A and B), capturing shared valley geology, riparian land use, or mobile ecology.</li>
+            <li><strong>Euclidean (<code>C &harr; D</code>, Purple):</strong> Bridges across the catchment divide using straight-line overland distance, capturing regional climate, rainfall, or bedrock patterns shared by neighbouring basins.</li>
+            <li><strong>Combined (<code>Joint TU + TD + Euclidean</code>):</strong> Real rivers experience all three mechanisms at once, so <code>S3N</code> estimates the variance share of each pathway directly from the <code>RSN</code> observations.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">3. Kriging vs. Co-Kriging (<code>Factor-LMC</code>)</h3>
+          <span class="pill pill-green">Single-Target vs. Joint Multi-Target</span>
+        </div>
+        <p style="font-size:0.9rem; color:var(--text-secondary); margin-top:0; margin-bottom:14px;">
+          Standard stream kriging models one determinand at a time. <strong><a class="wiki-inline" href="https://en.wikipedia.org/wiki/Kriging#Cokriging" target="_blank" rel="noopener noreferrer">Co-Kriging</a></strong> extends this to multiple correlated determinands simultaneously using a <em>Linear Model of Coregionalization</em> (<code>Factor-LMC</code>), sharing <code>Tail-Up</code>, <code>Tail-Down</code>, and <code>Euclidean</code> latent factors across variables so predictions stay physically consistent across all <code>90,876</code> reaches.
+        </p>
+        <div class="grid-2" style="margin-top:0;">
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #38bdf8; background:rgba(56, 189, 248, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong>Univariate Kriging (Single Target)</strong>
+              <span class="pill pill-blue">CS1 &ndash; CS4</span>
+            </div>
+            <ul style="margin:0; font-size:0.84rem;">
+              <li><strong>How it predicts:</strong> Uses only observations of the target variable itself (e.g. Nitrate <code>0117</code> alone) plus landscape covariates.</li>
+              <li><strong>At unmonitored reaches:</strong> Borrows spatial information strictly from nearby gauges that also measured that same variable.</li>
+              <li><strong>Best when:</strong> Monitoring coverage for the target is dense enough on its own, or no strongly correlated auxiliary variable is available.</li>
+            </ul>
+          </div>
+
+          <div class="interp-box" style="margin-top:0; border-left:4px solid #34d399; background:rgba(52, 211, 153, 0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <strong>Multivariate Co-Kriging (<code>Factor-LMC</code>)</strong>
+              <span class="pill pill-green">CS5 &ndash; CS7</span>
+            </div>
+            <ul style="margin:0; font-size:0.84rem;">
+              <li><strong>How it predicts:</strong> Jointly models <code>P &ge; 2</code> correlated targets (e.g. Nitrate + Orthophosphate, or Nutrients + Macrophytes) and their cross-covariances.</li>
+              <li><strong>At unmonitored reaches:</strong> Borrows strength from <em>both</em> nearby gauges of the target variable <em>and</em> co-located auxiliary variables measured at that reach (<em>heterotopic</em> sampling).</li>
+              <li><strong>Best when:</strong> One variable is sparser or noisier than a correlated partner&mdash;cutting prediction uncertainty at monitoring gaps.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">4. Key Statistical Elements &amp; Model Evaluation Metrics</h3>
+          <span class="pill pill-amber">Model Building Blocks</span>
+        </div>
+
+        <h4 style="margin: 4px 0 10px; font-size: 0.95rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">A. How We Measure Accuracy &amp; Uncertainty</h4>
+        <div class="feature-grid" style="margin-bottom: 20px;">
+          <div class="feature-item">
+            <span class="pill pill-blue">Validation</span>
+            <h4>Cross-Validation (Random, Catchment &amp; Upstream/Downstream)</h4>
+            <p>Holds out a subset of stations (e.g., 20% or K-fold) and predicts them unseen. Catchment-blocked and upstream/downstream splits are stricter than random splits and test true generalisation to unmonitored rivers.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="copy-btn" type="button" data-jump-tab="cs1">Open Case Study &rarr;</button>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Cross-validation_(statistics)" target="_blank" rel="noopener noreferrer">Wikipedia: CV &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-green">Higher is better (max 1.0)</span>
+            <h4>R&sup2; (In-Sample vs. CV R&sup2;)</h4>
+            <p>Share of variance explained by the model: <code>1.0</code> is exact, <code>0</code> is no better than predicting the mean, and <code>&lt; 0</code> is worse than the mean. Always compare models on out-of-sample <strong>CV R&sup2;</strong>, not in-sample R&sup2; (which can overfit).</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Coefficient_of_determination" target="_blank" rel="noopener noreferrer">Wikipedia: R&sup2; &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-green">Lower is better (0 = exact)</span>
+            <h4>RMSE &amp; MAE (Prediction Error)</h4>
+            <p>Average prediction error in the determinand's own units (e.g., <code>mg/L</code> or taxa). <strong>RMSE</strong> squares errors before averaging so it penalises large misses heavily; <strong>MAE</strong> measures typical error magnitude with less sensitivity to outliers.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Root_mean_square_deviation" target="_blank" rel="noopener noreferrer">Wikipedia: RMSE &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Mean_absolute_error" target="_blank" rel="noopener noreferrer">Wikipedia: MAE &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-green">Lower SE = higher confidence</span>
+            <h4>Kriging SE, Prediction Intervals &amp; Exceedance</h4>
+            <p>Every reach receives a local standard error (<code>SE</code>)&mdash;tight near monitoring stations and wider in unmonitored headwaters. <code>SE</code> drives 95% prediction intervals and 5-tier threshold exceedance probabilities (e.g., <code>11.3 mg/L</code> NO3-N).</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="copy-btn" type="button" data-jump-tab="cs15">Open Case Study &rarr;</button>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Standard_error" target="_blank" rel="noopener noreferrer">Wikipedia: SE &#8599;</a>
+            </div>
+          </div>
+        </div>
+
+        <h4 style="margin: 4px 0 10px; font-size: 0.95rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;">B. Statistical Methods Inside the Models</h4>
+        <div class="feature-grid">
+          <div class="feature-item">
+            <span class="pill pill-blue">Trend Model</span>
+            <h4>Linear OLS vs. Penalized GAM Splines</h4>
+            <p>Landscape covariates (elevation, slope, baseflow, soil, land cover) are fitted either as linear slopes (<code>OLS</code>) or as smooth non-linear curves (<code>GAM</code> cubic regression splines with REML smoothness penalties to prevent overfitting).</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="copy-btn" type="button" data-jump-tab="cs1">Open Case Study &rarr;</button>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Ordinary_least_squares" target="_blank" rel="noopener noreferrer">Wikipedia: OLS &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Generalized_additive_model" target="_blank" rel="noopener noreferrer">Wikipedia: GAM &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-blue">Spatial Structure</span>
+            <h4>Variance Decomposition: Sill, Nugget &amp; Range</h4>
+            <p>Splits residual variance into structured spatial signal (<strong>sill</strong>: Tail-Up + Tail-Down + Euclidean) vs. unstructured noise (<strong>nugget</strong>: measurement error &amp; micro-variation), plus <strong>range</strong> (distance over which correlation decays). Higher structured share means stronger spatial predictability.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Variogram" target="_blank" rel="noopener noreferrer">Wikipedia: Variogram &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-blue">Estimation &amp; Scaling</span>
+            <h4>REML Estimation &amp; NNGP Approximation</h4>
+            <p><strong>REML</strong> estimates spatial variance parameters without downward bias from fixed-effect degrees of freedom. <strong>NNGP</strong> conditions each reach on a small local neighbourhood so kriging scales cleanly to ~90,000+ reaches.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Restricted_maximum_likelihood" target="_blank" rel="noopener noreferrer">Wikipedia: REML &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Gaussian_process" target="_blank" rel="noopener noreferrer">Wikipedia: Gaussian Process &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-blue">Distributional Fit</span>
+            <h4>Response Transforms &amp; Back-Transformation</h4>
+            <p><code>Log</code>, <code>Sqrt</code>, and <code>Box-Cox</code> transforms keep skewed concentrations strictly positive and residuals near-Gaussian, with bias correction to avoid Jensen's inequality under-prediction when returning to native units.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="copy-btn" type="button" data-jump-tab="cs7">Open Case Study &rarr;</button>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Power_transform" target="_blank" rel="noopener noreferrer">Wikipedia: Box-Cox &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Jensen%27s_inequality" target="_blank" rel="noopener noreferrer">Wikipedia: Jensen's &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-blue">Data Handling</span>
+            <h4>Censored Data (Tobit / ROS) &amp; Observation Weights</h4>
+            <p>Handles lab <code>&lt; LOD</code> limits and citizen-science range brackets statistically rather than dropping or halving values, and applies inverse-variance weights so noisier sources (e.g., WaterBlitz test strips) do not distort lab <code>RSN</code> data.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="copy-btn" type="button" data-jump-tab="cs6">Open Case Study &rarr;</button>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Tobit_model" target="_blank" rel="noopener noreferrer">Wikipedia: Tobit &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Inverse-variance_weighting" target="_blank" rel="noopener noreferrer">Wikipedia: Weighting &#8599;</a>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="pill pill-blue">Multivariate</span>
+            <h4>Factor-LMC Cross-Covariance &amp; Parameter CIs</h4>
+            <p>Jointly estimates cross-correlations between determinands across Tail-Up, Tail-Down, and Nugget components so densely sampled variables improve sparse ones, paired with bootstrap/Hessian confidence intervals on model parameters.</p>
+            <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="copy-btn" type="button" data-jump-tab="cs4">Open Case Study &rarr;</button>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Bootstrapping_(statistics)" target="_blank" rel="noopener noreferrer">Wikipedia: Bootstrap &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Confidence_interval" target="_blank" rel="noopener noreferrer">Wikipedia: CIs &#8599;</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">5. Further Reading &amp; Wikipedia Reference</h3>
+          <span class="pill pill-blue">External Glossary</span>
+        </div>
+        <div class="grid-3" style="margin-top:0;">
+          <div class="interp-box" style="margin-top:0;">
+            <strong>Geostatistics &amp; Spatial</strong>
+            <div class="wiki-pill-row">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Kriging" target="_blank" rel="noopener noreferrer">Kriging &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Kriging#Cokriging" target="_blank" rel="noopener noreferrer">Co-Kriging &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Variogram" target="_blank" rel="noopener noreferrer">Variogram &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Gaussian_process" target="_blank" rel="noopener noreferrer">Gaussian Process &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Euclidean_distance" target="_blank" rel="noopener noreferrer">Euclidean Distance &#8599;</a>
+            </div>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
+            <strong>Validation &amp; Uncertainty</strong>
+            <div class="wiki-pill-row">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Cross-validation_(statistics)" target="_blank" rel="noopener noreferrer">Cross-Validation &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Coefficient_of_determination" target="_blank" rel="noopener noreferrer">R&sup2; &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Root_mean_square_deviation" target="_blank" rel="noopener noreferrer">RMSE &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Mean_absolute_error" target="_blank" rel="noopener noreferrer">MAE &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Standard_error" target="_blank" rel="noopener noreferrer">Standard Error &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Confidence_interval" target="_blank" rel="noopener noreferrer">Confidence Interval &#8599;</a>
+            </div>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
+            <strong>Regression, Transforms &amp; Data</strong>
+            <div class="wiki-pill-row">
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Ordinary_least_squares" target="_blank" rel="noopener noreferrer">OLS Regression &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Generalized_additive_model" target="_blank" rel="noopener noreferrer">GAM &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Restricted_maximum_likelihood" target="_blank" rel="noopener noreferrer">REML &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Power_transform" target="_blank" rel="noopener noreferrer">Box-Cox Transform &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Tobit_model" target="_blank" rel="noopener noreferrer">Tobit Censoring &#8599;</a>
+              <a class="wiki-btn" href="https://en.wikipedia.org/wiki/Inverse-variance_weighting" target="_blank" rel="noopener noreferrer">Inverse-Variance Weighting &#8599;</a>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -207,8 +611,17 @@
         <span class="hero-eyebrow">Case Study 1 · National Univariate Regression Kriging</span>
         <h2>Nitrate as N (<code>0117</code>): Linear S3N vs. Non-Linear <code>GAM + S3N</code></h2>
         <p>
-          Demonstrates full national (`90,876` reaches) and regional basin (`Humber`, `Thames`, `Severn`) modelling on EA River Surveillance Network (`RSN`) Nitrate samples (`18,462` samples across `1,210` observed reaches), comparing standard linear fixed effects against REML-penalized cubic regression splines (<code>--trend=gam</code>).
+          Demonstrates full national (<code>90,876</code> reaches) and regional basin (<code>Humber</code>, <code>Thames</code>, <code>Severn</code>) modelling on EA River Surveillance Network (<code>RSN</code>) Nitrate samples (<code>18,462</code> samples across <code>1,210</code> observed reaches), comparing standard linear fixed effects against REML-penalized cubic regression splines (<code>--trend=gam</code>).
         </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>How Univariate Stream-Network Regression Kriging Works</h4>
+          <ul>
+            <li><strong>Trend + Spatial Residuals:</strong> Models a single determinand by combining a landscape regression trend (linear covariates or non-linear <code>GAM</code> splines on elevation, slope, baseflow, soil, and land cover) with a <code>Joint NNGP</code> spatial residual surface kriged across all <code>90,876</code> reaches.</li>
+            <li><strong>Tail-Up (Flow-Connected + AFV):</strong> Captures solutes transported downstream with river flow; only flow-connected reaches correlate, weighted at confluences by Additive Function Values (<code>AFV</code>) to reflect each tributary's upstream contribution.</li>
+            <li><strong>Tail-Down &amp; Euclidean Covariance:</strong> <em>Tail-Down</em> links reaches by along-channel distance even across confluence junctions (unconnected tributaries), while <em>Euclidean</em> captures overland proximity across catchment divides (e.g. shared geology, climate, or regional land use).</li>
+            <li><strong>What "Combined" Means (<code>Joint TU + TD + Euclidean</code>):</strong> Instead of forcing a single spatial mechanism, <code>S3N Combined</code> estimates all three variance components together (<code>&sigma;&sup2;<sub>TU</sub> + &sigma;&sup2;<sub>TD</sub> + &sigma;&sup2;<sub>Euc</sub> + &tau;&sup2;</code>) in one unified <code>NNGP</code> kriging system&mdash;automatically weighting how much variation arises from downstream flow, channel proximity, and regional overland gradients.</li>
+          </ul>
+        </div>
       </div>
 
       <div id="cs1-kpis" class="kpi-grid"></div>
@@ -216,41 +629,23 @@
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Case-Study Command Examples</h3>
-            <span class="pill pill-blue">Univariate + Non-Linear Trends</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Standard Joint S3N &amp; Non-Linear GAM / RF Variants</span><button class="copy-btn" data-copy-target="code-cs1">Copy</button></div>
-            <pre id="code-cs1"># 1. Standard Linear Joint (TU + TD + Euclidean) Nitrate at 300 DPI
-Rscript scripts/run_s3n_determinand.R 0117 --dpi=300 --omp=4
-
-# 2. Non-Linear REML Spline Trend (GAM + S3N) or Tree Ensembles (--trend=rf|gbm)
-Rscript scripts/run_s3n_determinand.R 0117 --trend=gam --dpi=300 --omp=4
-Rscript scripts/run_s3n_determinand.R 0117 --trend=rf --trees=150 --omp=4
-
-# 3. Robust Z-Score Anomaly Surface + Minor Power Options
-Rscript scripts/run_s3n_determinand.R 0117 --norm=robust_zscore --dpi=300 --omp=4
-Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --design-sites=50 --vars=-Slope_z</pre>
-          </div>
-          <div id="cs1-r2-svg" class="svg-panel"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
             <h3 class="card-title">National Nitrate Map, Basin Zoom &amp; Robust Z-Score</h3>
             <div class="fig-toggle-bar" data-group="cs1-map">
-              <button class="fig-toggle-btn active" data-fig="no3_england">England Linear (300 DPI)</button>
+              <button class="fig-toggle-btn active" data-fig="no3_england">England Linear</button>
               <button class="fig-toggle-btn" data-fig="no3_gam_england">England GAM+S3N</button>
               <button class="fig-toggle-btn" data-fig="no3_z_england">England Robust Z-Score</button>
-              <button class="fig-toggle-btn" data-fig="no3_z_humber">Humber Robust Z-Score</button>
-              <button class="fig-toggle-btn" data-fig="no3_z_thames_severn">Thames &amp; Severn Z-Score</button>
               <button class="fig-toggle-btn" data-fig="no3_humber">Humber Basin</button>
               <button class="fig-toggle-btn" data-fig="no3_thames_severn">Thames &amp; Severn</button>
             </div>
           </div>
           <div id="fig-slot-cs1-map"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>East–West Gradient:</strong> Arable Chalk/Limestone catchments in eastern &amp; southern England consistently exceed 5–9 mg/L N, while upland Wales &amp; Pennine headwaters remain low (&lt; 0.5 mg/L).</li>
               <li><strong>Robust Z-Score View (<code>--norm=robust_zscore</code>):</strong> Standardizes predictions as <code>(x − median) / (1.4826 × MAD)</code> in model space, stripping concentration units so anomalous arable sub-catchments (red, &gt; +1.5 SD) and pristine upland headwaters (blue, &lt; −1.5 SD) stand out cleanly on one symmetric scale.</li>
@@ -266,17 +661,38 @@ Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --des
           <div class="card-header">
             <h3 class="card-title">4-Panel Diagnostics &amp; Cross-Validation</h3>
             <div class="fig-toggle-bar" data-group="cs1-diag">
-              <button class="fig-toggle-btn active" data-fig="no3_diag">Linear S3N (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="no3_gam_diag">GAM+S3N (SVG)</button>
+              <button class="fig-toggle-btn active" data-fig="no3_diag">Linear S3N</button>
+              <button class="fig-toggle-btn" data-fig="no3_gam_diag">GAM+S3N</button>
             </div>
           </div>
           <div id="fig-slot-cs1-diag"></div>
+          <div id="cs1-r2-svg" class="svg-panel" style="margin-top:14px;"></div>
         </div>
 
         <div class="card">
           <div class="card-header"><h3 class="card-title">5-Fold CV &amp; Covariate Effects (All England)</h3></div>
           <div id="cs1-cv-table" class="table-scroll"></div>
           <div id="cs1-param-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">Univariate + Non-Linear Trends</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Standard Joint S3N &amp; Non-Linear GAM / RF Variants</span><button class="copy-btn" data-copy-target="code-cs1">Copy</button></div>
+          <pre id="code-cs1"># 1. Standard Linear Joint (TU + TD + Euclidean) Nitrate at 300 DPI
+Rscript scripts/run_s3n_determinand.R 0117
+
+# 2. Non-Linear REML Spline Trend (GAM + S3N) or Tree Ensembles (--trend=rf|gbm)
+Rscript scripts/run_s3n_determinand.R 0117 --trend=gam
+Rscript scripts/run_s3n_determinand.R 0117 --trend=rf --trees=150
+
+# 3. Robust Z-Score Anomaly Surface + Minor Power Options
+Rscript scripts/run_s3n_determinand.R 0117 --norm=robust_zscore
+Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --design-sites=50 --vars=-Slope_z</pre>
         </div>
       </div>
     </section>
@@ -286,55 +702,36 @@ Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --des
          =================================================================== -->
     <section id="tab-cs2" class="tab-panel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 3 · Regulatory Compliance, Ecology &amp; Uncertainty</span>
-        <h2>Ecological Health (<code>whpt_aspt</code>) &amp; Threshold Exceedance Risk</h2>
+        <span class="hero-eyebrow">Case Study 4 · National Univariate Ecological Health (WHPT ASPT)</span>
+        <h2>Macroinvertebrate Ecological Health (<code>whpt_aspt</code>)</h2>
         <p>
-          Showcases ecological modelling with <code>--reverse-color</code> on macroinvertebrate <code>WHPT ASPT</code> (<code>1,160</code> observed reaches), 5-tier probabilistic threshold exceedance mapping (<code>--threshold=uk</code>) for Nitrate &amp; Orthophosphate, and raw vs. <code>robust_zscore</code> normalisation comparisons.
+          Showcases national univariate ecological modelling with <code>--reverse-color</code> on macroinvertebrate <code>WHPT ASPT</code> (<code>1,160</code> observed reaches across <code>90,876</code> England ORN v2 reaches), highlighting upland biological integrity versus lowland urban/agricultural stress.
         </p>
       </div>
+
+      <div id="cs2-kpis" class="kpi-grid"></div>
 
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Macroinvertebrate Health (`whpt_aspt --reverse-color`)</h3>
+            <h3 class="card-title">Macroinvertebrate Health (<code>whpt_aspt --reverse-color</code>)</h3>
             <div class="fig-toggle-bar" data-group="cs2-ecol">
-              <button class="fig-toggle-btn active" data-fig="whpt_england">England Map (300 DPI)</button>
+              <button class="fig-toggle-btn active" data-fig="whpt_england">England Map</button>
               <button class="fig-toggle-btn" data-fig="whpt_thames_severn">Thames &amp; Severn</button>
-              <button class="fig-toggle-btn" data-fig="whpt_diag">CV &amp; Params (SVG)</button>
             </div>
           </div>
           <div id="fig-slot-cs2-ecol"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Ecological Quality &amp; Uncertainty Options</span><button class="copy-btn" data-copy-target="code-cs2">Copy</button></div>
-            <pre id="code-cs2"># Macroinvertebrate biological health (inverted red-low / blue-high palette)
-Rscript scripts/run_s3n_determinand.R whpt_aspt --dataset=inverts --reverse-color --dpi=300 --omp=4
-
-# Regulatory threshold exceedance risk &amp; Robust Z-Score anomaly surfacing
-Rscript scripts/run_s3n_determinand.R 0180 --threshold=uk --transform=boxcox --norm=robust_zscore --dpi=300
-
-# Two-Stage GAM Measurement-Error Kriging &amp; Spatial Tobit EM Censoring
-Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --censor=em</pre>
-          </div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Threshold Exceedance Risk &amp; Raw vs. Z-Score Anomaly</h3>
-            <div class="fig-toggle-bar" data-group="cs2-risk">
-              <button class="fig-toggle-btn active" data-fig="no3_exceed_england">Nitrate Threshold Risk (11.3)</button>
-              <button class="fig-toggle-btn" data-fig="po4_exceed_england">Phosphate Threshold Risk (0.069)</button>
-              <button class="fig-toggle-btn" data-fig="no3_z_england">Nitrate Robust Z-Score</button>
-              <button class="fig-toggle-btn" data-fig="no3_z_humber">Humber Robust Z-Score</button>
-              <button class="fig-toggle-btn" data-fig="no3_exceed_basins">Basins Exceedance Risk</button>
-            </div>
+            <h3 class="card-title">Suggested Interpretation</h3>
           </div>
-          <div id="fig-slot-cs2-risk"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
-              <li><strong>Why <code>WHPT ASPT</code> Improves with S3N (`0.493 &rarr; 0.640 R²`):</strong> Macroinvertebrates integrate water chemistry, flow permanence, and riparian habitat over months, creating strong downstream &amp; neighborhood continuity.</li>
-              <li><strong>5-Tier Probability Compliance Bands:</strong> Yellow (<em>Uncertain / Priority Monitoring</em>) marks reaches whose Gaussian exceedance probability lies between <code>0.20</code> and <code>0.80</code> around a single indicative threshold (<code>47.5%</code> of England reaches for Orthophosphate <code>0.069 mg/L</code>)—prime candidates for follow-up sampling (separate from site-typed ecological status).</li>
-              <li><strong>Robust Z-Score View:</strong> Highlights localized anomalous sub-catchment spikes relative to national median/MAD across heterogenous rivers.</li>
+              <li><strong>Why <code>WHPT ASPT</code> Improves with S3N (<code>0.493 &rarr; 0.640 R&sup2;</code>):</strong> Macroinvertebrates integrate water chemistry, flow permanence, and riparian habitat over months, creating strong downstream &amp; neighborhood continuity.</li>
+              <li><strong>Inverted Ecological Palette (<code>--reverse-color</code>):</strong> High-scoring, sensitive macroinvertebrate communities (Pennines, Lake District, Devon, Welsh borders) render in cool blues, while degraded lowland reaches render in warm reds.</li>
+              <li><strong>Flow-Connected &amp; Euclidean Structure:</strong> Joint additive S3N captures both catchment-wide land-use gradients and instream longitudinal recovery downstream of point-source pressures.</li>
             </ul>
           </div>
         </div>
@@ -342,16 +739,105 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header"><h3 class="card-title">National 5-Tier Exceedance Breakdown (Inline SVG + Table)</h3></div>
-          <div id="cs2-exceed-svg" class="svg-panel"></div>
-          <div id="cs2-exceed-table" class="table-scroll"></div>
-        </div>
-        <div class="card">
-          <div class="card-header"><h3 class="card-title">WHPT ASPT &amp; Orthophosphate CV Benchmarks</h3></div>
-          <div id="cs2-cv-table" class="table-scroll"></div>
-          <div class="caveat-box">
-            <strong>12 Built-In Transforms &amp; 4 Normalisations:</strong> <code>log</code>, <code>log10</code>, <code>log1p</code>, <code>sqrt</code>, <code>cbrt</code>, <code>fourthrt</code>, <code>reciprocal</code>, <code>boxcox</code> (Profile MLE &lambda;), <code>yeojohnson</code>, <code>asin</code>, <code>logit</code>, <code>none</code> + Taylor/Duan back-transformation, plus <code>zscore</code>, <code>robust_zscore</code>, <code>minmax</code>, <code>percentile</code> (benchmarked in <strong>CS7</strong>).
+          <div class="card-header">
+            <h3 class="card-title">4-Panel Diagnostics &amp; Cross-Validation (SVG)</h3>
           </div>
+          <div id="fig-slot-cs2-diag"></div>
+          <div id="cs2-r2-svg" class="svg-panel" style="margin-top:14px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">5-Fold CV Breakdown (All England &amp; Regional Basins)</h3></div>
+          <div id="cs2-cv-table" class="table-scroll"></div>
+          <div id="cs2-basin-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Ecological Quality Options</span><button class="copy-btn" data-copy-target="code-cs2">Copy</button></div>
+          <pre id="code-cs2"># Macroinvertebrate biological health (inverted red-low / blue-high palette)
+Rscript scripts/run_s3n_determinand.R whpt_aspt --dataset=inverts --reverse-color</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 4: CASE STUDY 4 - THRESHOLD EXCEEDANCE RISK & ANOMALIES
+         =================================================================== -->
+    <section id="tab-cs15" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 9 · Regulatory Compliance &amp; Uncertainty</span>
+        <h2>Threshold Exceedance Risk</h2>
+        <p>
+          5-tier probabilistic threshold exceedance mapping (<code>--threshold=uk</code>) for Nitrate (<code>11.3 mg/L</code>) &amp; Orthophosphate (<code>0.069 mg/L</code>), plus measurement-error / censoring workflows.
+        </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>Method Explainer: Probabilistic Threshold Exceedance, 5-Tier Categories &amp; UK Reference Values</h4>
+          <ul>
+            <li><strong>What Threshold Exceedance Is:</strong> Instead of comparing only a point prediction against a limit, S3N combines the predictive mean <code>z&#770;(s<sub>0</sub>)</code> and kriging standard error <code>SE(s<sub>0</sub>)</code> on the transformed model scale to evaluate the exact Gaussian exceedance probability <code>P(Y(s<sub>0</sub>) &gt; T) = 1 &minus; &Phi;((g(T) &minus; z&#770;(s<sub>0</sub>)) / SE(s<sub>0</sub>))</code>.</li>
+            <li><strong>The 5 Statistical Confidence Categories:</strong> Reaches are grouped into <strong>Confidently Compliant</strong> (<code>&lt; 5%</code>), <strong>Likely Compliant</strong> (<code>5&ndash;20%</code>), <strong>Uncertain / Priority Monitoring</strong> (<code>20&ndash;80%</code>, where uncertainty makes compliance ambiguous and additional sampling is most valuable), <strong>Likely Exceeding</strong> (<code>80&ndash;95%</code>), and <strong>Confidently Exceeding</strong> (<code>&gt; 95%</code>). These are statistical confidence bands around a single threshold <code>T</code>, not site-typed ecological status classes.</li>
+            <li><strong>Where the Threshold Values Come From (<code>--threshold=uk</code>):</strong> Nitrate (<code>11.3 mg/L as N</code>) comes from the UK Drinking Water Inspectorate (DWI) / Nitrates Directive standard (<code>11.3 mg/L N &equiv; 50 mg/L NO<sub>3</sub></code>). Orthophosphate (<code>0.069 mg/L as P</code>) is the indicative lowland, high-alkalinity Good/Moderate SRP boundary from <em>The Standards and Classification Directions (England and Wales) 2015</em> (used as a uniform national benchmark here, though site-specific regulatory boundaries vary with altitude and alkalinity).</li>
+          </ul>
+        </div>
+      </div>
+
+      <div id="cs15-kpis" class="kpi-grid"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Threshold Exceedance Risk</h3>
+            <div class="fig-toggle-bar" data-group="cs15-risk">
+              <button class="fig-toggle-btn active" data-fig="no3_exceed_england">Nitrate Threshold Risk (11.3)</button>
+              <button class="fig-toggle-btn" data-fig="po4_exceed_england">Phosphate Threshold Risk (0.069)</button>
+              <button class="fig-toggle-btn" data-fig="no3_exceed_basins">Basins Exceedance Risk</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs15-risk"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
+            <ul>
+              <li><strong>5-Tier Probability Compliance Bands:</strong> Yellow (<em>Uncertain / Priority Monitoring</em>) marks reaches whose Gaussian exceedance probability lies between <code>0.20</code> and <code>0.80</code> around a single indicative threshold (<code>47.5%</code> of England reaches for Orthophosphate <code>0.069 mg/L</code>)—prime candidates for follow-up sampling (separate from site-typed ecological status).</li>
+              <li><strong>Nitrate vs. Phosphate Risk Profiles:</strong> Nitrate remains <code>90.8%</code> confidently/likely compliant against the <code>11.3 mg/L</code> N drinking-water threshold (only <code>0.08%</code> exceeding), whereas Orthophosphate exhibits widespread uncertain (<code>47.5%</code>) and exceeding (<code>7.3%</code>) reaches across lowland arable and peri-urban catchments.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">5-Tier Exceedance Share &amp; Orthophosphate 5-Fold CV</h3></div>
+          <div id="cs15-exceed-svg" class="svg-panel"></div>
+          <div id="cs15-r2-svg" class="svg-panel" style="margin-top:14px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">National 5-Tier Exceedance &amp; Orthophosphate CV Benchmark</h3></div>
+          <div id="cs15-exceed-table" class="table-scroll"></div>
+          <div id="cs15-cv-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Threshold Exceedance, Normalisation &amp; Uncertainty Options</span><button class="copy-btn" data-copy-target="code-cs15">Copy</button></div>
+          <pre id="code-cs15"># Regulatory threshold exceedance risk &amp; Robust Z-Score anomaly surfacing
+Rscript scripts/run_s3n_determinand.R 0180 --threshold=uk --transform=boxcox --norm=robust_zscore
+
+# Two-Stage GAM Measurement-Error Kriging &amp; Spatial Tobit EM Censoring
+Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --censor=em</pre>
         </div>
       </div>
     </section>
@@ -361,12 +847,22 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
          =================================================================== -->
     <section id="tab-cs3" class="tab-panel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 7 · Multi-Period Batching &amp; Dynamic Borrowing</span>
+        <span class="hero-eyebrow">Case Study 8 · Multi-Period Batching &amp; Dynamic Borrowing</span>
         <h2>Spatio-Temporal Nitrate Trends (<code>2021–2024</code> &amp; Seasonal Cycles)</h2>
         <p>
           Demonstrates temporal slicing via <code>--by=year</code> and <code>--by=season</code> paired with precision-weighted Dynamic Temporal Borrowing (<code>--st-borrow</code>), reach-level Weighted Least Squares trend tests (<code>fig6</code>), and consecutive-season shift surfaces (<code>fig7</code>).
         </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>Method Explainer: Precision-Weighted Dynamic Temporal Borrowing (<code>--st-borrow</code>)</h4>
+          <ul>
+            <li><strong>Per-Slice Kriging First:</strong> Each year or season slice is fitted separately with Joint S3N to obtain a reach-level prediction <code>z&#770;(s, t)</code> and kriging standard error <code>SE(s, t)</code>.</li>
+            <li><strong>Inverse-Variance Borrowing Across Time:</strong> Under <code>--st-borrow</code>, each slice is shrunk toward adjacent time periods using precision weights <code>1 / SE(s, t)&sup2;</code> modulated by the empirical temporal correlation <code>&rho;<sub>t</sub></code>. Reaches with high uncertainty in a sparsely sampled period borrow strength from neighboring periods, whereas well-monitored reaches with low <code>SE</code> retain their local signal.</li>
+            <li><strong>Stabilised Trend &amp; Transition Tests:</strong> The borrowed series feeds reach-level Weighted Least Squares slope tests (<code>fig6</code>) and consecutive-period transition maps (<code>fig7</code>), preventing isolated sampling gaps from appearing as false step-changes.</li>
+          </ul>
+        </div>
       </div>
+
+      <div id="cs3-kpis" class="kpi-grid"></div>
 
       <div class="grid-2">
         <div class="card">
@@ -382,7 +878,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
 
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Reach Trend Significance (`fig6`) &amp; Transitions (`fig7`)</h3>
+            <h3 class="card-title">Reach Trend Significance &amp; Transitions</h3>
             <div class="fig-toggle-bar" data-group="cs3-trend">
               <button class="fig-toggle-btn active" data-fig="st_year_trends">Annual Trends (fig6)</button>
               <button class="fig-toggle-btn" data-fig="st_season_trends">Seasonal Trends (fig6)</button>
@@ -390,23 +886,16 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
             </div>
           </div>
           <div id="fig-slot-cs3-trend"></div>
+          <div class="caveat-box" style="margin-top:12px;">
+            <strong>What Trend Direction &amp; Significance Show:</strong> Reach slopes are estimated via precision-weighted Least Squares (<code>w = 1 / SE&sup2;</code>) across consecutive periods after <code>--st-borrow</code>. <strong>Positive slopes (red)</strong> indicate rising Nitrate concentrations over time, <strong>negative slopes (blue)</strong> indicate declining/improving trajectories, and neutral tones indicate stable reaches. <strong>Significance (Wald <code>|Z|</code> tiers)</strong> tests whether the fitted slope exceeds combined kriging uncertainty across periods—filtering out noisy, sparsely monitored reaches so highlighted corridors reflect sustained multi-period change rather than single-campaign noise. <strong>Season Transitions</strong> show consecutive period-to-period hydrological flushing and dilution shifts.
+          </div>
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header"><h3 class="card-title">CLI Examples &amp; Suggested Interpretation</h3></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Temporal Batching &amp; Dynamic Borrowing</span><button class="copy-btn" data-copy-target="code-cs3">Copy</button></div>
-            <pre id="code-cs3"># 4 Meteorological seasons + Precision-Weighted Dynamic Borrowing + fig6/fig7
-Rscript scripts/run_s3n_determinand.R 0117 --by=season --st-borrow --dpi=300 --omp=4
-
-# Multi-year trajectory (2021-2024) or single-period slice (--year / --season / --month)
-Rscript scripts/run_s3n_determinand.R 0117 --by=year --st-borrow --dpi=300 --omp=4
-Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter --omp=4</pre>
-          </div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Winter Peak Hydrology:</strong> Notice Winter Nitrate achieves higher national CV $R^2$ (`0.7164`) than Summer because sustained winter runoff connects agricultural soils cleanly along flow paths.</li>
               <li><strong>Why <code>--st-borrow</code> Matters:</strong> When a tributary gauge is missed during one summer campaign, Dynamic Borrowing shrinks the single-period kriging variance toward neighboring periods weighted by $1/\mathrm{SE}^2$, avoiding false jump artefacts in <code>fig6</code>.</li>
@@ -419,6 +908,19 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter --omp=4</
           <div id="cs3-cv-table" class="table-scroll"></div>
         </div>
       </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Temporal Batching &amp; Dynamic Borrowing</span><button class="copy-btn" data-copy-target="code-cs3">Copy</button></div>
+          <pre id="code-cs3"># 4 Meteorological seasons + Precision-Weighted Dynamic Borrowing + fig6/fig7
+Rscript scripts/run_s3n_determinand.R 0117 --by=season --st-borrow
+
+# Multi-year trajectory (2021-2024) or single-period slice (--year / --season / --month)
+Rscript scripts/run_s3n_determinand.R 0117 --by=year --st-borrow
+Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter</pre>
+        </div>
+      </div>
     </section>
 
     <!-- ===================================================================
@@ -429,8 +931,15 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter --omp=4</
         <span class="hero-eyebrow">Case Study 5 · Heterotopic Coregionalization &amp; Network Fusion</span>
         <h2>Factor-LMC Co-Kriging (<code>0117 + 0180</code>) &amp; Multi-Source Fusion (<code>RSN + SSN</code>)</h2>
         <p>
-          Jointly models coupled nutrients via OpenMP Factor-LMC NNGP (`8 of 8` Strong Benefit across England &amp; basins; median Aux-Aided $\Delta R^2 = +0.2062$, $-16.6\%$ RMSE) and showcases explicit network priority &amp; reliability weighting across statutory `RSN` + headwater `SSN` + citizen-science campaigns.
+          Jointly models coupled nutrients via OpenMP Factor-LMC NNGP (`8 of 8` Strong Benefit across England &amp; basins; median Aux-Aided $\Delta R^2 = +0.2062$, $-16.6\%$ RMSE) and showcases explicit network priority &amp; reliability weighting across statistically designed `RSN` + headwater `SSN` surveillance surveys.
         </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>Method Explainer: Factor-LMC Co-Kriging &amp; RSN + SSN Fusion</h4>
+          <ul>
+            <li><strong>What Factor-LMC Co-Kriging Does:</strong> Models multiple coupled determinands (here Nitrate <code>0117</code> and Orthophosphate <code>0180</code>) simultaneously through a shared Linear Model of Coregionalisation across Tail-Up, Tail-Down, and Euclidean NNGP components. Compared to single-target <strong>Univariate S3N</strong>, it borrows cross-variable correlation wherever one determinand is unsampled or sparse—improving CV accuracy in all <code>8 / 8</code> England &amp; basin benchmarks.</li>
+            <li><strong>Benefits of Combining <code>RSN + SSN</code>:</strong> Merging the statistically designed River Surveillance Network (<code>RSN</code>, <code>1,210</code> reaches) with the headwater Small Streams Network (<code>SSN</code>) expands coverage to <code>1,384</code> observed reaches across <code>91,118</code> reaches, filling small-stream headwater gaps while <code>--prefer-source=rsn</code> and <code>--source-weight</code> preserve RSN surveillance consistency on shared reaches.</li>
+          </ul>
+        </div>
       </div>
 
       <div id="cs4-kpis" class="kpi-grid"></div>
@@ -438,11 +947,36 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter --omp=4</
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
+            <h3 class="card-title">Co-Kriged Surfaces &amp; Multi-Source Fusion (`RSN + SSN`)</h3>
+            <div class="fig-toggle-bar" data-group="cs4-ms">
+              <button class="fig-toggle-btn active" data-fig="rss_england">RSN+SSN Nitrate Map</button>
+              <button class="fig-toggle-btn" data-fig="cokrig_0117">Co-Kriged Nitrate</button>
+              <button class="fig-toggle-btn" data-fig="cokrig_0180">Co-Kriged Phosphate</button>
+              <button class="fig-toggle-btn" data-fig="rss_diag">RSN+SSN Diagnostics</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs4-ms"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
+            <ul>
+              <li><strong>Look at Severn Nitrate:</strong> Univariate $R^2 = 0.270$ jumps to `0.371` (`All-Holdout`) and `0.552` (`Aux-Aided`, $-21.7\%$ RMSE) once coupled with Orthophosphate.</li>
+              <li><strong>Why Co-Kriging &amp; Source Weighting Beat Naive Pooling:</strong> Keeping heterogeneous surveys weighted via <code>--prefer-source=rsn</code> and <code>--source-weight</code> adds analytical variance $(1/w - 1)\tau^2$ onto lower-priority or noisier surveys, preventing headwater/campaign offsets from diluting routine <code>RSN</code> medians on co-located reaches.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
             <h3 class="card-title">Cross-Correlation &amp; Co-Kriged National Surfaces</h3>
             <div class="fig-toggle-bar" data-group="cs4-ck">
-              <button class="fig-toggle-btn active" data-fig="cokrig_xcorr">TU/TD/Nugget Heatmap (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="cokrig_0117">Co-Kriged Nitrate (300 DPI)</button>
-              <button class="fig-toggle-btn" data-fig="cokrig_0180">Co-Kriged Phosphate (300 DPI)</button>
+              <button class="fig-toggle-btn active" data-fig="cokrig_xcorr">TU/TD/Nugget Heatmap</button>
+              <button class="fig-toggle-btn" data-fig="cokrig_0117">Co-Kriged Nitrate</button>
+              <button class="fig-toggle-btn" data-fig="cokrig_0180">Co-Kriged Phosphate</button>
             </div>
           </div>
           <div id="fig-slot-cs4-ck"></div>
@@ -450,100 +984,53 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter --omp=4</
         </div>
 
         <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Multi-Source Fusion (`RSN + SSN`, `--prefer-source`, `--source-weight`)</h3>
-            <div class="fig-toggle-bar" data-group="cs4-ms">
-              <button class="fig-toggle-btn active" data-fig="rss_england">RSN+SSN Nitrate Map (300 DPI)</button>
-              <button class="fig-toggle-btn" data-fig="rss_diag">RSN+SSN Diagnostics (SVG)</button>
-            </div>
-          </div>
-          <div id="fig-slot-cs4-ms"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Co-Kriging &amp; Citizen-Science Network Weighting</span><button class="copy-btn" data-copy-target="code-cs4">Copy</button></div>
-            <pre id="code-cs4"># 1. Factor-LMC Co-Kriging with Threshold Exceedance Risk (Nitrate + Orthophosphate)
-Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 --threshold=uk --dpi=300 --omp=4
-
-# 2. Live RSN + SSN Fusion with Hard Co-Located Priority + Soft Reliability Weighting
-Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn --prefer-source=rsn --source-weight=rsn:1,ssn:0.75 --omp=4
-
-# 3. Supplementing RSN with Citizen Science WaterBlitz (Tobit Ranges + Explicit SE)
-python3 scripts/format_custom_data.py data/waterblitz.csv --source-name=waterblitz --range-mode=tobit --generate-config
-Rscript scripts/run_s3n_cokriging.R --targets=0117,0180,wb_no3,wb_po4 --source=rsn+waterblitz \
-  --method=lmc --source-weight=rsn:1,waterblitz:0.35 --source-se=rsn:0.05,waterblitz:0.40 --omp=4</pre>
-          </div>
+          <div class="card-header"><h3 class="card-title">Dual CV Benchmark (`Univariate` vs `All-Holdout` vs `Aux-Aided`)</h3></div>
+          <div id="cs4-cv-table" class="table-scroll"></div>
         </div>
       </div>
 
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header"><h3 class="card-title">Dual CV Benchmark (`Univariate` vs `All-Holdout` vs `Aux-Aided`)</h3></div>
-          <div id="cs4-cv-table" class="table-scroll"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
-            <ul>
-              <li><strong>Look at Severn Nitrate:</strong> Univariate $R^2 = 0.270$ jumps to `0.371` (`All-Holdout`) and `0.552` (`Aux-Aided`, $-21.7\%$ RMSE) once coupled with Orthophosphate.</li>
-              <li><strong>Why Co-Kriging Beats Naive Pooling for Citizen Science:</strong> Keeping volunteer kits (`wb_no3`) as separate co-kriged variables absorbs kit offsets/noise into target-specific parameters while <code>--source-weight</code> adds analytical variance $(1/w - 1)\tau^2$ onto noisy sensors.</li>
-            </ul>
-          </div>
-        </div>
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header"><h3 class="card-title">Analytical Reliability Penalty $V_{\text{wt}} = (1/w - 1)\tau^2$ &amp; Cross-Covariance</h3></div>
+        <div id="cs4-weight-svg" class="svg-panel"></div>
+        <div id="cs4-cov-table" class="table-scroll"></div>
+      </div>
 
-        <div class="card">
-          <div class="card-header"><h3 class="card-title">Analytical Reliability Penalty $V_{\text{wt}} = (1/w - 1)\tau^2$ &amp; Cross-Covariance</h3></div>
-          <div id="cs4-weight-svg" class="svg-panel"></div>
-          <div id="cs4-cov-table" class="table-scroll"></div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Factor-LMC Co-Kriging &amp; RSN+SSN Network Weighting</span><button class="copy-btn" data-copy-target="code-cs4">Copy</button></div>
+          <pre id="code-cs4"># 1. Factor-LMC Co-Kriging (Nitrate 0117 + Orthophosphate 0180)
+Rscript scripts/run_s3n_cokriging.R --targets=0117,0180
+
+# 2. Live RSN + SSN Fusion with Hard Co-Located Priority + Soft Reliability Weighting
+Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn --prefer-source=rsn --source-weight=rsn:1,ssn:0.75</pre>
         </div>
       </div>
     </section>
 
     <!-- ===================================================================
-         TAB 6: CASE STUDY 5 - BASIN AUDITS, DESCRIPTIVES & N:P STOICHIOMETRY
+         TAB 6: CASE STUDY 10 - DESCRIPTIVE STATS & N:P STOICHIOMETRY
          =================================================================== -->
     <section id="tab-cs5" class="tab-panel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 9 · Environmental Gradients, Bias &amp; Cross-Run Audits</span>
-        <h2>Monitoring Representativeness, <code>N:P</code> Stoichiometry &amp; Snapping Audits</h2>
+        <span class="hero-eyebrow">Case Study 10 · Environmental Gradients, Bias &amp; Cross-Run Audits</span>
+        <h2>Descriptive Statistics, Monitoring Bias &amp; <code>N:P</code> Stoichiometry</h2>
         <p>
-          Inspects monitoring bias between sampled vs. unmonitored upland reaches (`05_descriptive_stats.R`), compares Nitrate vs. Orthophosphate landscapes with Fisher $z$ and Wald $Z$-tests (`04_compare_model_runs.R`), and audits station-to-reach snapping across Thames &amp; Humber (`06_station_snapping_diagnostics.R`).
+          Inspects monitoring bias between sampled vs. unmonitored upland reaches (<code>05_descriptive_stats.R</code>) and compares Nitrate vs. Orthophosphate landscapes with Fisher z and Wald Z-tests (<code>04_compare_model_runs.R</code>).
         </p>
-      </div>
-
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Descriptive Stats &amp; `N:P` Comparison Visuals</h3>
-            <div class="fig-toggle-bar" data-group="cs5-audits">
-              <button class="fig-toggle-btn active" data-fig="desc_grad">Stratified Gradients (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="desc_dist">Distributions &amp; Bias (300 DPI)</button>
-              <button class="fig-toggle-btn" data-fig="comp_cv">N vs P CV Performance (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="comp_forest">Covariate Forest Plot (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="comp_maps">Side-by-Side N vs P Maps</button>
-              <button class="fig-toggle-btn" data-fig="comp_rel">N:P Stoichiometry &amp; Quadrant</button>
-            </div>
-          </div>
-          <div id="fig-slot-cs5-audits"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Diagnostic &amp; Multi-Run Comparison Commands</span><button class="copy-btn" data-copy-target="code-cs5">Copy</button></div>
-            <pre id="code-cs5">Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn --fig-format=svg
-Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/results/det_0180_orn_rsn --dpi=300
-Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames,Humber --dpi=300</pre>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Station-to-Reach Snapping Geometry &amp; Catchment Insets</h3>
-            <div class="fig-toggle-bar" data-group="cs5-snap">
-              <button class="fig-toggle-btn active" data-fig="snap_overview">England Overview (300 DPI)</button>
-              <button class="fig-toggle-btn" data-fig="snap_thames">Thames Catchment &amp; Insets</button>
-              <button class="fig-toggle-btn" data-fig="snap_humber">Humber Catchment &amp; Insets</button>
-            </div>
-          </div>
-          <div id="fig-slot-cs5-snap"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
+        <div class="grid-2" style="margin-top:14px;">
+          <div class="interp-box" style="margin-top:0;">
+            <strong>What is Monitoring Bias &amp; How is it Calculated?</strong>
             <ul>
-              <li><strong>Statistically Significant Lowland Bias:</strong> Monitored `RSN` median Nitrate (`3.35 mg/L`) significantly exceeds the full-network predicted median (`2.06 mg/L`, Mann-Whitney $p = 5.1 \times 10^{-45}$)—proving naive sample averages overstate national nitrate pollution.</li>
-              <li><strong>Tight Geographic Snapping:</strong> `88.6%` of Humber and `83.6%` of Thames stations snap within `10 m` of an `ORN v2` reach (`2.3–3.1 m` median). Always inspect outliers above `150 m` before running local campaigns.</li>
+              <li><strong>Why it occurs:</strong> Surveillance sites (e.g. <code>RSN</code>) are disproportionately located on larger, lowland, higher-order rivers rather than small upland headwaters, so raw station averages can overstate national nutrient levels.</li>
+              <li><strong>How it is calculated:</strong> <code>05_descriptive_stats.R</code> compares observed station concentrations (<code>Obs Median</code>) against full-network S3N predictions across all <code>90,876</code> reaches (<code>Pred Median</code>) via the <strong>Predicted-to-Observed Median Ratio</strong> (<code>Pred / Obs</code>; values <code>&lt; 1.0</code> mean stations over-sample high-concentration reaches) and a two-sample <strong>Mann-Whitney U test</strong>.</li>
+            </ul>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
+            <strong>What is <code>N:P</code> Stoichiometry &amp; What Does it Tell Us?</strong>
+            <ul>
+              <li><strong>Definition:</strong> The atomic/molar ratio of Nitrate-N (<code>0117</code>) to Orthophosphate-P (<code>0180</code>) at each reach, computed as <code>Molar N:P = 2.21135 &times; (NO3-N / PO4-P)</code>.</li>
+              <li><strong>Limitation regimes:</strong> Diagnoses which nutrient limits algal and macrophyte growth: <strong>P-Limited</strong> (<code>&gt; 20:1</code>; excess N, P reduction is primary lever), <strong>Co-Limited</strong> (<code>10:1&ndash;20:1</code>; near-Redfield balance), and <strong>N-Limited</strong> (<code>&lt; 10:1</code>; low-nitrate upland headwaters or P-rich point-source corridors).</li>
             </ul>
           </div>
         </div>
@@ -551,13 +1038,116 @@ Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames,Humber --dp
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header"><h3 class="card-title">Representativeness Bias &amp; `N:P` Statistical Tests</h3></div>
-          <div id="cs5-bias-table" class="table-scroll"></div>
-          <div id="cs5-tests-table" class="table-scroll" style="margin-top:12px;"></div>
+          <div class="card-header">
+            <h3 class="card-title">Descriptive Stats &amp; Monitoring Bias</h3>
+            <div class="fig-toggle-bar" data-group="cs5-bias">
+              <button class="fig-toggle-btn active" data-fig="desc_grad">Stratified Gradients</button>
+              <button class="fig-toggle-btn" data-fig="desc_dist">Distributions &amp; Bias</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs5-bias"></div>
+          <div id="cs5-bias-table" class="table-scroll" style="margin-top:14px;"></div>
+          <div class="caveat-box" style="margin-top:12px;">
+            <strong>Reading the Representativeness Bias Table:</strong> Comparing the raw median across the <code>1,210</code> monitored <code>RSN</code> stations (<code>Obs Median = 3.349 mg/L</code>) against the S3N-predicted median across all <code>90,876</code> England reaches (<code>Pred Median = 2.059 mg/L</code>) yields a <code>Pred / Obs</code> ratio of <code>0.615</code>. This shows that unmonitored upland headwaters pull the true network median <code>38.5%</code> below the station median, confirmed as highly significant by the Mann-Whitney U test (<code>p &lt; 10<sup>&minus;44</sup></code>).
+          </div>
         </div>
+
         <div class="card">
-          <div class="card-header"><h3 class="card-title">Top Catchments Station Snapping Summary</h3></div>
-          <div id="cs5-snap-table" class="table-scroll"></div>
+          <div class="card-header">
+            <h3 class="card-title"><code>N:P</code> Cross-Run Comparison Visuals</h3>
+            <div class="fig-toggle-bar" data-group="cs5-np">
+              <button class="fig-toggle-btn active" data-fig="comp_cv">N vs P CV Performance</button>
+              <button class="fig-toggle-btn" data-fig="comp_forest">Covariate Forest Plot</button>
+              <button class="fig-toggle-btn" data-fig="comp_maps">Side-by-Side N vs P Maps</button>
+              <button class="fig-toggle-btn" data-fig="comp_rel">N:P Stoichiometry &amp; Quadrant</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs5-np"></div>
+          <div id="fig-explainer-cs5-np" class="caveat-box" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
+            <ul>
+              <li><strong>Statistically Significant Lowland Bias:</strong> Monitored <code>RSN</code> median Nitrate (<code>3.35 mg/L</code>) significantly exceeds the full-network predicted median (<code>2.06 mg/L</code>, Mann-Whitney <code>p = 5.1 &times; 10<sup>&minus;45</sup></code>)—proving naive sample averages overstate national nitrate pollution because headwaters are under-sampled relative to their topological abundance.</li>
+              <li><strong>Landscape &amp; N:P Coupling:</strong> Comparing Nitrate and Orthophosphate runs on the shared <code>90,876</code>-reach network isolates co-elevated agricultural/urban nutrient hotspots from geological or point-source-driven Phosphate corridors via formal Fisher z and Wald Z-tests.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><code>N:P</code> Cross-Run Statistical Tests</h3></div>
+          <div id="cs5-tests-table" class="table-scroll"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Descriptive Stats &amp; Multi-Run Comparison Commands</span><button class="copy-btn" data-copy-target="code-cs5">Copy</button></div>
+          <pre id="code-cs5">Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn --fig-format=svg
+Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/results/det_0180_orn_rsn</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         TAB 6B: CASE STUDY 11 - STATION-TO-REACH SNAPPING AUDITS
+         =================================================================== -->
+    <section id="tab-cs16" class="tab-panel">
+      <div class="hero-card">
+        <span class="hero-eyebrow">Case Study 11 · Station-to-Reach Snapping Geometry &amp; Outlier QC</span>
+        <h2>Station-to-Reach Snapping Audits (<code>ORN v2</code>)</h2>
+        <p>
+          Audits monitoring station-to-reach snapping accuracy and off-network outlier filtering across England, Thames, and Humber catchments (<code>06_station_snapping_diagnostics.R</code>).
+        </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>How Station-to-Reach Snapping Works</h4>
+          <ul>
+            <li><strong>2 km Spatial Hash Grid:</strong> Buckets station coordinates into <code>2 km &times; 2 km</code> cells so each of the <code>ORN v2</code> reaches only tests nearby candidate stations rather than scanning the full national dataset.</li>
+            <li><strong>Orthogonal Segment Projection:</strong> Projects each station orthogonally onto its nearest upstream-to-downstream polyline segment (<code>Fnode &rarr; Tnode</code>), recording the perpendicular snapping offset (<code>d</code> in metres) and cumulative distance along the reach (<code>along</code>) to compute exact hydrologic distance to the river mouth: <code>obs_up_dist_km = max(0, (Dist2Mth &minus; along) / 1000)</code>.</li>
+            <li><strong>Outlier Threshold Filtering (<code>--max-snap-dist=250</code>):</strong> Retains stations within <code>250 m</code> of a reach (<code>1,349 / 1,382</code> <code>RSN</code> stations, median <code>8.0 m</code>) and excludes off-network estuarine, canal, or pond monitors so they cannot corrupt dendritic Tail-Up/Tail-Down stream distances.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Station-to-Reach Snapping Geometry &amp; Catchment Insets</h3>
+            <div class="fig-toggle-bar" data-group="cs16-snap">
+              <button class="fig-toggle-btn active" data-fig="snap_overview">England Overview</button>
+              <button class="fig-toggle-btn" data-fig="snap_thames">Thames Catchment &amp; Insets</button>
+              <button class="fig-toggle-btn" data-fig="snap_humber">Humber Catchment &amp; Insets</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs16-snap"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
+            <ul>
+              <li><strong>Tight Geographic Snapping:</strong> <code>88.6%</code> of Humber and <code>83.6%</code> of Thames stations snap within <code>10 m</code> of an <code>ORN v2</code> reach (<code>2.3&ndash;3.1 m</code> median offset).</li>
+              <li><strong>Off-Network Outlier Filtering:</strong> Stations beyond the <code>250 m</code> snapping threshold are automatically flagged and excluded so estuarine, canal, or pond monitors do not corrupt dendritic Tail-Up/Tail-Down hydrological distances.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header"><h3 class="card-title">Top Catchments Station Snapping Summary</h3></div>
+        <div id="cs16-snap-table" class="table-scroll"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Station Snapping Diagnostic Commands</span><button class="copy-btn" data-copy-target="code-cs16">Copy</button></div>
+          <pre id="code-cs16">Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames,Humber</pre>
         </div>
       </div>
     </section>
@@ -568,10 +1158,17 @@ Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames,Humber --dp
     <section id="tab-cs6" class="tab-panel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 6 · Citizen Science Fusion (RSN + SSN + Earthwatch WaterBlitz)</span>
-        <h2>Equal-Source vs. Statutory-Favoured Co-Kriging (Nitrate &amp; Orthophosphate)</h2>
+        <h2>Equal-Source vs. Surveillance-Favoured Co-Kriging (Nitrate &amp; Orthophosphate)</h2>
         <p>
-          Ingests <code>44,982</code> England rows from <code>data/Waterblitz/</code> (<code>36,956</code> citizen sites, Tobit interval-censored via <code>format_custom_data.py</code>) and snaps them onto ORN v2 alongside statutory <code>RSN</code> + <code>SSN</code> monitors (<code>33,013</code> snapped stations across <code>8,346</code> active reaches and <code>268</code> catchments). We compare <strong>Equal Sources</strong> against <strong>Favoured RSN+SSN</strong> (<code>--prefer-source=rsn,ssn --source-weight=rsn:1,ssn:1,waterblitz:0.25</code>) for bivariate <code>0117</code> + <code>0180</code> Co-Kriging.
+          Ingests <code>44,982</code> England rows from <code>data/Waterblitz/</code> (<code>36,956</code> citizen sites, Tobit interval-censored via <code>format_custom_data.py</code>) and snaps them onto ORN v2 alongside EA surveillance <code>RSN</code> + <code>SSN</code> monitors (<code>33,013</code> snapped stations across <code>8,346</code> active reaches and <code>268</code> catchments). We compare <strong>Equal Sources</strong> against <strong>Favoured RSN+SSN</strong> (<code>--prefer-source=rsn,ssn --source-weight=rsn:1,ssn:1,waterblitz:0.25</code>) for bivariate <code>0117</code> + <code>0180</code> Co-Kriging.
         </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>Method Explainer: Equal Sources vs. Favoured RSN+SSN</h4>
+          <ul>
+            <li><strong>Equal Sources (<code>w = 1.0</code> for all networks):</strong> Pools <code>RSN</code>, <code>SSN</code>, and <code>WaterBlitz</code> observations with identical weight (<code>1.0</code>) and zero co-located priority. On shared reaches, high-volume citizen-science test-strip samples are averaged directly alongside EA surveillance laboratory measurements.</li>
+            <li><strong>Favoured RSN+SSN (<code>--prefer-source=rsn,ssn</code> + <code>--source-weight=rsn:1,ssn:1,waterblitz:0.25</code>):</strong> Combines <em>hard co-located priority</em> (dropping <code>2,903</code> Nitrate and <code>2,672</code> Phosphate WaterBlitz samples on the <code>384</code> reaches that also have <code>RSN</code>/<code>SSN</code> monitors) with <em>soft reliability weighting</em> on WaterBlitz-only reaches. Setting <code>waterblitz:0.25</code> injects an analytical variance penalty <code>V_wt = (1/0.25 &minus; 1)&tau;&sup2; = 3&tau;&sup2;</code> onto citizen measurements while keeping <code>RSN</code> and <code>SSN</code> at <code>w = 1.0</code> (<code>0&tau;&sup2;</code> penalty), preserving gap-filling coverage without diluting surveillance accuracy.</li>
+          </ul>
+        </div>
       </div>
 
       <div id="cs6-kpis" class="kpi-grid"></div>
@@ -587,13 +1184,56 @@ Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames,Humber --dp
               <button class="fig-toggle-btn" data-fig="wb_wt_0117">Favoured 0117 Map</button>
               <button class="fig-toggle-btn" data-fig="wb_eq_0180">Equal 0180 Map</button>
               <button class="fig-toggle-btn" data-fig="wb_wt_0180">Favoured 0180 Map</button>
-              <button class="fig-toggle-btn" data-fig="wb_snap_overview">RSN+SSN+WB Snapping</button>
             </div>
           </div>
           <div id="fig-slot-cs6-maps"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · WaterBlitz Formatting, ORN Snapping &amp; Dual Co-Kriging Runs</span><button class="copy-btn" data-copy-target="code-cs6">Copy</button></div>
-            <pre id="code-cs6"># 1. Format England WaterBlitz CSV with Tobit interval estimation
+          <div class="caveat-box" style="margin-top:12px;">
+            <strong>What the Difference Maps Show (<code>Favoured RSN+SSN &minus; Equal Sources</code>):</strong> Maps the reach-by-reach change across all <code>95,773</code> England reaches when EA surveillance <code>RSN+SSN</code> observations are prioritised and WaterBlitz is weighted at <code>0.25</code>. Positive shifts highlight co-located reaches and surrounding tributaries where removing citizen-science dilution lifts predictions back toward surveillance lab levels, while negative shifts show where surveillance anchors pull down isolated citizen-science spikes; surveillance-only corridors remain near zero (<code>r &gt; 0.99</code>).
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
+            <ul>
+              <li><strong>Co-Located Surveillance Dilution Corrected:</strong> Under Equal Sources, lower citizen-science medians (<code>1.415 mg/L</code> NO3-N, <code>0.0319 mg/L</code> PO4-P) pulled down the <code>384</code> co-located surveillance reaches (<code>0117</code> median <code>2.6232 &rarr; 3.4333 mg/L</code> under Favoured, mean shift <code>0.6252 mg/L</code>; <code>0180</code> median <code>0.0578 &rarr; 0.0645 mg/L</code>). Dropping <code>2,903</code> (<code>0117</code>) and <code>2,672</code> (<code>0180</code>) lower-priority citizen samples on shared reaches lets EA surveillance lab measurements anchor those locations.</li>
+              <li><strong>Targeted Precision Where Each Source Fits Best:</strong> Weighting WaterBlitz at <code>0.25</code> injects analytical variance penalty <code>V_wt = (1/0.25 - 1)&tau;&sup2; = 3&tau;&sup2;</code>, inflating Mean SE by <code>+253.58%</code> on WaterBlitz-only citizen reaches (<code>0.1746 &rarr; 0.6174</code> for <code>0117</code>; <code>+119.33%</code> for <code>0180</code>) while tightening co-located surveillance SE by <code>-46.70%</code> (<code>0117</code>) and <code>-49.93%</code> (<code>0180</code>). Across all <code>95,773</code> England reaches, mean Kriging SE drops <code>-14.53%</code> (<code>0117</code>: <code>0.9306 &rarr; 0.7954</code>) and <code>-23.43%</code> (<code>0180</code>: <code>1.1020 &rarr; 0.8438</code>).</li>
+              <li><strong>Cross-Covariance &amp; Threshold Priority Mapping:</strong> Because WaterBlitz kit noise is de-weighted, England latent total cross-correlation strengthens from <code>+0.2989</code> (Equal) to <code>+0.4310</code> (Favoured), and Uncertain Phosphate reaches (<code>0.20 &le; P &le; 0.80</code> at <code>0.069 mg/L</code>) drop from <code>48,802 (51.0%)</code> to <code>39,969 (41.7%)</code>. On surveillance-only reaches (<code>1,343</code>), predictions agree closely (<code>r = 0.9953</code> NO3-N, <code>r = 0.9929</code> PO4-P), whereas WaterBlitz-only reaches diverge sharply on Phosphate compliance tiering (<code>30.84%</code> tier match) where kit quantification noise meets the strict <code>0.069 mg/L</code> threshold.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Multi-Stratum Diagnostics &amp; Cross-Covariance (SVG)</h3>
+            <div class="fig-toggle-bar" data-group="cs6-charts">
+              <button class="fig-toggle-btn active" data-fig="wb_comp_svg">Equal vs. Favoured Summary</button>
+              <button class="fig-toggle-btn" data-fig="wb_eq_xcorr">Equal Cross-Correlation</button>
+              <button class="fig-toggle-btn" data-fig="wb_wt_xcorr">Favoured Cross-Correlation</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs6-charts"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Dual Cross-Validation &amp; Latent Cross-Correlation Shifts</h3></div>
+          <div id="cs6-cv-table" class="table-scroll"></div>
+          <div id="cs6-cov-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header"><h3 class="card-title">Stratified Prediction, Kriging SE &amp; Tier Agreement (95,773 Reaches)</h3></div>
+        <div id="cs6-reach-table" class="table-scroll"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · WaterBlitz Formatting, ORN Snapping &amp; Dual Co-Kriging Runs</span><button class="copy-btn" data-copy-target="code-cs6">Copy</button></div>
+          <pre id="code-cs6"># 1. Format England WaterBlitz CSV with Tobit interval estimation
 python3 scripts/format_custom_data.py data/Waterblitz \
   --source-name=waterblitz --source-label="Earthwatch Waterblitz" \
   --filter="Country=England" --val-col="Nitrate (mg/L),Phosphate (mg/L)" \
@@ -604,49 +1244,16 @@ python3 scripts/01_preprocess_orn.py --source=rsn+ssn+waterblitz_tobit --max-sna
 
 # 3. Co-Kriging Run 1: Equal Sources
 Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 \
-  --source=rsn+ssn+waterblitz_tobit --threshold=uk --dpi=300 --omp=4 --out-dir=output/cs6_equal
+  --source=rsn+ssn+waterblitz_tobit --threshold=uk --out-dir=output/cs6_equal
 
-# 4. Co-Kriging Run 2: Statutory Priority &amp; 4x Variance Inflation on WaterBlitz
+# 4. Co-Kriging Run 2: Surveillance Priority (RSN+SSN) &amp; 4x Variance Inflation on WaterBlitz
 Rscript scripts/run_s3n_cokriging.R --targets=0117,0180 \
   --source=rsn+ssn+waterblitz_tobit --prefer-source=rsn,ssn \
-  --source-weight=rsn:1,ssn:1,waterblitz:0.25 --threshold=uk --dpi=300 --omp=4 \
+  --source-weight=rsn:1,ssn:1,waterblitz:0.25 --threshold=uk \
   --out-dir=output/cs6_weighted
 
 # 5. Quantitative &amp; spatial comparison across reach strata
-Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Multi-Stratum Diagnostics &amp; Cross-Covariance (SVG)</h3>
-            <div class="fig-toggle-bar" data-group="cs6-charts">
-              <button class="fig-toggle-btn active" data-fig="wb_comp_svg">Equal vs. Favoured Summary (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="wb_eq_xcorr">Equal Cross-Correlation (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="wb_wt_xcorr">Favoured Cross-Correlation (SVG)</button>
-            </div>
-          </div>
-          <div id="fig-slot-cs6-charts"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
-            <ul>
-              <li><strong>Co-Located Statutory Dilution Corrected:</strong> Under Equal Sources, lower citizen-science medians (<code>1.415 mg/L</code> NO3-N, <code>0.0319 mg/L</code> PO4-P) pulled down the <code>384</code> co-located statutory reaches (<code>0117</code> median <code>2.6232 &rarr; 3.4333 mg/L</code> under Favoured, mean shift <code>0.6252 mg/L</code>; <code>0180</code> median <code>0.0578 &rarr; 0.0645 mg/L</code>). Dropping <code>2,903</code> (<code>0117</code>) and <code>2,672</code> (<code>0180</code>) lower-priority citizen samples on shared reaches lets regulatory lab measurements anchor those locations.</li>
-              <li><strong>Targeted Precision Where Each Source Fits Best:</strong> Weighting WaterBlitz at <code>0.25</code> injects analytical variance penalty <code>V_wt = (1/0.25 - 1)&tau;&sup2; = 3&tau;&sup2;</code>, inflating Mean SE by <code>+253.58%</code> on WaterBlitz-only citizen reaches (<code>0.1746 &rarr; 0.6174</code> for <code>0117</code>; <code>+119.33%</code> for <code>0180</code>) while tightening co-located statutory SE by <code>-46.70%</code> (<code>0117</code>) and <code>-49.93%</code> (<code>0180</code>). Across all <code>95,773</code> England reaches, mean Kriging SE drops <code>-14.53%</code> (<code>0117</code>: <code>0.9306 &rarr; 0.7954</code>) and <code>-23.43%</code> (<code>0180</code>: <code>1.1020 &rarr; 0.8438</code>).</li>
-              <li><strong>Cross-Covariance &amp; Threshold Priority Mapping:</strong> Because WaterBlitz kit noise is de-weighted, England latent total cross-correlation strengthens from <code>+0.2989</code> (Equal) to <code>+0.4310</code> (Favoured), and Uncertain Phosphate reaches (<code>0.20 &le; P &le; 0.80</code> at <code>0.069 mg/L</code>) drop from <code>48,802 (51.0%)</code> to <code>39,969 (41.7%)</code>. On statutory-only reaches (<code>1,343</code>), predictions agree closely (<code>r = 0.9953</code> NO3-N, <code>r = 0.9929</code> PO4-P), whereas WaterBlitz-only reaches diverge sharply on Phosphate compliance tiering (<code>30.84%</code> tier match) where kit quantification noise meets the strict <code>0.069 mg/L</code> threshold.</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header"><h3 class="card-title">Stratified Prediction, Kriging SE &amp; Tier Agreement (95,773 Reaches)</h3></div>
-          <div id="cs6-reach-table" class="table-scroll"></div>
-        </div>
-        <div class="card">
-          <div class="card-header"><h3 class="card-title">Dual Cross-Validation &amp; Latent Cross-Correlation Shifts</h3></div>
-          <div id="cs6-cv-table" class="table-scroll"></div>
-          <div id="cs6-cov-table" class="table-scroll" style="margin-top:14px;"></div>
+Rscript scripts/07_compare_cokriging_runs.R</pre>
         </div>
       </div>
     </section>
@@ -656,7 +1263,7 @@ Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
          =================================================================== -->
     <section id="tab-cs7" class="tab-panel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 8 · Response Scale Transformations (Nitrate-N 0117)</span>
+        <span class="hero-eyebrow">Case Study 2 · Response Scale Transformations (Nitrate-N 0117)</span>
         <h2>Raw vs. Log vs. Square-Root vs. Profile-MLE Box-Cox on England Nitrate</h2>
         <p>
           Evaluates four response transformations on identical England RSN Nitrate observations (<code>1,210</code> stations, <code>90,876</code> reaches, <code>267</code> catchments, management threshold <code>11.3 mg/L</code>): untransformed <code>--transform=none</code>, natural log <code>--transform=log</code>, square root <code>--transform=sqrt</code>, and Profile-MLE Box-Cox <code>--transform=boxcox</code> (which estimates <code>&lambda; = 0.50</code> from the data). Compares model-scale CV accuracy, raw-scale prediction error, Gaussian residual symmetry, physical positivity, and 5-tier threshold stability.
@@ -678,44 +1285,11 @@ Rscript scripts/07_compare_cokriging_runs.R --dpi=300</pre>
             </div>
           </div>
           <div id="fig-slot-cs7-maps"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Four Nitrate Transform Runs &amp; Automated Multi-Run Comparison</span><button class="copy-btn" data-copy-target="code-cs7">Copy</button></div>
-            <pre id="code-cs7"># 1. Untransformed Raw mg/L (linear scale, no positivity bound)
-Rscript scripts/run_s3n_determinand.R 0117 --transform=none --threshold=uk --dpi=300 --omp=4
-
-# 2. Natural Log ln(y) (baseline multiplicative / right-skew standard)
-Rscript scripts/run_s3n_determinand.R 0117 --transform=log --threshold=uk --dpi=300 --omp=4
-
-# 3. Fixed Square Root sqrt(y) (power lambda = 0.50)
-Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --threshold=uk --dpi=300 --omp=4
-
-# 4. Profile-MLE Box-Cox (automatically selects lambda = 0.50 on 0117)
-Rscript scripts/run_s3n_determinand.R 0117 --transform=boxcox --threshold=uk --dpi=300 --omp=4
-
-# 5. Cross-transform comparison &amp; custom 6-panel transform diagnostics
-Rscript scripts/04_compare_model_runs.R \
-  output/results/det_0117_orn_rsn_trans_raw \
-  output/results/det_0117_orn_rsn \
-  output/results/det_0117_orn_rsn_trans_sqrt \
-  output/results/det_0117_orn_rsn_trans_boxcox_lam0.50 \
-  --labels="Raw (none),Log (ln),Sqrt,Box-Cox (0.50)" \
-  --out=output/comparisons/cs7_transforms_0117
-Rscript scripts/08_compare_transforms.R --dpi=300</pre>
-          </div>
         </div>
 
         <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Cross-Scale Accuracy, Skew &amp; Threshold Impact</h3>
-            <div class="fig-toggle-bar" data-group="cs7-charts">
-              <button class="fig-toggle-btn active" data-fig="tr_comp_svg">6-Panel Transform Diagnostics (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="tr_pred_dens">Back-Transformed Density &amp; Bounds</button>
-              <button class="fig-toggle-btn" data-fig="tr_param_forest">Variance Component &amp; Parameter Shifts</button>
-            </div>
-          </div>
-          <div id="fig-slot-cs7-charts"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Why Untransformed <code>Raw (none)</code> Breaks Physical Positivity:</strong> On native <code>mg/L</code>, <code>Raw</code> reaches <code>R&sup2;_Raw = 0.5335</code> only because OLS and Kriging minimize raw squared error directly. In exchange, it produces <strong>47 negative CV predictions</strong> and <strong>6,349 negative England reaches (6.99% of the network, min -4.817 mg/L, P05 -0.288 mg/L)</strong> in cleaner upland catchments (Lake District, Pennines, Devon), alongside strongly right-skewed CV residuals (<code>+1.398</code>).</li>
               <li><strong>Why <code>Log (ln)</code> Tops Model-Scale R&sup2; Yet Shows Median Back-Transform Bias:</strong> Natural log leads model-scale CV (<code>R&sup2;_Model = 0.6784</code>, zero negatives) and sets the baseline rank ordering, but over-compresses Nitrate into left-skewed residuals (<code>-0.904</code>). Because exponentiating Gaussian log-predictions <code>exp(&mu;)</code> targets the conditional <em>median</em> rather than the arithmetic <em>mean</em> (Jensen&rsquo;s inequality), raw-scale bias reaches <code>-1.0078 mg/L</code> (<code>R&sup2;_Raw = 0.3859</code>, <code>RMSE_Raw = 2.7513</code>) and wider log back-transform intervals push Uncertain reaches around <code>11.3 mg/L</code> up to <code>9.22%</code> (vs <code>1.54%&ndash;2.15%</code> for the other transforms).</li>
@@ -727,12 +1301,52 @@ Rscript scripts/08_compare_transforms.R --dpi=300</pre>
 
       <div class="grid-2">
         <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Cross-Scale Accuracy, Skew &amp; Threshold Impact</h3>
+            <div class="fig-toggle-bar" data-group="cs7-charts">
+              <button class="fig-toggle-btn active" data-fig="tr_comp_svg">6-Panel Transform Diagnostics</button>
+              <button class="fig-toggle-btn" data-fig="tr_pred_dens">Back-Transformed Density &amp; Bounds</button>
+              <button class="fig-toggle-btn" data-fig="tr_param_forest">Variance Component &amp; Parameter Shifts</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs7-charts"></div>
+        </div>
+
+        <div class="card">
           <div class="card-header"><h3 class="card-title">National Transform Comparison (90,876 England Reaches)</h3></div>
           <div id="cs7-summary-table" class="table-scroll"></div>
+          <div id="cs7-cv-table" class="table-scroll" style="margin-top:14px;"></div>
+          <div class="caveat-box">
+            <strong>12 Built-In Transforms &amp; 4 Normalisations:</strong> <code>log</code>, <code>log10</code>, <code>log1p</code>, <code>sqrt</code>, <code>cbrt</code>, <code>fourthrt</code>, <code>reciprocal</code>, <code>boxcox</code> (Profile MLE &lambda;), <code>yeojohnson</code>, <code>asin</code>, <code>logit</code>, <code>none</code> + Taylor/Duan back-transformation, plus <code>zscore</code>, <code>robust_zscore</code>, <code>minmax</code>, <code>percentile</code>.
+          </div>
         </div>
-        <div class="card">
-          <div class="card-header"><h3 class="card-title">Catchment-Stratified CV Performance Across Transforms</h3></div>
-          <div id="cs7-cv-table" class="table-scroll"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Four Nitrate Transform Runs &amp; Automated Multi-Run Comparison</span><button class="copy-btn" data-copy-target="code-cs7">Copy</button></div>
+          <pre id="code-cs7"># 1. Untransformed Raw mg/L (linear scale, no positivity bound)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=none --threshold=uk
+
+# 2. Natural Log ln(y) (baseline multiplicative / right-skew standard)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=log --threshold=uk
+
+# 3. Fixed Square Root sqrt(y) (power lambda = 0.50)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --threshold=uk
+
+# 4. Profile-MLE Box-Cox (automatically selects lambda = 0.50 on 0117)
+Rscript scripts/run_s3n_determinand.R 0117 --transform=boxcox --threshold=uk
+
+# 5. Cross-transform comparison &amp; custom 6-panel transform diagnostics
+Rscript scripts/04_compare_model_runs.R \
+  output/results/det_0117_orn_rsn_trans_raw \
+  output/results/det_0117_orn_rsn \
+  output/results/det_0117_orn_rsn_trans_sqrt \
+  output/results/det_0117_orn_rsn_trans_boxcox_lam0.50 \
+  --labels="Raw (none),Log (ln),Sqrt,Box-Cox (0.50)" \
+  --out=output/comparisons/cs7_transforms_0117
+Rscript scripts/08_compare_transforms.R</pre>
         </div>
       </div>
     </section>
@@ -742,11 +1356,19 @@ Rscript scripts/08_compare_transforms.R --dpi=300</pre>
          =================================================================== -->
     <section id="tab-cs8" class="tab-panel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 10 · Active-Learning Optimal Monitoring Design (<code>--design-sites=50</code>)</span>
+        <span class="hero-eyebrow">Case Study 12 · Active-Learning Optimal Monitoring Design (<code>--design-sites=50</code>)</span>
         <h2>Pinpointing Uncertainty Gaps &amp; Highest-Impact Station Placements (Nitrate 0117)</h2>
         <p>
           Runs our OpenMP C++ greedy Schur-complement solver (<code>C_s3n_optimal_design</code>) across <code>90,876</code> England ORN v2 reaches (<code>1,210</code> existing RSN stations, <code>267</code> catchments) as well as independent Humber, Thames, and Severn optimizations. Evaluates both stream-network covariance (Tail-Up + Tail-Down) and Euclidean correlation so new stations maximize network-wide uncertainty reduction without clustering next to redundant reaches.
         </p>
+        <div class="interp-box" style="margin-top:14px;">
+          <h4>How the C++ Greedy Schur-Complement Solver Works</h4>
+          <ul>
+            <li><strong>Why not just pick the highest-SE reaches?</strong> Placing gauges solely where Kriging Standard Error (<code>SE</code>) is highest can waste visits on short, isolated headwater twigs or cluster multiple new sites onto the same stream.</li>
+            <li><strong>What the Schur-complement calculation does:</strong> Using the fitted hybrid covariance (<code>Tail-Up</code> + <code>Tail-Down</code> + <code>Euclidean</code>), the Schur complement computes how much observing a single candidate reach <code>c</code> (with nugget variance <code>&tau;&sup2;</code>) reduces prediction variance across <em>all</em> connected downstream and neighbouring reaches combined.</li>
+            <li><strong>Sequential greedy conditioning:</strong> In parallel via OpenMP, <code>C_s3n_optimal_design</code> scores all unmonitored candidate reaches (thinned to <code>4,000</code> evenly spaced reaches on national domains), selects site <code>#1</code> with the largest total variance drop, and updates the remaining uncertainty map via a rank-1 Schur-complement conditioning step before picking <code>#2</code> through <code>#50</code>&mdash;preventing redundant clustering.</li>
+          </ul>
+        </div>
       </div>
 
       <div id="cs8-kpis" class="kpi-grid"></div>
@@ -763,24 +1385,18 @@ Rscript scripts/08_compare_transforms.R --dpi=300</pre>
             </div>
           </div>
           <div id="fig-slot-cs8-design"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash · Active-Learning Optimal Monitoring Placement &amp; Gap Mapping</span><button class="copy-btn" data-copy-target="code-cs8">Copy</button></div>
-            <pre id="code-cs8"># 1. Fit All England + core basins &amp; rank top 50 new monitoring reaches per domain
-Rscript scripts/run_s3n_determinand.R 0117 --design-sites=50 --threshold=uk --dpi=300 --omp=4
-
-# 2. Target a specific catchment (--basin=Eden) for top 15 local additions
-Rscript scripts/run_s3n_determinand.R 0117 --basin=Eden --design-sites=15 --threshold=uk --dpi=300
-
-# 3. Re-render optimal_monitoring_design_*.csv maps cleanly as scalable SVG
-Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-format=svg</pre>
+          <div class="caveat-box" style="margin-top:12px;">
+            <strong>What Panels B &amp; C Show:</strong>
+            <ul style="margin:6px 0 0 18px; padding:0;">
+              <li><strong>Panel B (Variance Reduction Curve):</strong> The crimson curve tracks <em>Cumulative % Variance Reduced</em> as stations <code>#1&ndash;#50</code> are added, pale blue bars show each site's marginal <code>%</code> gain, and the dashed teal curve traces <em>Mean Kriging SE</em> (<code>Mean_SE_Before &rarr; Mean_SE_After</code>)&mdash;revealing the diminishing-returns elbow where additional gauges begin to plateau.</li>
+              <li><strong>Panel C (Top-12 Priority Reaches):</strong> A horizontal bar chart ranking candidates <code>#1</code> to <code>#12</code> with each reach's <code>RivID</code>, <code>CatchID</code>, Strahler stream order (<code>O</code>), local baseline Kriging SE, and individual <code>% dV</code> variance reduction for field reconnaissance.</li>
+            </ul>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-header"><h3 class="card-title">Per-Domain Uncertainty Reduction Summary (<code>K = 50</code>)</h3></div>
-          <div id="cs8-design-summary-table" class="table-scroll"></div>
-          <div class="interp-box" style="margin-top:16px;">
-            <h4>Suggested Interpretation</h4>
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>80.74% Evaluated Variance Drop from +50 Stations:</strong> Starting from <code>1,210</code> England RSN stations (mean Kriging SE <code>0.7961</code> log units), adding <code>50</code> optimally placed sites cuts Mean Kriging SE by <strong>-59.5%</strong> (<code>0.7961 &rarr; 0.3228</code>). Independent <code>K = 50</code> basin designs cut variance by <code>32.31%</code> in Humber, <code>43.55%</code> in Thames, and <code>43.01%</code> in Severn.</li>
               <li><strong>Schur-Complement De-Duplication:</strong> Updating <code>v_eval</code> and <code>v_cand</code> in place after every selection prevents picking neighbouring tributaries on the same river, dispersing Top-10 picks across Humber (<code>#1 Riv 18175</code>, <code>+4.58% dV</code>), Eden (<code>#2 Riv 155540</code>, <code>+3.90% dV</code>), Thames (<code>#3 Riv 137890</code>, <code>+3.74% dV</code>), Severn (<code>#4 Riv 110339</code>, <code>+3.58% dV</code>), and Tweed/Border (<code>#5 Riv 149271</code>, <code>+3.50% dV</code>).</li>
@@ -790,9 +1406,33 @@ Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-
         </div>
       </div>
 
-      <div class="card" style="margin-top:16px;">
-        <div class="card-header"><h3 class="card-title">Top-20 Priority Candidate Reaches Across England (Ranked by Schur-Complement Variance Reduction)</h3></div>
-        <div id="cs8-design-table" class="table-scroll"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Per-Domain Uncertainty Reduction Summary (<code>K = 50</code>)</h3></div>
+          <div id="cs8-design-summary-table" class="table-scroll"></div>
+          <div class="caveat-box" style="margin-top:12px;">
+            <strong>What This Shows &amp; Means:</strong> Each row summarises the end state after adding <code>K = 50</code> greedily selected stations in that domain independently. <strong>Rank-50 Reach</strong> &amp; <strong>Order</strong> identify the 50th site added (and its Strahler stream order); <strong>Cum Var Drop</strong> shows the total percentage of evaluated network prediction variance eliminated across the domain (<code>80.74%</code> for All England); and <strong>Mean SE Final</strong> gives the resulting domain-wide mean Kriging Standard Error in model units (dropping from <code>0.7961</code> to <code>0.3228</code> across England).
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Top-20 Priority Candidate Reaches Across England (Ranked by Schur-Complement Variance Reduction)</h3></div>
+          <div id="cs8-design-table" class="table-scroll"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Case-Study Command Examples</h3></div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash · Active-Learning Optimal Monitoring Placement &amp; Gap Mapping</span><button class="copy-btn" data-copy-target="code-cs8">Copy</button></div>
+          <pre id="code-cs8"># 1. Fit All England + core basins &amp; rank top 50 new monitoring reaches per domain
+Rscript scripts/run_s3n_determinand.R 0117 --design-sites=50 --threshold=uk
+
+# 2. Target a specific catchment (--basin=Eden) for top 15 local additions
+Rscript scripts/run_s3n_determinand.R 0117 --basin=Eden --design-sites=15 --threshold=uk
+
+# 3. Re-render optimal_monitoring_design_*.csv maps cleanly as scalable SVG
+Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-format=svg</pre>
+        </div>
       </div>
     </section>
 
@@ -801,7 +1441,7 @@ Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-
          ================================================================== -->
     <section id="tab-cs9" class="tab-panel" role="tabpanel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 2 &middot; National Univariate Ecological Regression Kriging</span>
+        <span class="hero-eyebrow">Case Study 3 &middot; National Univariate Ecological Regression Kriging</span>
         <h2>WHPT Taxon Richness (<code>whpt_ntaxa</code>): Linear S3N vs. Non-Linear <code>GAM + S3N</code></h2>
         <p>
           Demonstrates full national (<code>90,876</code> reaches) and regional basin (<code>Humber</code>, <code>Thames</code>, <code>Severn</code>) modelling on EA River Surveillance Network (<code>RSN</code>) macroinvertebrate <code>whpt_ntaxa</code> samples (<code>3,408</code> samples across <code>1,313</code> sites; <code>1,160</code> England RSN observed reaches; <code>0%</code> censored) using <code>--reverse-color</code> (blue = high richness, red = low richness), comparing linear fixed effects against REML-penalized cubic regression splines (<code>--trend=gam</code>).
@@ -813,40 +1453,21 @@ Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --fig-
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Case-Study Command Examples</h3>
-            <span class="pill pill-blue">Univariate + Non-Linear Trends</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash &middot; Standard Joint S3N, GAM &amp; Robust Z-Score Variants</span><button class="copy-btn" data-copy-target="code-cs9">Copy</button></div>
-            <pre id="code-cs9"># 1. Standard Linear Joint (TU + TD + Euclidean) WHPT N-Taxa at 300 DPI
-Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --reverse-color --dpi=300 --omp=4
-
-# 2. Non-Linear REML Spline Trend (GAM + S3N)
-Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --trend=gam --reverse-color --dpi=300 --omp=4
-
-# 3. Fast Robust Z-Score Anomaly Maps &amp; Vector SVG Diagnostics (from saved CSVs)
-Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_rsn --norm=robust_zscore --reverse-color --dpi=300
-Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_rsn --fig-format=svg --reverse-color</pre>
-          </div>
-          <div id="cs9-r2-svg" class="svg-panel"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
             <h3 class="card-title">National N-Taxa Map, Basin Zoom &amp; Robust Z-Score</h3>
             <div class="fig-toggle-bar" data-group="cs9-map">
-              <button class="fig-toggle-btn active" data-fig="ntaxa_england">England Linear (300 DPI)</button>
+              <button class="fig-toggle-btn active" data-fig="ntaxa_england">England Linear</button>
               <button class="fig-toggle-btn" data-fig="ntaxa_gam_england">England GAM+S3N</button>
               <button class="fig-toggle-btn" data-fig="ntaxa_z_england">England Robust Z-Score</button>
-              <button class="fig-toggle-btn" data-fig="ntaxa_z_humber">Humber Robust Z-Score</button>
-              <button class="fig-toggle-btn" data-fig="ntaxa_z_thames_severn">Thames &amp; Severn Z-Score</button>
               <button class="fig-toggle-btn" data-fig="ntaxa_humber">Humber Basin</button>
               <button class="fig-toggle-btn" data-fig="ntaxa_thames_severn">Thames &amp; Severn</button>
             </div>
           </div>
           <div id="fig-slot-cs9-map"></div>
-          <div class="interp-box">
-            <h4>Suggested Interpretation</h4>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Network Structure Doubles Explanatory Power:</strong> Non-spatial OLS explains <code>R&sup2; = 0.1371</code> of All-England taxon richness variance (<code>RMSE = 5.8486</code> taxa). Joint Additive S3N (<code>TU + TD + Euc</code>) lifts CV accuracy to <code>R&sup2; = 0.2648</code> (<code>RMSE = 5.3985</code> taxa), partitioning variance across Tail-Up (<code>10.91</code>), Tail-Down (<code>8.35</code>), Euclidean (<code>5.86</code>), and nugget (<code>8.56</code>).</li>
               <li><strong>Robust Z-Score View (<code>--norm=robust_zscore</code>):</strong> Standardizes predictions as <code>(x &minus; median) / (1.4826 &times; MAD)</code> so richness anomalies stand out on one symmetric dimensionless scale across England, Humber, Thames, and Severn.</li>
@@ -862,17 +1483,37 @@ Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_
           <div class="card-header">
             <h3 class="card-title">4-Panel Diagnostics &amp; Cross-Validation</h3>
             <div class="fig-toggle-bar" data-group="cs9-diag">
-              <button class="fig-toggle-btn active" data-fig="ntaxa_diag">Linear S3N (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="ntaxa_gam_diag">GAM+S3N (SVG)</button>
+              <button class="fig-toggle-btn active" data-fig="ntaxa_diag">Linear S3N</button>
+              <button class="fig-toggle-btn" data-fig="ntaxa_gam_diag">GAM+S3N</button>
             </div>
           </div>
           <div id="fig-slot-cs9-diag"></div>
+          <div id="cs9-r2-svg" class="svg-panel" style="margin-top:14px;"></div>
         </div>
 
         <div class="card">
           <div class="card-header"><h3 class="card-title">5-Fold CV &amp; Covariate Effects (All England)</h3></div>
           <div id="cs9-cv-table" class="table-scroll"></div>
           <div id="cs9-param-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">Univariate + Non-Linear Trends</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash &middot; Standard Joint S3N, GAM &amp; Robust Z-Score Variants</span><button class="copy-btn" data-copy-target="code-cs9">Copy</button></div>
+          <pre id="code-cs9"># 1. Standard Linear Joint (TU + TD + Euclidean) WHPT N-Taxa at 300 DPI
+Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --reverse-color
+
+# 2. Non-Linear REML Spline Trend (GAM + S3N)
+Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --trend=gam --reverse-color
+
+# 3. Fast Robust Z-Score Anomaly Maps &amp; Vector SVG Diagnostics (from saved CSVs)
+Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_rsn --norm=robust_zscore --reverse-color
+Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_rsn --fig-format=svg --reverse-color</pre>
         </div>
       </div>
     </section>
@@ -882,7 +1523,7 @@ Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_
          ================================================================== -->
     <section id="tab-cs10" class="tab-panel" role="tabpanel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 4 &middot; Multi-Approach Eutrophication Synthesis</span>
+        <span class="hero-eyebrow">Case Study 7 &middot; Multi-Approach Eutrophication Synthesis</span>
         <h2>Eutrophication Modelling: Driver&ndash;Response Co-Kriging, Non-Linear GAM &amp; Seasonal DO</h2>
         <p>
           Evaluates three complementary ways to model river eutrophication across <code>90,876</code> England reaches using nutrient pressures (Orthophosphate <code>0180</code>, Nitrate <code>0117</code>), primary-producer response (Macrophyte Nutrient Index <code>rmni</code>, <code>1,687</code> samples across <code>1,098</code> reaches), and seasonal oxygen sag (Dissolved Oxygen <code>9901</code> % saturation, <code>20,915</code> samples). Compares cross-validated accuracy, spatial concordance, and practical trade-offs across all three paradigms.
@@ -924,44 +1565,48 @@ Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Model Benchmark &amp; Reproducible CLI</h3>
-            <span class="pill pill-blue">RMNI CV R&sup2; &amp; P&ndash;RMNI Coupling</span>
+            <h3 class="card-title">Eutrophication Maps</h3>
+            <div class="fig-toggle-bar" data-group="cs10-map">
+              <button class="fig-toggle-btn active" data-fig="eut_cokrig_rmni">Co-Kriged RMNI</button>
+              <button class="fig-toggle-btn" data-fig="eut_cokrig_0180">Co-Kriged Ortho-P</button>
+              <button class="fig-toggle-btn" data-fig="eut_rmni_gam">RMNI GAM+S3N</button>
+              <button class="fig-toggle-btn" data-fig="eut_rmni_linear">RMNI Linear S3N</button>
+              <button class="fig-toggle-btn" data-fig="eut_p_rmni_maps">P vs RMNI Maps</button>
+            </div>
           </div>
-          <div id="cs10-r2-svg" class="svg-panel" style="margin-bottom:14px;"></div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash &middot; All 3 Eutrophication Modelling Approaches</span><button class="copy-btn" data-copy-target="code-cs10">Copy</button></div>
-            <pre id="code-cs10"># Approach 1: Multivariate Driver-Response Factor-LMC Co-Kriging (P + N + RMNI)
-Rscript scripts/run_s3n_cokriging.R --targets=wq:0180,wq:0117,macrophytes:rmni --method=lmc --dpi=300 --omp=4
-
-# Approach 2: Non-Linear GAM + S3N vs. Linear S3N for Macrophyte RMNI
-Rscript scripts/run_s3n_determinand.R rmni --dataset=macrophytes --dpi=300 --omp=4
-Rscript scripts/run_s3n_determinand.R rmni --dataset=macrophytes --trend=gam --dpi=300 --omp=4
-
-# Approach 3: Seasonal Dissolved Oxygen (--by=season) &amp; Orthophosphate vs. RMNI Coupling
-Rscript scripts/run_s3n_determinand.R 9901 --by=season --st-borrow --reverse-color --dpi=300 --omp=4
-Rscript scripts/04_compare_model_runs.R output/results/det_0180_orn_rsn output/results/macrophytes_rmni_orn_rsn \
-  --labels="Orthophosphate (0180),Macrophyte RMNI" --out=output/results/compare_eutrophication_p_rmni</pre>
-          </div>
+          <div id="fig-slot-cs10-map"></div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Eutrophication Maps, Cross-Correlations &amp; Seasonal DO</h3>
-            <div class="fig-toggle-bar" data-group="cs10-map">
-              <button class="fig-toggle-btn active" data-fig="eut_cokrig_rmni">Co-Kriged RMNI</button>
-              <button class="fig-toggle-btn" data-fig="eut_cokrig_0180">Co-Kriged Ortho-P</button>
-              <button class="fig-toggle-btn" data-fig="eut_cokrig_xcorr">LMC Cross-Corr</button>
-              <button class="fig-toggle-btn" data-fig="eut_rmni_gam">RMNI GAM+S3N</button>
-              <button class="fig-toggle-btn" data-fig="eut_rmni_linear">RMNI Linear S3N</button>
-              <button class="fig-toggle-btn" data-fig="eut_p_rmni_maps">P vs RMNI Maps</button>
+            <h3 class="card-title">Cross-Correlations &amp; P&ndash;RMNI Coupling</h3>
+            <div class="fig-toggle-bar" data-group="cs10-xcorr">
+              <button class="fig-toggle-btn active" data-fig="eut_cokrig_xcorr">LMC Cross-Corr</button>
               <button class="fig-toggle-btn" data-fig="eut_p_rmni_rel">P&ndash;RMNI Scatter</button>
-              <button class="fig-toggle-btn" data-fig="eut_do_season_grid">DO 4-Season Grid</button>
+            </div>
+          </div>
+          <div id="fig-slot-cs10-xcorr"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Seasonal Dissolved Oxygen (DO)</h3>
+            <div class="fig-toggle-bar" data-group="cs10-do">
+              <button class="fig-toggle-btn active" data-fig="eut_do_season_grid">DO 4-Season Grid</button>
               <button class="fig-toggle-btn" data-fig="eut_do_summer">Summer DO Sag</button>
             </div>
           </div>
-          <div id="fig-slot-cs10-map"></div>
-          <div class="interp-box">
-            <h4>Which Model Performs Best?</h4>
+          <div id="fig-slot-cs10-do"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+            <span class="pill pill-blue">Which Model Performs Best?</span>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Highest National RMNI Accuracy &mdash; GAM + S3N (Approach 2):</strong> Achieves All-England CV <code>R&sup2; = 0.7607</code> (<code>RMSE = 0.6846</code>), beating Linear Joint S3N (<code>0.7398</code>, <code>RMSE = 0.7139</code>), non-spatial GAM (<code>0.7319</code>), and Linear OLS (<code>0.6289</code>). Non-linear splines capture catchment size and slope thresholds cleanly.</li>
               <li><strong>Best Regional &amp; Gap-Fill Performance &mdash; LMC Co-Kriging (Approach 1):</strong> Nearly ties GAM nationally when nutrients are known (<em>Aux-Aided</em> <code>R&sup2; = 0.7580</code>, <code>RMSE = 0.6884</code>) and <strong>dominates in sparse basins</strong>: in Thames (<code>n = 99</code>), Univariate S3N collapses (<code>R&sup2; = -0.2671</code>) while Co-Kriging rescues RMNI to <code>0.2393</code> (<em>All-Holdout</em>) and <code>0.3165</code> (<em>Aux-Aided</em>); in Severn, RMNI rises from <code>0.1190</code> to <code>0.4381</code>. Learned Tail-Down residual correlations are strong (<code>r = +0.752</code> P&ndash;RMNI, <code>+0.790</code> N&ndash;RMNI).</li>
@@ -971,30 +1616,55 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0180_orn_rsn output/r
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header"><h3 class="card-title">Pros &amp; Cons of Each Eutrophication Approach</h3></div>
+        <div class="interp-box" style="margin-top:0;">
+          <ul>
+            <li><strong>1. Factor-LMC Co-Kriging (<code>0180 + 0117 + rmni</code>):</strong> <em>Pros:</em> +0.106 to +0.584 Aux-Aided $R^2$ gain; rescues data-sparse basins (Thames, Severn); fills heterotopic biological gaps (<code>118</code> RMNI gap reaches) using dense WQ stations; quantifies P/N&ndash;ecology cross-correlation. <em>Cons:</em> Linear trend only; higher compute (<code>~29s</code> national LMC fit); requires multi-target alignment.</li>
+            <li><strong>2. Non-Linear GAM + S3N (<code>rmni --trend=gam</code>):</strong> <em>Pros:</em> Best overall All-England RMNI CV <code>R&sup2; = 0.7607</code>; captures physical slope/drainage thresholds; single-command univariate workflow. <em>Cons:</em> Cannot borrow strength from Orthophosphate/Nitrate stations; does not rescue sparse regional basins (Thames GAM <code>R&sup2; = 0.0795</code>).</li>
+            <li><strong>3. Seasonal DO &amp; P&ndash;RMNI Coupling (<code>9901 --by=season</code> + <code>04_compare_model_runs.R</code>):</strong> <em>Pros:</em> Captures acute summer oxygen stress and separates High-P/High-RMNI hotspots from High-P/Low-RMNI (light/flow-limited) reaches with formal Fisher-z/concordance tests. <em>Cons:</em> Instantaneous DO has high diel noise (<code>R&sup2; = 0.1574</code> in summer); cross-run comparison is post-hoc rather than joint likelihood.</li>
+          </ul>
+        </div>
+      </div>
+
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Approach 2 Diagnostics: RMNI Linear vs. GAM + S3N (SVG)</h3>
+            <h3 class="card-title">Approach 2 Diagnostics &amp; RMNI CV Benchmark (SVG)</h3>
             <div class="fig-toggle-bar" data-group="cs10-diag">
-              <button class="fig-toggle-btn active" data-fig="eut_rmni_gam_diag">GAM+S3N (SVG)</button>
-              <button class="fig-toggle-btn" data-fig="eut_rmni_diag">Linear S3N (SVG)</button>
+              <button class="fig-toggle-btn active" data-fig="eut_rmni_gam_diag">GAM+S3N</button>
+              <button class="fig-toggle-btn" data-fig="eut_rmni_diag">Linear S3N</button>
             </div>
           </div>
           <div id="fig-slot-cs10-diag"></div>
-          <div class="interp-box" style="margin-top:14px;">
-            <h4>Pros &amp; Cons of Each Eutrophication Approach</h4>
-            <ul>
-              <li><strong>1. Factor-LMC Co-Kriging (<code>0180 + 0117 + rmni</code>):</strong> <em>Pros:</em> +0.106 to +0.584 Aux-Aided $R^2$ gain; rescues data-sparse basins (Thames, Severn); fills heterotopic biological gaps (<code>118</code> RMNI gap reaches) using dense WQ stations; quantifies P/N&ndash;ecology cross-correlation. <em>Cons:</em> Linear trend only; higher compute (<code>~29s</code> national LMC fit); requires multi-target alignment.</li>
-              <li><strong>2. Non-Linear GAM + S3N (<code>rmni --trend=gam</code>):</strong> <em>Pros:</em> Best overall All-England RMNI CV <code>R&sup2; = 0.7607</code>; captures physical slope/drainage thresholds; single-command univariate workflow. <em>Cons:</em> Cannot borrow strength from Orthophosphate/Nitrate stations; does not rescue sparse regional basins (Thames GAM <code>R&sup2; = 0.0795</code>).</li>
-              <li><strong>3. Seasonal DO &amp; P&ndash;RMNI Coupling (<code>9901 --by=season</code> + <code>04_compare_model_runs.R</code>):</strong> <em>Pros:</em> Captures acute summer oxygen stress and separates High-P/High-RMNI hotspots from High-P/Low-RMNI (light/flow-limited) reaches with formal Fisher-z/concordance tests. <em>Cons:</em> Instantaneous DO has high diel noise (<code>R&sup2; = 0.1574</code> in summer); cross-run comparison is post-hoc rather than joint likelihood.</li>
-            </ul>
-          </div>
+          <div id="cs10-r2-svg" class="svg-panel" style="margin-top:14px;"></div>
         </div>
 
         <div class="card">
           <div class="card-header"><h3 class="card-title">Cross-Approach CV Benchmark &amp; P&ndash;RMNI Spatial Concordance</h3></div>
           <div id="cs10-cv-table" class="table-scroll"></div>
           <div id="cs10-rel-table" class="table-scroll" style="margin-top:14px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">RMNI CV R&sup2; &amp; P&ndash;RMNI Coupling</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash &middot; All 3 Eutrophication Modelling Approaches</span><button class="copy-btn" data-copy-target="code-cs10">Copy</button></div>
+          <pre id="code-cs10"># Approach 1: Multivariate Driver-Response Factor-LMC Co-Kriging (P + N + RMNI)
+Rscript scripts/run_s3n_cokriging.R --targets=wq:0180,wq:0117,macrophytes:rmni --method=lmc
+
+# Approach 2: Non-Linear GAM + S3N vs. Linear S3N for Macrophyte RMNI
+Rscript scripts/run_s3n_determinand.R rmni --dataset=macrophytes
+Rscript scripts/run_s3n_determinand.R rmni --dataset=macrophytes --trend=gam
+
+# Approach 3: Seasonal Dissolved Oxygen (--by=season) &amp; Orthophosphate vs. RMNI Coupling
+Rscript scripts/run_s3n_determinand.R 9901 --by=season --st-borrow --reverse-color
+Rscript scripts/04_compare_model_runs.R output/results/det_0180_orn_rsn output/results/macrophytes_rmni_orn_rsn \
+  --labels="Orthophosphate (0180),Macrophyte RMNI" --out=output/results/compare_eutrophication_p_rmni</pre>
         </div>
       </div>
     </section>
@@ -1004,7 +1674,7 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0180_orn_rsn output/r
          ================================================================== -->
     <section id="tab-cs11" class="tab-panel" role="tabpanel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 11 &middot; North West RBD (RBD=12) Nitrate, Exceedance &amp; Seasonal Trends</span>
+        <span class="hero-eyebrow">Case Study 13 &middot; North West RBD (RBD=12) Nitrate, Exceedance &amp; Seasonal Trends</span>
         <h2>North West Nitrate (<code>0117</code>): Compliance Risk &amp; Seasonal Dynamics</h2>
         <p>
           Regional focus on the <strong>North West River Basin District (RBD=12)</strong> (<code>12,465</code> reaches, <code>136</code> observed RSN stations) spanning the Ribble, Mersey, Weaver, Lune, and Derwent catchments. Shows North West-only Joint S3N Nitrate predictions, 5-tier UK exceedance risk (<code>11.3 mg/L</code> N), and seasonal precision-borrowed maps (<code>--by=season --st-borrow</code>).
@@ -1014,22 +1684,6 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0180_orn_rsn output/r
       <div id="cs11-kpis" class="kpi-grid"></div>
 
       <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">North West Reproducible CLI &amp; Seasonal CV R&sup2;</h3>
-            <span class="pill pill-blue">RBD=12 &middot; 12,465 Reaches</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash &middot; North West Nitrate, Exceedance &amp; Seasonal Trends</span><button class="copy-btn" data-copy-target="code-cs11">Copy</button></div>
-            <pre id="code-cs11"># 1. North West RBD Nitrate + UK 11.3 mg/L Exceedance Risk
-Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --threshold=uk --dpi=300 --omp=4
-
-# 2. North West Seasonal Nitrate Dynamics + Temporal Borrowing (rho_t = 0.363)
-Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --by=season --st-borrow --dpi=300 --omp=4</pre>
-          </div>
-          <div id="cs11-r2-svg" class="svg-panel"></div>
-        </div>
-
         <div class="card">
           <div class="card-header">
             <h3 class="card-title">North West Nitrate, Exceedance &amp; Seasonal Maps</h3>
@@ -1043,8 +1697,14 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --by=season --st
             </div>
           </div>
           <div id="fig-slot-cs11-map"></div>
-          <div class="interp-box">
-            <h4>North West Regional Findings</h4>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+            <span class="pill pill-blue">North West Regional Findings</span>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Upland&ndash;Lowland Gradient:</strong> Pennine and Lake District headwaters remain ultra-low (&lt; 0.5 mg/L N), while lowland Cheshire/Mersey/Ribble agricultural tributaries reach 3&ndash;7 mg/L N (Joint S3N CV <code>R&sup2; = 0.6702</code>, <code>RMSE = 0.8429</code>).</li>
               <li><strong>99.4% Regulatory Compliance:</strong> At the UK <code>11.3 mg/L</code> N threshold, <code>11,686</code> reaches (<code>93.8%</code>) are <em>Confidently Compliant</em>, <code>704</code> (<code>5.7%</code>) <em>Likely Compliant</em>, <code>75</code> (<code>0.6%</code>) <em>Uncertain</em>, and <code>0</code> reaches exceed.</li>
@@ -1056,12 +1716,28 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --by=season --st
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header"><h3 class="card-title">North West Nitrate Annual &amp; Seasonal CV Benchmark</h3></div>
+          <div class="card-header"><h3 class="card-title">North West Nitrate Seasonal CV R&sup2; &amp; Annual Benchmark</h3></div>
+          <div id="cs11-r2-svg" class="svg-panel" style="margin-bottom:14px;"></div>
           <div id="cs11-cv-table" class="table-scroll"></div>
         </div>
         <div class="card">
           <div class="card-header"><h3 class="card-title">North West Exceedance Risk Summary (<code>11.3 mg/L</code> as N)</h3></div>
           <div id="cs11-exceed-table" class="table-scroll"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">RBD=12 &middot; 12,465 Reaches</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash &middot; North West Nitrate, Exceedance &amp; Seasonal Trends</span><button class="copy-btn" data-copy-target="code-cs11">Copy</button></div>
+          <pre id="code-cs11"># 1. North West RBD Nitrate + UK 11.3 mg/L Exceedance Risk
+Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --threshold=uk
+
+# 2. North West Seasonal Nitrate Dynamics + Temporal Borrowing (rho_t = 0.363)
+Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --by=season --st-borrow</pre>
         </div>
       </div>
     </section>
@@ -1071,7 +1747,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --by=season --st
          ================================================================== -->
     <section id="tab-cs12" class="tab-panel" role="tabpanel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 12 &middot; North West RBD (RBD=12) Macroinvertebrate Taxon Richness</span>
+        <span class="hero-eyebrow">Case Study 14 &middot; North West RBD (RBD=12) Macroinvertebrate Taxon Richness</span>
         <h2>North West Inverts N-Taxa (<code>whpt_ntaxa --reverse-color</code>)</h2>
         <p>
           Regional ecological modelling of macroinvertebrate taxon richness (<code>whpt_ntaxa</code>) across the <strong>North West River Basin District (RBD=12)</strong> (<code>12,465</code> reaches, <code>131</code> observed RSN stations), contrasting upland Cumbrian/Pennine biodiversity against urbanised Mersey and Irwell corridors.
@@ -1083,25 +1759,18 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --by=season --st
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">North West N-Taxa CLI &amp; Held-Out CV R&sup2;</h3>
-            <span class="pill pill-blue">RBD=12 &middot; 131 Obs Reaches</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash &middot; North West RBD Macroinvertebrate Richness</span><button class="copy-btn" data-copy-target="code-cs12">Copy</button></div>
-            <pre id="code-cs12"># North West RBD Macroinvertebrate Taxon Richness (--reverse-color)
-Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --basin="North West" --reverse-color --dpi=300 --omp=4</pre>
-          </div>
-          <div id="cs12-r2-svg" class="svg-panel"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
             <h3 class="card-title">North West RBD N-Taxa Predictions &amp; Kriging SE</h3>
             <span class="pill pill-green">Inverted Ecological Palette</span>
           </div>
           <div id="fig-slot-cs12-map"></div>
-          <div class="interp-box">
-            <h4>North West Ecological Insights</h4>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+            <span class="pill pill-blue">North West Ecological Insights</span>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Richness Gain from Joint S3N:</strong> In North West RBD, Joint Additive S3N (<code>TU + TD + Euc</code>) improves <code>whpt_ntaxa</code> CV accuracy from <code>R&sup2; = 0.1252</code> (OLS, <code>RMSE = 5.3833</code>) to <code>0.1950</code> (<code>RMSE = 5.1640</code> taxa).</li>
               <li><strong>Spatial Variance Structure:</strong> Euclidean (<code>13.92</code>) and Tail-Up flow-connected (<code>7.56</code>) components dominate over Tail-Down (<code>1.14</code>) and nugget (<code>4.30</code>), reflecting strong regional land-use and urban-industrial gradients across the Mersey/Irwell vs. northern Lune/Derwent catchments.</li>
@@ -1110,9 +1779,28 @@ Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --basin="Nort
         </div>
       </div>
 
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">North West N-Taxa Held-Out CV R&sup2;</h3></div>
+          <div id="cs12-r2-svg" class="svg-panel"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">North West N-Taxa Cross-Validation Benchmark (RBD=12)</h3></div>
+          <div id="cs12-cv-table" class="table-scroll"></div>
+        </div>
+      </div>
+
       <div class="card">
-        <div class="card-header"><h3 class="card-title">North West N-Taxa Cross-Validation Benchmark (RBD=12)</h3></div>
-        <div id="cs12-cv-table" class="table-scroll"></div>
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">RBD=12 &middot; 131 Obs Reaches</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash &middot; North West RBD Macroinvertebrate Richness</span><button class="copy-btn" data-copy-target="code-cs12">Copy</button></div>
+          <pre id="code-cs12"># North West RBD Macroinvertebrate Taxon Richness (--reverse-color)
+Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --basin="North West" --reverse-color</pre>
+        </div>
       </div>
     </section>
 
@@ -1121,7 +1809,7 @@ Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --basin="Nort
          ================================================================== -->
     <section id="tab-cs13" class="tab-panel" role="tabpanel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 13 &middot; North West RBD (RBD=12) Station-to-Reach Snapping Audits</span>
+        <span class="hero-eyebrow">Case Study 15 &middot; North West RBD (RBD=12) Station-to-Reach Snapping Audits</span>
         <h2>North West Catchment Snapping Diagnostics (<code>06_station_snapping_diagnostics.R</code>)</h2>
         <p>
           Evaluates Euclidean station-to-reach snapping precision against the <code>250 m</code> inclusion threshold across the five primary North West catchments: <strong>River Ribble (161)</strong>, <strong>River Mersey (177)</strong>, <strong>River Weaver (173)</strong>, <strong>River Lune (157)</strong>, and <strong>River Derwent (138)</strong>.
@@ -1131,21 +1819,6 @@ Rscript scripts/run_s3n_determinand.R whpt_ntaxa --dataset=inverts --basin="Nort
       <div id="cs13-kpis" class="kpi-grid"></div>
 
       <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">North West Snapping CLI &amp; &le; 10 m Precision</h3>
-            <span class="pill pill-blue">5 Core NW Catchments</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash &middot; North West Catchment Snapping Diagnostics</span><button class="copy-btn" data-copy-target="code-cs13">Copy</button></div>
-            <pre id="code-cs13"># North West Catchment Station-to-Reach Snapping Diagnostics
-Rscript scripts/06_station_snapping_diagnostics.R \
-  --catchment=Ribble,Weaver,Mersey,Lune,Derwent \
-  --out=output/results/snapping_north_west</pre>
-          </div>
-          <div id="cs13-snap-svg" class="svg-panel"></div>
-        </div>
-
         <div class="card">
           <div class="card-header">
             <h3 class="card-title">North West Catchment Snapping Maps</h3>
@@ -1158,8 +1831,14 @@ Rscript scripts/06_station_snapping_diagnostics.R \
             </div>
           </div>
           <div id="fig-slot-cs13-map"></div>
-          <div class="interp-box">
-            <h4>Snapping Quality Control Insights</h4>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+            <span class="pill pill-blue">Snapping Quality Control Insights</span>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>Sub-4 m Median Offsets:</strong> Median station-to-reach snap distances are <code>1.88 m</code> in Ribble (<code>87.1% &le; 10 m</code>), <code>2.15 m</code> in Mersey (<code>95.7% &le; 10 m</code>), <code>2.18 m</code> in Weaver (<code>100.0% &le; 10 m</code>), and <code>3.48 m</code> in Lune (<code>76.5% &le; 10 m</code>).</li>
               <li><strong>Off-Network Outlier Filtering:</strong> Stations &gt; <code>250 m</code> from mapped ORN v2 reaches (e.g., <code>2</code> in Ribble, <code>5</code> in Weaver, <code>1</code> in Derwent at <code>301.64 m</code>) are automatically flagged and excluded so estuarine/pond sites do not corrupt dendritic Tail-Up/Tail-Down distances.</li>
@@ -1168,9 +1847,30 @@ Rscript scripts/06_station_snapping_diagnostics.R \
         </div>
       </div>
 
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">North West Snapping &le; 10 m Precision</h3></div>
+          <div id="cs13-snap-svg" class="svg-panel"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">North West Catchment Snapping Summary Table</h3></div>
+          <div id="cs13-snap-table" class="table-scroll"></div>
+        </div>
+      </div>
+
       <div class="card">
-        <div class="card-header"><h3 class="card-title">North West Catchment Snapping Summary Table</h3></div>
-        <div id="cs13-snap-table" class="table-scroll"></div>
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">5 Core NW Catchments</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash &middot; North West Catchment Snapping Diagnostics</span><button class="copy-btn" data-copy-target="code-cs13">Copy</button></div>
+          <pre id="code-cs13"># North West Catchment Station-to-Reach Snapping Diagnostics
+Rscript scripts/06_station_snapping_diagnostics.R \
+  --catchment=Ribble,Weaver,Mersey,Lune,Derwent \
+  --out=output/results/snapping_north_west</pre>
+        </div>
       </div>
     </section>
 
@@ -1179,7 +1879,7 @@ Rscript scripts/06_station_snapping_diagnostics.R \
          ================================================================== -->
     <section id="tab-cs14" class="tab-panel" role="tabpanel">
       <div class="hero-card">
-        <span class="hero-eyebrow">Case Study 14 &middot; North West RBD (RBD=12) Active-Learning Monitoring Design (<code>--design-sites=50</code>)</span>
+        <span class="hero-eyebrow">Case Study 16 &middot; North West RBD (RBD=12) Active-Learning Monitoring Design (<code>--design-sites=50</code>)</span>
         <h2>North West Optimal Station Placement &amp; Uncertainty Gap Map</h2>
         <p>
           Runs the OpenMP C++ greedy Schur-complement solver (<code>C_s3n_optimal_design</code>) exclusively within <strong>North West RBD (RBD=12)</strong> (<code>12,465</code> reaches, <code>136</code> existing RSN stations) to rank the top <code>50</code> new monitoring locations that maximize regional kriging variance reduction without clustering on redundant tributaries.
@@ -1191,25 +1891,18 @@ Rscript scripts/06_station_snapping_diagnostics.R \
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">North West Optimal Design CLI &amp; Cumulative Variance Drop</h3>
-            <span class="pill pill-blue">K = 50 Priority Sites</span>
-          </div>
-          <div class="code-wrap">
-            <div class="code-bar"><span>Bash &middot; North West Optimal Monitoring Placement</span><button class="copy-btn" data-copy-target="code-cs14">Copy</button></div>
-            <pre id="code-cs14"># Rank top 50 new monitoring reaches across North West RBD (RBD=12)
-Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --design-sites=50 --threshold=uk --dpi=300 --omp=4</pre>
-          </div>
-          <div id="cs14-design-svg" class="svg-panel"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
             <h3 class="card-title">North West RBD Optimal Monitoring Gap Map (<code>K = 50</code>)</h3>
             <span class="pill pill-green">-45.95% Kriging Variance</span>
           </div>
           <div id="fig-slot-cs14-design"></div>
-          <div class="interp-box">
-            <h4>North West Design Insights</h4>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Suggested Interpretation</h3>
+            <span class="pill pill-blue">North West Design Insights</span>
+          </div>
+          <div class="interp-box" style="margin-top:0;">
             <ul>
               <li><strong>45.95% Regional Variance Reduction:</strong> Adding <code>50</code> optimally placed stations across North West RBD cuts Mean Kriging SE by <strong>-29.7%</strong> (<code>0.6956 &rarr; 0.4887</code> log mg/L) in <code>21.33 s</code> of OpenMP C++ runtime.</li>
               <li><strong>Catchment-Wide Gap Dispersion:</strong> Top picks target unmonitored reaches across the Ribble (<code>#1 Riv 38848</code>, <code>+2.77% dV</code>; <code>#5 Riv 182269</code>, <code>+1.48% dV</code>), Cumbrian coastal/Solway-border tributaries (<code>#2 Riv 33248</code>, <code>+1.96% dV</code>; <code>#3 Riv 177771</code>, <code>+1.76% dV</code>), and River Lune (<code>#4 Riv 34728</code>, <code>+1.49% dV</code>).</li>
@@ -1218,9 +1911,28 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --design-sites=5
         </div>
       </div>
 
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">North West Optimal Design Cumulative Variance Drop</h3></div>
+          <div id="cs14-design-svg" class="svg-panel"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Top-20 Priority Candidate Reaches in North West RBD (Ranked by Schur-Complement Variance Reduction)</h3></div>
+          <div id="cs14-design-table" class="table-scroll"></div>
+        </div>
+      </div>
+
       <div class="card">
-        <div class="card-header"><h3 class="card-title">Top-20 Priority Candidate Reaches in North West RBD (Ranked by Schur-Complement Variance Reduction)</h3></div>
-        <div id="cs14-design-table" class="table-scroll"></div>
+        <div class="card-header">
+          <h3 class="card-title">Case-Study Command Examples</h3>
+          <span class="pill pill-blue">K = 50 Priority Sites</span>
+        </div>
+        <div class="code-wrap">
+          <div class="code-bar"><span>Bash &middot; North West Optimal Monitoring Placement</span><button class="copy-btn" data-copy-target="code-cs14">Copy</button></div>
+          <pre id="code-cs14"># Rank top 50 new monitoring reaches across North West RBD (RBD=12)
+Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --design-sites=50 --threshold=uk</pre>
+        </div>
       </div>
     </section>
 
@@ -1235,6 +1947,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --design-sites=5
           <span id="modalMeta" class="pill pill-blue" style="margin-left:8px;"></span>
         </div>
         <div style="display:flex; gap:8px;">
+          <a id="modalDownloadBtn" class="btn" href="#" download>&#11015; Download</a>
           <button id="modalZoomBtn" class="btn" type="button">🔍 Toggle 170% Zoom</button>
           <button id="modalCloseBtn" class="btn" type="button">✕ Close</button>
         </div>
@@ -1250,7 +1963,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --basin="North West" --design-sites=5
     </div>
   </div>
 
-  <script src="data.js"></script>
-  <script src="app.js"></script>
+  <script src="data.js?v=20261115" defer></script>
+  <script src="app.js?v=20261115" defer></script>
 </body>
 </html>

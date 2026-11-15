@@ -1,8 +1,8 @@
 # Multi-Source Fusion & Citizen-Science Co-Kriging Guide
 
-> **Supplementing Statutory River Monitoring Networks (`RSN` / `SSN`) with Citizen Science, Telemetry Sensors, and Local Campaigns**
+> **Supplementing EA Surveillance River Monitoring Networks (`RSN` / `SSN`) with Citizen Science, Telemetry Sensors, and Local Campaigns**
 
-Statutory monitoring networks such as the Environment Agency **River Surveillance Network (`RSN`)** and **Small Streams Network (`SSN`)** provide laboratory-accredited analytical measurements, yet vast stretches of tributaries, headwaters, and local catchments remain unsampled in any given season or year. **Citizen-science campaigns** (e.g., WaterBlitz, Anglers' Riverfly Monitoring Initiative), catchment-partnership grab samples, and continuous sondes offer denser spatial or temporal coverage, often with coarser precision, colorimetric range kits, or different measurement protocols.
+Statistically designed surveillance networks such as the Environment Agency **River Surveillance Network (`RSN`)** and **Small Streams Network (`SSN`)** provide laboratory-accredited analytical measurements, yet vast stretches of tributaries, headwaters, and local catchments remain unsampled in any given season or year. **Citizen-science campaigns** (e.g., WaterBlitz, Anglers' Riverfly Monitoring Initiative), catchment-partnership grab samples, and continuous sondes offer denser spatial or temporal coverage, often with coarser precision, colorimetric range kits, or different measurement protocols.
 
 This guide explains **when** to keep networks as separate co-kriged variables versus **when** to pool them with explicit source priority and precision weighting, documents every multi-source CLI option (`--prefer-source`, `--source-weight`, `--source-se`, `--method=lmc|colocated`), and walks through a complete end-to-end workflow.
 
@@ -17,7 +17,7 @@ This guide explains **when** to keep networks as separate co-kriged variables ve
   - [Mathematical Formulation of `--source-weight` and `--source-se`](#mathematical-formulation-of---source-weight-and---source-se)
 - [3. High-Value Real-World Use Cases](#3-high-value-real-world-use-cases)
   - [Use Case 1: National `RSN` + Citizen Science WaterBlitz Colorimetric Kits](#use-case-1-national-rsn--citizen-science-waterblitz-colorimetric-kits)
-  - [Use Case 2: Ecological Statutory `WHPT ASPT` + Volunteer `Riverfly ARMI`](#use-case-2-ecological-statutory-whpt-aspt--volunteer-riverfly-armi)
+  - [Use Case 2: Ecological EA Surveillance `WHPT ASPT` + Volunteer `Riverfly ARMI`](#use-case-2-ecological-ea-surveillance-whpt-aspt--volunteer-riverfly-armi)
   - [Use Case 3: Accredited `RSN` + Regional Water Company / Catchment Trust Grab Samples (Same Method)](#use-case-3-accredited-rsn--regional-water-company--catchment-trust-grab-samples-same-method)
   - [Use Case 4: High-Frequency Sondes / In-Situ Telemetry + Spot `RSN` Monitoring](#use-case-4-high-frequency-sondes--in-situ-telemetry--spot-rsn-monitoring)
 - [4. End-to-End Worked Workflow (`RSN` + Citizen Science WaterBlitz)](#4-end-to-end-worked-workflow-rsn--citizen-science-waterblitz)
@@ -37,16 +37,16 @@ This guide explains **when** to keep networks as separate co-kriged variables ve
 Simply appending citizen-science or campaign readings into the same target variable as `RSN` laboratory assays causes four structural problems in spatial stream modelling:
 
 1. **Methodological Bias & Scale Offset**: Colorimetric dip-strips, handheld probes, or semi-quantitative scorecards often carry additive offsets or multiplicative scaling relative to IC/ICP-MS lab assays. Pooling them shifts the spatial mean field $\mathbf{X}\boldsymbol{\beta}$ and inflates the nugget $\tau^2$.
-2. **Heteroskedastic Observation Noise**: Lab titration repeatability might have $\mathrm{SE} \approx 0.02\text{ mg/L}$, whereas a citizen colorimetric test strip might effectively have $\mathrm{SE} \approx 0.5\text{ mg/L}$ or censored interval ranges (`1-2 mg/L`). An unweighted kriging solver trusts a noisy reading almost as much as a statutory station, distorting nearby reaches.
+2. **Heteroskedastic Observation Noise**: Lab titration repeatability might have $\mathrm{SE} \approx 0.02\text{ mg/L}$, whereas a citizen colorimetric test strip might effectively have $\mathrm{SE} \approx 0.5\text{ mg/L}$ or censored interval ranges (`1-2 mg/L`). An unweighted kriging solver trusts a noisy reading almost as much as an EA surveillance station, distorting nearby reaches.
 3. **Different Analytes or Surrogate Metrics**: Volunteer programmes frequently record ecological or optical proxies (e.g., **Riverfly ARMI**, **Secchi turbidity**, **field conductivity**) rather than regulated chemical determinands (**Nitrate `0117`**, **Orthophosphate `0180`**, **WHPT ASPT**). You cannot concatenate non-identical units into one vector.
-4. **Visit-Frequency Imbalance**: A volunteer catchment blitz can upload 30–50 repeat readings on one urban reach while a statutory site is visited once per quarter. Naive arithmetic reach-averaging allows the high-frequency campaign to numerically drown out the accredited measurement.
+4. **Visit-Frequency Imbalance**: A volunteer catchment blitz can upload 30–50 repeat readings on one urban reach while an EA surveillance site is visited once per quarter. Naive arithmetic reach-averaging allows the high-frequency campaign to numerically drown out the accredited measurement.
 
 ### How the Pipeline Solves Each Issue
 
 | Fusion Architecture | Script & Flags | When to Use | How Bias, Noise & Imbalance Are Handled |
 | :--- | :--- | :--- | :--- |
 | **Separate-Target Multivariate Co-Kriging (`Factor-LMC`)** | [`scripts/run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R)<br>`--targets=0117,wb_no3` `--method=lmc` | **Default recommendation** when citizen data uses a different kit, range scale, proxy metric (e.g. Riverfly vs. `whpt_aspt`), or systematic offset relative to RSN. | Fits separate intercepts, covariate slopes $\boldsymbol{\beta}_p$, transforms, and error variances $\tau_p^2$ per source variable, while borrowing spatial signal through learned **Tail-Up**, **Tail-Down**, and **Co-Located Nugget** cross-correlations. |
-| **Colocated Residual Co-Kriging (`RSN`-Anchored)** | [`scripts/run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R)<br>`--targets=0117,wb_no3` `--method=colocated` | When you want strict statutory primacy: predictions on the primary target (`0117`) are anchored directly to the `RSN` univariate model and adjusted only where correlated auxiliary networks provide verified residual signal. | Fits Target 1 (`RSN`) independently first, then updates predictions via weighted residual conditioning (`lm.wfit` + auxiliary differences), guaranteeing zero likelihood contamination of `RSN` parameters. |
+| **Colocated Residual Co-Kriging (`RSN`-Anchored)** | [`scripts/run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R)<br>`--targets=0117,wb_no3` `--method=colocated` | When you want strict surveillance primacy: predictions on the primary target (`0117`) are anchored directly to the `RSN` univariate model and adjusted only where correlated auxiliary networks provide verified residual signal. | Fits Target 1 (`RSN`) independently first, then updates predictions via weighted residual conditioning (`lm.wfit` + auxiliary differences), guaranteeing zero likelihood contamination of `RSN` parameters. |
 | **Pooled Single-Determinand with Priority & Reliability Weights** | [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)<br>`--source=rsn+survey` + `--prefer-source` / `--source-weight` / `--source-se` | When both sources measure the **same determinand and lab/calibrated method** (e.g., EA `RSN` + catchment trust lab-accredited Nitrate, or `RSN` + `SSN`), and you want one unified surface while still trusting `RSN` on shared reaches. | Enforces per-reach source priority (`--prefer-source`), aggregates shared reaches **within each `data_source` first** so repeat counts never drown out `RSN`, and down-weights noisy/secondary sources analytically via penalty variance and/or physical measurement SE. |
 
 > [!TIP]
@@ -79,7 +79,7 @@ $$
 \bar{y}_r = \sum_{s \in \mathcal{S}_r} \tilde{w}_s \, \bar{y}_{r,s}, \qquad v_{r,\text{phys}} = \sum_{s \in \mathcal{S}_r} \tilde{w}_s^2 \left( \frac{\sum_{i \in r,s} \mathrm{SE}_i^2}{n_{r,s}^2} \right)
 $$
 
-Because aggregation happens **by source first**, 50 volunteer dip-strip readings on reach $r$ cannot override 1 statutory `RSN` station by sheer sample count. Sample standard errors combine in quadrature within each source ($s_{u,r,s} = \frac{1}{n_{r,s}}\sqrt{\sum_{i \in r,s} \mathrm{SE}_i^2}$) and across sources ($\sqrt{\sum_{s \in \mathcal{S}_r} (\tilde{w}_s s_{u,r,s})^2}$), while the reach's effective observation weight is carried forward as $w_r = \max_{s \in \mathcal{S}_r} w_s$.
+Because aggregation happens **by source first**, 50 volunteer dip-strip readings on reach $r$ cannot override 1 EA surveillance `RSN` station by sheer sample count. Sample standard errors combine in quadrature within each source ($s_{u,r,s} = \frac{1}{n_{r,s}}\sqrt{\sum_{i \in r,s} \mathrm{SE}_i^2}$) and across sources ($\sqrt{\sum_{s \in \mathcal{S}_r} (\tilde{w}_s s_{u,r,s})^2}$), while the reach's effective observation weight is carried forward as $w_r = \max_{s \in \mathcal{S}_r} w_s$.
 
 #### 2. Observation-Error Variance Decomposition in S3N & Factor-LMC NNGP
 
@@ -124,12 +124,12 @@ Notice the limiting behaviour:
 
 ---
 
-### Use Case 2: Ecological Statutory `WHPT ASPT` + Volunteer `Riverfly ARMI`
+### Use Case 2: Ecological EA Surveillance `WHPT ASPT` + Volunteer `Riverfly ARMI`
 
-**Scenario**: Statutory Environment Agency macroinvertebrate sampling (`--dataset=inverts`, `whpt_aspt`) covers key surveillance sites, while angler groups run monthly **Riverfly ARMI** counts on smaller tributaries and urban brooks.
+**Scenario**: Environment Agency surveillance macroinvertebrate sampling (`--dataset=inverts`, `whpt_aspt`) covers key surveillance sites, while angler groups run monthly **Riverfly ARMI** counts on smaller tributaries and urban brooks.
 
 **Recommended Strategy**:
-- Register Riverfly scores as a custom target (`riverfly_armi`) and co-krige jointly with statutory water quality and invertebrate indices:
+- Register Riverfly scores as a custom target (`riverfly_armi`) and co-krige jointly with EA surveillance water quality and invertebrate indices:
   ```bash
   Rscript scripts/run_s3n_cokriging.R \
     --targets=inverts:whpt_aspt,wq:0117,wq:0180,wq:riverfly_armi \
@@ -148,7 +148,7 @@ Notice the limiting behaviour:
 **Scenario**: A Catchment Partnership or Water Company runs accredited laboratory Nitrate (`0117`) analyses matching `RSN` laboratory standards, adding 600 extra monitoring locations in one river basin, with occasional repeat visits on `RSN` reaches.
 
 **Recommended Strategy**:
-- Because analytical protocols match, pool into a single-determinand surface while guaranteeing statutory `RSN` primacy on shared reaches and discounting slightly higher field/transport variance if applicable:
+- Because analytical protocols match, pool into a single-determinand surface while guaranteeing surveillance `RSN` primacy on shared reaches and discounting slightly higher field/transport variance if applicable:
   ```bash
   Rscript scripts/run_s3n_determinand.R 0117 \
     --source=rsn+catchment_lab \
@@ -215,7 +215,7 @@ python3 scripts/01_preprocess_orn.py \
 ```
 
 > [!NOTE]
-> Statutory `RSN` coordinates are accurate to ~10–50 m (`--max-snap-dist=250` default); smartphone GPS readings on riverbanks/bridges often benefit from `--max-snap-dist=350` or `500`.
+> EA surveillance `RSN` coordinates are accurate to ~10–50 m (`--max-snap-dist=250` default); smartphone GPS readings on riverbanks/bridges often benefit from `--max-snap-dist=350` or `500`.
 
 ### Step 3: Verify Station Snapping Quality
 
@@ -223,7 +223,7 @@ Inspect `output/station_snapping/orn_rsn+waterblitz_tobit/` via [`scripts/06_sta
 
 ### Step 4: Run Baseline Univariate `RSN` vs. Co-Kriged Multi-Source Model
 
-Run joint 4-target **Factor-LMC Co-Kriging** combining statutory `RSN` (`0117`, `0180`) with citizen `WaterBlitz` (`wb_no3`, `wb_po4`), using `--cv-mode=spatial` (alias for `spatial_block`), reliability weights, and physical SEs:
+Run joint 4-target **Factor-LMC Co-Kriging** combining EA surveillance `RSN` (`0117`, `0180`) with citizen `WaterBlitz` (`wb_no3`, `wb_po4`), using `--cv-mode=spatial` (alias for `spatial_block`), reliability weights, and physical SEs:
 
 ```bash
 Rscript scripts/run_s3n_cokriging.R \
@@ -271,7 +271,7 @@ Inspect the generated outputs in `output/results/cokrig_0117_0180_wb_no3_wb_po4_
 
 1. **`cokriging_evaluation_report.md`**: Check whether the pipeline verdict rates multi-source co-kriging as `Strong Benefit`, `Moderate Benefit`, or `Marginal/Parity` on out-of-sample `RSN` prediction.
 2. **`cv_univariate_vs_cokriging.csv`**: Compare **Univariate S3N** vs. **Co-Kriging (All-Holdout)** vs. **Co-Kriging (Aux-Aided)** RMSE and $R^2$ for `0117` and `0180`.
-   - Look for positive **Aux-Aided $R^2$ gain**: this demonstrates that where a reach has WaterBlitz data (`wb_no3`) but lacks `RSN`, knowing the citizen reading reduces prediction error on statutory Nitrate.
+   - Look for positive **Aux-Aided $R^2$ gain**: this demonstrates that where a reach has WaterBlitz data (`wb_no3`) but lacks `RSN`, knowing the citizen reading reduces prediction error on surveillance Nitrate.
    - Look at **All-Holdout $R^2$**: even on completely unmonitored reaches, a gain confirms WaterBlitz sharpened the underlying spatial stream fields (`Tail-Up` / `Tail-Down`).
 3. **`cokriging_cross_covariance.csv` & `fig_cokrig_cross_correlation.png`**: Inspect `Corr_TU`, `Corr_TD`, and `Corr_Nugget` between `0117` and `wb_no3`. If cross-correlations are near zero (e.g., an uncalibrated kit dominated by noise or wrong season), co-kriging automatically shrinks cross-variable influence toward zero rather than corrupting `RSN`.
 4. **`fig_cokrig_england_0117.png`**: Compare Panel B (Co-Kriging SE) against a standalone `RSN`-only run (`run_s3n_determinand.R 0117 --source=rsn`) to confirm uncertainty shrinks meaningfully in citizen-sampled sub-catchments without introducing salt-and-pepper artefacts.

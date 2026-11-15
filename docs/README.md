@@ -31,7 +31,7 @@ Use this index to find the right guide for your task.
 | Guide | Purpose |
 | :--- | :--- |
 | [**Multivariate Stream Co-Kriging (Factor-LMC)**](./multivariate_cokriging_guide.md) | Jointly modelling $P \ge 2$ chemical and ecological targets across heterotopic networks via `scripts/run_s3n_cokriging.R`, Factor-LMC NNGP (`--factors`), and Dual CV benchmarks. |
-| [**Multi-Source Fusion & Citizen-Science Co-Kriging**](./multi_source_and_citizen_science_guide.md) | Supplementing statutory networks (`RSN` / `SSN`) with citizen science or campaign data via Factor-LMC / Colocated co-kriging, reach priority (`--prefer-source`), reliability weighting (`--source-weight`), and source SE (`--source-se`). |
+| [**Multi-Source Fusion & Citizen-Science Co-Kriging**](./multi_source_and_citizen_science_guide.md) | Supplementing EA surveillance networks (`RSN` / `SSN`) with citizen science or campaign data via Factor-LMC / Colocated co-kriging, reach priority (`--prefer-source`), reliability weighting (`--source-weight`), and source SE (`--source-se`). |
 
 ---
 

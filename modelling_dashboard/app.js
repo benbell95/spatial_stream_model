@@ -253,7 +253,7 @@
     },
     rss_diag: {
       title: "Multi-Source RSN+SSN Diagnostics & Measurement Error CV (SVG)",
-      note: "Analytic (1/w - 1)*tau^2 penalty weighting preserves statutory RSN primacy while extracting headwater signal from SSN."
+      note: "Analytic (1/w - 1)*tau^2 penalty weighting preserves surveillance RSN primacy while extracting headwater signal from SSN."
     },
     desc_dist: {
       title: "Nitrate Network Distributions & Sampling Bias Diagnostics",
@@ -293,11 +293,11 @@
     },
     wb_diff_0117: {
       title: "Nitrate (0117) Co-Kriging Difference Map: Favoured minus Equal Sources",
-      note: "Spatial shift across 95,773 England reaches; co-located statutory reaches rise (+0.6252 median abs shift) as WaterBlitz dilution is removed."
+      note: "Spatial shift across 95,773 England reaches; co-located surveillance reaches rise (+0.6252 median abs shift) as WaterBlitz dilution is removed."
     },
     wb_diff_0180: {
       title: "Orthophosphate (0180) Co-Kriging Difference Map: Favoured minus Equal Sources",
-      note: "Highlights threshold tier divergence (30.84% tier match on WaterBlitz-only reaches) when statutory RSN+SSN anchors dominate."
+      note: "Highlights threshold tier divergence (30.84% tier match on WaterBlitz-only reaches) when surveillance RSN+SSN anchors dominate."
     },
     wb_eq_0117: {
       title: "Nitrate (0117) Equal-Sources Co-Kriging Map (RSN+SSN+WaterBlitz)",
@@ -366,33 +366,30 @@
   };
 
   const FEATURE_CATALOG = [
-    { cat: "major", badge: "CS8", title: "Data Transformation Comparison (Raw, Log, Sqrt, Box-Cox)", desc: "Benchmarks 4 Nitrate transformations across physical positivity, Jensen median bias, residual symmetry (0.118 skew), and Profile-MLE Box-Cox (lambda=0.50).", tab: "cs7" },
-    { cat: "major", badge: "CS6", title: "Citizen Science WaterBlitz Co-Kriging Fusion", desc: "Ingest 44,982 England WaterBlitz citizen observations via format_custom_data.py and compare Equal vs. Statutory-Favoured (rsn,ssn priority + 0.25 weight) bivariate Co-Kriging.", tab: "cs6" },
-    { cat: "major", badge: "Stage 1", title: "Zero-Dependency Python WKB GIS Extractor", desc: "Pure stdlib sqlite3 + binary WKB decoder extracts 90,876 ORN v2 reaches in ~8-15s without GDAL or sf.", tab: "overview" },
-    { cat: "major", badge: "Stage 2", title: "C++/OpenMP Euler-Tour Joint NNGP", desc: "Sub-second O(n) Tail-Up + Tail-Down + Euclidean additive kriging via compiled s3n_fast_neighbors.so.", tab: "cs1" },
-    { cat: "major", badge: "CS1", title: "Non-Linear GAM, Spline, RF & GBM Trends", desc: "Replace linear X*beta with --trend=gam, spline, rf, or gbm plus orthogonal OOB/OOF spatial residual kriging.", tab: "cs1" },
-    { cat: "major", badge: "CS3", title: "5-Tier Threshold Exceedance Risk Mapping", desc: "--threshold=uk applies indicative UK thresholds (11.3 mg/L NO3-N, 0.069 mg/L P) to map 5-tier Gaussian exceedance probability.", tab: "cs2" },
-    { cat: "major", badge: "CS3", title: "Ecological Metrics & Inverted Scales", desc: "Supports inverts (whpt_aspt), diatoms, macrophytes, rhs & lcms with --reverse-color palettes.", tab: "cs2" },
-    { cat: "major", badge: "CS7", title: "Spatio-Temporal Batching & Dynamic Borrowing", desc: "--by=year|season|month + --st-borrow precision weighting, fig6 trend tests & fig7 period transitions.", tab: "cs3" },
-    { cat: "major", badge: "CS5", title: "Multivariate Factor-LMC Joint Co-Kriging", desc: "Models P >= 2 heterotopic targets simultaneously via --method=lmc|colocated with Dual CV benchmarks.", tab: "cs4" },
-    { cat: "major", badge: "CS5", title: "Multi-Source Fusion & Network Preference", desc: "Combine statutory RSN + SSN + citizen science using --prefer-source, --source-weight & --source-se.", tab: "cs4" },
-    { cat: "major", badge: "CS9", title: "Descriptive Stats, Bias & N:P Stoichiometry", desc: "Scripts 05 & 04 run Mann-Whitney representativeness tests, gradient breakdowns, Fisher z & Wald Z-tests.", tab: "cs5" },
+    { cat: "major", badge: "CS1", title: "Nitrate-N (0117) & Non-Linear GAM, Spline, RF & GBM Trends", desc: "Replace linear X*beta with --trend=gam, spline, rf, or gbm plus orthogonal OOB/OOF spatial residual kriging.", tab: "cs1" },
+    { cat: "major", badge: "CS2", title: "Data Transformation Comparison (Raw, Log, Sqrt, Box-Cox)", desc: "Benchmarks 4 Nitrate transformations across physical positivity, Jensen median bias, residual symmetry (0.118 skew), and Profile-MLE Box-Cox (lambda=0.50).", tab: "cs7" },
+    { cat: "major", badge: "CS3", title: "Macroinvertebrate Taxon Richness (WHPT N-Taxa) & GAM", desc: "Models 3,408 England inverts samples with --reverse-color, --trend=gam, and Robust Z-Score anomaly mapping (CV R2 0.1371 -> 0.2664).", tab: "cs9" },
+    { cat: "major", badge: "CS4", title: "Ecological Health (WHPT ASPT) & Inverted Scales", desc: "Supports inverts (whpt_aspt), diatoms, macrophytes, rhs & lcms with --reverse-color palettes (CV R2 = 0.6402).", tab: "cs2" },
+    { cat: "major", badge: "CS5", title: "Factor-LMC Co-Kriging & Multi-Source Fusion", desc: "Models P >= 2 heterotopic targets via --method=lmc|colocated and combines EA RSN + headwater SSN networks.", tab: "cs4" },
+    { cat: "major", badge: "CS6", title: "Citizen Science WaterBlitz Co-Kriging Fusion", desc: "Ingest 44,982 England WaterBlitz citizen observations via format_custom_data.py and compare Equal vs. Surveillance-Favoured (rsn,ssn priority + 0.25 weight) bivariate Co-Kriging.", tab: "cs6" },
+    { cat: "major", badge: "CS7", title: "Multi-Approach Eutrophication Synthesis (P, N, RMNI & DO)", desc: "Compares Factor-LMC Co-Kriging (0180+0117+rmni), GAM+S3N (R2=0.7607), and Seasonal DO + P-RMNI concordance (r=0.9005).", tab: "cs10" },
+    { cat: "major", badge: "CS8", title: "Spatio-Temporal Batching & Dynamic Borrowing", desc: "--by=year|season|month + --st-borrow precision weighting, reach-level trend tests & period transitions.", tab: "cs3" },
+    { cat: "major", badge: "CS9", title: "5-Tier Threshold Exceedance Risk Mapping", desc: "--threshold=uk applies indicative UK thresholds (11.3 mg/L NO3-N, 0.069 mg/L P) to map 5-tier Gaussian exceedance probability.", tab: "cs15" },
+    { cat: "major", badge: "CS10", title: "Descriptive Stats, Monitoring Bias & N:P Stoichiometry", desc: "Scripts 05 & 04 run Mann-Whitney representativeness tests, gradient breakdowns, Fisher z & Wald Z-tests.", tab: "cs5" },
+    { cat: "major", badge: "CS11", title: "Station-to-Reach Snapping Audits (Script 06)", desc: "Generates snapping distance summaries, unclipped maps & off-network outlier tables across ORN v2.", tab: "cs16" },
+    { cat: "major", badge: "CS12", title: "Optimal Monitoring Network Design & Gap Mapping", desc: "--design-sites=<K> runs OpenMP C++ Schur-complement active learning and renders multi-panel gap maps (80.74% variance drop at K=50).", tab: "cs8" },
+    { cat: "major", badge: "CS13", title: "North West Nitrate, Exceedance & Seasonal Trends (RBD=12)", desc: "Regional North West RBD (12,465 reaches) Nitrate predictions, 11.3 mg/L UK exceedance tiers (99.4% compliant), and 4-season borrowing.", tab: "cs11" },
+    { cat: "major", badge: "CS14", title: "North West Inverts N-Taxa (RBD=12)", desc: "Regional North West WHPT N-Taxa richness (131 obs reaches, CV R2 0.1252 -> 0.1950, RMSE = 5.1640 taxa).", tab: "cs12" },
+    { cat: "major", badge: "CS15", title: "North West Station-to-Reach Snapping Audits", desc: "Snapping precision QC across Ribble, Mersey, Weaver, Lune, and Derwent catchments (median 1.88-3.48 m).", tab: "cs13" },
+    { cat: "major", badge: "CS16", title: "North West Optimal Monitoring Design (K=50)", desc: "OpenMP C++ Schur-complement active learning in North West RBD cuts variance by 45.95% (Mean SE 0.6956 -> 0.4887).", tab: "cs14" },
     { cat: "minor", badge: "Kernels", title: "5 Stream Covariance Kernels (--kernel)", desc: "exponential, spherical, mariah, linear, or auto (selects best kernel by Profile MLE likelihood).", tab: "cs1" },
     { cat: "minor", badge: "Confluence", title: "3 Physical AFV Weighting Schemes (--afv)", desc: "Branch weights by upstream length, Shreve link magnitude, or hydro_yield (orographic + aquifer proxy).", tab: "cs1" },
     { cat: "minor", badge: "Covariates", title: "15 Covariates & Mixed +/- Selection (--vars)", desc: "Customize predictors with --vars=+Soil_Idx,-Slope_z; inspect full catalog via --list-vars.", tab: "cs1" },
     { cat: "minor", badge: "Transforms", title: "12 Transforms & 4 Normalisations", desc: "boxcox, yeojohnson, log, sqrt, logit, asin + Taylor/Duan back-transform; robust_zscore, zscore, minmax, percentile.", tab: "cs7" },
-    { cat: "minor", badge: "Censoring", title: "ROS, Site-ROS & Spatial Tobit EM (< LOD)", desc: "Handle left-censored '<' detection limits (--censor=ros|ros_site|em) and colorimetric ranges (--range-mode=tobit).", tab: "cs2" },
-    { cat: "minor", badge: "Uncertainty", title: "Two-Stage Approach A Meas-Error Kriging", desc: "--meas-error / --gam and --source-se propagate Delta-Method observation SE into prediction SE maps.", tab: "cs2" },
-    { cat: "major", badge: "CS10", title: "Optimal Monitoring Network Design & Gap Mapping", desc: "--design-sites=<K> runs OpenMP C++ Schur-complement active learning and renders multi-panel gap maps (80.74% variance drop at K=50).", tab: "cs8" },
-    { cat: "major", badge: "CS2", title: "Macroinvertebrate Taxon Richness (WHPT N-Taxa) & GAM", desc: "Models 3,408 England inverts samples with --reverse-color, --trend=gam, and Robust Z-Score anomaly mapping (CV R2 0.1371 -> 0.2664).", tab: "cs9" },
-    { cat: "major", badge: "CS4", title: "Multi-Approach Eutrophication Synthesis (P, N, RMNI & DO)", desc: "Compares Factor-LMC Co-Kriging (0180+0117+rmni), GAM+S3N (R2=0.7607), and Seasonal DO + P-RMNI concordance (r=0.9005).", tab: "cs10" },
-    { cat: "major", badge: "CS11", title: "North West Nitrate, Exceedance & Seasonal Trends (RBD=12)", desc: "Regional North West RBD (12,465 reaches) Nitrate predictions, 11.3 mg/L UK exceedance tiers (99.4% compliant), and 4-season borrowing.", tab: "cs11" },
-    { cat: "major", badge: "CS12", title: "North West Inverts N-Taxa (RBD=12)", desc: "Regional North West WHPT N-Taxa richness (131 obs reaches, CV R2 0.1252 -> 0.1950, RMSE = 5.1640 taxa).", tab: "cs12" },
-    { cat: "major", badge: "CS13", title: "North West Station-to-Reach Snapping Audits", desc: "Snapping precision QC across Ribble, Mersey, Weaver, Lune, and Derwent catchments (median 1.88-3.48 m).", tab: "cs13" },
-    { cat: "major", badge: "CS14", title: "North West Optimal Monitoring Design (K=50)", desc: "OpenMP C++ Schur-complement active learning in North West RBD cuts variance by 45.95% (Mean SE 0.6956 -> 0.4887).", tab: "cs14" },
-    { cat: "minor", badge: "Validation", title: "Hydrological CV Modes (--cv-mode)", desc: "--cv-mode=random|spatial|catchment|downstream|upstream evaluates geographic & downstream extrapolation.", tab: "cs1" },
-    { cat: "minor", badge: "Networks", title: "BYOWN Custom GeoPackage & GeoParquet", desc: "Bring your own river shapefile/gpkg via JSON profile (--network) or convert via --convert-to-geoparquet.", tab: "overview" },
-    { cat: "minor", badge: "Graphics", title: "Hybrid DPI, Vector SVG & Size Scaling", desc: "--fig-format=png|pdf|svg, --dpi=<N>, and --fig-size=<pct> across standalone & runner scripts.", tab: "workbench" }
+    { cat: "minor", badge: "Multi-Source", title: "Network Preference & Reliability Weighting", desc: "Combine EA surveillance RSN + headwater SSN networks using --prefer-source, --source-weight & --source-se.", tab: "cs4" },
+    { cat: "minor", badge: "Censoring", title: "ROS, Site-ROS & Spatial Tobit EM (< LOD)", desc: "Handle left-censored '<' detection limits (--censor=ros|ros_site|em) and colorimetric ranges (--range-mode=tobit).", tab: "cs15" },
+    { cat: "minor", badge: "Uncertainty", title: "Two-Stage Approach A Meas-Error Kriging", desc: "--meas-error / --gam and --source-se propagate Delta-Method observation SE into prediction SE maps.", tab: "cs15" },
+    { cat: "minor", badge: "Validation", title: "Hydrological CV Modes (--cv-mode)", desc: "--cv-mode=random|spatial|catchment|downstream|upstream evaluates geographic & downstream extrapolation.", tab: "cs1" }
   ];
 
   function esc(val) {
@@ -409,13 +406,27 @@
     return esc(val);
   }
 
+  const renderedTabs = new Set();
+
+  function ensureTabRendered(tabId) {
+    if (!tabId || renderedTabs.has(tabId)) return;
+    renderedTabs.add(tabId);
+    const panel = document.getElementById("tab-" + tabId);
+    if (!panel) return;
+    renderTabDefaultFigures(tabId);
+    attachKpiExplainers(panel);
+    initWorkbenchLinks(panel);
+    initCaseStudyPagerForTab(tabId);
+  }
+
   function switchTab(tabId, updateHash) {
     if (tabId === "workbench") {
       window.location.href = "../cli_workbench/index.html";
       return;
     }
+    ensureTabRendered(tabId);
     const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
-    const activeGroup = targetBtn ? targetBtn.dataset.group : "overview";
+    const activeGroup = targetBtn ? targetBtn.dataset.group : (tabId === "how-it-works" ? "how-it-works" : "overview");
 
     document.querySelectorAll(".group-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.group === activeGroup);
@@ -423,7 +434,7 @@
 
     const subtabStrip = document.getElementById("subtabStrip");
     if (subtabStrip) {
-      subtabStrip.classList.toggle("hidden", activeGroup === "overview");
+      subtabStrip.classList.toggle("hidden", activeGroup === "overview" || activeGroup === "how-it-works");
     }
 
     document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -439,9 +450,20 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  const CS5_NP_EXPLAINERS = {
+    comp_cv: "<strong>What N vs P CV Performance Shows:</strong> Compares 5-fold out-of-sample cross-validation accuracy (<code>R&sup2;</code> and <code>RMSE</code>) across OLS and S3N models for Nitrate-N (<code>0117</code>) vs. Orthophosphate-P (<code>0180</code>), tested formally via Fisher's r-to-z test.",
+    comp_forest: "<strong>What the Covariate Forest Plot Shows:</strong> Displays standardised fixed-effect regression coefficients (<code>&beta;</code> with 95% bootstrap CIs) and spatial variance partitioning (<code>&sigma;&sup2;</code> vs. <code>&tau;&sup2;</code>) side-by-side for Nitrate and Orthophosphate, with two-sample Wald Z-test significance flags.",
+    comp_maps: "<strong>What the Side-by-Side Maps Show:</strong> Places the full-network England predictions (<code>90,876</code> reaches) for Nitrate-N and Orthophosphate-P next to each other to highlight shared agricultural/urban nutrient hotspots versus distinct geological or point-source corridors.",
+    comp_rel: "<strong>What N:P Stoichiometry &amp; Quadrant Show:</strong> Maps reach-by-reach 4-quadrant co-occurrence (<code>High-N/High-P</code>, <code>Low-N/Low-P</code>, and discordant regimes) alongside molar <code>N:P</code> ratio distributions across basins, showing where reaches are P-limited (<code>&gt; 20:1</code>), Co-limited (<code>10:1&ndash;20:1</code>), or N-limited (<code>&lt; 10:1</code>)."
+  };
+
   function renderFigureInto(slotId, figKey) {
     const slot = document.getElementById(slotId);
     if (!slot) return;
+    if (slotId === "fig-slot-cs5-np") {
+      const expEl = document.getElementById("fig-explainer-cs5-np");
+      if (expEl) expEl.innerHTML = CS5_NP_EXPLAINERS[figKey] || "";
+    }
     const fig = (DATA.figures || {})[figKey];
     const meta = FIGURE_META[figKey] || { title: figKey, note: "" };
     if (!fig) {
@@ -454,50 +476,33 @@
       </div>
       <div class="figure-caption">
         <span><strong>${esc(meta.title)}</strong> &mdash; ${esc(meta.note)}</span>
-        <span class="pill pill-green">${esc(fig.format)} &middot; ${esc(fig.size_kb)} KB</span>
       </div>
     `;
   }
 
-  function initFigureToggles() {
-    const defaults = [
-      ["fig-slot-cs1-map", "no3_england"],
-      ["fig-slot-cs1-diag", "no3_diag"],
-      ["fig-slot-cs2-ecol", "whpt_england"],
-      ["fig-slot-cs2-risk", "no3_exceed_england"],
-      ["fig-slot-cs3-grid", "st_season_grid"],
-      ["fig-slot-cs3-trend", "st_year_trends"],
-      ["fig-slot-cs4-ck", "cokrig_xcorr"],
-      ["fig-slot-cs4-ms", "rss_england"],
-      ["fig-slot-cs5-audits", "desc_grad"],
-      ["fig-slot-cs5-snap", "snap_overview"],
-      ["fig-slot-cs6-maps", "wb_diff_0117"],
-      ["fig-slot-cs6-charts", "wb_comp_svg"],
-      ["fig-slot-cs7-maps", "tr_diff_map"],
-      ["fig-slot-cs7-charts", "tr_comp_svg"],
-      ["fig-slot-cs8-design", "opt_design_england"],
-      ["fig-slot-cs9-map", "ntaxa_england"],
-      ["fig-slot-cs9-diag", "ntaxa_diag"],
-      ["fig-slot-cs10-map", "eut_cokrig_rmni"],
-      ["fig-slot-cs10-diag", "eut_rmni_gam_diag"],
-      ["fig-slot-cs11-map", "nw_no3_map"],
-      ["fig-slot-cs12-map", "nw_ntaxa_map"],
-      ["fig-slot-cs13-map", "nw_snap_ribble"],
-      ["fig-slot-cs14-design", "nw_opt_design"]
-    ];
-    defaults.forEach(([slotId, figKey]) => renderFigureInto(slotId, figKey));
+  const DEFAULT_FIGURES_BY_TAB = {
+    cs1: [["fig-slot-cs1-map", "no3_england"], ["fig-slot-cs1-diag", "no3_diag"]],
+    cs2: [["fig-slot-cs2-ecol", "whpt_england"], ["fig-slot-cs2-diag", "whpt_diag"]],
+    cs15: [["fig-slot-cs15-risk", "no3_exceed_england"]],
+    cs3: [["fig-slot-cs3-grid", "st_season_grid"], ["fig-slot-cs3-trend", "st_year_trends"]],
+    cs4: [["fig-slot-cs4-ck", "cokrig_xcorr"], ["fig-slot-cs4-ms", "rss_england"]],
+    cs5: [["fig-slot-cs5-bias", "desc_grad"], ["fig-slot-cs5-np", "comp_cv"]],
+    cs16: [["fig-slot-cs16-snap", "snap_overview"]],
+    cs6: [["fig-slot-cs6-maps", "wb_diff_0117"], ["fig-slot-cs6-charts", "wb_comp_svg"]],
+    cs7: [["fig-slot-cs7-maps", "tr_diff_map"], ["fig-slot-cs7-charts", "tr_comp_svg"]],
+    cs8: [["fig-slot-cs8-design", "opt_design_england"]],
+    cs9: [["fig-slot-cs9-map", "ntaxa_england"], ["fig-slot-cs9-diag", "ntaxa_diag"]],
+    cs10: [["fig-slot-cs10-map", "eut_cokrig_rmni"], ["fig-slot-cs10-xcorr", "eut_cokrig_xcorr"], ["fig-slot-cs10-do", "eut_do_season_grid"], ["fig-slot-cs10-diag", "eut_rmni_gam_diag"]],
+    cs11: [["fig-slot-cs11-map", "nw_no3_map"]],
+    cs12: [["fig-slot-cs12-map", "nw_ntaxa_map"]],
+    cs13: [["fig-slot-cs13-map", "nw_snap_ribble"]],
+    cs14: [["fig-slot-cs14-design", "nw_opt_design"]]
+  };
 
-    document.querySelectorAll(".fig-toggle-bar[data-group]").forEach((bar) => {
-      const group = bar.dataset.group;
-      const slotId = "fig-slot-" + group;
-      bar.querySelectorAll(".fig-toggle-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          bar.querySelectorAll(".fig-toggle-btn").forEach((b) => b.classList.remove("active"));
-          btn.classList.add("active");
-          renderFigureInto(slotId, btn.dataset.fig);
-        });
-      });
-    });
+  function renderTabDefaultFigures(tabId) {
+    const pairs = DEFAULT_FIGURES_BY_TAB[tabId];
+    if (!pairs) return;
+    pairs.forEach(([slotId, figKey]) => renderFigureInto(slotId, figKey));
   }
 
   function renderTable(elId, headers, rows, rowClassFn) {
@@ -603,9 +608,9 @@
         { val: "3,408", lbl: "Inverts Samples (1,313 Sites)", sub: "1,160 England RSN observed reaches" }
       ].map((k) => `
         <div class="kpi-card">
+          <div class="kpi-label">${esc(k.lbl)}</div>
           <div class="kpi-val">${k.val}</div>
-          <div class="kpi-lbl">${esc(k.lbl)}</div>
-          <div class="kpi-sub">${esc(k.sub)}</div>
+          <div class="kpi-note">${esc(k.sub)}</div>
         </div>
       `).join("");
     }
@@ -650,9 +655,9 @@
         { val: "0.1574", lbl: "Summer DO (9901) Joint R²", sub: "Diel noise limits grab-sample DO CV" }
       ].map((k) => `
         <div class="kpi-card">
+          <div class="kpi-label">${esc(k.lbl)}</div>
           <div class="kpi-val">${k.val}</div>
-          <div class="kpi-lbl">${esc(k.lbl)}</div>
-          <div class="kpi-sub">${esc(k.sub)}</div>
+          <div class="kpi-note">${esc(k.sub)}</div>
         </div>
       `).join("");
     }
@@ -725,9 +730,9 @@
         { val: "0.8429", lbl: "Joint S3N RMSE (log mg/L)", sub: "Temporal borrowing rho_t = 0.363" }
       ].map((k) => `
         <div class="kpi-card">
+          <div class="kpi-label">${esc(k.lbl)}</div>
           <div class="kpi-val">${k.val}</div>
-          <div class="kpi-lbl">${esc(k.lbl)}</div>
-          <div class="kpi-sub">${esc(k.sub)}</div>
+          <div class="kpi-note">${esc(k.sub)}</div>
         </div>
       `).join("");
     }
@@ -781,9 +786,9 @@
         { val: "7.56", lbl: "Tail-Up Variance (sigma2_TU)", sub: "Flow-connected AFV continuity (tau2=4.30)" }
       ].map((k) => `
         <div class="kpi-card">
+          <div class="kpi-label">${esc(k.lbl)}</div>
           <div class="kpi-val">${k.val}</div>
-          <div class="kpi-lbl">${esc(k.lbl)}</div>
-          <div class="kpi-sub">${esc(k.sub)}</div>
+          <div class="kpi-note">${esc(k.sub)}</div>
         </div>
       `).join("");
     }
@@ -820,9 +825,9 @@
         { val: "76.5%", lbl: "Lune Snapping <= 10 m", sub: "17 included, 0 excluded, median 3.48 m" }
       ].map((k) => `
         <div class="kpi-card">
+          <div class="kpi-label">${esc(k.lbl)}</div>
           <div class="kpi-val">${k.val}</div>
-          <div class="kpi-lbl">${esc(k.lbl)}</div>
-          <div class="kpi-sub">${esc(k.sub)}</div>
+          <div class="kpi-note">${esc(k.sub)}</div>
         </div>
       `).join("");
     }
@@ -856,9 +861,9 @@
         { val: "+2.77%", lbl: "#1 Site Variance Drop", sub: "Riv 38848 (Ribble, Order 6)" }
       ].map((k) => `
         <div class="kpi-card">
+          <div class="kpi-label">${esc(k.lbl)}</div>
           <div class="kpi-val">${k.val}</div>
-          <div class="kpi-lbl">${esc(k.lbl)}</div>
-          <div class="kpi-sub">${esc(k.sub)}</div>
+          <div class="kpi-note">${esc(k.sub)}</div>
         </div>
       `).join("");
     }
@@ -884,10 +889,69 @@
       { key: "Cum_Pct_Reduced", label: "Cum. dV (%)", num: true, digits: 2, clsFn: (r) => (r.Rank <= 5 ? "highlight-cell" : "") }
     ], nwDesignRows.slice(0, 20));
 
-    // --- CS2: Exceedance + WHPT ASPT ---
+    // --- CS2: WHPT ASPT Ecological Health ---
+    const engWhpt = (t.cv_whpt || []).filter((r) => r.Domain === "All England RSN Network");
+    const whptComb = engWhpt.find((r) => String(r.Model).includes("Combined")) || {};
+    const whptOls = engWhpt.find((r) => String(r.Model).includes("OLS")) || {};
+    const kpi2 = document.getElementById("cs2-kpis");
+    if (kpi2) {
+      kpi2.innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">Joint S3N CV R²</div><div class="kpi-val pos">${fmt(whptComb.R2, 4)}</div><div class="kpi-note">RMSE ${fmt(whptComb.RMSE, 4)} (vs ${fmt(whptOls.RMSE, 4)} OLS)</div></div>
+        <div class="kpi-card"><div class="kpi-label">Spatial Variance Gain</div><div class="kpi-val pos">+0.1470</div><div class="kpi-note">R² lift from Tail-Up + Tail-Down + Euclidean</div></div>
+        <div class="kpi-card"><div class="kpi-label">Humber Basin CV R²</div><div class="kpi-val pos">0.5704</div><div class="kpi-note">Up from 0.5028 OLS (Severn 0.3416, Thames 0.3051)</div></div>
+        <div class="kpi-card"><div class="kpi-label">Observed Sites</div><div class="kpi-val">1,160 reaches</div><div class="kpi-note">Predicted out-of-sample across 90,876 reaches</div></div>
+      `;
+    }
+    const whptSvg = document.getElementById("cs2-r2-svg");
+    if (whptSvg && engWhpt.length) {
+      const bars = engWhpt.map((r) => ({
+        label: r.Model.replace(" (Flow-Connected + AFV)", "").replace(" (Tail-Up + Tail-Down)", "").replace(" (Stream Distance)", ""),
+        val: r.R2 || 0,
+        color: r.Model.includes("Combined") ? "#34d399" : (r.Model.includes("OLS") ? "#64748b" : "#38bdf8")
+      }));
+      whptSvg.innerHTML = buildInlineBarSvg("ALL ENGLAND WHPT ASPT 5-FOLD CV R2 COMPARISON", bars, 0.75, "");
+    }
+
+    renderTable("cs2-cv-table",
+      [
+        { label: "All England Model", key: "Model" },
+        { label: "n_obs", key: "n_obs", num: true },
+        { label: "RMSE", key: "RMSE", num: true, digits: 4 },
+        { label: "MAE", key: "MAE", num: true, digits: 4 },
+        { label: "R²", key: "R2", num: true, digits: 4 }
+      ],
+      engWhpt,
+      (r) => String(r.Model).includes("Combined") ? "highlight-row" : ""
+    );
+
+    renderTable("cs2-basin-table",
+      [
+        { label: "Regional Basin", key: "Domain" },
+        { label: "Model", key: "Model" },
+        { label: "n_obs", key: "n_obs", num: true },
+        { label: "RMSE", key: "RMSE", num: true, digits: 4 },
+        { label: "R²", key: "R2", num: true, digits: 4 }
+      ],
+      (t.cv_whpt || []).filter((r) => r.Domain !== "All England RSN Network" && (String(r.Model).includes("OLS") || String(r.Model).includes("Combined"))),
+      (r) => String(r.Model).includes("Combined") ? "highlight-row" : ""
+    );
+
+    // --- CS15: Threshold Exceedance Risk & Anomalies ---
     const ex0117 = (t.exceed_0117 || []).filter((r) => r.Domain === "All England RSN Network");
     const ex0180 = (t.exceed_0180 || []).filter((r) => r.Domain === "All England RSN Network");
-    const exSvg = document.getElementById("cs2-exceed-svg");
+    const eng0180 = (t.cv_0180 || []).filter((r) => r.Domain === "All England RSN Network");
+    const pComb = eng0180.find((r) => String(r.Model).includes("Combined")) || {};
+    const pOls = eng0180.find((r) => String(r.Model).includes("OLS")) || {};
+    const kpi15 = document.getElementById("cs15-kpis");
+    if (kpi15) {
+      kpi15.innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">Nitrate Compliant (&le; 11.3)</div><div class="kpi-val pos">90.8%</div><div class="kpi-note">63.6% Confident + 27.3% Likely (0.08% exceeding)</div></div>
+        <div class="kpi-card"><div class="kpi-label">PO4 Uncertain Tier</div><div class="kpi-val warn">47.5%</div><div class="kpi-note">43,202 reaches with P(exceed 0.069) in [0.20, 0.80]</div></div>
+        <div class="kpi-card"><div class="kpi-label">Orthophosphate CV R²</div><div class="kpi-val pos">${fmt(pComb.R2, 4)}</div><div class="kpi-note">RMSE ${fmt(pComb.RMSE, 4)} vs ${fmt(pOls.RMSE, 4)} OLS (log)</div></div>
+        <div class="kpi-card"><div class="kpi-label">National Reach Coverage</div><div class="kpi-val">90,876</div><div class="kpi-note">1,210 RSN WQ stations &middot; 5-tier Gaussian risk</div></div>
+      `;
+    }
+    const exSvg = document.getElementById("cs15-exceed-svg");
     if (exSvg && (ex0117.length || ex0180.length)) {
       const tierColors = {
         "Confidently Compliant": "#0284c7",
@@ -920,7 +984,17 @@
       </svg>`;
     }
 
-    renderTable("cs2-exceed-table",
+    const r2Svg15 = document.getElementById("cs15-r2-svg");
+    if (r2Svg15 && eng0180.length) {
+      const bars = eng0180.map((r) => ({
+        label: r.Model.replace(" (Flow-Connected + AFV)", "").replace(" (Tail-Up + Tail-Down)", "").replace(" (Stream Distance)", ""),
+        val: r.R2 || 0,
+        color: r.Model.includes("Combined") ? "#34d399" : (r.Model.includes("OLS") ? "#64748b" : "#38bdf8")
+      }));
+      r2Svg15.innerHTML = buildInlineBarSvg("ALL ENGLAND ORTHOPHOSPHATE (0180) 5-FOLD CV R2 COMPARISON", bars, 0.75, "");
+    }
+
+    renderTable("cs15-exceed-table",
       [
         { label: "Determinand", fn: (r) => r.Determinand_Name || (r.Threshold_Raw === 11.3 ? "Nitrate" : "Orthophosphate") },
         { label: "Tier", key: "Tier" },
@@ -930,19 +1004,35 @@
       [...ex0117, ...ex0180]
     );
 
-    renderTable("cs2-cv-table",
+    renderTable("cs15-cv-table",
       [
-        { label: "Determinand", key: "Determinand_Name" },
         { label: "Domain", key: "Domain" },
         { label: "Model", key: "Model" },
+        { label: "n_obs", key: "n_obs", num: true },
         { label: "RMSE", key: "RMSE", num: true, digits: 4 },
+        { label: "MAE", key: "MAE", num: true, digits: 4 },
         { label: "R²", key: "R2", num: true, digits: 4 }
       ],
-      [...(t.cv_whpt || []), ...(t.cv_0180 || [])].filter((r) => String(r.Model).includes("OLS") || String(r.Model).includes("Combined")),
+      (t.cv_0180 || []).filter((r) => String(r.Model).includes("OLS") || String(r.Model).includes("Combined")),
       (r) => String(r.Model).includes("Combined") ? "highlight-row" : ""
     );
 
     // --- CS3: Spatio-Temporal ---
+    const stWin = (t.st_season_cv || []).find((r) => String(r.Period).includes("winter")) || {};
+    const stSum = (t.st_season_cv || []).find((r) => String(r.Period).includes("summer")) || {};
+    const stYrR2 = (t.st_year_cv || []).map((r) => r.R2).filter((v) => typeof v === "number");
+    const stYrMin = stYrR2.length ? Math.min(...stYrR2) : 0.5772;
+    const stYrMax = stYrR2.length ? Math.max(...stYrR2) : 0.6218;
+    const kpi3 = document.getElementById("cs3-kpis");
+    if (kpi3) {
+      kpi3.innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">Winter Peak CV R²</div><div class="kpi-val pos">${fmt(stWin.R2, 4)}</div><div class="kpi-note">RMSE ${fmt(stWin.RMSE, 4)} across ${fmt(stWin.n_obs, 0)} obs reaches</div></div>
+        <div class="kpi-card"><div class="kpi-label">Summer Low-Flow CV R²</div><div class="kpi-val warn">${fmt(stSum.R2, 4)}</div><div class="kpi-note">RMSE ${fmt(stSum.RMSE, 4)} across ${fmt(stSum.n_obs, 0)} obs reaches</div></div>
+        <div class="kpi-card"><div class="kpi-label">Annual CV R² (2021–2024)</div><div class="kpi-val pos">${fmt(stYrMin, 3)}&ndash;${fmt(stYrMax, 3)}</div><div class="kpi-note">434&ndash;439 obs/yr across 90,876 England reaches</div></div>
+        <div class="kpi-card"><div class="kpi-label">Temporal Trend Workflow</div><div class="kpi-val">4 Seasons &middot; 4 Years</div><div class="kpi-note">Precision-borrowed WLS slopes (fig6) &amp; shifts (fig7)</div></div>
+      `;
+    }
+
     renderTable("cs3-cv-table",
       [
         { label: "Period Slice", key: "Period" },
@@ -960,6 +1050,10 @@
     const ckEng0117 = (t.cokrig_cv || []).filter((r) => r.Domain === "All England RSN Network" && (r.Target_Code === "0117" || Number(r.Target_Code) === 117));
     const ckUni = ckEng0117.find((r) => String(r.Model).includes("Univariate")) || {};
     const ckAux = ckEng0117.find((r) => String(r.Model).includes("Aux-Aided")) || {};
+    const ckEng0180 = (t.cokrig_cv || []).filter((r) => r.Domain === "All England RSN Network" && (r.Target_Code === "0180" || Number(r.Target_Code) === 180));
+    const ck180Uni = ckEng0180.find((r) => String(r.Model).includes("Univariate")) || {};
+    const ck180Aux = ckEng0180.find((r) => String(r.Model).includes("Aux-Aided")) || {};
+    const ck180Drop = (ck180Uni.RMSE && ck180Aux.RMSE) ? (((1 - ck180Aux.RMSE / ck180Uni.RMSE) * 100).toFixed(1)) : "—";
     const rssComb = (t.cv_rss || []).find((r) => r.Domain === "All England RSS Combined Network" && String(r.Model).includes("Combined")) || {};
 
     const kpi4 = document.getElementById("cs4-kpis");
@@ -967,7 +1061,7 @@
       kpi4.innerHTML = `
         <div class="kpi-card"><div class="kpi-label">Co-Kriging Verdict</div><div class="kpi-val pos">8 / 8 Strong</div><div class="kpi-note">Outperformed Univariate across all basins &amp; targets</div></div>
         <div class="kpi-card"><div class="kpi-label">England 0117 Aux-Aided</div><div class="kpi-val pos">${fmt(ckAux.R2, 4)}</div><div class="kpi-note">Up from ${fmt(ckUni.R2, 4)} Univariate (-22.3% RMSE)</div></div>
-        <div class="kpi-card"><div class="kpi-label">Median Aux-Aided Gain</div><div class="kpi-val pos">+0.2062 R²</div><div class="kpi-note">Median -16.6% RMSE across all 8 Domain x Target pairs</div></div>
+        <div class="kpi-card"><div class="kpi-label">England 0180 Aux-Aided</div><div class="kpi-val pos">${fmt(ck180Aux.R2, 4)}</div><div class="kpi-note">Up from ${fmt(ck180Uni.R2, 4)} Univariate (-${ck180Drop}% RMSE)</div></div>
         <div class="kpi-card"><div class="kpi-label">RSN+SSN Combined Network</div><div class="kpi-val">1,384 reaches</div><div class="kpi-note">CV R² = ${fmt(rssComb.R2, 4)} across 91,118 reaches (prefer RSN)</div></div>
       `;
     }
@@ -1000,7 +1094,7 @@
         <line x1="60" y1="28" x2="60" y2="135" stroke="var(--border-strong)" stroke-width="1.2"/>
         <polyline fill="none" stroke="#fbbf24" stroke-width="2.6" points="${pts.join(" ")}" />
         <circle cx="540" cy="135" r="4.5" fill="#34d399"/><text x="480" y="125" fill="#34d399" font-size="11" font-weight="700">RSN w=1.0 (0x)</text>
-        <circle cx="193" cy="96" r="4.5" fill="#38bdf8"/><text x="198" y="88" fill="#38bdf8" font-size="11" font-weight="700">WaterBlitz w=0.35 (1.86x)</text>
+        <circle cx="406.7" cy="131.1" r="4.5" fill="#38bdf8"/><text x="325" y="112" fill="#38bdf8" font-size="11" font-weight="700">SSN w=0.75 (0.33x)</text>
         <text x="60" y="153" fill="var(--text-muted)" font-size="11">w = 0.10 (9x tau^2 noise)</text>
         <text x="485" y="153" fill="var(--text-muted)" font-size="11">w = 1.00 (exact)</text>
       </svg>`;
@@ -1053,7 +1147,7 @@
       (t.comp_tests || []).slice(0, 10)
     );
 
-    renderTable("cs5-snap-table",
+    renderTable("cs16-snap-table",
       [
         { label: "Catchment", key: "Main_River" },
         { label: "RBD", key: "RBD_Name" },
@@ -1216,10 +1310,23 @@
   function initFeatureCatalog() {
     const grid = document.getElementById("featureCatalogGrid");
     const btns = document.querySelectorAll("#featureFilterBtns .fig-toggle-btn");
+    const searchInput = document.getElementById("catalogSearch");
     if (!grid) return;
 
-    function draw(cat) {
-      const items = cat === "all" ? FEATURE_CATALOG : FEATURE_CATALOG.filter((f) => f.cat === cat);
+    let activeCat = "all";
+    let searchTerm = "";
+
+    function draw() {
+      const q = searchTerm.trim().toLowerCase();
+      const items = FEATURE_CATALOG.filter((f) => {
+        if (activeCat !== "all" && f.cat !== activeCat) return false;
+        if (!q) return true;
+        return (f.title + " " + f.desc + " " + f.badge).toLowerCase().includes(q);
+      });
+      if (!items.length) {
+        grid.innerHTML = `<div class="feature-item" style="grid-column:1/-1;"><p style="margin:0;">No catalog features match "<code>${esc(searchTerm)}</code>".</p></div>`;
+        return;
+      }
       grid.innerHTML = items.map((f) => `
         <div class="feature-item">
           <span class="pill ${f.cat === "major" ? "pill-green" : "pill-amber"}">${esc(f.badge)}</span>
@@ -1230,19 +1337,23 @@
           </div>
         </div>
       `).join("");
-      grid.querySelectorAll("[data-jump-tab]").forEach((b) => {
-        b.addEventListener("click", () => switchTab(b.dataset.jumpTab));
-      });
     }
 
-    draw("all");
+    draw();
     btns.forEach((btn) => {
       btn.addEventListener("click", () => {
         btns.forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
-        draw(btn.dataset.fcat);
+        activeCat = btn.dataset.fcat || "all";
+        draw();
       });
     });
+    if (searchInput) {
+      searchInput.addEventListener("input", () => {
+        searchTerm = searchInput.value || "";
+        draw();
+      });
+    }
   }
 
   function initSearch() {
@@ -1256,7 +1367,8 @@
         title: m.title,
         sub: m.note,
         tab: k === "no3_z_thames_severn" || k.startsWith("cs1") || k.startsWith("no3_gam") || k === "no3_england" || k === "no3_humber" || k === "no3_thames_severn" || k === "no3_diag" ? "cs1"
-          : k.startsWith("whpt") || k.includes("exceed") || k.includes("no3_z") ? "cs2"
+          : k.startsWith("whpt") ? "cs2"
+          : k.includes("exceed") || k.includes("no3_z") ? "cs15"
           : k.startsWith("st_") ? "cs3"
           : k.startsWith("cokrig") || k.startsWith("rss_") ? "cs4"
           : k.startsWith("wb_") ? "cs6"
@@ -1265,6 +1377,7 @@
           : k.startsWith("ntaxa_") ? "cs9"
           : k.startsWith("eut_") ? "cs10"
           : k.startsWith("nw_no3_") ? "cs11"
+          : k.startsWith("snap_") ? "cs16"
           : k.startsWith("nw_snap_") ? "cs13"
           : k.startsWith("nw_opt_") ? "cs14"
           : k.startsWith("nw_") ? "cs12" : "cs5"
@@ -1300,26 +1413,6 @@
     });
   }
 
-  function initCopyButtons() {
-    document.querySelectorAll("[data-copy-target]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const target = document.getElementById(btn.dataset.copyTarget);
-        if (!target) return;
-        const txt = target.textContent;
-        const done = () => {
-          const orig = btn.textContent;
-          btn.textContent = "Copied!";
-          setTimeout(() => { btn.textContent = orig; }, 1400);
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(txt).then(done).catch(() => fallbackCopy(txt, done));
-        } else {
-          fallbackCopy(txt, done);
-        }
-      });
-    });
-  }
-
   function fallbackCopy(txt, cb) {
     const ta = document.createElement("textarea");
     ta.value = txt;
@@ -1339,6 +1432,7 @@
     const metaPill = document.getElementById("modalMeta");
     const footer = document.getElementById("modalFooter");
     const zoomBtn = document.getElementById("modalZoomBtn");
+    const downloadBtn = document.getElementById("modalDownloadBtn");
     const closeBtn = document.getElementById("modalCloseBtn");
     const prevBtn = document.getElementById("modalPrevBtn");
     const nextBtn = document.getElementById("modalNextBtn");
@@ -1372,14 +1466,23 @@
       if (!fig) return;
       img.src = fig.path;
       img.alt = info.title;
+      if (downloadBtn) {
+        downloadBtn.href = fig.path;
+        downloadBtn.download = (fig.path || "figure.png").split("/").pop();
+      }
       img.classList.remove("zoomed");
       if (bodyEl) {
         bodyEl.scrollTop = 0;
         bodyEl.scrollLeft = 0;
       }
       title.textContent = info.title;
-      const counter = gallery.length > 1 ? `${currentIdx + 1} / ${gallery.length} · ` : "";
-      metaPill.textContent = `${counter}${fig.format} · ${fig.size_kb} KB`;
+      if (gallery.length > 1) {
+        metaPill.textContent = `${currentIdx + 1} / ${gallery.length}`;
+        metaPill.hidden = false;
+      } else {
+        metaPill.textContent = "";
+        metaPill.hidden = true;
+      }
       footer.textContent = info.note;
       const single = gallery.length <= 1;
       if (prevBtn) prevBtn.hidden = single;
@@ -1423,7 +1526,8 @@
     const root = document.documentElement;
     function apply(theme) {
       root.setAttribute("data-theme", theme);
-      btn.textContent = theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode";
+      btn.textContent = theme === "dark" ? "☀️" : "🌙";
+      btn.title = theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
       try { localStorage.setItem("modelling_dashboard_theme", theme); } catch (e) {}
     }
     let saved = "dark";
@@ -1442,16 +1546,357 @@
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
-  document.querySelectorAll(".pipe-node[data-jump]").forEach((node) => {
-    node.addEventListener("click", () => switchTab(node.dataset.jump));
+  document.querySelectorAll("[data-jump-tab]").forEach((el) => {
+    el.addEventListener("click", () => switchTab(el.dataset.jumpTab));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        switchTab(el.dataset.jumpTab);
+      }
+    });
   });
+  const STAGE_EXPLAINERS = {
+    "1": {
+      title: "Stage 1 · Python Stdlib Preprocessing (GIS, ROS & Snapping)",
+      body: "Reads OS Open Rivers Network v2 (ORN v2) GeoPackage topology and binary WKB geometries directly using pure-stdlib Python SQLite—no GDAL or sf required. Builds the directed river graph, snaps monitoring stations to nearest reaches (flagging off-network outliers), and imputes left-censored below-LOD or range-limited values via Lognormal ROS or Tobit preprocessing."
+    },
+    "2": {
+      title: "Stage 2 · C++ / OpenMP Euler-Tour Stream NNGP Engine",
+      body: "Computes O(1) lowest-common-ancestor (LCA) hydrological distances via Euler-tour RMQ in compiled C++ with OpenMP parallelism. Constructs sparse Nearest-Neighbor Gaussian Process (NNGP) precision factors combining flow-connected Tail-Up (with AFV confluence weights), flow-unconnected Tail-Down, and Euclidean kernels alongside linear, GAM, RF, or GBM fixed-effect trends."
+    },
+    "3": {
+      title: "Stage 3 · Stream Modelling (Univariate & Co-Kriging)",
+      body: "Fits either single-determinand Univariate S3N models (water quality or ecological indices such as WHPT ASPT / N-Taxa / RMNI) or multivariate Factor-LMC / colocated Co-Kriging models across coupled targets (e.g., Nitrate + Orthophosphate + RMNI). Supports spatio-temporal period batching with precision-weighted borrowing and multi-source surveillance/citizen-science weighting."
+    },
+    "4": {
+      title: "Stage 4 · Diagnostics, Thresholds & Quality Control",
+      body: "Evaluates out-of-sample 5-fold cross-validation, renders national/basin prediction and kriging SE maps, and computes 5-tier probabilistic threshold exceedance risk. Also runs station-to-reach snapping distance audits, Mann-Whitney network representativeness bias tests, and cross-run N:P or P–RMNI concordance analyses."
+    }
+  };
+
+  function selectPipelineStage(stageId) {
+    const info = STAGE_EXPLAINERS[stageId];
+    const box = document.getElementById("pipelineStageExplainer");
+    if (!info || !box) return;
+    document.querySelectorAll(".pipe-node[data-stage]").forEach((n) => {
+      n.classList.toggle("active", n.dataset.stage === stageId);
+    });
+    box.dataset.stage = stageId;
+    box.innerHTML = `<h4 style="margin-top:0;">${esc(info.title)}</h4><p style="margin:0; color:var(--text-secondary); font-size:0.86rem; line-height:1.55;">${esc(info.body)}</p>`;
+  }
+
+  document.querySelectorAll(".pipe-node[data-stage]").forEach((node) => {
+    const activate = () => selectPipelineStage(node.dataset.stage);
+    node.addEventListener("mouseenter", activate);
+    node.addEventListener("focus", activate);
+    node.addEventListener("click", activate);
+  });
+  selectPipelineStage("1");
+
+  const KPI_EXPLAINERS = {
+    "Linear S3N CV R²": "5-fold cross-validation R² for Nitrate (0117) using linear environmental covariates plus Joint Tail-Up, Tail-Down, and Euclidean NNGP stream covariance.",
+    "GAM + S3N CV R²": "5-fold CV R² when linear fixed effects are replaced by REML-penalised cubic regression splines (mgcv::gam) before fitting spatial stream-network residuals.",
+    "Spatial Variance Gain": "Additional out-of-sample variance explained (+0.2126 R²) purely from modelling river-network and Euclidean spatial correlation over non-spatial OLS.",
+    "Observed Sites": "1,210 ORN v2 reaches with EA surveillance (RSN) Nitrate samples used to condition predictions across all 90,876 reaches in 141 monitored catchments.",
+
+    "Co-Kriging Verdict": "Factor-LMC co-kriging outperformed single-target univariate S3N in all 8 Domain × Target cross-validation benchmarks (England, Humber, Thames, Severn × Nitrate, Orthophosphate).",
+    "England 0117 Aux-Aided": "Cross-validation R² for Nitrate when Nitrate is held out at a reach while co-located Orthophosphate (0180) remains observed, cutting RMSE by 22.3%.",
+    "England 0180 Aux-Aided": "Cross-validation R² for Orthophosphate (0180) when Phosphate is held out at a reach while co-located Nitrate (0117) remains observed, borrowing strength through Factor-LMC cross-correlation.",
+    "Median Aux-Aided Gain": "Median improvement across all 8 Domain × Target pairs when borrowing strength from an auxiliary co-located determinand at monitoring gaps.",
+    "RSN+SSN Combined Network": "Combining River Surveillance Network (RSN) and Small Streams Network (SSN) increases coverage to 1,384 observed reaches across 91,118 reaches, with RSN prioritised on shared reaches.",
+
+    "England Reaches Snap-Fused": "Total active ORN v2 reaches with at least one snapped RSN, SSN, or citizen-science WaterBlitz observation within 350 m across 268 catchments.",
+    "Co-Located Reach Dilution Fix": "On 384 reaches sampled by both EA surveillance monitors (RSN/SSN) and WaterBlitz, weighting surveillance sources higher (--prefer-source / --source-weight) prevents noisy citizen strips from diluting RSN/SSN medians.",
+    "National Kriging SE Change": "Percentage drop in mean national kriging standard error across all 95,773 reaches for Nitrate (0117) and Orthophosphate (0180) after adding WaterBlitz coverage.",
+    "PO4 Uncertain Tier Reaches": "Share of reaches falling in the Uncertain regulatory exceedance band for Orthophosphate drops from 51.0% to 41.7% when WaterBlitz observations reduce spatial uncertainty.",
+
+    "Profile-MLE Box-Cox λ": "Maximum-likelihood Box-Cox power parameter λ = 0.50 matches the square-root transform, reducing Nitrate residual skewness from 1.001 to 0.118.",
+    "Raw Positivity Violations": "Number of reaches where untransformed linear kriging predicts physically impossible negative Nitrate concentrations (minimum -4.817 mg/L); Sqrt, Log, and Box-Cox guarantee >= 0.",
+    "Best Model-Scale vs. Raw Error": "Log achieves the highest R² on its own transformed scale (0.6784), whereas Sqrt and Box-Cox minimise back-transformed prediction error in raw mg/L (MAE = 1.57 mg/L).",
+    "Log Median Bias vs. Rank": "Because exp(E[log Y]) estimates the geometric rather than arithmetic mean (Jensen's inequality), raw-scale median predictions sit -1.01 mg/L lower while preserving 0.982 rank correlation.",
+
+    "England Variance Drop (+50)": "Percentage of total evaluated kriging variance across 90,876 England reaches eliminated by adding 50 optimally placed monitoring sites via the greedy Schur-complement solver.",
+    "National Mean Kriging SE": "Reduction in average log-scale kriging standard error across England when expanding from 1,210 existing RSN sites to 1,260 (+50 optimal placements).",
+    "Top Single Placement (#1)": "Highest-ranked individual new monitoring reach (RivID 18175 in Humber CatchID 80), delivering a +4.58% national variance reduction on its own.",
+    "Per-Basin Gains (+50 Each)": "Independent variance reductions achieved when placing 50 optimal stations within each standalone river basin (Humber 32.3%, Thames 43.6%, Severn 43.0%).",
+
+    "All-England Joint S3N R²": "5-fold CV R² for macroinvertebrate taxon richness (WHPT N-Taxa) across England using Joint Tail-Up + Tail-Down + Euclidean NNGP covariance.",
+    "GAM + S3N Joint R²": "5-fold CV R² for WHPT N-Taxa using non-linear GAM covariates plus spatial stream-network residuals (RMSE = 5.3926 taxa vs 5.8486 for non-spatial OLS).",
+    "Severn Basin Joint R²": "Regional 5-fold CV R² for WHPT N-Taxa within the Severn basin, lifting explained variance from 0.0200 (OLS) to 0.1750 via stream-network spatial structure.",
+    "Inverts Samples (1,313 Sites)": "Total macroinvertebrate survey samples across 1,313 RSN sites mapped onto 1,160 unique England ORN v2 reaches.",
+
+    "Best National RMNI R² (GAM+S3N)": "5-fold CV R² for River Macrophyte Nutrient Index (RMNI) using REML-penalised GAM fixed effects and Joint S3N spatial residuals.",
+    "LMC Co-Kriging RMNI R² (Aux)": "Factor-LMC co-kriging R² for RMNI when borrowing strength from co-located Orthophosphate (0180), rescuing Thames basin CV R² from -0.2671 to +0.3165.",
+    "P (0180) vs RMNI Reach r": "Reach-level Pearson correlation (r = 0.9005) between predicted Orthophosphate and RMNI across England, with 86.55% agreement across high/low risk quadrants.",
+    "Summer DO (9901) Joint R²": "5-fold CV R² for summer dissolved oxygen saturation (9901); lower R² reflects strong sub-daily photosynthesis/respiration cycles in daytime grab samples.",
+
+    "North West Joint S3N R²": "5-fold CV R² for Nitrate (0117) across 12,465 reaches and 136 observed RSN reaches in the North West River Basin District.",
+    "Confidently Compliant": "Share of North West reaches (93.8%) whose upper kriging confidence bound remains safely below the 11.3 mg/L Nitrates Directive threshold.",
+    "Peak Autumn Seasonal R²": "Highest seasonal Nitrate CV R² (0.6799 in Autumn) from multi-season fitting with precision-weighted dynamic temporal borrowing.",
+    "Joint S3N RMSE (log mg/L)": "Out-of-sample root-mean-square error on the log Nitrate scale for the North West RBD fit with temporal borrowing (rho_t = 0.363).",
+
+    "North West N-Taxa Joint R²": "5-fold CV R² for macroinvertebrate WHPT N-Taxa in the North West RBD, improving +0.0698 over non-spatial OLS (0.1252).",
+    "Joint S3N RMSE (taxa)": "Out-of-sample cross-validation error in raw taxon count units across 131 observed North West macroinvertebrate reaches.",
+    "Euclidean Variance (sigma2_Euc)": "Estimated partial sill for straight-line spatial covariance (13.92), capturing regional geology and climate gradients across adjacent catchments.",
+    "Tail-Up Variance (sigma2_TU)": "Estimated partial sill for flow-connected downstream dispersion weighted by Additive Function Values (7.56, with nugget tau2 = 4.30).",
+
+    "Ribble Median Snap Offset": "Median orthogonal distance from raw Ribble monitoring coordinates to the mapped ORN v2 river centreline (87.1% within 10 m).",
+    "Weaver Snapping <= 10 m": "Percentage of included Weaver stations snapping within 10 m of an ORN v2 reach (100.0% across 23 sites, median offset 2.18 m).",
+    "Mersey Snapping <= 10 m": "Percentage of included Mersey stations snapping within 10 m of an ORN v2 reach (95.7% across 23 sites, 0 excluded).",
+    "Lune Snapping <= 10 m": "Percentage of included Lune stations snapping within 10 m of an ORN v2 reach (76.5% across 17 sites, median offset 3.48 m).",
+
+    "NW Variance Reduction (K=50)": "Total evaluated kriging variance reduction across 12,465 North West reaches from adding 50 greedy optimal monitoring stations.",
+    "Mean Kriging SE After K=50": "Average log-scale kriging standard error across the North West RBD after adding 50 optimal stations (-29.7% from 0.6956).",
+    "Winter Peak CV R²": "Winter (DJF) achieves the highest seasonal Nitrate CV R² (0.7153) because high baseflow and winter runoff connect agricultural soils consistently along the river network.",
+    "Summer Low-Flow CV R²": "Summer (JJA) Nitrate CV R² (0.5598) is lower due to reduced hydrological connectivity, uptake/denitrification, and sparser summer flow paths.",
+    "Annual CV R² (2021–2024)": "Range of All-England 5-fold CV R² across individual calendar years 2021–2024 (~434–439 observed reaches per year).",
+    "Temporal Trend Workflow": "Combines --by=season / --by=year slicing with --st-borrow precision weighting before running reach-level WLS trend tests (fig6) and period transitions (fig7).",
+    "Existing NW RSN Stations": "Number of current EA surveillance (RSN) Nitrate monitoring reaches in the North West RBD baseline before adding new design sites.",
+    "#1 Site Variance Drop": "Variance reduction delivered by the single highest-priority new North West station (RivID 38848 on the Ribble, Strahler order 6)."
+  };
+
+  function attachKpiExplainers(rootEl) {
+    (rootEl || document).querySelectorAll(".kpi-card .kpi-label, .kpi-card .kpi-lbl").forEach((lblEl) => {
+      if (lblEl.querySelector(".info-wrap")) return;
+      const title = lblEl.textContent.trim();
+      const text = KPI_EXPLAINERS[title];
+      if (!text) return;
+      const span = document.createElement("span");
+      span.textContent = title;
+      const wrap = document.createElement("span");
+      wrap.className = "info-wrap";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "info-tip-btn";
+      btn.setAttribute("aria-label", `Info about ${title}`);
+      btn.textContent = "i";
+      const pop = document.createElement("div");
+      pop.className = "info-popover";
+      pop.setAttribute("role", "tooltip");
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      pop.appendChild(strong);
+      pop.appendChild(document.createTextNode(text));
+      wrap.appendChild(btn);
+      wrap.appendChild(pop);
+      lblEl.textContent = "";
+      lblEl.appendChild(span);
+      lblEl.appendChild(wrap);
+    });
+  }
+
+  function initInfoTooltips() {
+    function positionPopover(wrap) {
+      const btn = wrap.querySelector(".info-tip-btn");
+      const pop = wrap.querySelector(".info-popover");
+      if (!btn || !pop) return;
+      const margin = 12;
+      const gap = 8;
+      const rect = btn.getBoundingClientRect();
+      const popW = pop.offsetWidth || 280;
+      const popH = pop.offsetHeight || 110;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      // Prefer right-aligned with the (i) button, clamped inside viewport
+      let left = rect.right - popW;
+      if (left < margin) left = margin;
+      if (left + popW > vw - margin) left = Math.max(margin, vw - popW - margin);
+
+      // Prefer below the (i) button; flip above if near bottom edge and room exists above
+      let top = rect.bottom + gap;
+      if (top + popH > vh - margin && rect.top - gap - popH >= margin) {
+        top = rect.top - gap - popH;
+      } else if (top + popH > vh - margin) {
+        top = Math.max(margin, vh - popH - margin);
+      }
+
+      pop.style.left = `${Math.round(left)}px`;
+      pop.style.top = `${Math.round(top)}px`;
+    }
+
+    function closeAll(exceptWrap) {
+      document.querySelectorAll(".info-wrap.open").forEach((wrap) => {
+        if (wrap !== exceptWrap) wrap.classList.remove("open");
+      });
+    }
+
+    document.querySelectorAll(".info-wrap").forEach((wrap) => {
+      wrap.addEventListener("mouseenter", () => positionPopover(wrap));
+      wrap.addEventListener("focusin", () => positionPopover(wrap));
+    });
+
+    document.querySelectorAll(".info-tip-btn").forEach((btn) => {
+      btn.setAttribute("aria-expanded", "false");
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = btn.closest(".info-wrap");
+        if (!wrap) return;
+        const willOpen = !wrap.classList.contains("open");
+        closeAll(wrap);
+        if (willOpen) positionPopover(wrap);
+        wrap.classList.toggle("open", willOpen);
+        btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      });
+    });
+
+    window.addEventListener("resize", () => {
+      document.querySelectorAll(".info-wrap.open").forEach(positionPopover);
+    });
+
+    window.addEventListener("scroll", () => {
+      document.querySelectorAll(".info-wrap.open").forEach(positionPopover);
+    }, true);
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".info-wrap")) {
+        closeAll(null);
+        document.querySelectorAll(".info-tip-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeAll(null);
+        document.querySelectorAll(".info-tip-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      }
+    });
+  }
+
+  function renderOverviewBenchmark() {
+    const el = document.getElementById("overview-benchmark-table");
+    if (!el) return;
+    const t = DATA.tables || {};
+    function pickPair(rows, domainFilter) {
+      const sub = (rows || []).filter(domainFilter);
+      const ols = sub.find((r) => String(r.Model).includes("OLS")) || {};
+      const comb = sub.find((r) => String(r.Model).includes("Combined")) || {};
+      return { olsR2: ols.R2, combR2: comb.R2, rmse: comb.RMSE };
+    }
+    const specs = [
+      { cs: "CS1", tab: "cs1", study: "England Nitrate (0117, Linear)", ...pickPair(t.cv_0117, (r) => r.Domain === "All England RSN Network") },
+      { cs: "CS1", tab: "cs1", study: "England Nitrate (0117, GAM + S3N)", ...pickPair(t.cv_0117_gam, (r) => r.Domain === "All England RSN Network") },
+      { cs: "CS3", tab: "cs9", study: "England Inverts WHPT N-Taxa", ...pickPair(t.cv_whpt_ntaxa, (r) => r.Domain === "All England RSN Network") },
+      { cs: "CS4", tab: "cs2", study: "England Ecology WHPT ASPT", ...pickPair(t.cv_whpt, (r) => r.Domain === "All England RSN Network") },
+      { cs: "CS7", tab: "cs10", study: "England Macrophyte RMNI", ...pickPair(t.cv_eut_rmni, (r) => r.Domain === "All England RSN Network") }
+    ].filter((row) => Number.isFinite(row.olsR2) && Number.isFinite(row.combR2));
+
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Case Study</th>
+            <th>Model Benchmark (All England RSN)</th>
+            <th class="num">OLS CV R&sup2;</th>
+            <th class="num">S3N Combined CV R&sup2;</th>
+            <th class="num">Spatial R&sup2; Lift</th>
+            <th class="num">S3N RMSE</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${specs.map((r) => {
+            const lift = r.combR2 - r.olsR2;
+            return `
+              <tr>
+                <td><span class="pill pill-blue">${esc(r.cs)}</span></td>
+                <td>${esc(r.study)}</td>
+                <td class="num">${fmt(r.olsR2, 4)}</td>
+                <td class="num"><strong>${fmt(r.combR2, 4)}</strong></td>
+                <td class="num" style="color:var(--accent-secondary); font-weight:600;">+${fmt(lift, 4)}</td>
+                <td class="num">${fmt(r.rmse, 4)}</td>
+                <td><button class="copy-btn" type="button" data-jump-tab="${esc(r.tab)}">Open &rarr;</button></td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function initCaseStudyPagerForTab(tabId) {
+    const btns = Array.from(document.querySelectorAll("#subtabStrip .tab-btn[data-tab]"));
+    const idx = btns.findIndex((b) => b.dataset.tab === tabId);
+    if (idx === -1) return;
+    const panel = document.getElementById("tab-" + tabId);
+    if (!panel || panel.querySelector(".cs-pager")) return;
+    const prev = idx > 0 ? btns[idx - 1] : null;
+    const next = idx < btns.length - 1 ? btns[idx + 1] : null;
+    const pager = document.createElement("div");
+    pager.className = "cs-pager";
+    pager.innerHTML = `
+      <div>${prev ? `<button class="cs-pager-btn" type="button" data-pager-tab="${esc(prev.dataset.tab)}">&larr; ${esc(prev.textContent)}</button>` : ""}</div>
+      <div>${next ? `<button class="cs-pager-btn" type="button" data-pager-tab="${esc(next.dataset.tab)}">${esc(next.textContent)} &rarr;</button>` : ""}</div>
+    `;
+    panel.appendChild(pager);
+  }
+
+  function initWorkbenchLinks(rootEl) {
+    (rootEl || document).querySelectorAll(".code-bar").forEach((bar) => {
+      if (bar.querySelector("[data-wb-link]")) return;
+      const copyBtn = bar.querySelector("[data-copy-target]");
+      if (!copyBtn) return;
+      const wrap = document.createElement("div");
+      wrap.style.display = "flex";
+      wrap.style.alignItems = "center";
+      wrap.style.gap = "6px";
+      const wbLink = document.createElement("a");
+      wbLink.className = "wiki-btn";
+      wbLink.href = "../cli_workbench/index.html";
+      wbLink.setAttribute("data-wb-link", "1");
+      wbLink.innerHTML = "Open in CLI Workbench &rarr;";
+      copyBtn.parentNode.insertBefore(wrap, copyBtn);
+      wrap.appendChild(wbLink);
+      wrap.appendChild(copyBtn);
+    });
+  }
+
+  function initDelegatedActions() {
+    document.addEventListener("click", (e) => {
+      const figBtn = e.target.closest(".fig-toggle-bar[data-group] .fig-toggle-btn[data-fig]");
+      if (figBtn) {
+        const bar = figBtn.closest(".fig-toggle-bar[data-group]");
+        const slotId = "fig-slot-" + bar.dataset.group;
+        bar.querySelectorAll(".fig-toggle-btn").forEach((b) => b.classList.remove("active"));
+        figBtn.classList.add("active");
+        renderFigureInto(slotId, figBtn.dataset.fig);
+        return;
+      }
+
+      const jumpBtn = e.target.closest("[data-jump-tab], [data-pager-tab]");
+      if (jumpBtn) {
+        const targetTab = jumpBtn.dataset.jumpTab || jumpBtn.dataset.pagerTab;
+        if (targetTab) switchTab(targetTab);
+        return;
+      }
+
+      const copyBtn = e.target.closest("[data-copy-target]");
+      if (copyBtn) {
+        const target = document.getElementById(copyBtn.dataset.copyTarget);
+        if (!target) return;
+        const txt = target.textContent;
+        const done = () => {
+          const orig = copyBtn.textContent;
+          copyBtn.textContent = "Copied!";
+          setTimeout(() => { copyBtn.textContent = orig; }, 1400);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).then(done).catch(() => fallbackCopy(txt, done));
+        } else {
+          fallbackCopy(txt, done);
+        }
+      }
+    });
+  }
 
   initThemeToggle();
-  initFigureToggles();
   populateCaseStudyData();
+  renderOverviewBenchmark();
+  initInfoTooltips();
   initFeatureCatalog();
   initSearch();
-  initCopyButtons();
+  initDelegatedActions();
   initLightbox();
 
   function syncTabFromHash() {

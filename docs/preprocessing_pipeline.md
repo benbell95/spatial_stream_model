@@ -31,7 +31,7 @@ This document covers the technical architecture across all three stages of the *
 [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~7–8 seconds** using compiled `csv.reader` fast paths and Python standard library modules (`sqlite3`, `struct`, `math`, `csv`; optional `pyarrow`/`libgdal` for GeoParquet).
 
 ### 1. Multi-Network Monitoring Data Ingestion (`--source=<name>`)
-The preprocessor supports official statutory networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
+The preprocessor supports EA surveillance networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
 - `rsn` (*default*, `configs/sources/rsn.json`): Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 baseline stations across England's mainstems and major tributaries.
 - `ssn` (`configs/sources/ssn.json`): Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations (< 20 km² catchment area).
 - `rss` (`configs/sources/composites.json`): **Combined River Surveillance + Small Streams Network** integrating both datasets (1,695 unique monitoring stations) for complete headwater-to-mouth stream network coverage (`all` also resolves to `rsn+ssn` by default and includes any user-registered sources in `configs/sources/`).
