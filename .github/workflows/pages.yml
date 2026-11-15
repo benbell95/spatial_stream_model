@@ -1,0 +1,61 @@
+name: Deploy Dashboard & CLI Workbench to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "modelling_dashboard/**"
+      - "cli_workbench/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Stage static site artifact
+        run: |
+          mkdir -p _site
+          cp -r modelling_dashboard _site/modelling_dashboard
+          cp -r cli_workbench _site/cli_workbench
+          touch _site/.nojekyll
+          cat <<'EOF' > _site/index.html
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta http-equiv="refresh" content="0; url=./modelling_dashboard/" />
+            <title>Scalable Spatial Stream Network Modelling Dashboard</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="./modelling_dashboard/">Modelling Dashboard</a>&hellip;</p>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "_site"
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
