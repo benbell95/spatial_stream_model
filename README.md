@@ -3,15 +3,28 @@
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](docs/setup_and_architecture.md)
 [![R 3.5+](https://img.shields.io/badge/R-3.5%2B-276DC3?logo=r&logoColor=white)](docs/setup_and_architecture.md)
 [![C++ OpenMP](https://img.shields.io/badge/C%2B%2B-OpenMP%20Engine-00599C?logo=cplusplus&logoColor=white)](src/s3n_fast_neighbors.cpp)
+[![Live Dashboard](https://img.shields.io/badge/Live_Dashboard-GitHub_Pages-38bdf8?logo=githubpages&logoColor=white)](https://benbell95.github.io/spatial_stream_model/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 This project implements a headless pipeline for **Scalable Spatial Stream Network (`S3N` / NNGP)** modelling, including; 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access river network data from the Environment Agency (EA), and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
 
-These scripts are fast, and are designed to run on any system without heavy GIS/plotting dependencies (no `GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2` packages are required).
+### Key Features
+
+- 🌊 **Full-Network Water Quality & Ecology Mapping:** Predict chemistry and ecological scores at every unmonitored river reach with local uncertainty (`SE`).
+- 🔀 **Flow-Aware Spatial Interpolation:** Combine downstream transport (`Tail-Up` + `AFV`), along-channel (`Tail-Down`), and overland (`Euclidean`) correlation in one model.
+- 📈 **Linear & Non-Linear Catchment Trends:** Account for land use, soil, and terrain using linear regression, penalized `GAM` splines, or `RF`/`GBM` trends.
+- 🔗 **Multi-Determinand Co-Kriging:** Model correlated targets together (e.g., Nitrate + Orthophosphate, or Nutrients + Macrophytes) to fill monitoring gaps.
+- 🧪 **Multi-Source & Citizen-Science Fusion:** Blend lab networks (`RSN`, `SSN`), `< LOD` records, and bracketed citizen science (`WaterBlitz`) with reliability weighting.
+- ⏱️ **Spatio-Temporal Trends & Exceedance Risk:** Track seasonal/annual dynamics and map 5-tier probabilities of exceeding regulatory thresholds.
+- 🎯 **Network Audits & Optimal Gauge Design:** Diagnose sampling bias, evaluate stoichiometry, and rank new gauge sites by uncertainty reduction.
 
 Also supports using other environmental (river) datasets including citizen science data, and the use of other riverline datasets, and is not limited to the UK.
 
->  This pipeline builds on and adapts the **Scalable Spatial Stream Network (`S3N`)** framework ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear Nearest-Neighbour Gaussian Process (`NNGP`) scaling to river networks. Full credit to the authors of these packages and statistical theory:
+<img alt="model_results" src="https://github.com/user-attachments/assets/fa6210b8-aeb3-47d1-89a8-38fd6ec1a756" />
+
+A full [interactive dashboard](https://benbell95.github.io/spatial_stream_model/) is also included to showcase these features.
+
+>  This pipeline is based upon the **Scalable Spatial Stream Network (`S3N`)** paper and R package ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear Nearest-Neighbour Gaussian Process (`NNGP`) scaling to river networks. Full attribution to the authors of these packages and statistical theory:
 > - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
 >   Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
 > - **`BRISC` R Package** — **Arkajyoti Saha and Abhirup Datta**:
@@ -21,11 +34,8 @@ Also supports using other environmental (river) datasets including citizen scien
 >
 > See [Where This Pipeline Differs from `S3N`](docs/where_this_differs_from_s3n.md) for a full breakdown of what is shared, replaced, or added.
 
-<img alt="model_results" src="https://github.com/user-attachments/assets/fa6210b8-aeb3-47d1-89a8-38fd6ec1a756" />
-
 ## 📑 Table of Contents
 
-- [Key Features](#-key-features)
 - [Setup & Installation](#-setup--installation)
   - [1. System Prerequisites](#1-system-prerequisites)
   - [2. Quick Setup (R Packages, C++ Library & Paths)](#2-quick-setup-r-packages-c-library--paths)
@@ -35,21 +45,10 @@ Also supports using other environmental (river) datasets including citizen scien
   - [Step 2: Inspect Station-to-Reach Snapping](#step-2-inspect-station-to-reach-snapping-optional)
   - [Step 3: Fit S3N Models, Krige & Render Maps](#step-3-fit-s3n-models-krige--render-maps)
   - [Step 4: Generate Statistical Reports & Multi-Run Comparisons](#step-4-generate-statistical-reports--multi-run-comparisons)
+- [Interactive Dashboard & CLI Workbench](#️-interactive-dashboard--cli-workbench)
 - [Full Documentation](#-full-documentation)
 - [AI Disclosure](#-ai-disclosure)
 - [License](#-license)
-
-
-## ✨ Key Features
-
-- ⚡ Sub-Second C++/OpenMP Stream-Tree & Joint NNGP Engine
-- 🐍 Low-Dependency Python GIS Extractor 
-- 🧪 Censored & Interval-Range Imputation 
-- 📐 12 Response Transformations & 4 Normalisation Methods
-- 🔗 Univariate Kriging and Multivariate Co-Kriging
-- 📉 Non-Linear Spline & Tree-Ensemble Regression Kriging, and Two-Stage GAM & Measurement-Error Kriging
-- 🗺️ Multi-Source, Multi-Network & Temporal Batching (Combine built-in (`rsn`, `ssn`) and custom data sources)
-- 📊 Automated Diagnostics, Statistics & Maps
 
 
 ## 🛠️ Setup & Installation
@@ -101,7 +100,7 @@ See [Section 2 of Setup, Architecture & Testing](docs/setup_and_architecture.md#
 ℹ️ These scripts are designed to run "headless" and are called from the terminal, rather than from inside R or Python environments. Run these commands from your terminal. Windows users will need to ensure R is on PATH to use these commands. Alternatively, you may run from inside R/Python if you prefer, see the [Running on Databricks](docs/databricks_guide.md) guide for details (this can be adapted for your personal machine/setup).
 
 > [!TIP]
-> Open [`cli_workbench/index.html`](cli_workbench/index.html) for a visual command builder directly in your web browser. Pick your analysis options from grouped dropdowns and copy ready-to-run commands formatted for **Bash**, **Windows PowerShell**, or **Windows Command Prompt**.
+> Open [`cli_workbench/index.html`](cli_workbench/index.html) for a visual command builder directly in your web browser. Pick your analysis options from grouped dropdowns and copy ready-to-run commands formatted for **Bash/Zsh**, **Windows PowerShell**, or **Command Prompt**.
 
 <img alt="pipeline_command" src="https://github.com/user-attachments/assets/c2c0b5ce-2741-4338-a890-acda8a3e3ba1" />
 
@@ -127,7 +126,7 @@ Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
 
 ### Step 3: Fit S3N Models, Krige & Render Maps
 
-This is the main script runner to run the models. Use the [`cli_workbench/index.html`](cli_workbench/index.html) for a visual command builder.
+This is the main script runner to run the models.
 
 ```bash
 # Nitrate (0117) with square-root transform
@@ -165,13 +164,25 @@ Rscript scripts/04_compare_model_runs.R \
 > 💡 **Split workflow tip**: You can run model fitting ([`scripts/02_fit_s3n_models.R`](scripts/02_fit_s3n_models.R)) and plotting ([`scripts/03_generate_plots.R`](scripts/03_generate_plots.R)) separately so you can re-style colorbars, basins (`--basin=Eden`), or `--norm=` views without re-fitting models.
 
 
+## 🖥️ Interactive Dashboard & CLI Workbench
+
+Both browser tools work **online via GitHub Pages** and **100% offline** (just open the local HTML files directly in any browser—no web server or internet connection required):
+
+- **Modelling Dashboard** — Interactive showcase of **16 reproducible river-network case studies** across England's `ORN v2` network, including plain-English kriging & statistics guides, 5-fold CV accuracy benchmarks, high-resolution maps/diagnostics, and copyable CLI commands:
+  - 🌐 **Online:** [https://benbell95.github.io/spatial_stream_model/](https://benbell95.github.io/spatial_stream_model/)
+  - 💻 **Offline:** Open [`modelling_dashboard/index.html`](modelling_dashboard/index.html)
+- **Interactive CLI Workbench** — Visual command builder to configure datasets, determinands, spatial kernels, transforms, and diagnostics, and copy ready-to-run commands for **Bash**, **Windows PowerShell**, or **Windows Command Prompt**:
+  - 🌐 **Online:** [https://benbell95.github.io/spatial_stream_model/cli_workbench/](https://benbell95.github.io/spatial_stream_model/cli_workbench/)
+  - 💻 **Offline:** Open [`cli_workbench/index.html`](cli_workbench/index.html) (also linked from the dashboard)
+
+
 ## 📚 Full Documentation
 
 See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 
 | Category | Guides |
 | :--- | :--- |
-| **Getting Started & CLI** | [Interactive CLI Workbench](cli_workbench/index.html) · [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
+| **Getting Started & CLI** | [Modelling Dashboard (Offline)](modelling_dashboard/index.html) · [Modelling Dashboard (GitHub Pages)](https://benbell95.github.io/spatial_stream_model/) · [Interactive CLI Workbench](cli_workbench/index.html) · [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
 | **Specialised Workflows** | [Regulatory Exceedance & Threshold Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Optimal Monitoring Network Design & Gap Mapping](docs/optimal_monitoring_design_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Multi-Source & Citizen-Science Fusion](docs/multi_source_and_citizen_science_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
 | **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks (`BYOWN`)](docs/custom_water_network_guide.md) · [ORN Covariates Reference (`--vars`)](docs/orn_variables_reference.md) |
 | **Diagnostics & Interpretation** | [Station Snapping Guide](docs/station_snapping_guide.md) · [Descriptive Statistics Guide](docs/descriptive_stats_interpretation_guide.md) · [Model Comparison Guide](docs/model_comparison_interpretation_guide.md) |
