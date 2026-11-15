@@ -3,9 +3,9 @@
 Build the standalone, zero-server `modelling_dashboard/` showcase site.
 
 Reads real CSVs, Markdown evaluation reports, and rendered PNG/SVG figures from
-`output/`, converts raster figures to WebP (quality=80, 300 DPI or selective 200 DPI
-for dense multi-panel grids) and stages Python-minified vector SVGs for non-network
-charts into `modelling_dashboard/assets/figures/`, and writes a synchronous
+`output/`, converts all figures to WebP (rasterizing SVG-only charts via Inkscape
+with top padding), stamps the `"ILLUSTRATIVE EXAMPLE ONLY"` badge onto each image
+into `modelling_dashboard/assets/figures/`, and writes a synchronous
 `modelling_dashboard/data.js` bundle safe for direct `file://` browser viewing.
 """
 
@@ -15,22 +15,21 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASH_DIR = os.path.join(BASE_DIR, "modelling_dashboard")
 FIG_DEST_DIR = os.path.join(DASH_DIR, "assets", "figures")
 
-SVG_MAX_BYTES = 400_000  # Keep SVG only for low-element statistical charts; use WebP for dense maps/scatters
-WEBP_QUALITY = 75
+WEBP_QUALITY = 80
+BADGE_TEXT = "ILLUSTRATIVE EXAMPLE ONLY"
+BADGE_FILL = (128, 24, 38, 235)
+BADGE_BORDER = (255, 255, 255, 230)
 
 _RE_INT = re.compile(r"-?\d+")
-_RE_SVG_COMMENT = re.compile(r"<!--.*?-->", flags=re.DOTALL)
-_RE_SVG_TAG_SPLIT = re.compile(r"(<[^>]+>)")
-_RE_SVG_FLOAT = re.compile(r"(?<![A-Za-z0-9_#.-])(-?\d+\.\d{3,})")
-_RE_SVG_MULTI_SPACE = re.compile(r"\s{2,}")
-_RE_SVG_TAG_GAP = re.compile(r">\s+<")
 _CSV_CACHE = {}
 
 
@@ -63,76 +62,101 @@ def read_csv_rows(rel_path):
     return rows
 
 
-def _round_float_match(m):
-    num_str = m.group(1)
-    rounded = f"{float(num_str):.2f}".rstrip("0").rstrip(".")
-    return rounded if rounded != "-0" else "0"
+def stamp_illustrative_badge(img, add_top_pad=False):
+    """Overlay the maroon 'ILLUSTRATIVE EXAMPLE ONLY' pill badge in the top-left corner."""
+    rgba = img.convert("RGBA")
+    w, h = rgba.size
+    font_size = max(28, int(min(w, h) * 0.029))
+    font = ImageFont.load_default(size=font_size)
 
+    probe = ImageDraw.Draw(rgba)
+    bbox = probe.textbbox((0, 0), BADGE_TEXT, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
 
-def optimize_svg(svg_text):
-    """Minify SVG safely: strip comments, collapse tag gaps, round attribute floats only."""
-    cleaned = _RE_SVG_COMMENT.sub("", svg_text)
-    # Round long floats strictly inside tag markup (<...>), preserving <text> content verbatim
-    parts = _RE_SVG_TAG_SPLIT.split(cleaned)
-    out_parts = []
-    for part in parts:
-        if part.startswith("<") and part.endswith(">"):
-            part = _RE_SVG_FLOAT.sub(_round_float_match, part)
-            part = _RE_SVG_MULTI_SPACE.sub(" ", part)
-        out_parts.append(part)
-    minified = "".join(out_parts)
-    minified = _RE_SVG_TAG_GAP.sub("><", minified).strip()
-    return minified
+    pad_x = max(14, int(font_size * 0.55))
+    pad_y = max(10, int(font_size * 0.35))
+    margin = max(16, int(min(w, h) * 0.015))
+    pill_w = tw + 2 * pad_x
+    pill_h = th + 2 * pad_y
+
+    if add_top_pad:
+        top_pad = margin + pill_h + 12
+        canvas = Image.new("RGBA", (w, h + top_pad), (255, 255, 255, 255))
+        canvas.paste(rgba, (0, top_pad))
+    else:
+        canvas = rgba
+
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    x0, y0 = margin, margin
+    x1, y1 = x0 + pill_w, y0 + pill_h
+    draw.rounded_rectangle(
+        [x0, y0, x1, y1],
+        radius=pill_h // 2,
+        fill=BADGE_FILL,
+        outline=BADGE_BORDER,
+        width=max(2, font_size // 14),
+    )
+    draw.text(
+        (x0 + pad_x - bbox[0], y0 + pad_y - bbox[1]),
+        BADGE_TEXT,
+        font=font,
+        fill=(255, 255, 255, 255),
+    )
+    return Image.alpha_composite(canvas, overlay).convert("RGB")
 
 
 def stage_figure(rel_base_no_ext, alias_name, allow_svg=True, dpi=300):
-    """Stage either minified SVG (for statistical charts) or WebP (from 300-DPI PNG, optionally downsampled to 200 DPI)."""
+    """Stage figure as a stamped WebP (from PNG, or rasterized from SVG via Inkscape with top padding)."""
     os.makedirs(FIG_DEST_DIR, exist_ok=True)
     svg_src = os.path.join(BASE_DIR, rel_base_no_ext + ".svg")
     png_src = os.path.join(BASE_DIR, rel_base_no_ext + ".png")
-
-    use_svg = False
-    if allow_svg and os.path.exists(svg_src) and os.path.getsize(svg_src) <= SVG_MAX_BYTES:
-        use_svg = True
-    elif not os.path.exists(png_src) and os.path.exists(svg_src):
-        use_svg = True
-
-    if use_svg:
-        dest_file = alias_name + ".svg"
-        dest_path = os.path.join(FIG_DEST_DIR, dest_file)
-        with open(svg_src, "r", encoding="utf-8") as f:
-            raw_svg = f.read()
-        opt_svg = optimize_svg(raw_svg)
-        with open(dest_path, "w", encoding="utf-8") as f:
-            f.write(opt_svg)
-        raw_kb = os.path.getsize(svg_src) / 1024.0
-        opt_kb = os.path.getsize(dest_path) / 1024.0
-        print(f"  [SVG] {dest_file}: {raw_kb:.0f} KB -> {opt_kb:.0f} KB (minified)")
-        return {
-            "path": f"assets/figures/{dest_file}",
-            "format": "SVG (Vector Minified)",
-            "size_kb": round(opt_kb, 1),
-        }
+    dest_file = alias_name + ".webp"
+    dest_path = os.path.join(FIG_DEST_DIR, dest_file)
 
     if os.path.exists(png_src):
-        dest_file = alias_name + ".webp"
-        dest_path = os.path.join(FIG_DEST_DIR, dest_file)
         with Image.open(png_src) as img:
-            if img.mode == "P":
-                img = img.convert("RGBA")
-            elif img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGB")
             if dpi < 300:
                 scale = dpi / 300.0
                 new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
-            img.save(dest_path, format="WEBP", quality=WEBP_QUALITY, method=6)
+            stamped = stamp_illustrative_badge(img, add_top_pad=False)
+            stamped.save(dest_path, format="WEBP", quality=WEBP_QUALITY, method=6)
         raw_kb = os.path.getsize(png_src) / 1024.0
         size_kb = os.path.getsize(dest_path) / 1024.0
         print(f"  [WebP] {dest_file}: {raw_kb:.0f} KB PNG -> {size_kb:.0f} KB ({dpi} DPI, q={WEBP_QUALITY})")
         return {
             "path": f"assets/figures/{dest_file}",
             "format": f"WebP ({dpi} DPI)",
+            "size_kb": round(size_kb, 1),
+        }
+
+    if os.path.exists(svg_src):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_png = os.path.join(tmpdir, f"{alias_name}.png")
+            subprocess.run(
+                [
+                    "inkscape",
+                    svg_src,
+                    "--export-type=png",
+                    f"--export-filename={tmp_png}",
+                    "--export-width=2400",
+                    "--export-background=#ffffff",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with Image.open(tmp_png) as img:
+                stamped = stamp_illustrative_badge(img, add_top_pad=True)
+                stamped.save(dest_path, format="WEBP", quality=92)
+        raw_kb = os.path.getsize(svg_src) / 1024.0
+        size_kb = os.path.getsize(dest_path) / 1024.0
+        print(f"  [WebP] {dest_file}: {raw_kb:.0f} KB SVG -> {size_kb:.0f} KB (2400px, q=92)")
+        return {
+            "path": f"assets/figures/{dest_file}",
+            "format": "WebP (2400px from SVG)",
             "size_kb": round(size_kb, 1),
         }
 

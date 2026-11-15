@@ -1890,7 +1890,22 @@
     });
   }
 
+  function initChromeHeightSync() {
+    const chrome = document.querySelector(".top-chrome");
+    if (!chrome) return;
+    const update = () => {
+      document.documentElement.style.setProperty("--chrome-h", chrome.offsetHeight + "px");
+    };
+    update();
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(update).observe(chrome);
+    } else {
+      window.addEventListener("resize", update);
+    }
+  }
+
   initThemeToggle();
+  initChromeHeightSync();
   populateCaseStudyData();
   renderOverviewBenchmark();
   initInfoTooltips();

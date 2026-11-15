@@ -962,6 +962,23 @@ tr.highlight-row { background: rgba(56, 189, 248, 0.08); font-weight: 600; }
 }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
 
+.disclaimer-banner {
+  position: sticky;
+  top: calc(var(--chrome-h, 112px) + 8px);
+  z-index: 80;
+  margin: 0 0 18px;
+  padding: 13px 16px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-page) 86%, #ef4444 14%);
+  backdrop-filter: blur(8px);
+  border: 2px solid rgba(239, 68, 68, 0.38);
+  border-left: 8px solid var(--accent-danger);
+  color: var(--text-primary);
+  font-size: 1.1em;
+  line-height: 1.45;
+  box-shadow: var(--shadow-card);
+}
+
 .card,
 .feature-item {
   content-visibility: auto;
