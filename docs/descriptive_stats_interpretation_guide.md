@@ -5,13 +5,13 @@
 - [1. Overview & Purpose](#1-overview--purpose)
 - [2. Quick-Start CLI Reference & Generated Outputs](#2-quick-start-cli-reference--generated-outputs)
   - [2.1 Running the Script](#21-running-the-script)
-  - [2.2 Output Files Written to `<run_dir>/descriptives/`](#22-output-files-written-to-run_dirdescriptives)
+  - [2.2 Output Files](#22-output-files)
 - [3. Section-by-Section Guide to the Report & Metrics](#3-section-by-section-guide-to-the-report--metrics)
-  - [3.1 Section 1: Comprehensive Distributional Statistics (`descriptive_stats_summary.csv`)](#31-section-1-comprehensive-distributional-statistics-descriptive_stats_summarycsv)
-  - [3.2 Section 2: Monitoring Network Representativeness & Bias Analysis (`monitoring_representativeness.csv`)](#32-section-2-monitoring-network-representativeness--bias-analysis-monitoring_representativenesscsv)
-  - [3.3 Section 3: Stratified Environmental, Topological & Basin Analysis (`stratified_results_summary.csv`)](#33-section-3-stratified-environmental-topological--basin-analysis-stratified_results_summarycsv)
-  - [3.4 Section 4: Within-Run Statistical Hypothesis Tests (`within_run_statistical_tests.csv`)](#34-section-4-within-run-statistical-hypothesis-tests-within_run_statistical_testscsv)
-  - [3.5 Section 5: Cross-Validation Performance Summary (`cv_comparison_*.csv`)](#35-section-5-cross-validation-performance-summary-cv_comparison_csv)
+  - [3.1 Section 1: Comprehensive Distributional Statistics](#31-section-1-comprehensive-distributional-statistics)
+  - [3.2 Section 2: Monitoring Network Representativeness & Bias Analysis](#32-section-2-monitoring-network-representativeness-bias-analysis)
+  - [3.3 Section 3: Stratified Environmental, Topological & Basin Analysis](#33-section-3-stratified-environmental-topological-basin-analysis)
+  - [3.4 Section 4: Within-Run Statistical Hypothesis Tests](#34-section-4-within-run-statistical-hypothesis-tests)
+  - [3.5 Section 5: Cross-Validation Performance Summary](#35-section-5-cross-validation-performance-summary)
 - [4. Visual Diagnostic Guide: Interpreting the Figures](#4-visual-diagnostic-guide-interpreting-the-figures)
   - [4.1 Figure 1: `fig_desc1_distributions_and_representativeness.png`](#41-figure-1-fig_desc1_distributions_and_representativenesspng)
   - [4.2 Figure 2: `fig_desc2_stratified_gradients.png`](#42-figure-2-fig_desc2_stratified_gradientspng)
@@ -59,7 +59,7 @@ Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn \
   --out=output/results/det_0117_orn_rsn/descriptives
 ```
 
-### 2.2 Output Files Written to `<run_dir>/descriptives/`
+### 2.2 Output Files
 
 | Output File | Format | Description |
 | :--- | :--- | :--- |
@@ -75,7 +75,7 @@ Rscript scripts/05_descriptive_stats.R output/results/det_0117_orn_rsn \
 
 ## 3. Section-by-Section Guide to the Report & Metrics
 
-### 3.1 Section 1: Comprehensive Distributional Statistics (`descriptive_stats_summary.csv`)
+### 3.1 Section 1: Comprehensive Distributional Statistics
 
 Section 1 summarises seven distinct subsets/components of the model output so you can compare observations, predictions, spatial components, and uncertainty side by side.
 
@@ -112,7 +112,7 @@ Water quality concentrations (such as Nitrate and Orthophosphate) are typically 
 
 ---
 
-### 3.2 Section 2: Monitoring Network Representativeness & Bias Analysis (`monitoring_representativeness.csv`)
+### 3.2 Section 2: Monitoring Network Representativeness & Bias Analysis
 
 Regulatory monitoring networks are rarely random spatial samples of a river network. Bridges, gauging stations, and statutory compliance points are disproportionately located on **accessible lowland, higher-order (`Strahler ≥ 3`) reaches**, whereas `75%–80%` of total stream segments in topological river networks are **first- and second-order headwaters** (many in upland moorland or forested headwaters).
 
@@ -128,7 +128,7 @@ Section 2 quantifies this **Monitoring Network Selection Bias** by comparing `Ob
 
 ---
 
-### 3.3 Section 3: Stratified Environmental, Topological & Basin Analysis (`stratified_results_summary.csv`)
+### 3.3 Section 3: Stratified Environmental, Topological & Basin Analysis
 
 Section 3 partitions every reach in the network across **five environmental and topological stratification dimensions** to reveal where high concentrations, ecological degradation, and prediction uncertainties occur.
 
@@ -169,7 +169,7 @@ Directly below the table in Section 3, the script prints automatic **Within-Run 
 
 ---
 
-### 3.4 Section 4: Within-Run Statistical Hypothesis Tests (`within_run_statistical_tests.csv`)
+### 3.4 Section 4: Within-Run Statistical Hypothesis Tests
 
 Section 4 conducts up to **10 formal statistical hypothesis tests** across four analytical categories to check internal model performance and spatial behaviour.
 
@@ -183,7 +183,7 @@ Section 4 conducts up to **10 formal statistical hypothesis tests** across four 
 
 ---
 
-### 3.5 Section 5: Cross-Validation Performance Summary (`cv_comparison_*.csv`)
+### 3.5 Section 5: Cross-Validation Performance Summary
 
 Section 5 tabulates the 5-fold out-of-sample cross-validation metrics across each spatial domain (`All England`, `Humber`, `Thames`, `Severn`):
 - **`CV R²`**: Out-of-sample coefficient of determination (`1 - SSE / SST`) on the model scale. Values `> 0.50` indicate strong predictive skill; comparing `S3N Combined` vs. `OLS` shows the exact fraction of variance explained by river-network spatial autocorrelation (`ΔR² = R²_S3N - R²_OLS`).
@@ -258,6 +258,6 @@ Below is an illustrative reference summary showing how to synthesize the outputs
 - **S3N Modelling & Universal Stream Kriging Theoretical Guide**: [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md)
 - **Multi-Run & Cross-Determinand Comparison Interpretation Guide**: [`./model_comparison_interpretation_guide.md`](./model_comparison_interpretation_guide.md)
 - **End-to-End Pipeline Usage Guide**: [`./usage_guide.md`](./usage_guide.md)
-- **Custom Water Network Guide (`BYOWN`)**: [`./custom_water_network_guide.md`](./custom_water_network_guide.md)
+- **Custom Water Network Guide**: [`./custom_water_network_guide.md`](./custom_water_network_guide.md)
 - **Preprocessing & Graph Topology Guide**: [`./preprocessing_pipeline.md`](./preprocessing_pipeline.md)
 - **ORN Variables & Covariates Reference**: [`./orn_variables_reference.md`](./orn_variables_reference.md)

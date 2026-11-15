@@ -8,7 +8,7 @@
 - [3. Where This Pipeline Replaces `S3N`](#3-where-this-pipeline-replaces-s3n)
   - [3.1 Zero-Dependency GIS Ingestion, Cycle Resolution & Station Snapping](#31-zero-dependency-gis-ingestion-cycle-resolution--station-snapping)
   - [3.2 Sub-Second C++/OpenMP Euler-Tour Neighbour Engine](#32-sub-second-copenmp-euler-tour-neighbour-engine)
-  - [3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting (`--afv=`)](#33-numerically-stable-log_afv--physical-confluence-weighting---afv)
+  - [3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting](#33-numerically-stable-logafv-physical-confluence-weighting)
   - [3.4 Combining `Tail-Up` & `Tail-Down`](#34-combining-tail-up--tail-down)
 - [4. Additional Features Available in This Pipeline](#4-additional-features-available-in-this-pipeline)
 - [5. License](#5-license)
@@ -84,7 +84,7 @@ Instead of calling `S3N`'s R-level `order_stream()` and `get_neighbor_stream()`,
 - **`C_build_tree_tin_tout()`**: Runs a single $\mathcal{O}(q_{\text{tot}})$ DFS Euler tour storing entry/exit timestamps (`tin`, `tout`), reducing every flow-connectedness test `FC(a, b)` to an $\mathcal{O}(1)$ integer interval check (`tin[a] <= tin[b] && tout[b] <= tout[a]`).
 - **`C_compute_s3n_neighbors()`**: Uses OpenMP threads and `std::partial_sort` to construct `m = 15` nearest stream-network neighbourhoods across ~91,000 reaches in under a second (`100×–300×` faster than R tree walks).
 
-### 3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting (`--afv=`)
+### 3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting
 In large national catchments (e.g., Humber or Thames), raw multiplicative Additive Function Values (`AFV`) can underflow floating-point precision after `40–70` headwater bifurcations. [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) and `C_compute_log_afv()` in [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) accumulate `log_AFV` additively in double precision and allow switching dynamically among three physical confluence-mixing schemes:
 - `length`: cumulative upstream channel length (`US_Accum_km`)
 - `shreve`: Shreve link magnitude
@@ -120,7 +120,7 @@ Alongside the core `S3N` workflow, this codebase provides the following modellin
 10. **Full Operational Workflow, Hydrological Validation & Diagnostics**:
     - **4 Hydrological CV Modes (`--cv-mode=`)**: `random`, `catchment` (Leave-Catchment-Out), `strahler` (mainstem-to-headwater extrapolation), and `spatial_block`.
     - **12 Response Transforms & 4 Normalisations**: Profile-MLE `boxcox`/`yeojohnson`, `sqrt`, `log`, `log1p`, `asin`, `logit`, etc., plus `zscore`, `robust_zscore`, `minmax`, and `percentile` outputs.
-    - **Custom Data & Networks**: Combine built-in (`rsn`, `ssn`, `rss`) and user CSV sources (`+`), bring custom river networks (`BYOWN`), and customise 15 covariates via `--vars=`.
+    - **Custom Data & Networks**: Combine built-in (`rsn`, `ssn`, `rss`) and user CSV sources (`+`), bring custom river networks, and customise 15 covariates via `--vars=`.
     - **Diagnostics & Re-Plottable Multi-Format Figures**: Automated station snapping diagnostics (`06_station_snapping_diagnostics.R`), descriptive environmental gradient reports (`05_descriptive_stats.R`), multi-run / `N:P` stoichiometry comparisons (`04_compare_model_runs.R`), and standalone re-plotting (`03_generate_plots.R`) in `png`, Cairo `pdf`, and `svg` with `--dpi` and `--fig-size`.
 
 ---

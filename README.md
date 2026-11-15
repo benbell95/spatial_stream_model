@@ -6,7 +6,7 @@
 [![Live Dashboard](https://img.shields.io/badge/Live_Dashboard-GitHub_Pages-38bdf8?logo=githubpages&logoColor=white)](https://benbell95.github.io/spatial_stream_model/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-This project implements a headless pipeline for **Scalable Spatial Stream Network (`S3N` / NNGP)** modelling, including; 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access river network data from the Environment Agency (EA), and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
+This project implements a headless pipeline for **Scalable Spatial Stream Modelling (`NNGP`)**, including; 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access river network data from the Environment Agency (EA), and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
 
 ### Key Features
 
@@ -43,7 +43,7 @@ A full [interactive dashboard](https://benbell95.github.io/spatial_stream_model/
 - [Quickstart](#-quickstart)
   - [Step 1: Preprocess the River Network & Monitoring Data](#step-1-preprocess-the-river-network--monitoring-data)
   - [Step 2: Inspect Station-to-Reach Snapping](#step-2-inspect-station-to-reach-snapping-optional)
-  - [Step 3: Fit S3N Models, Krige & Render Maps](#step-3-fit-s3n-models-krige--render-maps)
+  - [Step 3: Fit Spatial Stream Models, Krige & Render Maps](#step-3-fit-spatial-stream-models-krige--render-maps)
   - [Step 4: Generate Statistical Reports & Multi-Run Comparisons](#step-4-generate-statistical-reports--multi-run-comparisons)
 - [Interactive Dashboard & CLI Workbench](#️-interactive-dashboard--cli-workbench)
 - [Full Documentation](#-full-documentation)
@@ -100,7 +100,7 @@ See [Section 2 of Setup, Architecture & Testing](docs/setup_and_architecture.md#
 ℹ️ These scripts are designed to run "headless" and are called from the terminal, rather than from inside R or Python environments. Run these commands from your terminal. Windows users will need to ensure R is on PATH to use these commands. Alternatively, you may run from inside R/Python if you prefer, see the [Running on Databricks](docs/databricks_guide.md) guide for details (this can be adapted for your personal machine/setup).
 
 > [!TIP]
-> Open [`cli_workbench/index.html`](cli_workbench/index.html) for a visual command builder directly in your web browser. Pick your analysis options from grouped dropdowns and copy ready-to-run commands formatted for **Bash/Zsh**, **Windows PowerShell**, or **Command Prompt**.
+> Open [`cli_workbench/index.html`](https://benbell95.github.io/spatial_stream_model/cli_workbench/) for a visual command builder directly in your web browser. Pick your analysis options from grouped dropdowns and copy ready-to-run commands formatted for **Bash/Zsh**, **Windows PowerShell**, or **Command Prompt**.
 
 <img alt="pipeline_command" src="https://github.com/user-attachments/assets/c2c0b5ce-2741-4338-a890-acda8a3e3ba1" />
 
@@ -124,7 +124,7 @@ This allows you to check the station snapping to the riverline network (choose w
 Rscript scripts/06_station_snapping_diagnostics.R --catchment=Thames
 ```
 
-### Step 3: Fit S3N Models, Krige & Render Maps
+### Step 3: Fit Spatial Stream Models, Krige & Render Maps
 
 This is the main script runner to run the models.
 
@@ -182,11 +182,11 @@ See the **[Documentation Hub](docs/README.md)** or jump straight to a guide:
 
 | Category | Guides |
 | :--- | :--- |
-| **Getting Started & CLI** | [Modelling Dashboard (Offline)](modelling_dashboard/index.html) · [Modelling Dashboard (GitHub Pages)](https://benbell95.github.io/spatial_stream_model/) · [Interactive CLI Workbench](cli_workbench/index.html) · [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
-| **Specialised Workflows** | [Regulatory Exceedance & Threshold Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Optimal Monitoring Network Design & Gap Mapping](docs/optimal_monitoring_design_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Multi-Source & Citizen-Science Fusion](docs/multi_source_and_citizen_science_guide.md) · [Non-Linear (`GAM + S3N`) & Tree-Ensemble (`RF/GBM`) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
-| **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks (`BYOWN`)](docs/custom_water_network_guide.md) · [ORN Covariates Reference (`--vars`)](docs/orn_variables_reference.md) |
+| **Getting Started & CLI** | [Setup, Architecture & Testing](docs/setup_and_architecture.md) · [End-to-End Usage Guide](docs/usage_guide.md) · [Running on Databricks](docs/databricks_guide.md) |
+| **Specialised Workflows** | [Regulatory Exceedance & Threshold Risk Mapping](docs/regulatory_exceedance_mapping_guide.md) · [Optimal Monitoring Network Design & Gap Mapping](docs/optimal_monitoring_design_guide.md) · [Spatio-Temporal Trends & Borrowing](docs/spatiotemporal_trends_and_borrowing_guide.md) · [Multivariate Stream Co-Kriging](docs/multivariate_cokriging_guide.md) · [Multi-Source & Citizen-Science Fusion](docs/multi_source_and_citizen_science_guide.md) · [Non-Linear (GAM + S3N) & Tree-Ensemble (RF/GBM) Guide](docs/nonlinear_and_tree_ensemble_trend_guide.md) |
+| **Customising the Pipeline** | [Custom Monitoring Sources](docs/custom_data_sources_guide.md) · [Custom Water Networks](docs/custom_water_network_guide.md) · [ORN Covariates Reference](docs/orn_variables_reference.md) |
 | **Diagnostics & Interpretation** | [Station Snapping Guide](docs/station_snapping_guide.md) · [Descriptive Statistics Guide](docs/descriptive_stats_interpretation_guide.md) · [Model Comparison Guide](docs/model_comparison_interpretation_guide.md) |
-| **Methodology & Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) · [Where This Differs from `S3N`](docs/where_this_differs_from_s3n.md) |
+| **Methodology & Theory** | [S3N Modelling & Kriging Guide](docs/s3n_modelling_and_kriging_guide.md) · [Two-Stage GAM & Measurement-Error Kriging](docs/two_stage_gam_measurement_error_kriging_guide.md) · [Preprocessing & C++ Engine](docs/preprocessing_pipeline.md) · [Where This Differs from S3N package](docs/where_this_differs_from_s3n.md) |
 
 
 ## 🤖 AI Disclosure

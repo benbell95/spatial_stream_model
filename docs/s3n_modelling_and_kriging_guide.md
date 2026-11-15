@@ -1,4 +1,4 @@
-# Scalable Spatial Stream Network (S3N) Modelling & Universal Kriging — Complete Theoretical & Algorithmic Guide
+# Scalable Spatial Stream Modelling & Universal Kriging — Complete Theoretical & Algorithmic Guide
 
 ## Table of Contents
 
@@ -14,32 +14,32 @@
   - [3.3 Step 1.3: Orthogonal Station Snapping (`≤ 250 m`) & Exact Hydrologic Coordinates](#33-step-13-orthogonal-station-snapping--250-m--exact-hydrologic-coordinates)
   - [3.4 Step 1.4: Confluence Weighting & Additive Function Values (`AFV` and `log_AFV`)](#34-step-14-confluence-weighting--additive-function-values-afv-and-log_afv)
   - [3.5 Step 1.5: Environmental Design Matrix Construction (`build_design_matrix()`)](#35-step-15-environmental-design-matrix-construction-build_design_matrix)
-  - [3.6 Step 1.6: Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging (`--trend=linear|spline|gam|rf|gbm`)](#36-step-16-non-linear--spline-fixed-effects-gam--s3n--tree-ensemble-regression-kriging---trendlinearsplinegamrfgbm)
+  - [3.6 Step 1.6: Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging](#36-step-16-non-linear-spline-fixed-effects-gam-s3n-tree-ensemble-regression-kriging)
 - [4. Stage 2: Spatial Stream Network (SSN) Covariance Theory](#4-stage-2-spatial-stream-network-ssn-covariance-theory)
   - [4.1 Hydrologic Stream Distance (`d_hydro(s_i, s_j)`)](#41-hydrologic-stream-distance-d_hydros_i-s_j)
   - [4.2 The `Tail-Up` Covariance Function (`C_TU`: Flow-Connected + Confluence Weighting)](#42-the-tail-up-covariance-function-c_tu-flow-connected--confluence-weighting)
   - [4.3 The `Tail-Down` Covariance Function (`C_TD`: Hydrologic Stream Distance)](#43-the-tail-down-covariance-function-c_td-hydrologic-stream-distance)
-  - [4.4 Stream Covariance Kernel Families (`--kernel=exponential|spherical|mariah|linear|auto`)](#44-stream-covariance-kernel-families---kernelexponentialsphericalmariahlinearauto)
-  - [4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`, `--combine=joint`)](#45-joint-additive-covariance-tail-up--tail-down--euclidean---combinejoint)
+  - [4.4 Stream Covariance Kernel Families](#44-stream-covariance-kernel-families)
+  - [4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`)](#45-joint-additive-covariance-tail-up-tail-down-euclidean)
 - [5. Stage 3: The `S3N` Package Architecture & C++ OpenMP Neighbour Engine](#5-stage-3-the-s3n-package-architecture--c-openmp-neighbour-engine)
   - [5.1 Core Functions in the `S3N` R Package](#51-core-functions-in-the-s3n-r-package)
-  - [5.2 How the C++ Euler-Tour & Stream Neighbour Engine Works (`../src/s3n_fast_neighbors.cpp`)](#52-how-the-c-euler-tour--stream-neighbour-engine-works-srcs3n_fast_neighborscpp)
+  - [5.2 How the C++ Euler-Tour & Stream Neighbour Engine Works](#52-how-the-c-euler-tour--stream-neighbour-engine-works)
 - [6. Stage 4: Sparse NNGP Maximum Likelihood Estimation & Parametric Bootstrap](#6-stage-4-sparse-nngp-maximum-likelihood-estimation--parametric-bootstrap)
   - [6.1 How `BRISC_estimation_stream()` Avoids the `O(n³)` Matrix Inversion](#61-how-brisc_estimation_stream-avoids-the-on³-matrix-inversion)
   - [6.2 Parametric Bootstrap Confidence Intervals (`BRISC_bootstrap()`)](#62-parametric-bootstrap-confidence-intervals-brisc_bootstrap)
-- [7. Stage 5: How Universal Stream Kriging Works in Detail (`--combine=joint` vs `BRISC_prediction_stream`)](#7-stage-5-how-universal-stream-kriging-works-in-detail---combinejoint-vs-brisc_prediction_stream)
+- [7. Stage 5: How Universal Stream Kriging Works in Detail](#7-stage-5-how-universal-stream-kriging-works-in-detail)
   - [7.1 Mathematical Formulation of Universal Stream Kriging (`UK`)](#71-mathematical-formulation-of-universal-stream-kriging-uk)
   - [7.2 How `SE(s₀)` Behaves Across the River Network (3 Canonical Regimes)](#72-how-ses₀-behaves-across-the-river-network-3-canonical-regimes)
-  - [7.3 Variance-Weighted Spatial Information Combination (`--combine=precision`) vs Joint Additive (`--combine=joint`, Default)](#73-variance-weighted-spatial-information-combination---combineprecision-vs-joint-additive---combinejoint-default)
+  - [7.3 Variance-Weighted Spatial Information Combination vs. Joint Additive Covariance](#73-variance-weighted-spatial-information-combination-vs-joint-additive-covariance)
   - [7.4 Back-Transformation to the Physical Scale & Normalised Outputs](#74-back-transformation-to-the-physical-scale--normalised-outputs)
 - [8. Stage 6: Out-of-Sample 5-Fold Cross-Validation Protocol](#8-stage-6-out-of-sample-5-fold-cross-validation-protocol)
 - [9. Worked Numerical Walkthrough: Universal Kriging of a Single River Reach](#9-worked-numerical-walkthrough-universal-kriging-of-a-single-river-reach)
 - [10. Hydrological Cross-Validation & Optimal Monitoring Network Design](#10-hydrological-cross-validation--optimal-monitoring-network-design)
-  - [10.1 Hydrological Cross-Validation Modes (`--cv-mode=<mode>`)](#101-hydrological-cross-validation-modes---cv-modemode)
-  - [10.2 Optimal Monitoring Network Design (`--design-sites=<K>`)](#102-optimal-monitoring-network-design---design-sitesk)
+  - [10.1 Hydrological Cross-Validation Modes](#101-hydrological-cross-validation-modes)
+  - [10.2 Optimal Monitoring Network Design](#102-optimal-monitoring-network-design)
 - [11. Spatio-Temporal Trend Mapping, Dynamic Borrowing & Spatial Tobit EM Censored Kriging](#11-spatio-temporal-trend-mapping-dynamic-borrowing--spatial-tobit-em-censored-kriging)
-  - [11.1 Spatio-Temporal Trend Mapping & Dynamic Borrowing (`--by=year|season|month`, `--st-borrow`)](#111-spatio-temporal-trend-mapping--dynamic-borrowing---byyearseasonmonth---st-borrow)
-  - [11.2 Spatial Tobit / Iterative EM Censored Kriging (`--censor=em|tobit`)](#112-spatial-tobit--iterative-em-censored-kriging---censoremtobit)
+  - [11.1 Spatio-Temporal Trend Mapping & Dynamic Borrowing](#111-spatio-temporal-trend-mapping-dynamic-borrowing)
+  - [11.2 Spatial Tobit / Iterative EM Censored Kriging](#112-spatial-tobit-iterative-em-censored-kriging)
 - [12. Summary Reference: Key Equations at a Glance](#12-summary-reference-key-equations-at-a-glance)
 - [13. References & Further Reading](#13-references--further-reading)
 - [14. Related Project Documentation](#14-related-project-documentation)
@@ -260,7 +260,7 @@ Optional hydromorphological covariates (`Sinuosity_z`, `SrcElevation_z`, `Dist2M
 
 ---
 
-### 3.6 Step 1.6: Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging (`--trend=linear|spline|gam|rf|gbm`)
+### 3.6 Step 1.6: Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging
 While standard spatial stream network models assume a strictly linear fixed-effect relationship $\mu(s_i) = x(s_i)^\top \beta$, real river networks often exhibit **non-linear environmental thresholds and high-order covariate interactions** (e.g., sharp agricultural transition below $120\text{ m}$ elevation, non-monotonic drainage-size dilution curves, or Elevation $\times$ Slope $\times$ Geology interactions).
 
 In [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`fit_nonlinear_trend()`), you can select among five fixed-effect / mean-trend engines via `--trend=<mode>` (listable via `--list-trends`):
@@ -353,7 +353,7 @@ Under the **Exponential Tail-Down model** (`cov.model = "exponential"`, where th
 
 ---
 
-### 4.4 Stream Covariance Kernel Families (`--kernel=exponential|spherical|mariah|linear|auto`)
+### 4.4 Stream Covariance Kernel Families
 In addition to the standard Exponential covariance kernel, the C++ NNGP engine ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) `eval_stream_kernel()` & `C_s3n_nngp_loglik()`) supports four stream covariance kernels (Ver Hoef et al., 2006) plus automatic AIC-based kernel selection (`--kernel=auto`):
 
 | Kernel (`--kernel=`) | Correlation Function $\rho(d; \phi)$ ($u = \phi d \ge 0$) | Support / Tail Behaviour | Best Physical & Ecological Use Cases |
@@ -366,7 +366,7 @@ In addition to the standard Exponential covariance kernel, the C++ NNGP engine (
 
 ---
 
-### 4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`, `--combine=joint`)
+### 4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`)
 Following the classical Ver Hoef & Peterson (2010) mixed spatial stream network specification, the pipeline supports **Joint Additive NNGP Estimation and Kriging** (`--combine=joint`, default) via `C_s3n_joint_nngp()` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp):
 
 $$
@@ -394,7 +394,7 @@ The `S3N` package (`remotes::install_github("jpierkunke/S3N")`, version `1.0.5`)
 
 ---
 
-### 5.2 How the C++ Euler-Tour & Stream Neighbour Engine Works ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp))
+### 5.2 How the C++ Euler-Tour & Stream Neighbour Engine Works
 
 > **In plain English:** Checking whether two river reaches lie upstream/downstream of each other normally means walking parent pointers step by step up to 100+ times per pair. The C++ engine visits each river tree once upfront to give every reach an entry/exit timestamp pair (`tin`, `tout`), turning every ancestry check into four fast integer comparisons in memory.
 
@@ -503,7 +503,7 @@ Because maximum likelihood estimators of spatial variance components (`σ², τ�
 
 ---
 
-## 7. Stage 5: How Universal Stream Kriging Works in Detail (`--combine=joint` vs `BRISC_prediction_stream`)
+## 7. Stage 5: How Universal Stream Kriging Works in Detail
 
 > **In plain English:** For every unmonitored reach, universal kriging starts with what elevation, geology, and catchment size predict (`x(s₀)ᵀ β̂`), then adjusts that baseline up or down using weighted residuals from the `m = 15` nearest monitoring stations. Clustered stations on the same stretch are automatically down-weighted so they do not dominate over independent tributaries.
 
@@ -591,7 +591,7 @@ Examining the variance equation `SE(s₀)² = (σ̂² + τ̂²) - c(s₀)ᵀ λ(
 
 ---
 
-### 7.3 Variance-Weighted Spatial Information Combination (`--combine=precision`) vs Joint Additive (`--combine=joint`, Default)
+### 7.3 Variance-Weighted Spatial Information Combination vs. Joint Additive Covariance
 
 By default (`--combine=joint`), `pred_combined` (`pred_model_sc`, `se_model_sc`) comes directly from the unified Joint Additive NNGP (`Tail-Up + Tail-Down + Euclidean`, `§4.5`). When `--combine=precision` is requested, [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) combines the **Tail-Up (`pr_tu`)** and **Tail-Down (`pr_td`)** universal kriging predictions at every individual reach `s₀` using **Local Spatial Information-Gain Weighting**:
 
@@ -682,7 +682,7 @@ The example below illustrates how `--combine=precision` computes a single-reach 
 
 ## 10. Hydrological Cross-Validation & Optimal Monitoring Network Design
 
-### 10.1 Hydrological Cross-Validation Modes (`--cv-mode=<mode>`)
+### 10.1 Hydrological Cross-Validation Modes
 
 Standard 5-fold random station CV (`--cv-mode=random`) randomly splits monitoring stations across folds. Because adjacent stations along the same river channel are strongly spatially autocorrelated, random CV can overestimate generalisation performance to unmonitored catchments or headwaters. Four CV splitting modes are supported in [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
 
@@ -696,7 +696,7 @@ Standard 5-fold random station CV (`--cv-mode=random`) randomly splits monitorin
 - Non-default CV modes append `_cv_<mode>` to the output directory (e.g. `output/results/det_0117_orn_rsn_cv_catchment/`).
 - `cv_comparison_<det>.csv` records the executed mode in `CV_Mode` and appends `[CV:<mode>]` to `Spatial_Method`, while keeping `Model` names unchanged so downstream plotting and comparison scripts remain compatible.
 
-### 10.2 Optimal Monitoring Network Design (`--design-sites=<K>`)
+### 10.2 Optimal Monitoring Network Design
 
 Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes the OpenMP C++ greedy active-learning solver (`C_s3n_optimal_design()` in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)) to select $K$ unmonitored candidate reaches that greedily maximise the Schur-complement reduction in domain-wide kriging variance, exporting `optimal_monitoring_design_<det>.csv` and `fig_optimal_design_<domain>_<det>.png`. For huge domains ($> 4{,}000$ reaches), candidates and evaluation reaches are deterministically thinned to $4{,}000$ evenly spaced reaches.
 
@@ -706,13 +706,13 @@ Passing `--design-sites=<K>` (alias `--optimal-design=<K>`) invokes the OpenMP C
 
 ## 11. Spatio-Temporal Trend Mapping, Dynamic Borrowing & Spatial Tobit EM Censored Kriging
 
-### 11.1 Spatio-Temporal Trend Mapping & Dynamic Borrowing (`--by=year|season|month`, `--st-borrow`)
+### 11.1 Spatio-Temporal Trend Mapping & Dynamic Borrowing
 
 When running temporal slices (`--by=year|season|month`), adding `--st-borrow` (alias `--temporal-borrow`) estimates lag-1 temporal correlation $\hat{\rho}_t \in [0.15, 0.85]$ across overlapping monitored reaches and computes precision-weighted exponential smoothing across slices, reducing `se_model_sc` in sparsely sampled periods and updating `predictions_*.csv`. Whenever $\ge 2$ slices are fit, the pipeline also fits reach-by-reach precision-weighted least squares (WLS) temporal trends, exporting `spatiotemporal_trends_by_<mode>_<det>.csv` and `fig6_spatiotemporal_trends_by_<mode>_<det>.png`.
 
 > **Full Guide**: See [`./spatiotemporal_trends_and_borrowing_guide.md`](./spatiotemporal_trends_and_borrowing_guide.md) for equations, Wald trend tiers, and CLI examples.
 
-### 11.2 Spatial Tobit / Iterative EM Censored Kriging (`--censor=em|tobit`)
+### 11.2 Spatial Tobit / Iterative EM Censored Kriging
 
 Standard non-spatial ROS (`--censor=ros`) imputes left-censored `< LOD` samples from the marginal distribution alone, ignoring where a censored station sits on the river network. For determinands with heavy censoring (e.g., 30–80% nondetects in trace organics, pesticides, or metals), **`--censor=em`** (alias `--censor=tobit`) runs an iterative **Spatial Tobit EM** loop inside `fit_s3n_domain()`:
 
@@ -772,7 +772,7 @@ Rscript scripts/run_s3n_determinand.R 0052 --censor=em
 - **Custom Monitoring Data & External Sources Guide**: [`./custom_data_sources_guide.md`](./custom_data_sources_guide.md)
 - **Single-Output Descriptive Statistics Interpretation Guide**: [`./descriptive_stats_interpretation_guide.md`](./descriptive_stats_interpretation_guide.md)
 - **Multi-Run & Cross-Determinand Comparison Interpretation Guide**: [`./model_comparison_interpretation_guide.md`](./model_comparison_interpretation_guide.md)
-- **Custom Water Network Guide (`BYOWN`)**: [`./custom_water_network_guide.md`](./custom_water_network_guide.md)
+- **Custom Water Network Guide**: [`./custom_water_network_guide.md`](./custom_water_network_guide.md)
 - **Technical Preprocessing & System Dependencies Summary**: [`./preprocessing_pipeline.md`](./preprocessing_pipeline.md)
 - **ORN Variables & Covariates Reference**: [`./orn_variables_reference.md`](./orn_variables_reference.md)
 

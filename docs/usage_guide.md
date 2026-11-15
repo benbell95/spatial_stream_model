@@ -1,6 +1,6 @@
-# Scalable Spatial Stream Network (S3N) Pipeline — Usage & CLI Reference Guide
+# Scalable Spatial Stream Modelling Pipeline — Usage & CLI Reference Guide
 
-This guide documents all scripts, command-line options, output directory conventions, and practical examples for running the Scalable Spatial Stream Network (S3N) water quality pipeline across the Ordnance Survey Open Rivers Network ([`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), 90,876 reaches across 141 monitored catchments), the Environment Agency River Surveillance Network ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the Small Streams Network ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), and the combined River Surveillance + Small Streams ([`RSS`](../data/processed/orn_rss/)) monitoring network.
+This guide documents all scripts, command-line options, output directory conventions, and practical examples for running the **Scalable Spatial Stream Modelling** water quality pipeline across the Ordnance Survey Open Rivers Network ([`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg), 90,876 reaches across 141 monitored catchments), the Environment Agency River Surveillance Network ([`RSN`](../data/NCEA_River_Surveillance_Network_ARD_Open/)), the Small Streams Network ([`SSN`](../data/NCEA_Small_Streams_Network_ARD_Open/)), and the combined River Surveillance + Small Streams ([`RSS`](../data/processed/orn_rss/)) monitoring network.
 
 > **Mathematical & Algorithmic Deep-Dive**: For a step-by-step theoretical and mathematical explanation of how the `S3N` package, stream-network covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbour Gaussian Process (`NNGP`) estimation, and Universal Stream Kriging work, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
 > 
@@ -20,29 +20,29 @@ This guide documents all scripts, command-line options, output directory convent
 ## Table of Contents
 
 - [1. Overview of Pipeline Scripts](#1-overview-of-pipeline-scripts)
-- [2. Primary Runner: `scripts/run_s3n_determinand.R`](#2-primary-runner-scriptsrun_s3n_determinandr)
+- [2. Primary Model Runner](#2-primary-model-runner)
   - [2.1 Synopsis](#21-synopsis)
   - [2.2 Complete Option Reference](#22-complete-option-reference)
   - [2.3 Common Determinand Codes (`det_code`)](#23-common-determinand-codes-det_code)
-  - [2.4 Ecological & Biological Datasets (`--dataset=inverts|diatoms|macrophytes|rhs|lcms`)](#24-ecological--biological-datasets---datasetinvertsdiatomsmacrophytesrhslcms)
+  - [2.4 Ecological & Biological Datasets](#24-ecological-biological-datasets)
   - [2.5 Quick Decision Cheat Sheet ("Which Flag Should I Choose?")](#25-quick-decision-cheat-sheet-which-flag-should-i-choose)
-  - [2.6 Universal Data Transformation Engine (`--transform=<type>`)](#26-universal-data-transformation-engine---transformtype)
-  - [2.7 Multi-Network Monitoring Data Sources & Custom Datasets (`--source=<name>`)](#27-multi-network-monitoring-data-sources--custom-datasets---sourcename)
-  - [2.8 Practical Examples for `scripts/run_s3n_determinand.R`](#28-practical-examples-for-scriptsrun_s3n_determinandr)
-- [3. GIS & Network Preprocessor: `scripts/01_preprocess_orn.py`](#3-gis--network-preprocessor-scripts01_preprocess_ornpy)
+  - [2.6 Universal Data Transformation Engine](#26-universal-data-transformation-engine)
+  - [2.7 Multi-Network Monitoring Data Sources & Custom Datasets](#27-multi-network-monitoring-data-sources-custom-datasets)
+  - [2.8 Practical Examples](#28-practical-examples)
+- [3. GIS & Network Preprocessor](#3-gis--network-preprocessor)
   - [3.1 Synopsis](#31-synopsis)
   - [3.2 Complete Option Reference](#32-complete-option-reference)
-  - [3.3 Station-to-Reach Snapping Tolerance (`--max-snap-dist`)](#33-station-to-reach-snapping-tolerance---max-snap-dist)
-  - [3.4 Practical Examples for `scripts/01_preprocess_orn.py`](#34-practical-examples-for-scripts01_preprocess_ornpy)
+  - [3.3 Station-to-Reach Snapping Tolerance](#33-station-to-reach-snapping-tolerance)
+  - [3.4 Practical Examples](#34-practical-examples)
 - [4. Output Files & Directory Structure](#4-output-files--directory-structure)
-  - [4.1 Preprocessed Data Directory (`data/processed/<net>_<source>/`)](#41-preprocessed-data-directory-dataprocessednet_source)
-  - [4.2 Output Directory Layout (`output/`) & Model Run Results (`output/results/`)](#42-output-directory-layout-output--model-run-results-outputresults)
+  - [4.1 Preprocessed Data Directory](#41-preprocessed-data-directory)
+  - [4.2 Output Directory Layout & Model Run Results](#42-output-directory-layout-model-run-results)
 - [5. Software Dependencies, C++ Compilation & Automated Tests](#5-software-dependencies-c-compilation--automated-tests)
-- [6. Single-Output Descriptive Statistics & Diagnostics: `scripts/05_descriptive_stats.R`](#6-single-output-descriptive-statistics--diagnostics-scripts05_descriptive_statsr)
-- [7. Comparing 2 or More Model Runs & Cross-Determinand Relationships: `scripts/04_compare_model_runs.R`](#7-comparing-2-or-more-model-runs--cross-determinand-relationships-scripts04_compare_model_runsr)
-- [8. Station-to-Reach Snapping Diagnostics & Catchment Plots: `scripts/06_station_snapping_diagnostics.R`](#8-station-to-reach-snapping-diagnostics--catchment-plots-scripts06_station_snapping_diagnosticsr)
-- [9. Co-Kriging Comparisons, Transform Benchmarks & Dashboard Builder (`07`, `08`, `build_showcase.py`)](#9-co-kriging-comparisons-transform-benchmarks--dashboard-builder-07-08-build_showcasepy)
-- [10. Regenerating Plots & Standalone Fitters (`scripts/03_generate_plots.R` & `scripts/02_fit_s3n_models.R`)](#10-regenerating-plots--standalone-fitters-scripts03_generate_plotsr--scripts02_fit_s3n_modelsr)
+- [6. Single-Output Descriptive Statistics & Diagnostics](#6-single-output-descriptive-statistics--diagnostics)
+- [7. Comparing 2 or More Model Runs & Cross-Determinand Relationships](#7-comparing-2-or-more-model-runs--cross-determinand-relationships)
+- [8. Station-to-Reach Snapping Diagnostics & Catchment Plots](#8-station-to-reach-snapping-diagnostics--catchment-plots)
+- [9. Co-Kriging Comparisons, Transform Benchmarks & Dashboard Builder](#9-co-kriging-comparisons-transform-benchmarks--dashboard-builder)
+- [10. Regenerating Plots & Standalone Fitters](#10-regenerating-plots--standalone-fitters)
 
 ---
 
@@ -69,7 +69,7 @@ This guide documents all scripts, command-line options, output directory convent
 
 ---
 
-## 2. Primary Runner: [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)
+## 2. Primary Model Runner
 
 ### 2.1 Synopsis
 ```bash
@@ -160,7 +160,7 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 | `0085` | Oxygen, Dissolved, % Saturation | `%` | `--transform=none` (untransformed) |
 | `9924` | Oxygen, Dissolved as O2 : In Situ | `mg/l` | `--transform=none` (untransformed) |
 
-### 2.4 Ecological & Biological Datasets (`--dataset=inverts|diatoms|macrophytes|rhs|lcms`)
+### 2.4 Ecological & Biological Datasets
 
 | Dataset (`--dataset=...`) | Variable Name | Description | Units | Default Scale |
 | :--- | :--- | :--- | :--- | :--- |
@@ -201,7 +201,7 @@ Rscript scripts/run_s3n_determinand.R <code_or_var> [OPTIONS]
 
 ---
 
-### 2.6 Universal Data Transformation Engine (`--transform=<type>`)
+### 2.6 Universal Data Transformation Engine
 
 Geostatistical spatial stream network kriging assumes that the stochastic error process follows a multivariate Gaussian distribution. The pipeline provides 12 analytical transformations with exact inverse back-transformation (reach aggregation computes `obs_y = mean(fwd(y))` before analytical inverse mapping), automatic Profile Maximum Likelihood parameter estimation ($\hat{\lambda}$), and matching colour scales.
 
@@ -233,7 +233,7 @@ Rscript scripts/run_s3n_determinand.R --list-transforms
 
 ---
 
-### 2.7 Multi-Network Monitoring Data Sources & Custom Datasets (`--source=<name>`)
+### 2.7 Multi-Network Monitoring Data Sources & Custom Datasets
 
 The pipeline supports EA surveillance networks, custom field campaigns, and arbitrary multi-network combinations via `--source=<name>`:
 
@@ -260,7 +260,7 @@ The pipeline supports EA surveillance networks, custom field campaigns, and arbi
 
 ---
 
-### 2.8 Practical Examples for [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R)
+### 2.8 Practical Examples
 
 #### A. Discovery Commands
 ```bash
@@ -335,7 +335,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=rsn_gam_mean --basin=Thames
 Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error
 ```
 
-#### C2. Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging (`--trend=...`)
+#### C2. Non-Linear / Spline Fixed Effects (`GAM + S3N`) & Tree-Ensemble Regression Kriging
 ```bash
 # 1. List all available fixed-effect / mean-trend engines and tuning flags
 Rscript scripts/run_s3n_determinand.R --list-trends
@@ -355,7 +355,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --transform=sqrt --trend=gbm --trees=
 
 > **Full Guide**: See [`./nonlinear_and_tree_ensemble_trend_guide.md`](./nonlinear_and_tree_ensemble_trend_guide.md) for details on using `--trend=` on standard raw data vs. `--meas-error`, package requirements (base/recommended R only), and interpreting `pred_trend_sc`, `GAM_EDF`, and `VarImp(%)`.
 
-#### D. Modelling & Plotting Additional Custom Basins (`--basin=...`)
+#### D. Modelling & Plotting Additional Custom Basins
 ```bash
 # 1. Add the River Eden catchment (CatchID=3125, Solway Tweed RBD) by river name
 Rscript scripts/run_s3n_determinand.R 0117 --basin=Eden
@@ -393,7 +393,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --by=season
 Rscript scripts/run_s3n_determinand.R 0117 --by=year --basin=Eden
 ```
 
-#### F. Overriding Default Directories (`--gis-dir`, `--data-dir`, `--processed-dir`, `--output-dir`)
+#### F. Overriding Default Directories
 
 Default paths are resolved centrally from [`configs/directories.json`](../configs/directories.json) and `S3N_*` environment variables (see [`./setup_and_architecture.md`](./setup_and_architecture.md)). Any script accepts CLI directory overrides when targeting alternate locations:
 
@@ -412,7 +412,7 @@ Rscript scripts/04_compare_model_runs.R det_0117_orn_rsn det_0180_orn_rsn --outp
 
 ---
 
-## 3. GIS & Network Preprocessor: [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)
+## 3. GIS & Network Preprocessor
 
 [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) builds the stream network topology from [`gis/ORN_v2.gpkg`](../gis/ORN_v2.gpkg) (or any custom network profile), snaps monitoring stations to their nearest reach polyline within a configurable distance tolerance (`--max-snap-dist`, default `250 m`), computes Shreve/accumulation-based additive function values (`log_AFV`), and exports standardised tables into `data/processed/<net>_<source>/` (default [`data/processed/orn_rsn/`](../data/processed/orn_rsn/)).
 
@@ -457,7 +457,7 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 
 ---
 
-### 3.3 Station-to-Reach Snapping Tolerance (`--max-snap-dist`)
+### 3.3 Station-to-Reach Snapping Tolerance
 
 Stations are snapped to river reach centrelines using a `2 km × 2 km` spatial hash grid and sub-metre orthogonal polyline projection (`included_250m = 1` when distance $d \le \text{max\_snap\_dist}$).
 
@@ -471,7 +471,7 @@ To inspect exact snapping coordinates (`snap_dist_m`) and zoomed catchment maps,
 
 ---
 
-### 3.4 Practical Examples for [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py)
+### 3.4 Practical Examples
 
 ```bash
 # 1. Default preprocessing (Nitrate 0117, ORN v2 network, 250 m snapping tolerance -> data/processed/orn_rsn/)
@@ -497,7 +497,7 @@ python3 scripts/01_preprocess_orn.py --network gis/my_network.gpkg --max-snap-di
 
 ## 4. Output Files & Directory Structure
 
-### 4.1 Preprocessed Data Directory (`data/processed/<net>_<source>/`)
+### 4.1 Preprocessed Data Directory
 For the default `orn` + `rsn` run ([`data/processed/orn_rsn/`](../data/processed/orn_rsn/)):
 
 | File | Rows | Description |
@@ -508,7 +508,7 @@ For the default `orn` + `rsn` run ([`data/processed/orn_rsn/`](../data/processed
 | [`rsn_reach_periods.csv`](../data/processed/orn_rsn/rsn_reach_periods.csv) | 22,566 | Long-format reach summaries broken down by `period_type` (`all`, `year`, `season`, `month`, `year_season`) and `period_value`. |
 | [`network_metadata.json`](../data/processed/orn_rsn/network_metadata.json) | — | Active water network & monitoring source metadata used automatically by R modelling and plotting scripts. |
 
-### 4.2 Output Directory Layout (`output/`) & Model Run Results (`output/results/`)
+### 4.2 Output Directory Layout & Model Run Results
 
 All pipeline outputs are organised into dedicated subfolders under `output/`:
 - `output/results/` — Model fitting outputs, predictions, CV metrics, parameter estimates, and maps from [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) (`output/results/det_<code>_<net>_<source>[_trans_<t>][_vars_<v>]/`) and [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) (`output/results/<net>_<source>[_trans_<t>][_vars_<v>]/`).
@@ -547,7 +547,7 @@ The pipeline runs with **Python ≥ 3.8** (core preprocessing uses the Python st
 
 ---
 
-## 6. Single-Output Descriptive Statistics & Diagnostics: [`scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R)
+## 6. Single-Output Descriptive Statistics & Diagnostics
 
 > **Detailed Interpretation Guide**: See [`./descriptive_stats_interpretation_guide.md`](./descriptive_stats_interpretation_guide.md) for definitions of all metrics, representativeness tests, stratified gradients, and figures (`fig_desc1_*`, `fig_desc2_*`).
 
@@ -564,7 +564,7 @@ Rscript scripts/05_descriptive_stats.R output/results/det_0180_orn_rsn --label="
 
 ---
 
-## 7. Comparing 2 or More Model Runs & Cross-Determinand Relationships: [`scripts/04_compare_model_runs.R`](../scripts/04_compare_model_runs.R)
+## 7. Comparing 2 or More Model Runs & Cross-Determinand Relationships
 
 > **Detailed Interpretation Guide**: See [`./model_comparison_interpretation_guide.md`](./model_comparison_interpretation_guide.md) for details on global vs. co-located CV, hypothesis tests, reach co-occurrence, Jaccard hotspots, `N:P` stoichiometry, Wald `Z`-tests, and `fig_comp1`–`fig_comp5`.
 
@@ -588,7 +588,7 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn --by=sea
 
 ---
 
-## 8. Station-to-Reach Snapping Diagnostics & Catchment Plots: [`scripts/06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R)
+## 8. Station-to-Reach Snapping Diagnostics & Catchment Plots
 
 > **Detailed Snapping Guide**: See [`./station_snapping_guide.md`](./station_snapping_guide.md) for complete column definitions, catchment-plot layout, and diagnostics interpretation.
 
@@ -607,7 +607,7 @@ Can also be sourced directly in R (`res <- analyze_station_snapping(catchment = 
 
 ---
 
-## 9. Co-Kriging Comparisons, Transform Benchmarks & Dashboard Builder (`07`, `08`, `build_showcase.py`)
+## 9. Co-Kriging Comparisons, Transform Benchmarks & Dashboard Builder
 
 - **[`scripts/07_compare_cokriging_runs.R`](../scripts/07_compare_cokriging_runs.R)** — Compares two multivariate co-kriging runs (e.g., equal vs. source-weighted RSN+SSN+WaterBlitz runs), generating `cs6_cv_comparison.csv`, `cs6_cross_covariance_comparison.csv`, `cs6_reach_comparison_summary.csv`, `fig_cs6_diff_maps_<det>.png`, `fig_cs6_equal_vs_favoured_comparison.svg`, and per-run `fig_cokrig_cross_correlation.svg`:
   ```bash
@@ -628,7 +628,7 @@ Can also be sourced directly in R (`res <- analyze_station_snapping(catchment = 
 
 ---
 
-## 10. Regenerating Plots & Standalone Fitters ([`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R) & [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R))
+## 10. Regenerating Plots & Standalone Fitters
 
 Because every model run saves its complete reach predictions, cross-validation tables, and parameter estimates as CSVs (`predictions_*.csv`, `cv_comparison_*.csv`, `parameters_*.csv`), you **never need to re-fit S3N models** just to change figure formats, resolution, physical dimensions, colour palettes, normalisations, or basin zooms. [`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R) reads any existing results directory in seconds and re-renders `fig1`–`fig4` (plus `fig5+` custom basins, `fig_exceedance_*`, and temporal grid/trend figures if present).
 
@@ -664,6 +664,6 @@ Rscript scripts/03_generate_plots.R --dir=output/results/det_0117_orn_rsn --basi
 > [!TIP]
 > `--fig-format=`, `--dpi=`, and `--fig-size=` work identically in [`run_s3n_determinand.R`](../scripts/run_s3n_determinand.R), [`run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R), [`04_compare_model_runs.R`](../scripts/04_compare_model_runs.R), [`05_descriptive_stats.R`](../scripts/05_descriptive_stats.R), and [`06_station_snapping_diagnostics.R`](../scripts/06_station_snapping_diagnostics.R).
 
-### Standalone Script Flag Summary ([`02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) & [`03_generate_plots.R`](../scripts/03_generate_plots.R))
+### Standalone Script Flag Summary
 - **[`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R)**: Accepts `--source=`, `--range-mode=`, `--network=`, `--vars=`/`--covariates=`, `--transform=`, `--lambda=`, `--scale=`, `--kernel=`, `--combine=`, `--afv=`, `--trend=` (`--gam-s3n`), `--spline-df=`, `--trees=`, `--cv-mode=`, `--threshold=`, `--threshold-dir=`, `--design-sites=`, `--boot=`/`--n-boot=`, `--omp=`, `--meas-error`/`--gam`, `--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`, plus `--list-sources`, `--list-networks`, `--list-vars`, `--list-transforms`, `--list-kernels`, `--list-trends`, `--list-validation`/`--list-cv`, `--list-thresholds`. Saves flat results + `s3n_model_results.rds` to `output/results/<net>_<source>[_trans_<t>][_vars_<v>]/`.
 - **[`scripts/03_generate_plots.R`](../scripts/03_generate_plots.R)**: Accepts `--dir=` (`--out-dir=`/`--output-dir=`/`--out=`/`--output=`), `--code=`, `--name=`, `--unit=`, `--transform=`, `--lambda=`, `--scale=`, `--norm=`, `--vmin=`, `--vmax=`, `--reverse-color`, `--normal-color` / `--no-reverse-color`, `--basin=`/`--catchid=`, `--fig-format=`, `--dpi=`, `--fig-size=`, `--data-dir=`, `--processed-dir=`, `--gis-dir=`.

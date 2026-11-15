@@ -10,8 +10,8 @@
   - [Command Line](#command-line)
   - [Supported CLI Flags](#supported-cli-flags)
   - [Calling from R](#calling-from-r)
-- [2. Generated Outputs (`output/station_snapping/<net>_<source>/`)](#2-generated-outputs-outputstation_snappingnet_source)
-- [3. Key Columns in `station_snapping_all.csv`](#3-key-columns-in-station_snapping_allcsv)
+- [2. Generated Outputs](#2-generated-outputs)
+- [3. Key Columns in the Station Snapping Output](#3-key-columns-in-the-station-snapping-output)
 - [4. Interpreting the Diagnostic Figures](#4-interpreting-the-diagnostic-figures)
 
 ---
@@ -58,7 +58,7 @@ res <- analyze_station_snapping(catchment = "Thames", network = "orn", source = 
 
 ---
 
-## 2. Generated Outputs (`output/station_snapping/<net>_<source>/`)
+## 2. Generated Outputs
 
 | File | Description |
 | :--- | :--- |
@@ -71,7 +71,7 @@ res <- analyze_station_snapping(catchment = "Thames", network = "orn", source = 
 
 ---
 
-## 3. Key Columns in `station_snapping_all.csv`
+## 3. Key Columns in the Station Snapping Output
 
 | Column | Meaning |
 | :--- | :--- |
@@ -82,7 +82,7 @@ res <- analyze_station_snapping(catchment = "Thames", network = "orn", source = 
 | `reach_mid_X`, `reach_mid_Y` | Midpoint coordinates of the snapped reach. |
 | `reach_start_X/Y`, `reach_end_X/Y` | Upstream and downstream endpoint coordinates of the snapped reach. |
 | `snap_dist_m` | Euclidean distance (metres) from the station to the snapped reach. |
-| `included_250m` | `1` if `snap_dist_m <= 250 m` (used in S3N modelling); `0` if excluded. |
+| `included_250m` | `1` if `snap_dist_m <= 250 m` (used in spatial modelling); `0` if excluded. |
 
 ---
 

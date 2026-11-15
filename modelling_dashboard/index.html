@@ -110,7 +110,7 @@
               <text x="28" y="72" fill="#e6edf7" font-size="14" font-weight="700">GIS, ROS &amp; Snapping</text>
               <text x="28" y="99" fill="#9fb0c9" font-size="11">• Pure SQLite + WKB GeoPackage</text>
               <text x="28" y="118" fill="#9fb0c9" font-size="11">• Lognormal ROS &amp; Tobit ranges</text>
-              <text x="28" y="137" fill="#9fb0c9" font-size="11">• BYOWN &amp; custom CSV ingest</text>
+              <text x="28" y="137" fill="#9fb0c9" font-size="11">• Custom network &amp; CSV ingest</text>
             </g>
             <line x1="252" y1="90" x2="288" y2="90" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
             <!-- Stage 2 -->
@@ -322,7 +322,7 @@
 
           <div class="interp-box" style="margin-top:0; border-left:4px solid #a78bfa; background:rgba(167, 139, 250, 0.06);">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
-              <strong>Why "Scalable" (<code>S3N</code> + <code>NNGP</code>)</strong>
+              <strong>Why "Scalable" (<code>NNGP</code> Stream Kriging)</strong>
               <span class="pill" style="color:#a78bfa; border-color:rgba(167, 139, 250, 0.35); background:rgba(167, 139, 250, 0.1);">O(n) Speed</span>
             </div>
             <p style="margin:0; font-size:0.84rem; color:var(--text-primary);">
@@ -414,7 +414,7 @@
             <li><strong>Tail-Up (<code>A &rarr; C</code>, Green):</strong> Models solutes carried downstream with river flow (e.g. Nitrate or dissolved Phosphorus). At the confluence, Tributary A's influence on Main Stem C is scaled by its <em>Additive Function Value</em> (<code>AFV = 0.65</code> vs. <code>0.35</code> from B) to reflect dilution. Tail-Up correlation between A and B is <strong>strictly zero</strong> because water cannot flow uphill from A into B.</li>
             <li><strong>Tail-Down (<code>A &harr; B</code> &amp; <code>A &harr; C</code>, Amber):</strong> Connects reaches along the stream channel even across confluence junctions (such as unconnected Tributaries A and B), capturing shared valley geology, riparian land use, or mobile ecology.</li>
             <li><strong>Euclidean (<code>C &harr; D</code>, Purple):</strong> Bridges across the catchment divide using straight-line overland distance, capturing regional climate, rainfall, or bedrock patterns shared by neighbouring basins.</li>
-            <li><strong>Combined (<code>Joint TU + TD + Euclidean</code>):</strong> Real rivers experience all three mechanisms at once, so <code>S3N</code> estimates the variance share of each pathway directly from the <code>RSN</code> observations.</li>
+            <li><strong>Combined (<code>Joint TU + TD + Euclidean</code>):</strong> Real rivers experience all three mechanisms at once, so the model estimates the variance share of each pathway directly from the <code>RSN</code> observations.</li>
           </ul>
         </div>
       </div>
@@ -778,7 +778,7 @@ Rscript scripts/run_s3n_determinand.R whpt_aspt --dataset=inverts --reverse-colo
         <div class="interp-box" style="margin-top:14px;">
           <h4>Method Explainer: Probabilistic Threshold Exceedance, 5-Tier Categories &amp; UK Reference Values</h4>
           <ul>
-            <li><strong>What Threshold Exceedance Is:</strong> Instead of comparing only a point prediction against a limit, S3N combines the predictive mean <code>z&#770;(s<sub>0</sub>)</code> and kriging standard error <code>SE(s<sub>0</sub>)</code> on the transformed model scale to evaluate the exact Gaussian exceedance probability <code>P(Y(s<sub>0</sub>) &gt; T) = 1 &minus; &Phi;((g(T) &minus; z&#770;(s<sub>0</sub>)) / SE(s<sub>0</sub>))</code>.</li>
+            <li><strong>What Threshold Exceedance Is:</strong> Instead of comparing only a point prediction against a limit, the model combines the predictive mean <code>z&#770;(s<sub>0</sub>)</code> and kriging standard error <code>SE(s<sub>0</sub>)</code> on the transformed model scale to evaluate the exact Gaussian exceedance probability <code>P(Y(s<sub>0</sub>) &gt; T) = 1 &minus; &Phi;((g(T) &minus; z&#770;(s<sub>0</sub>)) / SE(s<sub>0</sub>))</code>.</li>
             <li><strong>The 5 Statistical Confidence Categories:</strong> Reaches are grouped into <strong>Confidently Compliant</strong> (<code>&lt; 5%</code>), <strong>Likely Compliant</strong> (<code>5&ndash;20%</code>), <strong>Uncertain / Priority Monitoring</strong> (<code>20&ndash;80%</code>, where uncertainty makes compliance ambiguous and additional sampling is most valuable), <strong>Likely Exceeding</strong> (<code>80&ndash;95%</code>), and <strong>Confidently Exceeding</strong> (<code>&gt; 95%</code>). These are statistical confidence bands around a single threshold <code>T</code>, not site-typed ecological status classes.</li>
             <li><strong>Where the Threshold Values Come From (<code>--threshold=uk</code>):</strong> Nitrate (<code>11.3 mg/L as N</code>) comes from the UK Drinking Water Inspectorate (DWI) / Nitrates Directive standard (<code>11.3 mg/L N &equiv; 50 mg/L NO<sub>3</sub></code>). Orthophosphate (<code>0.069 mg/L as P</code>) is the indicative lowland, high-alkalinity Good/Moderate SRP boundary from <em>The Standards and Classification Directions (England and Wales) 2015</em> (used as a uniform national benchmark here, though site-specific regulatory boundaries vary with altitude and alkalinity).</li>
           </ul>
@@ -1023,7 +1023,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn --prefer-source=rsn 
             <strong>What is Monitoring Bias &amp; How is it Calculated?</strong>
             <ul>
               <li><strong>Why it occurs:</strong> Surveillance sites (e.g. <code>RSN</code>) are disproportionately located on larger, lowland, higher-order rivers rather than small upland headwaters, so raw station averages can overstate national nutrient levels.</li>
-              <li><strong>How it is calculated:</strong> <code>05_descriptive_stats.R</code> compares observed station concentrations (<code>Obs Median</code>) against full-network S3N predictions across all <code>90,876</code> reaches (<code>Pred Median</code>) via the <strong>Predicted-to-Observed Median Ratio</strong> (<code>Pred / Obs</code>; values <code>&lt; 1.0</code> mean stations over-sample high-concentration reaches) and a two-sample <strong>Mann-Whitney U test</strong>.</li>
+              <li><strong>How it is calculated:</strong> <code>05_descriptive_stats.R</code> compares observed station concentrations (<code>Obs Median</code>) against full-network spatial predictions across all <code>90,876</code> reaches (<code>Pred Median</code>) via the <strong>Predicted-to-Observed Median Ratio</strong> (<code>Pred / Obs</code>; values <code>&lt; 1.0</code> mean stations over-sample high-concentration reaches) and a two-sample <strong>Mann-Whitney U test</strong>.</li>
             </ul>
           </div>
           <div class="interp-box" style="margin-top:0;">
@@ -1048,7 +1048,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn --prefer-source=rsn 
           <div id="fig-slot-cs5-bias"></div>
           <div id="cs5-bias-table" class="table-scroll" style="margin-top:14px;"></div>
           <div class="caveat-box" style="margin-top:12px;">
-            <strong>Reading the Representativeness Bias Table:</strong> Comparing the raw median across the <code>1,210</code> monitored <code>RSN</code> stations (<code>Obs Median = 3.349 mg/L</code>) against the S3N-predicted median across all <code>90,876</code> England reaches (<code>Pred Median = 2.059 mg/L</code>) yields a <code>Pred / Obs</code> ratio of <code>0.615</code>. This shows that unmonitored upland headwaters pull the true network median <code>38.5%</code> below the station median, confirmed as highly significant by the Mann-Whitney U test (<code>p &lt; 10<sup>&minus;44</sup></code>).
+            <strong>Reading the Representativeness Bias Table:</strong> Comparing the raw median across the <code>1,210</code> monitored <code>RSN</code> stations (<code>Obs Median = 3.349 mg/L</code>) against the spatially predicted median across all <code>90,876</code> England reaches (<code>Pred Median = 2.059 mg/L</code>) yields a <code>Pred / Obs</code> ratio of <code>0.615</code>. This shows that unmonitored upland headwaters pull the true network median <code>38.5%</code> below the station median, confirmed as highly significant by the Mann-Whitney U test (<code>p &lt; 10<sup>&minus;44</sup></code>).
           </div>
         </div>
 

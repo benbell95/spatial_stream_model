@@ -9,7 +9,7 @@ Instead of classifying river reaches solely from a point estimate $\hat{y}(s_0)$
 ## Table of Contents
 
 - [1. CLI Flags](#1-cli-flags)
-- [2. Built-In UK Indicative Regulatory Thresholds (`--threshold=uk`)](#2-built-in-uk-indicative-regulatory-thresholds---thresholduk)
+- [2. Built-In UK Indicative Regulatory Thresholds](#2-built-in-uk-indicative-regulatory-thresholds)
   - [Official UK Regulatory References](#official-uk-regulatory-references)
 - [3. Mathematical Formulation](#3-mathematical-formulation)
 - [4. Five-Tier Management Classification](#4-five-tier-management-classification)
@@ -29,7 +29,7 @@ Instead of classifying river reaches solely from a point estimate $\hat{y}(s_0)$
 
 ---
 
-## 2. Built-In UK Indicative Regulatory Thresholds (`--threshold=uk`)
+## 2. Built-In UK Indicative Regulatory Thresholds
 
 Passing `--threshold=uk` automatically sets both the threshold value and direction (`above` or `below`) from the following indicative UK regulatory standards and guidelines:
 

@@ -1,9 +1,9 @@
-# Technical Documentation: Scalable Spatial Stream Network (S3N) Pipeline
+# Technical Documentation: Scalable Spatial Stream Modelling Pipeline
 
-This document covers the technical architecture across all three stages of the **Scalable Spatial Stream Network (S3N)** codebase:
+This document covers the technical architecture across all three stages of the **Scalable Spatial Stream Modelling** codebase:
 1. **Part I — GIS & Water Quality Preprocessing** ([`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py))
 2. **Part II — OpenMP C++ Stream-Tree Neighbour Engine** ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp))
-3. **Part III — R S3N Estimation, Prediction & Cross-Validation** ([`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) & [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R))
+3. **Part III — R Spatial Estimation, Prediction & Cross-Validation** ([`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) & [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R))
 
 > **Full Mathematical & Kriging Guide**: For the step-by-step derivation of `S3N` covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbour Gaussian Process (`NNGP`) estimation (`BRISC_estimation_stream`), Universal Stream Kriging (`BRISC_prediction_stream`), and spatial information-gain weighting, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
 
@@ -11,26 +11,26 @@ This document covers the technical architecture across all three stages of the *
 
 ## Table of Contents
 
-- [Part I: Python GIS & Monitoring Preprocessing (`01_preprocess_orn.py`)](#part-i-python-gis--monitoring-preprocessing-01_preprocess_ornpy)
-  - [1. Multi-Network Monitoring Data Ingestion (`--source=<name>`)](#1-multi-network-monitoring-data-ingestion---sourcename)
+- [Part I: Python GIS & Monitoring Preprocessing](#part-i-python-gis--monitoring-preprocessing)
+  - [1. Multi-Network Monitoring Data Ingestion](#1-multi-network-monitoring-data-ingestion)
   - [2. Zero-Dependency GeoPackage WKB Geometry Decoding (`parse_gpkg_multilinestring()`)](#2-zero-dependency-geopackage-wkb-geometry-decoding-parse_gpkg_multilinestring)
   - [3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()`)](#3-spatial-grid-snapping--exact-along-reach-projection-point_to_polyline)
   - [4. Subsetting to Monitored Catchments & Aggregating 100 m Covariates](#4-subsetting-to-monitored-catchments--aggregating-100-m-covariates)
   - [5. Directed River Tree Construction & Additive Function Values](#5-directed-river-tree-construction--additive-function-values)
-- [Part II: OpenMP C++ Stream-Tree Neighbour & NNGP Engine (`src/s3n_fast_neighbors.cpp`)](#part-ii-openmp-c-stream-tree-neighbour--nngp-engine-srcs3n_fast_neighborscpp)
+- [Part II: OpenMP C++ Stream-Tree Neighbour & NNGP Engine](#part-ii-openmp-c-stream-tree-neighbour--nngp-engine)
   - [1. O(1) Flow-Connectedness via Euler-Tour DFS Timestamps (`C_build_tree_tin_tout()`)](#1-o1-flow-connectedness-via-euler-tour-dfs-timestamps-c_build_tree_tin_tout)
   - [2. Pairwise Stream Distance & Weight Kernel (`calc_pair`)](#2-pairwise-stream-distance--weight-kernel-calc_pair)
-  - [3. Exported C++ Engines (`src/s3n_fast_neighbors.cpp`)](#3-exported-c-engines-srcs3n_fast_neighborscpp)
-- [Part III: R S3N Estimation, Prediction & Cross-Validation (`02_fit_s3n_models.R` & `run_s3n_determinand.R`)](#part-iii-r-s3n-estimation-prediction--cross-validation-02_fit_s3n_modelsr--run_s3n_determinandr)
+  - [3. Exported C++ Engines](#3-exported-c-engines)
+- [Part III: R S3N Estimation, Prediction & Cross-Validation](#part-iii-r-s3n-estimation-prediction--cross-validation)
 - [Part IV: System Requirements, Environment & Dependencies](#part-iv-system-requirements-environment--dependencies)
 
 ---
 
-## Part I: Python GIS & Monitoring Preprocessing (`01_preprocess_orn.py`)
+## Part I: Python GIS & Monitoring Preprocessing
 
 [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~7–8 seconds** using compiled `csv.reader` fast paths and Python standard library modules (`sqlite3`, `struct`, `math`, `csv`; optional `pyarrow`/`libgdal` for GeoParquet).
 
-### 1. Multi-Network Monitoring Data Ingestion (`--source=<name>`)
+### 1. Multi-Network Monitoring Data Ingestion
 The preprocessor supports EA surveillance networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
 - `rsn` (*default*, `configs/sources/rsn.json`): Environment Agency **River Surveillance Network** (`data/NCEA_River_Surveillance_Network_ARD_Open/`) monitoring 1,382 baseline stations across England's mainstems and major tributaries.
 - `ssn` (`configs/sources/ssn.json`): Environment Agency **Small Streams Network** (`data/NCEA_Small_Streams_Network_ARD_Open/`) monitoring 313 dedicated headwater stream stations (< 20 km² catchment area).
@@ -89,7 +89,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 ---
 
-## Part II: OpenMP C++ Stream-Tree Neighbour & NNGP Engine (`src/s3n_fast_neighbors.cpp`)
+## Part II: OpenMP C++ Stream-Tree Neighbour & NNGP Engine
 
 > **In plain English:** Walking a 90,000-reach river tree in pure R to measure distances between every pair of monitoring sites takes minutes or runs out of memory. This C++ module pre-indexes every river basin in a single pass so the solver can instantly check whether two reaches sit upstream/downstream of each other, measure exact channel distance through junctions, and keep only the `m = 15` closest stream neighbours in memory.
 
@@ -112,7 +112,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 - **Different Catchments**:
   - Sets `fc = false, wt = 0.0` and `dist = 1e6 + euclidean_dist_km` for Vecchia zero-weight padding.
 
-### 3. Exported C++ Engines (`src/s3n_fast_neighbors.cpp`)
+### 3. Exported C++ Engines
 | Exported Symbol | Purpose |
 | :--- | :--- |
 | `C_build_tree_tin_tout()` | Euler-tour DFS `tin`/`tout` intervals for $O(1)$ flow-connectedness checks. |
@@ -126,7 +126,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 ---
 
-## Part III: R S3N Estimation, Prediction & Cross-Validation (`02_fit_s3n_models.R` & `run_s3n_determinand.R`)
+## Part III: R S3N Estimation, Prediction & Cross-Validation
 
 1. **High-Speed CSV I/O (`fast_read_csv()` / `fast_write_csv()`)**: Automatically uses multi-threaded `data.table::fread()` / `fwrite()` when `data.table` is installed, with transparent fallback to base R `read.csv()` / `write.csv()`.
 2. **Downstream-to-Upstream Vecchia Ordering**: Orders observed reaches by `CatchID` and increasing `obs_up_dist_km` (`1..n_obs`), followed by prediction reaches (`n_obs+1..q_tot`).

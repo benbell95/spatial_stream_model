@@ -9,7 +9,7 @@ When expanding water quality monitoring, simply placing new stations where Krigi
 - [1. CLI Flags & Pipeline Integration](#1-cli-flags--pipeline-integration)
 - [2. Mathematical Formulation (`C_s3n_optimal_design`)](#2-mathematical-formulation-c_s3n_optimal_design)
 - [3. Visualisation Function (`plot_fig_optimal_design`) & Map Panels](#3-visualisation-function-plot_fig_optimal_design--map-panels)
-- [4. Output CSV Schema (`optimal_monitoring_design_<det>.csv`)](#4-output-csv-schema-optimal_monitoring_design_detcsv)
+- [4. Output Table Schema](#4-output-table-schema)
 - [5. Practical Interpretation & Combining with Threshold Exceedance](#5-practical-interpretation--combining-with-threshold-exceedance)
 - [6. Worked CLI Examples](#6-worked-cli-examples)
 
@@ -73,7 +73,7 @@ After universal S3N kriging produces the baseline combined prediction standard e
 
 ---
 
-## 4. Output CSV Schema (`optimal_monitoring_design_<det>.csv`)
+## 4. Output Table Schema
 
 Each fitted domain contributes `K` rows ordered by `Rank` (`1..K`):
 

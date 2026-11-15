@@ -1,6 +1,6 @@
 # Two-Stage Modelling & Heteroskedastic Measurement Error Kriging Guide
 
-This guide documents the methodology, equations, C++ implementation, and workflow for **Two-Stage Modelling** in the Scalable Spatial Stream Network (`S3N`) pipeline. It takes station predictions and estimation uncertainties from a first-stage temporal model—such as a Generalised Additive Model (`GAM`), state-space filter, or dynamic harmonic regression—and interpolates them across river networks via **Approach A: Heteroskedastic Measurement Error Kriging**.
+This guide documents the methodology, equations, C++ implementation, and workflow for **Two-Stage Modelling** in the **Scalable Spatial Stream Modelling** pipeline. It takes station predictions and estimation uncertainties from a first-stage temporal model—such as a Generalised Additive Model (`GAM`), state-space filter, or dynamic harmonic regression—and interpolates them across river networks via **Approach A: Heteroskedastic Measurement Error Kriging**.
 
 ---
 
@@ -18,21 +18,21 @@ This guide documents the methodology, equations, C++ implementation, and workflo
   - [3.1 Stack Allocation & Numerical Stability](#31-stack-allocation--numerical-stability)
   - [3.2 Machine-Precision Consistency Verification](#32-machine-precision-consistency-verification)
 - [4. Input Data Format & Schema Specification](#4-input-data-format--schema-specification)
-  - [4.1 Station Coordinate Points (`sites.csv`)](#41-station-coordinate-points-sitescsv)
-  - [4.2 GAM Predictions Table (`samples.csv`)](#42-gam-predictions-table-samplescsv)
+  - [4.1 Station Coordinate Points](#41-station-coordinate-points)
+  - [4.2 GAM Predictions Table](#42-gam-predictions-table)
   - [4.3 Multi-Temporal Aggregation](#43-multi-temporal-aggregation)
 - [5. End-to-End Workflow & Command Reference](#5-end-to-end-workflow--command-reference)
   - [Step 1: Preprocess River Network & Snap Stations](#step-1-preprocess-river-network--snap-stations)
-  - [Step 2: Fit S3N Model with Measurement Error Kriging](#step-2-fit-s3n-model-with-measurement-error-kriging)
+  - [Step 2: Fit Spatial Stream Model with Measurement Error Kriging](#step-2-fit-spatial-stream-model-with-measurement-error-kriging)
   - [Step 3: Standalone Model Execution](#step-3-standalone-model-execution)
 - [6. Output Tables & Interpretation](#6-output-tables--interpretation)
-  - [6.1 Parameter Estimates Table (`parameters_0117.csv`)](#61-parameter-estimates-table-parameters_0117csv)
-  - [6.2 Cross-Validation Comparison Table (`cv_comparison_0117.csv`)](#62-cross-validation-comparison-table-cv_comparison_0117csv)
+  - [6.1 Parameter Estimates Table](#61-parameter-estimates-table)
+  - [6.2 Cross-Validation Comparison Table](#62-cross-validation-comparison-table)
 - [7. Diagnostic Comparison: Standard S3N vs Measurement Error Kriging](#7-diagnostic-comparison-standard-s3n-vs-measurement-error-kriging)
 - [8. Troubleshooting & FAQ](#8-troubleshooting--faq)
   - [Q1: What if my first-stage model outputs standard errors on the log-scale already?](#q1-what-if-my-first-stage-model-outputs-standard-errors-on-the-log-scale-already)
   - [Q2: What if some stations have missing uncertainty (`NA` or `0`)?](#q2-what-if-some-stations-have-missing-uncertainty-na-or-0)
-  - [Q3: Does this affect regular non-GAM runs (e.g. `--source=rsn`)?](#q3-does-this-affect-regular-non-gam-runs-eg---sourcersn)
+  - [Q3: Does this affect regular non-GAM runs?](#q3-does-this-affect-regular-non-gam-runs)
   - [Q4: Can I use this for sensor telemetry with calibration drift uncertainty?](#q4-can-i-use-this-for-sensor-telemetry-with-calibration-drift-uncertainty)
 - [9. Related Guides & References](#9-related-guides--references)
 
@@ -219,7 +219,7 @@ This confirms that Approach A reduces to standard homoskedastic kriging to exact
 
 To supply first-stage GAM estimates to the pipeline, organise your dataset in `data/custom/<source_name>/` with two CSV files: `sites.csv` and `samples.csv`.
 
-### 4.1 Station Coordinate Points (`sites.csv`)
+### 4.1 Station Coordinate Points
 Standard station definition file:
 ```csv
 site_id,easting,northing,site_name,source
@@ -227,7 +227,7 @@ RSN001,425100,210400,River Thames at Reading,RSN_GAM
 RSN002,426200,211500,River Kennet Confluence,RSN_GAM
 ```
 
-### 4.2 GAM Predictions Table (`samples.csv`)
+### 4.2 GAM Predictions Table
 The samples table must contain the GAM predictions, standard errors, and the method flag:
 
 | Column Name | Required | Data Type | Description |
@@ -240,7 +240,7 @@ The samples table must contain the GAM predictions, standard errors, and the met
 | `det_code` | Optional | String | Determinand code (e.g. `0117` for Nitrate, `0180` for Orthophosphate). |
 | `unit_short_desc` | Optional | String | Measurement unit (e.g. `mg/L`). |
 
-#### Example `samples.csv`:
+#### Example GAM Predictions Table:
 ```csv
 site_id,sample_datetime,meas_result,meas_uncertainty,meas_method,unit_short_desc
 RSN001,2023-06-01,2.3510,0.2197,gam,mg/L
@@ -274,7 +274,7 @@ python3 scripts/01_preprocess_orn.py --source=rsn_gam
 
 ---
 
-### Step 2: Fit S3N Model with Measurement Error Kriging
+### Step 2: Fit Spatial Stream Model with Measurement Error Kriging
 Run [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R):
 ```bash
 # Nationwide England model + Humber, Thames, Severn, and a custom basin
@@ -303,7 +303,7 @@ Rscript scripts/02_fit_s3n_models.R --source=rsn_gam_mean --boot=50
 
 All results are saved under `output/results/det_<code>_<net>_<source>/` (e.g. `output/results/det_0117_orn_rsn_gam_mean/`), or `output/results/<net>_<source>/` for `02_fit_s3n_models.R`. The tables below show illustrative values from an early `rsn_gam_mean` benchmark run (`1,220` observed reaches across `91,077` network reaches on an earlier extract; standard ORN v2 RSN has `90,876` reaches / `1,210` observed reaches):
 
-### 6.1 Parameter Estimates Table (`parameters_0117.csv`)
+### 6.1 Parameter Estimates Table
 Under Approach A, the parameter table reports both the standard covariance parameters and the decoupled microscale variance (illustrative values below):
 
 | Domain | Model | Parameter | Estimate | CI_Lower | CI_Upper | Spatial_Method | Meas_Method |
@@ -318,7 +318,7 @@ Under Approach A, the parameter table reports both the standard covariance param
 - **`mean_meas_variance`**: Average first-stage GAM estimation error variance $\bar{v} = 0.0080$.
 - **`tau.sq (microscale)`**: The true sub-reach spatial nugget ($0.1770 = 0.1850 - 0.0080$).
 
-### 6.2 Cross-Validation Comparison Table (`cv_comparison_0117.csv`)
+### 6.2 Cross-Validation Comparison Table
 Cross-validation accurately reflects out-of-sample performance against the underlying latent stream signal:
 
 | Domain | n_obs | n_reaches | Model | Spatial_Method | RMSE | MAE | $R^2$ | Meas_Method |
@@ -356,7 +356,7 @@ If your GAM was fitted directly on $\log(\text{concentration})$ and produced $\t
 ### Q2: What if some stations have missing uncertainty (`NA` or `0`)?
 If `meas_uncertainty` is missing or $0$ for a particular site, the C++ solver sets $v_i = 0$ for that station. That station will behave as a standard exact observation, while stations with $v_j > 0$ will be appropriately smoothed.
 
-### Q3: Does this affect regular non-GAM runs (e.g. `--source=rsn`)?
+### Q3: Does this affect regular non-GAM runs?
 **No.** Unless `meas_method` is one of `gam`, `tobit_interval`, `tobit_raw_sd`, `geometric_midpoint`, or `source_se` (or `--meas-error` / `--gam` / `--source-se` is passed), the pipeline runs standard homoskedastic S3N kriging.
 
 ### Q4: Can I use this for sensor telemetry with calibration drift uncertainty?

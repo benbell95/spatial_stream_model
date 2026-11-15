@@ -7,9 +7,9 @@ This guide is the single reference for repository layout, environment dependenci
 ## Table of Contents
 
 - [1. Software & Hardware Requirements](#1-software--hardware-requirements)
-  - [1.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)](#11-python-environment-01_preprocess_ornpy-format_custom_datapy-build_showcasepy)
+  - [1.1 Python Environment](#11-python-environment)
   - [1.2 R Environment](#12-r-environment)
-  - [1.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)](#13-compiled-c--openmp-library-srcs3n_fast_neighborscpp)
+  - [1.3 Compiled C++ / OpenMP Library](#13-compiled-c--openmp-library)
   - [1.4 System Dependencies (Linux, macOS & Windows)](#14-system-dependencies-linux-macos--windows)
   - [1.5 Hardware Profile](#15-hardware-profile)
 - [2. Obtaining & Placing the Required Data](#2-obtaining--placing-the-required-data)
@@ -18,8 +18,8 @@ This guide is the single reference for repository layout, environment dependenci
   - [2.3 Verifying the Layout & Custom Locations](#23-verifying-the-layout--custom-locations)
   - [2.4 Additional River Networks & Citizen Science Data Sources](#24-additional-river-networks--citizen-science-data-sources)
 - [3. Configuration Files & Environment Variables](#3-configuration-files--environment-variables)
-  - [3.1 Directory Paths (`configs/directories.json`)](#31-directory-paths-configsdirectoriesjson)
-  - [3.2 Determinand Metadata Catalog (`configs/determinands.json`)](#32-determinand-metadata-catalog-configsdeterminandsjson)
+  - [3.1 Directory Paths](#31-directory-paths)
+  - [3.2 Determinand Metadata Catalog](#32-determinand-metadata-catalog)
 - [4. Running the Automated Test Suite](#4-running-the-automated-test-suite)
 - [5. License](#5-license)
 - [6. Repository & Output Layout](#6-repository--output-layout)
@@ -30,7 +30,7 @@ This guide is the single reference for repository layout, environment dependenci
 
 The pipeline minimises external dependencies so it runs reliably in headless Linux environments without heavy GIS or plotting stacks (`GDAL`, `geopandas`, `sf`, `SSN2`, or `ggplot2`).
 
-### 1.1 Python Environment (`01_preprocess_orn.py`, `format_custom_data.py`, `build_showcase.py`)
+### 1.1 Python Environment
 - **Python Version**: **Python ≥ 3.8** (uses `statistics.NormalDist()` for ROS normal quantiles).
 - **Third-Party Packages**: **None required** for core GeoPackage (`.gpkg`) and CSV preprocessing (uses standard library modules `sqlite3`, `struct`, `statistics`, `math`, `csv`, `json`, `argparse`).
   - Optional packages: `pyarrow` (or system `libgdal`) for GeoParquet `.parquet` networks, `pyproj` (or `osgeo.osr`) for CRS auto-reprojection in `format_custom_data.py`, and `Pillow` for WebP asset generation in `build_showcase.py`.
@@ -47,7 +47,7 @@ The pipeline minimises external dependencies so it runs reliably in headless Lin
   | `splines`, `mgcv`, `rpart` | Bundled with standard R | Used when `--trend=spline\|gam\|rf\|gbm` is enabled (automatic fallback to `spline`/`linear` if unavailable). |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG/PDF/SVG plotting (`type = "cairo"`). |
 
-### 1.3 Compiled C++ / OpenMP Library (`src/s3n_fast_neighbors.cpp`)
+### 1.3 Compiled C++ / OpenMP Library
 R scripts dynamically load `src/s3n_fast_neighbors.so` (Linux/macOS) or `src/s3n_fast_neighbors.dll` (Windows via Rtools). [`src/Makevars`](../src/Makevars) and [`src/Makevars.win`](../src/Makevars.win) already configure `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root:
 
 ```bash
@@ -172,7 +172,7 @@ Once extracted, verify that Python discovers the expected network and monitoring
 python3 scripts/01_preprocess_orn.py --list-sources
 ```
 
-- **Alternate folders**: If `gis/` or `data/` live outside the repository root (for example, on a shared drive or cloud volume), update [`configs/directories.json`](../configs/directories.json), set `S3N_GIS_DIR` / `S3N_DATA_DIR`, or pass `--gis-dir=` / `--data-dir=` (see [Section 3.1](#31-directory-paths-configsdirectoriesjson)).
+- **Alternate folders**: If `gis/` or `data/` live outside the repository root (for example, on a shared drive or cloud volume), update [`configs/directories.json`](../configs/directories.json), set `S3N_GIS_DIR` / `S3N_DATA_DIR`, or pass `--gis-dir=` / `--data-dir=` (see [Section 3.1](#31-directory-paths)).
 - **Custom monitoring or river networks**: To ingest non-EA monitoring tables or a non-UK hydrography network instead of `ORN`/`RSN`/`SSN`, see [`./custom_data_sources_guide.md`](./custom_data_sources_guide.md) and [`./custom_water_network_guide.md`](./custom_water_network_guide.md).
 
 ### 2.4 Additional River Networks & Citizen Science Data Sources
@@ -189,7 +189,7 @@ Beyond the core `ORN` + `RSN`/`SSN` setup, the repository supports additional ex
 
 ## 3. Configuration Files & Environment Variables
 
-### 3.1 Directory Paths (`configs/directories.json`)
+### 3.1 Directory Paths
 All Python and R scripts resolve root paths in this precedence order (highest to lowest):
 1. **CLI flags**: `--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`
 2. **Environment variables**: `S3N_GIS_DIR`, `S3N_DATA_DIR`, `S3N_PROCESSED_DIR`, `S3N_OUTPUT_DIR`
@@ -203,7 +203,7 @@ All Python and R scripts resolve root paths in this precedence order (highest to
    }
    ```
 
-### 3.2 Determinand Metadata Catalog (`configs/determinands.json`)
+### 3.2 Determinand Metadata Catalog
 `load_determinand_catalog()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R) and [`scripts/s3n_py_utils.py`](../scripts/s3n_py_utils.py) reads `configs/determinands.json` to map determinand codes (e.g., `"0117"`, `"whpt_aspt"`) to human-readable plot titles, short labels, and units.
 
 On first run, [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) automatically generates `configs/determinands.json` by scanning available RSN/SSN Water Quality and LCMS/GCMS CSVs alongside the built-in ecological index definitions (preserving any manual edits on later runs; pass `--update-determinands` to rescan for new codes):

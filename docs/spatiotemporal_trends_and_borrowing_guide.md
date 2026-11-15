@@ -9,10 +9,10 @@ This guide explains how to run temporal batch analyses (`--by=year|season|month`
 - [1. Quick Start & CLI Flags](#1-quick-start--cli-flags)
 - [2. Practical Usage Examples](#2-practical-usage-examples)
   - [2.1 Multi-Year Trend Mapping (Standard vs. Dynamic Borrowing)](#21-multi-year-trend-mapping-standard-vs-dynamic-borrowing)
-  - [2.2 Combining with Regulatory Exceedance Mapping (`--threshold=uk`)](#22-combining-with-regulatory-exceedance-mapping---thresholduk)
+  - [2.2 Combining with Regulatory Exceedance Mapping](#22-combining-with-regulatory-exceedance-mapping)
   - [2.3 Seasonal & Monthly Dynamics](#23-seasonal--monthly-dynamics)
   - [2.4 Combining with Custom Basins, Non-Linear Trends, or Normalisation](#24-combining-with-custom-basins-non-linear-trends-or-normalisation)
-- [3. How Dynamic Borrowing Across Time Works (`--st-borrow`)](#3-how-dynamic-borrowing-across-time-works---st-borrow)
+- [3. How Dynamic Borrowing Across Time Works](#3-how-dynamic-borrowing-across-time-works)
   - [3.1 Why Borrow Strength Across Time?](#31-why-borrow-strength-across-time)
   - [3.2 Two-Step Empirical Bayes Temporal Smoother](#32-two-step-empirical-bayes-temporal-smoother)
 - [4. How Reach-Level Trend Analysis Works](#4-how-reach-level-trend-analysis-works)
@@ -46,7 +46,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --by=year
 Rscript scripts/run_s3n_determinand.R 0117 --by=year --st-borrow
 ```
 
-### 2.2 Combining with Regulatory Exceedance Mapping (`--threshold=uk`)
+### 2.2 Combining with Regulatory Exceedance Mapping
 When `--st-borrow` and `--threshold=` are used together, exceedance probabilities (`exceed_prob`) and 5-tier management classifications (`compliance_tier`) are automatically recomputed from the temporally borrowed mean and reduced kriging SE:
 ```bash
 Rscript scripts/run_s3n_determinand.R 0117 --by=year --st-borrow --threshold=uk
@@ -72,7 +72,7 @@ Rscript scripts/run_s3n_determinand.R 0052 --by=year --st-borrow --censor=em
 
 ---
 
-## 3. How Dynamic Borrowing Across Time Works (`--st-borrow`)
+## 3. How Dynamic Borrowing Across Time Works
 
 ### 3.1 Why Borrow Strength Across Time?
 In real monitoring networks, station coverage is rarely identical every year:

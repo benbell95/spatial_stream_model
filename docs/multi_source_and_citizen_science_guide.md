@@ -14,7 +14,7 @@ This guide explains **when** to keep networks as separate co-kriged variables ve
   - [How the Pipeline Solves Each Issue](#how-the-pipeline-solves-each-issue)
 - [2. Core Multi-Source & Network-Preference Options](#2-core-multi-source--network-preference-options)
   - [Option Summary](#option-summary)
-  - [Mathematical Formulation of `--source-weight` and `--source-se`](#mathematical-formulation-of---source-weight-and---source-se)
+  - [Mathematical Formulation of Source Weighting and Measurement Error](#mathematical-formulation-of-source-weighting-and-measurement-error)
 - [3. High-Value Real-World Use Cases](#3-high-value-real-world-use-cases)
   - [Use Case 1: National `RSN` + Citizen Science WaterBlitz Colorimetric Kits](#use-case-1-national-rsn--citizen-science-waterblitz-colorimetric-kits)
   - [Use Case 2: Ecological EA Surveillance `WHPT ASPT` + Volunteer `Riverfly ARMI`](#use-case-2-ecological-ea-surveillance-whpt-aspt--volunteer-riverfly-armi)
@@ -69,7 +69,7 @@ All three preference/weighting flags work uniformly across both **single-determi
 
 ---
 
-### Mathematical Formulation of `--source-weight` and `--source-se`
+### Mathematical Formulation of Source Weighting and Measurement Error
 
 #### 1. Source-Grouped Weighted Reach Aggregation
 

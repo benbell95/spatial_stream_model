@@ -1,6 +1,6 @@
 # Bring Your Own Water Network Guide
 
-This guide explains what is required in a river/stream network dataset to work with the Scalable Spatial Stream Network (`S3N`) pipeline, how the preprocessor automatically derives missing hydrographic and topological attributes, and step-by-step instructions for adding and running a new water network.
+This guide explains what is required in a river/stream network dataset to work with the **Scalable Spatial Stream Modelling** pipeline, how the preprocessor automatically derives missing hydrographic and topological attributes, and step-by-step instructions for adding and running a new water network.
 
 ---
 
@@ -14,10 +14,10 @@ This guide explains what is required in a river/stream network dataset to work w
   - [2.4 Flow Routing & Topology Requirements](#24-flow-routing--topology-requirements)
   - [2.5 Required vs. Optional vs. Auto-Computed Attributes](#25-required-vs-optional-vs-auto-computed-attributes)
 - [3. Step-by-Step Setup Guide](#3-step-by-step-setup-guide)
-  - [Step 1: Place Your GeoPackage or GeoParquet File in `gis/` and Inspect Its Schema](#step-1-place-your-geopackage-or-geoparquet-file-in-gis-and-inspect-its-schema)
-  - [Step 2: Create a Network Profile in `configs/networks/<abbr>.json`](#step-2-create-a-network-profile-in-configsnetworksabbrjson)
+  - [Step 1: Place Your GeoPackage or GeoParquet File and Inspect Its Schema](#step-1-place-your-geopackage-or-geoparquet-file-and-inspect-its-schema)
+  - [Step 2: Create a Network Profile](#step-2-create-a-network-profile)
   - [Step 3: Run the Preprocessor on Your Network](#step-3-run-the-preprocessor-on-your-network)
-  - [Step 4: Run S3N Models with Your Water Network](#step-4-run-s3n-models-with-your-water-network)
+  - [Step 4: Run Spatial Stream Models with Your Water Network](#step-4-run-spatial-stream-models-with-your-water-network)
   - [Step 5: Re-Generate or Customise Plots](#step-5-re-generate-or-customise-plots)
 - [4. Ad-Hoc Usage (Running Directly on a `.parquet` or `.gpkg` File Without a Config File)](#4-ad-hoc-usage-running-directly-on-a-parquet-or-gpkg-file-without-a-config-file)
 - [5. Troubleshooting & Validation Checklist](#5-troubleshooting--validation-checklist)
@@ -30,7 +30,7 @@ The `S3N` R package models spatial autocorrelation along river networks using tw
 - **Tail-Up (TU)**: Flow-connected covariance that requires a **strictly converging directed tree** per catchment (every reach has at most **1 downstream child**, and no loops/cycles exist) plus **additive function values (`afv`, πᵢ)** that split weights proportionally at confluences.
 - **Tail-Down (TD)**: Flow-connected and flow-unconnected covariance that requires the **hydrologic distance to the catchment outlet (`Dist2Mth_km`)** for every reach.
 
-To decouple the `S3N` modelling scripts from any single GIS dataset (such as OS Open Rivers Network `ORN_v2.gpkg` or Copernicus `EU-Hydro`), the pipeline uses:
+To decouple the spatial modelling scripts from any single GIS dataset (such as OS Open Rivers Network `ORN_v2.gpkg` or Copernicus `EU-Hydro`), the pipeline uses:
 1. **Declarative Network Profiles (`configs/networks/<abbr>.json`)**: Maps a dataset's native GeoPackage (`.gpkg`) or GeoParquet (`.parquet` / `.geoparquet`) file paths, layer names, CRS, topology columns, and attribute names to the standardised `S3N` schema (`configs/networks/orn.json` is included out of the box; custom profiles can be added alongside it).
 2. **Network-Agnostic Preprocessor (`scripts/01_preprocess_orn.py`)**: Reads the GeoPackage or GeoParquet file(s), repairs topology into a valid converging tree, projects coordinates, computes missing hydrological attributes, snaps EA monitoring stations (or custom sources), and writes standardised CSV tables to `data/processed/<abbr>_<source>/`.
 3. **Network-Aware Modelling & Plotting (`scripts/run_s3n_determinand.R`, `scripts/02_fit_s3n_models.R`, `scripts/03_generate_plots.R`)**: Reads `data/processed/<abbr>_<source>/`, writes run outputs to `output/results/<run_tag>/` (e.g. `output/results/det_0117_my_net_rsn/`), and stamps all figures with the network's human-readable label.
@@ -88,7 +88,7 @@ Your dataset must provide **at least one** of the following three ways to determ
 > Some datasets split connected waterways across multiple layers (for example, in `euhydro_thames_v013.gpkg`, 147 river segments in `River_Net_l` have `NEXTDOWNID` pointing to canal segments in `Canals_l`). You can list multiple layers in `"layers": ["River_Net_l", "Canals_l", "Ditches_l"]` and the preprocessor will merge them into a single unified routing graph before building trees.
 
 > **Automatic Braided-Channel & Cycle Repair**:
-> Natural river datasets often contain braided splits/divergences (where one node has multiple outgoing reaches) or minor topological cycles. The preprocessor automatically resolves divergences (retaining the primary downstream branch with the largest upstream accumulation/length) and breaks cycles so the output graph is guaranteed to be a valid **directed acyclic forest** for `S3N`.
+> Natural river datasets often contain braided splits/divergences (where one node has multiple outgoing reaches) or minor topological cycles. The preprocessor automatically resolves divergences (retaining the primary downstream branch with the largest upstream accumulation/length) and breaks cycles so the output graph is guaranteed to be a valid **directed acyclic forest** for stream-network modelling.
 
 ---
 
@@ -116,7 +116,7 @@ You do **not** need pre-computed Strahler orders, Shreve orders, distances to mo
 
 ## 3. Step-by-Step Setup Guide
 
-### Step 1: Place Your GeoPackage or GeoParquet File in `gis/` and Inspect Its Schema
+### Step 1: Place Your GeoPackage or GeoParquet File and Inspect Its Schema
 
 Place your `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` file inside the `gis/` directory (or a custom `--gis-dir`).
 
@@ -138,7 +138,7 @@ Place your `.gpkg`, `.parquet` / `.geoparquet`, or `.zip` file inside the `gis/`
 
 ---
 
-### Step 2: Create a Network Profile in `configs/networks/<abbr>.json`
+### Step 2: Create a Network Profile
 
 Create a new JSON configuration file in [`configs/networks/`](../configs/networks) (for example, `configs/networks/my_net.json`). You can specify either `"parquet_paths"` (for `.parquet` / `.geoparquet` files), `"gpkg_paths"` (for `.gpkg` or `.parquet` files), or `"network_paths"`. Below is a complete template with annotations explaining every option:
 
@@ -197,7 +197,7 @@ Create a new JSON configuration file in [`configs/networks/`](../configs/network
 }
 ```
 
-#### Field Reference for `configs/networks/<abbr>.json`
+#### Network Profile Field Reference
 - **`name` / `abbr`**: Short lowercase identifier (e.g. `"my_net"` or `"euhydro_thames"`). Used in CLI `--network=<abbr>`, processed directory `data/processed/<abbr>_<source>/`, and output directory `output/results/det_0117_<abbr>_<source>/`.
 - **`label` / `short_label`**: Human-readable network name displayed on figures (`Water Network: <short_label>`) and saved in `network_metadata.json`.
 - **`parquet_paths` / `gpkg_paths` / `network_paths`**: List of one or more relative `.parquet` / `.geoparquet` or `.gpkg` paths under `gis/` (or the project root). Multiple files (for example, merging regional sub-basin files or separate GeoParquet layer files) are automatically combined.
@@ -229,7 +229,7 @@ python3 scripts/01_preprocess_orn.py --list-networks
 python3 scripts/01_preprocess_orn.py --network=my_net
 ```
 
-#### What `scripts/01_preprocess_orn.py --network=my_net` Produces
+#### What Network Preprocessing Produces
 All processed files are saved to `data/processed/my_net_rsn/` (or `data/processed/<abbr>_<source>/` for any monitoring source):
 1. **`england_rsn_reaches.csv`**: All reaches in monitored catchments with standardised topology (`RivID`, `CatchID`, `parent_dn`, `Dist2Mth_km`, `up_dist_mid_km`, `US_Accum_km`, `log_AFV`, `Shreve`, `Strahler`), coordinates (`start_X/Y`, `mid_X/Y`, `end_X/Y` in `EPSG:27700`), physical/geological covariates (`Elevation`, `Slope`, `Sinuosity`, `SrcElevation`, `Is_Chalk_Limestone`, `Is_Sandstone`, `Is_Aquifer`, `Is_Peat`), and canonical baseline observation columns (`has_obs`, `site_id`, `snap_dist_m`, `obs_up_dist_km`, `obs_mean`, `obs_median`, `trans_obs_mean`, `meas_uncertainty`, `meas_method`, `n_samples`).
 2. **`rsn_sites.csv`**: Station-level snapping coordinates and observation summaries (`site_id`, `easting`, `northing`, `snap_dist_m`, `RivID`, `CatchID`, `obs_up_dist_km`, `n_samples`, `obs_mean`, `obs_median`, `obs_sd`, `trans_obs_mean`, `mean_trans_obs`, `meas_uncertainty`, `meas_method`, `included_250m`, `source`), used by `scripts/run_s3n_determinand.R` and `scripts/06_station_snapping_diagnostics.R`.
@@ -241,7 +241,7 @@ All processed files are saved to `data/processed/my_net_rsn/` (or `data/processe
 
 ---
 
-### Step 4: Run S3N Models with Your Water Network
+### Step 4: Run Spatial Stream Models with Your Water Network
 
 Pass `--network=my_net` to [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) or [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R):
 

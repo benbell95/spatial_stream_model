@@ -11,17 +11,17 @@
   - [Example: Why Model Nitrate (`0117`) and Orthophosphate (`0180`) Together Rather Than Separately?](#example-why-model-nitrate-0117-and-orthophosphate-0180-together-rather-than-separately)
   - [Key Use Cases](#key-use-cases)
 - [2. Mathematical Model: Scalable Factor-LMC Joint Stream NNGP](#2-mathematical-model-scalable-factor-lmc-joint-stream-nngp)
-  - [How $P = 2$–$4$ vs. $P = 5+$ Variables Scale (`--factors=K`)](#how-p--24-vs-p--5-variables-scale---factorsk)
-- [3. CLI Reference (`scripts/run_s3n_cokriging.R`)](#3-cli-reference-scriptsrun_s3n_cokrigingr)
+  - [How $P = 2$–$4$ vs. $P = 5+$ Variables Scale](#how-p-24-vs-p-5-variables-scale)
+- [3. CLI Reference](#3-cli-reference)
   - [Target & Transform Options](#target--transform-options)
   - [Co-Kriging & Spatial Options](#co-kriging--spatial-options)
 - [4. Practical Examples](#4-practical-examples)
   - [Example 1: Coupled Nutrient Pair (Nitrate + Orthophosphate)](#example-1-coupled-nutrient-pair-nitrate--orthophosphate)
   - [Example 2: Cross-Dataset Water Quality & Ecology Co-Kriging ($P = 4$)](#example-2-cross-dataset-water-quality--ecology-co-kriging-p--4)
   - [Example 3: Scalable 6-Variable Catchment Syndrome Synthesis ($K = 3$ Latent Factors)](#example-3-scalable-6-variable-catchment-syndrome-synthesis-k--3-latent-factors)
-  - [Example 4: Fast Exploratory Screening (`--method=colocated`)](#example-4-fast-exploratory-screening---methodcolocated)
+  - [Example 4: Fast Exploratory Screening](#example-4-fast-exploratory-screening)
 - [5. Dual Cross-Validation & Output Interpretation](#5-dual-cross-validation--output-interpretation)
-  - [Output Directory & Artifacts (`output/results/cokrig_<targets>_<net>[_<source>][_colocated|_k<K>]/`)](#output-directory--artifacts-outputresultscokrig_targets_net_source_colocatedk)
+  - [Output Directory & Artifacts](#output-directory-artifacts)
 - [6. How to Interpret the Co-Kriging Figures](#6-how-to-interpret-the-co-kriging-figures)
   - [Interpreting `fig_cokrig_england_<code>.png` ("Figure 1" National Map)](#interpreting-fig_cokrig_england_codepng-figure-1-national-map)
   - [Interpreting `fig_cokrig_cross_correlation.png`](#interpreting-fig_cokrig_cross_correlationpng)
@@ -81,7 +81,7 @@ $$
 \text{Cov}\big(y(s_i), y(s_j)\big) = A_{\text{tu}} C_{\text{TU}}(s_i, s_j; \phi_{\text{tu}}) + A_{\text{td}} C_{\text{TD}}(s_i, s_j; \phi_{\text{td}}) + \delta_{ij} \Psi
 $$
 
-### How $P = 2$–$4$ vs. $P = 5+$ Variables Scale (`--factors=K`)
+### How $P = 2$–$4$ vs. $P = 5+$ Variables Scale
 
 Each $P \times P$ cross-covariance matrix is parameterised via **Factor Cholesky loadings** $A = L L^\top$, where $L \in \mathbb{R}^{P \times K}$ has rank $K \le P$:
 
@@ -95,7 +95,7 @@ All NNGP conditional mean and block-Cholesky operations in `C_s3n_multivariate_n
 
 ---
 
-## 3. CLI Reference (`scripts/run_s3n_cokriging.R`)
+## 3. CLI Reference
 
 ```bash
 Rscript scripts/run_s3n_cokriging.R --targets=<t1>,<t2>[,<t3>,...] [OPTIONS]
@@ -167,7 +167,7 @@ Rscript scripts/run_s3n_cokriging.R \
 ```
 Uses $K = 3$ latent Tail-Up/Tail-Down factors to summarise nutrient enrichment, organic matter, ionic strength, and biological response across 6 heterotopic datasets.
 
-### Example 4: Fast Exploratory Screening (`--method=colocated`)
+### Example 4: Fast Exploratory Screening
 ```bash
 Rscript scripts/run_s3n_cokriging.R \
   --targets=0117,0180,0111,0301,6396 --method=colocated --basin=Eden
@@ -183,7 +183,7 @@ Every run evaluates **three comparable out-of-sample CV accuracy benchmarks** in
 2. **`Co-Kriging (All-Holdout)`**: 5-fold CV where **all $P$ variables** at every holdout station are masked simultaneously (`Y_test = NA`). Tests whether joint multivariate covariance learning improves predictions at completely unmonitored stream reaches.
 3. **`Co-Kriging (Aux-Aided)`**: Exact Leave-One-Target-Out conditioning where target $p$ is masked at test station $i$, while any co-located auxiliary targets $q \ne p$ observed at station $i$ (plus all $m$ stream-network neighbours) remain observed. Measures the exact accuracy gain from leveraging cheaper/denser co-located proxies to fill gaps in harder-to-measure targets.
 
-### Output Directory & Artifacts (`output/results/cokrig_<targets>_<net>[_<source>][_colocated|_k<K>]/`)
+### Output Directory & Artifacts
 
 The folder name encodes the target codes (truncated with `_p<P>` if longer than 64 chars), network abbreviation (`orn`), normalised source tag (including any `_tobit`/`_midpoint` suffix), `_colocated` when `--method=colocated`, and `_k<K>` when `--factors < P`.
 

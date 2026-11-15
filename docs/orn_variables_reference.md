@@ -10,10 +10,10 @@ This document details all variables extracted from the **Ordnance Survey Open Ri
 - [2. Spatial Stream Network Topology & Covariance Variables](#2-spatial-stream-network-topology--covariance-variables)
 - [3. Fixed-Effect Regression Covariates (`X`)](#3-fixed-effect-regression-covariates-x)
 - [4. Variables Extracted for Visualisation, Basin Selection, Optional Predictors & Reference](#4-variables-extracted-for-visualisation-basin-selection-optional-predictors--reference)
-- [5. Selecting & Comparing Fixed-Effect Covariates (`--vars=...` & `--list-vars`)](#5-selecting--comparing-fixed-effect-covariates---vars----list-vars)
+- [5. Selecting & Comparing Fixed-Effect Covariates](#5-selecting-comparing-fixed-effect-covariates)
   - [5.1 Available Fixed-Effect Terms (`COVARIATE_CATALOG`)](#51-available-fixed-effect-terms-covariate_catalog)
   - [5.2 Example Commands for Comparing Fixed-Effect Specifications](#52-example-commands-for-comparing-fixed-effect-specifications)
-  - [5.3 Plot Subtitles & Differentiated Output Folders When `--vars` Is Used](#53-plot-subtitles--differentiated-output-folders-when---vars-is-used)
+  - [5.3 Plot Subtitles & Differentiated Output Folders for Custom Covariate Sets](#53-plot-subtitles-differentiated-output-folders-for-custom-covariate-sets)
 
 ---
 
@@ -86,7 +86,7 @@ The remaining ORN variables exported into `data/processed/orn_<source>/england_r
 
 ---
 
-## 5. Selecting & Comparing Fixed-Effect Covariates (`--vars=...` & `--list-vars`)
+## 5. Selecting & Comparing Fixed-Effect Covariates
 
 Because [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) already exports all 15 candidate topographic, hydromorphological, geological, and coordinate variables into `data/processed/orn_<source>/england_rsn_reaches.csv`, **you do not need to re-run preprocessing** to change which predictors enter the fixed-effect regression design matrix `X`.
 
@@ -136,7 +136,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --vars=none
 Rscript scripts/run_s3n_determinand.R 0117 --vars=all
 ```
 
-### 5.3 Plot Subtitles & Differentiated Output Folders When `--vars` Is Used
+### 5.3 Plot Subtitles & Differentiated Output Folders for Custom Covariate Sets
 When `--vars=<spec>` is set to anything other than `default`:
 1. **Plot Subtitles on Figures 1–3 (and Custom Basin / Temporal Grid Maps)**:
    - Figures 1, 2, and 3 (as well as any custom `--basin` maps and temporal comparison grid figures) automatically display the active fixed-effect covariates in both the panel subtitle (`Covariates: Elevation, Slope, Aquifer`) and a figure-level top header (`Fixed-Effect Regression Covariates: ...`).

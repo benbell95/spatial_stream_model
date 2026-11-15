@@ -5,13 +5,13 @@
 - [1. Overview & Supported Comparison Modes](#1-overview--supported-comparison-modes)
 - [2. Quick-Start CLI Reference & Generated Outputs](#2-quick-start-cli-reference--generated-outputs)
   - [2.1 Running the Script](#21-running-the-script)
-  - [2.2 Output Files Written to `output/comparisons/<comparison_slug>/`](#22-output-files-written-to-outputcomparisonscomparison_slug)
+  - [2.2 Output Files](#22-output-files)
 - [3. Section-by-Section Guide to the Comparison Report](#3-section-by-section-guide-to-the-comparison-report)
-  - [3.1 Sections 1–3: Executive Summary, Winner Determination & Cross-Validation Metrics (`cv_metrics_comparison.csv`)](#31-sections-13-executive-summary-winner-determination--cross-validation-metrics-cv_metrics_comparisoncsv)
-  - [3.2 Section 4: Formal Statistical Hypothesis Tests (`statistical_tests_summary.csv`)](#32-section-4-formal-statistical-hypothesis-tests-statistical_tests_summarycsv)
-  - [3.3 Section 5: Descriptive Statistics & Stratified Gradient Comparison (`descriptive_stats_summary.csv` & `stratified_results_summary.csv`)](#33-section-5-descriptive-statistics--stratified-gradient-comparison-descriptive_stats_summarycsv--stratified_results_summarycsv)
-  - [3.4 Section 6: Reach-Level Relationship, Co-Occurrence & Stoichiometric Analysis (`reach_relationship_summary.csv`)](#34-section-6-reach-level-relationship-co-occurrence--stoichiometric-analysis-reach_relationship_summarycsv)
-  - [3.5 Section 7: Fixed-Effect (`β`) & Spatial Covariance Parameter Comparison (`parameter_comparison.csv`)](#35-section-7-fixed-effect-β--spatial-covariance-parameter-comparison-parameter_comparisoncsv)
+  - [3.1 Sections 1–3: Executive Summary, Winner Determination & Cross-Validation Metrics](#31-sections-13-executive-summary-winner-determination-cross-validation-metrics)
+  - [3.2 Section 4: Formal Statistical Hypothesis Tests](#32-section-4-formal-statistical-hypothesis-tests)
+  - [3.3 Section 5: Descriptive Statistics & Stratified Gradient Comparison](#33-section-5-descriptive-statistics-stratified-gradient-comparison)
+  - [3.4 Section 6: Reach-Level Relationship, Co-Occurrence & Stoichiometric Analysis](#34-section-6-reach-level-relationship-co-occurrence-stoichiometric-analysis)
+  - [3.5 Section 7: Fixed-Effect (`β`) & Spatial Covariance Parameter Comparison](#35-section-7-fixed-effect-β-spatial-covariance-parameter-comparison)
 - [4. Visual Diagnostic Guide: Interpreting the 5 Comparison Figures](#4-visual-diagnostic-guide-interpreting-the-5-comparison-figures)
   - [4.1 Figure 1: `fig_comp1_cv_performance.png`](#41-figure-1-fig_comp1_cv_performancepng)
   - [4.2 Figure 2: `fig_comp2_predictions_and_uncertainty.png`](#42-figure-2-fig_comp2_predictions_and_uncertaintypng)
@@ -72,7 +72,7 @@ Rscript scripts/04_compare_model_runs.R \
   --fig-format=png --dpi=300 --fig-size=90
 ```
 
-### 2.2 Output Files Written to `output/comparisons/<comparison_slug>/`
+### 2.2 Output Files
 
 | Output File | Format | Description |
 | :--- | :--- | :--- |
@@ -94,7 +94,7 @@ Rscript scripts/04_compare_model_runs.R \
 
 ## 3. Section-by-Section Guide to the Comparison Report
 
-### 3.1 Sections 1–3: Executive Summary, Winner Determination & Cross-Validation Metrics (`cv_metrics_comparison.csv`)
+### 3.1 Sections 1–3: Executive Summary, Winner Determination & Cross-Validation Metrics
 
 Sections 1 through 3 evaluate out-of-sample predictive skill across held-out 5-fold cross-validation (`CV`) stations.
 
@@ -128,7 +128,7 @@ To eliminate domain-size and variance artifacts when comparing two networks (`OR
 
 ---
 
-### 3.2 Section 4: Formal Statistical Hypothesis Tests (`statistical_tests_summary.csv`)
+### 3.2 Section 4: Formal Statistical Hypothesis Tests
 
 Section 4 executes up to **12 formal statistical tests** grouped into five analytical categories. Every test reports the test statistic, degrees of freedom (`df` or sample size `n`), `p`-value, significance stars (`***` `< 0.001`, `**` `< 0.01`, `*` `< 0.05`, `.` `< 0.10`, `ns` `≥ 0.10`), and a plain-English interpretation.
 
@@ -148,7 +148,7 @@ Section 4 executes up to **12 formal statistical tests** grouped into five analy
 
 ---
 
-### 3.3 Section 5: Descriptive Statistics & Stratified Gradient Comparison (`descriptive_stats_summary.csv` & `stratified_results_summary.csv`)
+### 3.3 Section 5: Descriptive Statistics & Stratified Gradient Comparison
 
 Section 5 embeds the full multi-run outputs from [`../scripts/05_descriptive_stats.R`](../scripts/05_descriptive_stats.R):
 - **Section 5.1 (`Full Distributional Summary`)**: Places all 7 variable groups (`Observed Stations`, `S3N Combined`, `Unmonitored Reaches`, `Tail-Up`, `Tail-Down`, `Model Scale`, and `Kriging SE`) side by side across every run.
@@ -161,7 +161,7 @@ Section 5 embeds the full multi-run outputs from [`../scripts/05_descriptive_sta
 
 ---
 
-### 3.4 Section 6: Reach-Level Relationship, Co-Occurrence & Stoichiometric Analysis (`reach_relationship_summary.csv`)
+### 3.4 Section 6: Reach-Level Relationship, Co-Occurrence & Stoichiometric Analysis
 
 Section 6 pairs individual river reaches between Run 1 and Run 2 to evaluate how their predictions co-vary across space.
 
@@ -239,7 +239,7 @@ For all non-`N:P` pairs (such as cross-network comparisons, seasonal comparisons
 
 ---
 
-### 3.5 Section 7: Fixed-Effect (`β`) & Spatial Covariance Parameter Comparison (`parameter_comparison.csv`)
+### 3.5 Section 7: Fixed-Effect (`β`) & Spatial Covariance Parameter Comparison
 
 Section 7 compares the fitted regression coefficients and spatial autocovariance parameters from `parameters_*.csv` across runs using **Two-Sample Wald `Z`-Tests** derived from the 95% parametric bootstrap confidence intervals:
 
@@ -304,7 +304,7 @@ Section 7 compares the fitted regression coefficients and spatial autocovariance
    - Co-located reaches (`median separation = 41.5 m`) exhibit **very strong spatial correlation (`Pearson r = 0.8758`, `Spearman ρ = 0.8705`, `p < 1e-16`)** and a near-unity scaling slope (`EU-Hydro = 0.308 + 0.961 × ORN`).
    - **4-Quadrant Concordance is `88.7%`** (`Odds Ratio = 62.6`, `χ² = 3,189`, `p < 1e-16`), and **Upper-Quartile Hotspot Overlap (`Jaccard > P75`) is `77.1%`** (`P(EU-Hydro > P75 | ORN > P75) = 87.1%`).
 3. **Parameter Stability Across Networks (Section 7)**:
-   - Two-Sample Wald `Z`-tests check whether shared physical covariate slopes (`Elevation_z`, `Slope_z`, `log10_US_Accum_z`, and geology indicators) remain **statistically invariant** (`p ≥ 0.05 ns`) when transferring a model from a national network (`ORN v2`) to a regional custom network (`BYOWN`).
+   - Two-Sample Wald `Z`-tests check whether shared physical covariate slopes (`Elevation_z`, `Slope_z`, `log10_US_Accum_z`, and geology indicators) remain **statistically invariant** (`p ≥ 0.05 ns`) when transferring a model from a national network (`ORN v2`) to a regional custom network.
 
 ---
 
@@ -340,6 +340,6 @@ Section 7 compares the fitted regression coefficients and spatial autocovariance
 - **S3N Modelling & Universal Stream Kriging Theoretical Guide**: [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md)
 - **Single-Output Descriptive Statistics Interpretation Guide**: [`./descriptive_stats_interpretation_guide.md`](./descriptive_stats_interpretation_guide.md)
 - **End-to-End Pipeline Usage Guide**: [`./usage_guide.md`](./usage_guide.md)
-- **Custom Water Network Guide (`BYOWN`)**: [`./custom_water_network_guide.md`](./custom_water_network_guide.md)
+- **Custom Water Network Guide**: [`./custom_water_network_guide.md`](./custom_water_network_guide.md)
 - **Preprocessing & Graph Topology Guide**: [`./preprocessing_pipeline.md`](./preprocessing_pipeline.md)
 - **ORN Variables & Covariates Reference**: [`./orn_variables_reference.md`](./orn_variables_reference.md)

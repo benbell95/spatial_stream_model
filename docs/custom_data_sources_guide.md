@@ -1,6 +1,6 @@
 # Bring Your Own Monitoring Dataset & Custom Sources Guide
 
-This guide explains how to incorporate additional monitoring data sources and custom field datasets into the Scalable Spatial Stream Network (`S3N`) modelling pipeline. It details the underlying architecture, data requirements, schema definitions, and provides step-by-step instructions for preprocessing, snapping diagnostics, model fitting, and multi-source comparative evaluations.
+This guide explains how to incorporate additional monitoring data sources and custom field datasets into the **Scalable Spatial Stream Modelling** pipeline. It details the underlying architecture, data requirements, schema definitions, and provides step-by-step instructions for preprocessing, snapping diagnostics, model fitting, and multi-source comparative evaluations.
 
 ---
 
@@ -9,14 +9,14 @@ This guide explains how to incorporate additional monitoring data sources and cu
 - [1. Executive Overview & Architecture](#1-executive-overview--architecture)
 - [2. Ingestion Methods: How to Provide Your Data](#2-ingestion-methods-how-to-provide-your-data)
 - [3. Dataset Requirements & Schema Specifications](#3-dataset-requirements--schema-specifications)
-  - [3.1 Station Points Table (`sites.csv`)](#31-station-points-table-sitescsv)
-  - [3.2 Sample Observations Table (`samples.csv`)](#32-sample-observations-table-samplescsv)
-  - [3.3 Automated Formatting Tool: `scripts/format_custom_data.py`](#33-automated-formatting-tool-scriptsformat_custom_datapy)
+  - [3.1 Station Points Table](#31-station-points-table)
+  - [3.2 Sample Observations Table](#32-sample-observations-table)
+  - [3.3 Automated Formatting Tool](#33-automated-formatting-tool)
 - [4. Ingestion Workflows](#4-ingestion-workflows)
-  - [Method 1: Drop-In Directory (`data/custom/<project_name>/`)](#method-1-drop-in-directory-datacustomproject_name)
+  - [Method 1: Drop-In Directory](#method-1-drop-in-directory)
   - [Method 2: Ad-Hoc CLI Flags (Zero Configuration)](#method-2-ad-hoc-cli-flags-zero-configuration)
-  - [Method 3: Permanent Declarative JSON Profile (`configs/sources/<name>.json`)](#method-3-permanent-declarative-json-profile-configssourcesnamejson)
-  - [Method 4: Multi-Source Combination & Composites (`--source=rsn+custom`)](#method-4-multi-source-combination--composites---sourcersncustom)
+  - [Method 3: Permanent Declarative JSON Profile](#method-3-permanent-declarative-json-profile)
+  - [Method 4: Multi-Source Combination & Composites](#method-4-multi-source-combination-composites)
 - [5. Hydrological & Geostatistical Modelling Considerations](#5-hydrological--geostatistical-modelling-considerations)
   - [5.1 Snapping Distance & Unrepresented Headwaters](#51-snapping-distance--unrepresented-headwaters)
   - [5.2 Catchment Subsetting](#52-catchment-subsetting)
@@ -27,7 +27,7 @@ This guide explains how to incorporate additional monitoring data sources and cu
   - [Step 1: Create Custom Data Directory & Files](#step-1-create-custom-data-directory--files)
   - [Step 2: Combine with National RSN and Preprocess](#step-2-combine-with-national-rsn-and-preprocess)
   - [Step 3: Run Station Snapping Diagnostics](#step-3-run-station-snapping-diagnostics)
-  - [Step 4: Fit S3N Model & Predict Across All Reaches](#step-4-fit-s3n-model--predict-across-all-reaches)
+  - [Step 4: Fit Spatial Stream Model & Predict Across All Reaches](#step-4-fit-spatial-stream-model--predict-across-all-reaches)
   - [Step 5: Direct Statistical Comparison Against Baseline RSN](#step-5-direct-statistical-comparison-against-baseline-rsn)
 - [7. Troubleshooting & Diagnostics Reference](#7-troubleshooting--diagnostics-reference)
 
@@ -35,7 +35,7 @@ This guide explains how to incorporate additional monitoring data sources and cu
 
 ## 1. Executive Overview & Architecture
 
-The `S3N` pipeline models spatial autocorrelation along river networks using moving-average covariance functions:
+The scalable spatial modelling pipeline captures spatial autocorrelation along river networks using moving-average covariance functions:
 - **Tail-Up (TU)**: Models unidirectional downstream advective transport and dilution across stream confluences using additive function values ($\pi_i$).
 - **Tail-Down (TD)**: Models bidirectional mass exchange (advective downstream plus biological upstream movement/borrowing) conditioned on exact hydrologic distance to the river mouth (`Dist2Mth_km`).
 
@@ -95,7 +95,7 @@ Built-in profiles in `configs/sources/` include `rsn.json`, `ssn.json`, and `com
 
 ## 3. Dataset Requirements & Schema Specifications
 
-### 3.1 Station Points Table (`sites.csv`)
+### 3.1 Station Points Table
 
 The station points table defines the geographic locations of your monitoring points.
 
@@ -113,7 +113,7 @@ The station points table defines the geographic locations of your monitoring poi
 - **WGS84 Lat/Lon (`EPSG:4326`)**: If coordinates satisfy `abs(x) <= 180` and `abs(y) <= 90`, the preprocessor automatically detects decimal degrees and projects them to British National Grid metres in pure Python using Airy 1830 ellipsoid Transverse Mercator formulas.
 - **Explicit CRS Override**: Pass `--custom-crs=4326` or `--custom-crs=27700` to enforce projection handling.
 
-#### Example `sites.csv`:
+#### Example Station Points Table:
 ```csv
 site_id,easting,northing,site_name,source
 CS_001,425100,210400,Tributary A Confluence,MyStudy
@@ -123,7 +123,7 @@ CS_003,-0.1278,51.5074,Trafalgar Thames Reach,MyStudy
 
 ---
 
-### 3.2 Sample Observations Table (`samples.csv`)
+### 3.2 Sample Observations Table
 
 The sample observations table contains the individual physical, chemical, or biological measurements collected at the stations.
 
@@ -138,7 +138,7 @@ The sample observations table contains the individual physical, chemical, or bio
 | `det_name` | Optional | String | `det_desc`, `compound_name`, `description`, `parameter` | Human-readable determinand description (e.g. `"Nitrate as N"`). |
 | `unit_short_desc` | Optional | String | `unit`, `units` | Measurement units (e.g. `"mg/L"`, `"ug/L"`, `"index"`). |
 
-#### Example `samples.csv`:
+#### Example Sample Observations Table:
 ```csv
 site_id,sample_datetime,det_code,det_name,meas_result,meas_sign,unit_short_desc
 CS_001,2023-03-15T10:00:00,0117,Nitrate as N,4.8,=,mg/L
@@ -151,7 +151,7 @@ CS_002,2023-10-05T09:45:00,0117,Nitrate as N,1.9,=,mg/L
 
 ---
 
-### 3.3 Automated Formatting Tool: `scripts/format_custom_data.py`
+### 3.3 Automated Formatting Tool
 
 To eliminate manual data manipulation, the repository provides a standalone Python script, [`scripts/format_custom_data.py`](../scripts/format_custom_data.py), that ingests raw, unstandardized CSV files from any source and automatically creates model-ready `sites.csv` and `samples.csv` files with canonical column names.
 
@@ -185,7 +185,7 @@ To eliminate manual data manipulation, the repository provides a standalone Pyth
 6. **Data Filtering & Subsetting**:
    Filter rows using `--filter="KEY=VALUE"` (e.g. `--filter="Country=England"`).
 7. **Instant Pipeline Integration**:
-   Writes outputs directly to `data/custom/<source_name>/` and optionally creates `configs/sources/<source_name>.json` (`--generate-config`), making the dataset immediately available for preprocessing and S3N modelling.
+   Writes outputs directly to `data/custom/<source_name>/` and optionally creates `configs/sources/<source_name>.json` (`--generate-config`), making the dataset immediately available for preprocessing and spatial stream modelling.
 
 #### Example 1: Formatting the Earthwatch Waterblitz Dataset
 ```bash
@@ -218,7 +218,7 @@ python3 scripts/format_custom_data.py path/to/my_sensor_export.csv \
   --generate-config
 ```
 
-#### CLI Reference: `format_custom_data.py`
+#### CLI Reference: Custom Data Formatter
 | Flag / Option | Default | Description |
 | :--- | :---: | :--- |
 | `input` / `--input <path>` | *(Required)* | Path to raw CSV file or directory containing monitoring data |
@@ -278,7 +278,7 @@ Even when executing with default commands like `python3 scripts/01_preprocess_or
 
 ## 4. Ingestion Workflows
 
-### Method 1: Drop-In Directory (`data/custom/<project_name>/`)
+### Method 1: Drop-In Directory
 
 This is the simplest way to add a project dataset. Any subdirectory placed in `data/custom/` is automatically registered by the pipeline.
 
@@ -326,7 +326,7 @@ Rscript scripts/run_s3n_determinand.R 0117 \
 
 ---
 
-### Method 3: Permanent Declarative JSON Profile (`configs/sources/<name>.json`)
+### Method 3: Permanent Declarative JSON Profile
 
 If you regularly use a specific external monitoring dataset (such as a community citizen science network, river trust survey, or university sensor array) with custom column names, GPS coordinates, or specific subfolders, you can define a declarative profile in `configs/sources/`.
 
@@ -372,7 +372,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=river_guardians
 
 ---
 
-### Method 4: Multi-Source Combination & Composites (`--source=rsn+custom`)
+### Method 4: Multi-Source Combination & Composites
 
 To combine EA surveillance baseline networks with your custom data, use the delimiter syntax (`+` or `,`):
 
@@ -390,7 +390,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=ssn+catchment_study
 Rscript scripts/run_s3n_determinand.R 0117 --source=rsn,ssn,catchment_study
 ```
 
-#### Defining Permanent Composite Aliases (`configs/sources/composites.json`)
+#### Defining Permanent Composite Aliases
 You can register shorthand aliases for multi-network groups in `configs/sources/composites.json`:
 ```json
 {
@@ -424,7 +424,7 @@ The preprocessor ([`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.
 
 ### 5.2 Catchment Subsetting
 The preprocessor subsets the national water network to **only the catchments containing at least one monitored station**.
-- If your custom dataset is confined to a single river basin (e.g. River Eden or River Tamar), the preprocessor automatically extracts only that catchment's reaches (e.g. ~2,500 reaches instead of 90,876), making downstream S3N modelling run in **< 2 seconds**.
+- If your custom dataset is confined to a single river basin (e.g. River Eden or River Tamar), the preprocessor automatically extracts only that catchment's reaches (e.g. ~2,500 reaches instead of 90,876), making downstream spatial modelling run in **< 2 seconds**.
 
 ### 5.3 Sampling Frequency Imbalance & Aggregation
 If your custom data consists of high-frequency telemetry sondes (e.g. 15-minute readings: ~35,000 samples/station/year) while national RSN data is monthly grab sampling (~12 samples/station/year):
@@ -501,7 +501,7 @@ Rscript scripts/06_station_snapping_diagnostics.R \
 ```
 *Output*: Generates metre-scale vector maps in `output/station_snapping/orn_rsn+hampshire_avon_study/` verifying that all custom stations snapped cleanly to the correct channel reaches.
 
-### Step 4: Fit S3N Model & Predict Across All Reaches
+### Step 4: Fit Spatial Stream Model & Predict Across All Reaches
 ```bash
 Rscript scripts/run_s3n_determinand.R 0117 \
   --source=rsn+hampshire_avon_study \
@@ -530,4 +530,4 @@ Rscript scripts/04_compare_model_runs.R \
 | `Could not find ID and Easting/Northing columns` | Column names do not match any recognised variant. | Rename columns to `site_id`, `easting`, `northing` or configure mappings in `configs/sources/<name>.json`. |
 | `Stations snapped (0 active reaches)` | Monitoring points are $> 250\text{ m}$ from any reach polyline in the river network. | Inspect locations via `06_station_snapping_diagnostics.R` and rerun with `--max-snap-dist 500`. |
 | Coordinates snapped to sea or wrong coast | Coordinates were given in Lat/Lon degrees without detection, or inverted $(y, x)$. | Ensure coordinates are `(easting, northing)` or pass `--custom-crs=4326`. |
-| `Skipping separate fit (only N observed reaches)` | Custom source has $< 15$ observed reaches and S3N requires $m = 15$ nearest neighbours. | Combine with EA surveillance data using `--source=rsn+<custom>` so the model has sufficient spatial observations for NNGP estimation. |
+| `Skipping separate fit (only N observed reaches)` | Custom source has $< 15$ observed reaches and the NNGP solver requires $m = 15$ nearest neighbours. | Combine with EA surveillance data using `--source=rsn+<custom>` so the model has sufficient spatial observations for NNGP estimation. |
