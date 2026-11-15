@@ -54,3 +54,7 @@ data/
 gis/
 output/
 readings/
+
+# Pycache
+scripts/__pycache__/
+tests/__pycache__/

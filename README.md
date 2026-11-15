@@ -11,7 +11,7 @@ These scripts are fast, and are designed to run on any system without heavy GIS/
 
 Also supports using other environmental (river) datasets including citizen science data, and the use of other riverline datasets, and is not limited to the UK.
 
-> **Attribution:** This pipeline builds on and adapts the **Scalable Spatial Stream Network (`S3N`)** framework ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear Nearest-Neighbour Gaussian Process (`NNGP`) scaling to river networks. Full credit belongs to the authors of these packages and theory on which this repository builds:
+>  This pipeline builds on and adapts the **Scalable Spatial Stream Network (`S3N`)** framework ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear Nearest-Neighbour Gaussian Process (`NNGP`) scaling to river networks. Full credit to the authors of these packages and statistical theory:
 > - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
 >   Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
 > - **`BRISC` R Package** — **Arkajyoti Saha and Abhirup Datta**:
@@ -87,7 +87,7 @@ Default workspace folders (`gis/`, `data/`, `output/`) are configured in [`confi
 
 ### 3. Required Data Downloads
 
-💾 Download and unzip the three external datasets into `gis/` and `data/` before running the default pipeline (or pass `--source=rsn` if omitting the optional `SSN` dataset):
+💾 Download and unzip the three external datasets into `gis/` and `data/` before running the default pipeline.
 
 1. **OS Open Rivers Network (`ORN` v2.0 — Required)**: Download **version 2.0** in **GeoPackage** format (`ORN_v2_GeoPackage.zip`) from [openrivers.net/download/](https://openrivers.net/download/) and extract `ORN_v2.gpkg` into `gis/ORN_v2.gpkg`.
 2. **River Surveillance Network (`RSN` — Required)**: Download `NCEA_River_Surveillance_Network_ARD_Open.zip` from [Environment Agency NCEA — RSN Analysis Ready Data](https://environment.data.gov.uk/natural-capital-ecosystem-assessment/search/21763290-f395-4ca1-bcf6-884c2e7548d4?q=analysis+ready+data#access) and extract its CSV files directly into `data/NCEA_River_Surveillance_Network_ARD_Open/`.
@@ -111,10 +111,10 @@ You must first pre-process the data. This will happen automatically if running `
 
 ```bash
 # Default: ORN v2 network + EA River Surveillance Network (auto-creates configs/determinands.json)
-python3 scripts/01_preprocess_orn.py --network=orn --source=rsn
+python3 scripts/01_preprocess_orn.py
 
 # Or combine RSN + Small Streams Network (SSN)
-python3 scripts/01_preprocess_orn.py --network=orn --source=rss
+python3 scripts/01_preprocess_orn.py --source=rss
 ```
 
 ### Step 2: Inspect Station-to-Reach Snapping *(Optional)*
