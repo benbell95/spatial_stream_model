@@ -68,7 +68,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 - Decodes little-endian `LineString` (`wkb_type = 2`) and `MultiLineString` (`wkb_type = 5`) double-precision vertex arrays directly via `struct.unpack_from`.
 
 ### 3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()`)
-- **2 km Spatial Hash Grid (`site_grid`)**: Buckets all candidate stations (1,382 for RSN; 313 for SSN; 1,695 for combined RSS) into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`.
+- **2 km Spatial Hash Grid (`site_grid`)**: Buckets all candidate stations (1,382 for RSN; 313 for SSN; 1,695 for combined RSS) into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`. Each reach pads its bounding box by `snap_pad = max(1500.0, max_snap_m + 500.0)` before querying all overlapping and adjacent cells, so stations near bucket boundaries are never missed.
 - **Orthogonal Segment Projection**: Projects candidate stations onto each segment `p_i -> p_{i+1}` (digitized upstream-to-downstream from `Fnode` to `Tnode`), computing Euclidean snapping distance `d` and cumulative distance `along` from the upstream `Fnode`.
 - **Exact Station Distance to River Mouth (`obs_up_dist_km`)**: Subtracting `along` from `Dist2Mth` yields the exact hydrologic distance from the snapped station to the sea/estuary mouth: `max(0.0, (Dist2Mth - along) / 1000.0)`.
 - **Configurable Snapping Threshold (`--max-snap-dist <meters>`, default 250 m)**: Retains stations within `d <= max_snap_dist` of a reach:

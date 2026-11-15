@@ -427,6 +427,9 @@
     ensureTabRendered(tabId);
     const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
     const activeGroup = targetBtn ? targetBtn.dataset.group : (tabId === "how-it-works" ? "how-it-works" : "overview");
+    const prevGroupBtn = document.querySelector(".group-btn.active");
+    const prevGroup = prevGroupBtn ? prevGroupBtn.dataset.group : "overview";
+    const groupChanged = activeGroup !== prevGroup;
 
     document.querySelectorAll(".group-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.group === activeGroup);
@@ -445,7 +448,11 @@
       p.classList.toggle("active", p.id === "tab-" + tabId);
     });
     if (updateHash !== false && window.location.hash !== "#" + tabId) {
-      history.pushState({ tab: tabId }, "", "#" + tabId);
+      if (groupChanged) {
+        history.pushState({ tab: tabId }, "", "#" + tabId);
+      } else {
+        history.replaceState({ tab: tabId }, "", "#" + tabId);
+      }
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }

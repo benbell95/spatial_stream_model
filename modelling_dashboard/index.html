@@ -1110,7 +1110,7 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/r
         <div class="interp-box" style="margin-top:14px;">
           <h4>How Station-to-Reach Snapping Works</h4>
           <ul>
-            <li><strong>2 km Spatial Hash Grid:</strong> Buckets station coordinates into <code>2 km &times; 2 km</code> cells so each of the <code>ORN v2</code> reaches only tests nearby candidate stations rather than scanning the full national dataset.</li>
+            <li><strong>2 km Spatial Hash Grid:</strong> Buckets station coordinates into <code>2 km &times; 2 km</code> cells so each of the <code>ORN v2</code> reaches only tests nearby candidate stations rather than scanning the full national dataset. Each reach pads its bounding box by <code>max(1,500 m, max_snap_m + 500 m)</code> and queries all overlapping and adjacent grid cells, ensuring stations near bucket borders are never missed.</li>
             <li><strong>Orthogonal Segment Projection:</strong> Projects each station orthogonally onto its nearest upstream-to-downstream polyline segment (<code>Fnode &rarr; Tnode</code>), recording the perpendicular snapping offset (<code>d</code> in metres) and cumulative distance along the reach (<code>along</code>) to compute exact hydrologic distance to the river mouth: <code>obs_up_dist_km = max(0, (Dist2Mth &minus; along) / 1000)</code>.</li>
             <li><strong>Outlier Threshold Filtering (<code>--max-snap-dist=250</code>):</strong> Retains stations within <code>250 m</code> of a reach (<code>1,349 / 1,382</code> <code>RSN</code> stations, median <code>8.0 m</code>) and excludes off-network estuarine, canal, or pond monitors so they cannot corrupt dendritic Tail-Up/Tail-Down stream distances.</li>
           </ul>
