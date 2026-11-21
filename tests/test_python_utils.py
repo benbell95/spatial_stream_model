@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Unit tests for shared Python utilities in scripts/s3n_py_utils.py and preprocessing logic."""
 
+import array
 import math
 import os
+import random
 import struct
 import sys
 import tempfile
@@ -358,6 +360,231 @@ class TestGeometryCensoringAndTransforms(unittest.TestCase):
         self.assertIn("libgdal.so", lin)
         win = prep_orn._gdal_library_candidates("win32")
         self.assertIn("gdal.dll", win)
+
+
+class TestCppFastGeomParity(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.lib = u.load_fast_geom_lib(base_dir=_REPO_ROOT, auto_compile=True)
+        if cls.lib is None:
+            raise unittest.SkipTest("s3n_fast_geom C++ shared library unavailable")
+
+    def _make_wkb(self, coords_list, big_endian=False, ewkb_srid=None, has_z=False, has_m=False, multi=False):
+        bo = ">" if big_endian else "<"
+        endian_byte = 0 if big_endian else 1
+        ndim = 2 + (1 if has_z else 0) + (1 if has_m else 0)
+
+        def _pack_ls(pts):
+            if ewkb_srid is not None:
+                wt = 2
+                if has_z:
+                    wt |= 0x80000000
+                if has_m:
+                    wt |= 0x40000000
+                wt |= 0x20000000
+                hdr = struct.pack(bo + "BIII", endian_byte, wt, ewkb_srid, len(pts))
+            else:
+                offset = 0
+                if has_z and has_m:
+                    offset = 3000
+                elif has_z:
+                    offset = 1000
+                elif has_m:
+                    offset = 2000
+                hdr = struct.pack(bo + "BII", endian_byte, offset + 2, len(pts))
+            body = b"".join(struct.pack(bo + f"{ndim}d", *pt[:ndim]) for pt in pts)
+            return hdr + body
+
+        if not multi:
+            return _pack_ls(coords_list[0])
+        if ewkb_srid is not None:
+            wt = 5 | (0x80000000 if has_z else 0) | (0x40000000 if has_m else 0) | 0x20000000
+            hdr = struct.pack(bo + "BIII", endian_byte, wt, ewkb_srid, len(coords_list))
+        else:
+            offset = (3000 if (has_z and has_m) else (1000 if has_z else (2000 if has_m else 0)))
+            hdr = struct.pack(bo + "BII", endian_byte, offset + 5, len(coords_list))
+        return hdr + b"".join(_pack_ls(p) for p in coords_list)
+
+    def test_cpp_wkb_metrics_parity(self):
+        blobs = [
+            _make_gpkg_blob(_make_wkb_linestring([(0.0, 0.0), (300.0, 400.0), (600.0, 400.0)]), bbox=(0.0, 600.0, 0.0, 400.0)),
+            _make_gpkg_blob(self._make_wkb([[(10.0, 20.0, 120.0, 1.0), (110.0, 20.0, 100.0, 2.0)]], big_endian=True, ewkb_srid=27700, has_z=True, has_m=True)),
+            _make_gpkg_blob(self._make_wkb([[(0.0, 0.0, 50.0), (100.0, 0.0, 40.0)], [(100.0, 0.0, 40.0), (100.0, 100.0, float("nan"))]], has_z=True, multi=True)),
+            _make_gpkg_blob(_make_wkb_linestring([(12.5, -45.0)])),
+            b"",
+        ]
+        res = u.cpp_parse_wkb_metrics_batch(blobs, lib=self.lib)
+        for i, b in enumerate(blobs):
+            poly, zs = u.parse_gpkg_geometry(b)
+            tot_py, sinu_py, c_py = u.compute_polyline_metrics(poly)
+            self.assertEqual(res["n_pts"][i], len(poly))
+            self.assertAlmostEqual(res["tot_len_m"][i], tot_py, places=7)
+            self.assertAlmostEqual(res["sinuosity"][i], sinu_py, places=7)
+            for j, val in enumerate((
+                res["start_x"][i], res["start_y"][i],
+                res["mid_x"][i], res["mid_y"][i],
+                res["end_x"][i], res["end_y"][i],
+            )):
+                self.assertAlmostEqual(val, c_py[j], places=7)
+            self.assertEqual(res["z_count"][i], len(zs))
+            if zs:
+                self.assertAlmostEqual(res["z_first"][i], zs[0], places=7)
+                self.assertAlmostEqual(res["z_last"][i], zs[-1], places=7)
+                self.assertAlmostEqual(res["z_mean"][i], sum(zs) / len(zs), places=7)
+            else:
+                self.assertTrue(math.isnan(res["z_mean"][i]))
+
+    def test_cpp_station_snapping_parity(self):
+        rng = random.Random(2026)
+        blobs = []
+        polys = []
+        for _ in range(180):
+            x0 = rng.uniform(-5000.0, 5000.0)
+            y0 = rng.uniform(-5000.0, 5000.0)
+            pts = [(x0, y0), (x0 + rng.uniform(-400.0, 400.0), y0 + rng.uniform(-400.0, 400.0)), (x0 + rng.uniform(-600.0, 600.0), y0 + rng.uniform(-600.0, 600.0))]
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            polys.append(pts)
+            if len(blobs) % 2 == 0:
+                blobs.append(_make_gpkg_blob(_make_wkb_linestring(pts), bbox=(min(xs), max(xs), min(ys), max(ys))))
+            else:
+                blobs.append(_make_wkb_linestring(pts))
+
+        stations = [(rng.uniform(-5200.0, 5200.0), rng.uniform(-5200.0, 5200.0)) for _ in range(45)]
+        st_x = [s[0] for s in stations]
+        st_y = [s[1] for s in stations]
+
+        # Pure-Python reference
+        py_best = []
+        for px, py in stations:
+            bd, bidx, balong = 1e18, -1, 0.0
+            for i, poly in enumerate(polys):
+                d, along = u.point_to_polyline(px, py, poly)
+                if d < bd:
+                    bd, bidx, balong = d, i, along
+            py_best.append((bd, bidx, balong))
+
+        # C++ chunked across 1 thread and 4 threads (forcing cross-cell hits with large snap_pad)
+        prev_threads = u.cpp_get_geom_max_threads(self.lib)
+        try:
+            for nt in (1, 4):
+                u.cpp_set_geom_threads(nt, self.lib)
+                bd_arr = array.array("d", [1e18]) * len(stations)
+                idx_arr = array.array("q", [-1]) * len(stations)
+                al_arr = array.array("d", [0.0]) * len(stations)
+                u.cpp_snap_stations_wkb_batch(st_x, st_y, blobs[:70], bd_arr, idx_arr, al_arr, chunk_base_idx=0, cell_size=2000.0, snap_pad=8000.0, lib=self.lib)
+                u.cpp_snap_stations_wkb_batch(st_x, st_y, blobs[70:], bd_arr, idx_arr, al_arr, chunk_base_idx=70, cell_size=2000.0, snap_pad=8000.0, lib=self.lib)
+                for s_i, (pd, pidx, pal) in enumerate(py_best):
+                    self.assertEqual(idx_arr[s_i], pidx)
+                    self.assertAlmostEqual(bd_arr[s_i], pd, places=7)
+                    self.assertAlmostEqual(al_arr[s_i], pal, places=7)
+        finally:
+            u.cpp_set_geom_threads(prev_threads, self.lib)
+
+    def test_cpp_endpoint_snapping_parity(self):
+        file_idx = array.array("i", [0, 0, 0, 1])
+        sx = array.array("d", [0.0, 100.0, 50.0, 100.0])
+        sy = array.array("d", [0.0, 0.0, 50.0, 0.0])
+        ex = array.array("d", [98.0, 200.0, 50.0, 200.0])
+        ey = array.array("d", [1.0, 0.0, 50.5, 0.0])
+        dn = array.array("i", [-1, -1, 0, -1])
+        u.cpp_snap_endpoints(file_idx, sx, sy, ex, ey, dn, cell_size=50.0, max_dist=5.0, lib=self.lib)
+        # Reach 0 end (98,1) snaps to reach 1 start (100,0) in same file; reach 2 kept existing dn=0; file 1 isolated
+        self.assertEqual(list(dn), [1, -1, 0, -1])
+
+    def test_cpp_river_tree_orientation_hydro_afv_impute_parity(self):
+        # 5 reaches: 0 = mouth, 1->0 (flipped orientation), 2->0, 3->4->3 (disconnected 2-cycle)
+        raw_parent = array.array("i", [-1, 0, 0, 4, 3])
+        catch_id = array.array("i", [10, 10, 10, 20, 20])
+        out_dn, out_topo, n_broken = u.cpp_break_cycles(raw_parent, catch_id, mode=0, lib=self.lib)
+        self.assertEqual(n_broken, 1)
+        self.assertEqual(list(out_dn), [-1, 0, 0, 4, -1])
+        self.assertEqual(set(out_topo), {0, 1, 2, 3, 4})
+
+        # ORN mode=1 breaks disconnected cycles during mouth-first traversal
+        out_dn1, out_topo1, n_broken1 = u.cpp_break_cycles(raw_parent, catch_id, mode=1, lib=self.lib)
+        self.assertEqual(n_broken1, 1)
+        self.assertEqual(list(out_dn1), [-1, 0, 0, -1, 3])
+        self.assertEqual(list(out_topo1), [0, 2, 1, 3, 4])
+
+        # Orientation check on tree 0 <- 1, 0 <- 2 (reach 1 drawn backwards)
+        sx = array.array("d", [500.0, 0.0, 100.0, 0.0, 0.0])
+        sy = array.array("d", [0.0, 0.0, 100.0, 0.0, 0.0])
+        ex = array.array("d", [0.0, 500.0, 500.0, 0.0, 0.0])
+        ey = array.array("d", [0.0, 0.0, 0.0, 0.0, 0.0])
+        # Reach 1 start=(0,0) dist_to_dn(0)=min(500,0)=0, end=(500,0) dist_to_dn(0)=min(0,500)=0; use reach 1 at (1000,0)->(505,0) vs inverted (505,0)->(1000,0)
+        sx[1], sy[1], ex[1], ey[1] = 505.0, 0.0, 1000.0, 0.0
+        zf = array.array("d", [20.0, 80.0, 60.0, 10.0, 10.0])
+        zl = array.array("d", [10.0, 40.0, 20.0, 5.0, 5.0])
+        flipped, n_flip = u.cpp_check_reach_orientation(out_dn, sx, sy, ex, ey, zf, zl, lib=self.lib)
+        self.assertEqual(n_flip, 1)
+        self.assertEqual(flipped[1], 1)
+        self.assertAlmostEqual(sx[1], 1000.0)
+        self.assertAlmostEqual(ex[1], 505.0)
+        self.assertAlmostEqual(zf[1], 40.0)
+        self.assertAlmostEqual(zl[1], 80.0)
+
+        nan_v = float("nan")
+        len_km = array.array("d", [2.0, 3.0, 4.0, 1.5, 2.5])
+        raw_d2m = array.array("d", [nan_v] * 5)
+        raw_shr = array.array("i", [-1] * 5)
+        raw_str = array.array("i", [-1] * 5)
+        raw_acc = array.array("d", [nan_v] * 5)
+        d2m, shr, strh, acc = u.cpp_accumulate_tree_hydro(
+            out_dn, out_topo, len_km, raw_d2m, raw_shr, raw_str, raw_acc, lib=self.lib
+        )
+        self.assertAlmostEqual(d2m[0], 2.0)
+        self.assertAlmostEqual(d2m[1], 5.0)
+        self.assertAlmostEqual(d2m[2], 6.0)
+        self.assertEqual(shr[0], 2)
+        self.assertEqual(strh[0], 2)
+        self.assertAlmostEqual(acc[0], 9.0)
+
+        # Log-AFV parity for length, shreve, and hydro_yield
+        el = array.array("d", [10.0, 100.0, 50.0, 10.0, 20.0])
+        aq = array.array("i", [0, 1, 0, 0, 0])
+        for scheme in ("length", "shreve", "hydro_yield"):
+            lafv = u.cpp_compute_log_afv_tree(out_dn, out_topo, acc, shr, el, aq, afv_scheme=scheme, lib=self.lib)
+            w1 = u.compute_afv_reach_weight(scheme, acc[1], shr[1], el[1], aq[1])
+            w2 = u.compute_afv_reach_weight(scheme, acc[2], shr[2], el[2], aq[2])
+            self.assertAlmostEqual(lafv[0], 0.0, places=9)
+            self.assertAlmostEqual(lafv[1], math.log(w1 / (w1 + w2)), places=9)
+            self.assertAlmostEqual(lafv[2], math.log(w2 / (w1 + w2)), places=9)
+
+        # Covariate tree imputation parity (top-down + bottom-up)
+        cov_src = array.array("i", [-1, 1, -1, -1, 4])
+        u.cpp_impute_tree_index(out_dn1, out_topo1, cov_src, n_passes=3, lib=self.lib)
+        # 3 gets 4 bottom-up; 0 gets from child 1 bottom-up -> then 2 gets 0->1 top-down
+        self.assertEqual(cov_src[3], 4)
+        self.assertEqual(cov_src[0], 1)
+        self.assertEqual(cov_src[2], 1)
+
+    def test_cpp_spatial_hash_query_parity(self):
+        rng = random.Random(99)
+        ref_pts = [(rng.uniform(-4000.0, 12000.0), rng.uniform(-4000.0, 12000.0)) for _ in range(250)]
+        grid = {}
+        for idx, (rx, ry) in enumerate(ref_pts):
+            grid.setdefault((int(rx // 2000), int(ry // 2000)), []).append((rx, ry, idx))
+        queries = [(rng.uniform(-5000.0, 14000.0), rng.uniform(-5000.0, 14000.0)) for _ in range(100)]
+        ref_x = [p[0] for p in ref_pts]
+        ref_y = [p[1] for p in ref_pts]
+        qx = [q[0] for q in queries]
+        qy = [q[1] for q in queries]
+        cpp_idx = u.cpp_spatial_hash_query_batch(ref_x, ref_y, qx, qy, cell_size=2000.0, lib=self.lib)
+        for qi, (mx, my) in enumerate(queries):
+            best_d2, best_rec = 1e18, None
+            for radius in (1, 3):
+                gx0, gy0 = int(mx // 2000), int(my // 2000)
+                for gx in range(gx0 - radius, gx0 + radius + 1):
+                    for gy in range(gy0 - radius, gy0 + radius + 1):
+                        for rec in grid.get((gx, gy), ()):
+                            d2 = (mx - rec[0]) ** 2 + (my - rec[1]) ** 2
+                            if d2 < best_d2:
+                                best_d2, best_rec = d2, rec
+                if best_rec is not None:
+                    break
+            py_idx = best_rec[2] if best_rec is not None else -1
+            self.assertEqual(cpp_idx[qi], py_idx)
 
 
 if __name__ == "__main__":

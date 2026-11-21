@@ -28,7 +28,7 @@ This document covers the technical architecture across all three stages of the *
 
 ## Part I: Python GIS & Monitoring Preprocessing
 
-[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~7–8 seconds** using compiled `csv.reader` fast paths and Python standard library modules (`sqlite3`, `struct`, `math`, `csv`; optional `pyarrow`/`libgdal` for GeoParquet).
+[`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) transforms the raw **10.4 GB Ordnance Survey Open Rivers Network (`ORN_v2.gpkg`)** and **Environment Agency Monitoring Network** tables into a topologically ordered, model-ready spatial stream network dataset in **~3.6–5 seconds** using SQLite3/GeoParquet streaming and Python standard library modules (`sqlite3`, `struct`, `math`, `csv`, `ctypes`; optional `pyarrow`/`libgdal` for GeoParquet). By default (`--geom-engine=auto`), compute-intensive WKB decoding, station snapping, cycle breaking, reach orientation verification, hydrological accumulation, and spatial-hash joins run in parallel C++/OpenMP via [`src/s3n_fast_geom.cpp`](../src/s3n_fast_geom.cpp) (with automatic pure-Python fallback via `--geom-engine=python` or if no C++ shared library is present).
 
 ### 1. Multi-Network Monitoring Data Ingestion
 The preprocessor supports EA surveillance networks, custom field campaigns, and multi-network combinations via `--source=<name>`:
@@ -63,9 +63,9 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
   - `ros_site`: Station-level Robust Lognormal ROS within each station (when ≥ 3 uncensored detections exist and < 80% censoring), with automatic fallback to the global ROS regression parameters.
   - `half_lod`: Standard 0.5 × LOD substitution (`0.5 * meas_result`).
 
-### 2. Zero-Dependency GeoPackage WKB Geometry Decoding (`parse_gpkg_multilinestring()`)
-- Unpacks the OGC GeoPackage Binary (`GPB`) header (`flags = blob[3]`, `env_ind = (flags >> 1) & 0x07`) to read the 32-byte bounding box `[minx, maxx, miny, maxy]` at byte offset `8` (`struct.unpack_from("<4d", blob, 8)`) in ~1 microsecond without decoding vertex arrays unless a monitoring station is nearby.
-- Decodes little-endian `LineString` (`wkb_type = 2`) and `MultiLineString` (`wkb_type = 5`) double-precision vertex arrays directly via `struct.unpack_from`.
+### 2. Zero-Dependency GeoPackage WKB Geometry Decoding (`s3n_fast_geom.cpp` / `parse_gpkg_geometry()`)
+- Under `--geom-engine=auto` (default), raw GPB / ISO WKB / EWKB blobs (`2D`/`3D`/`4D` `LineString` & `MultiLineString`) are streamed in `50,000`-reach batches into [`src/s3n_fast_geom.cpp`](../src/s3n_fast_geom.cpp) (`s3n_snap_stations_wkb_batch()` and `s3n_parse_wkb_metrics_batch()`) via `ctypes` without allocating per-vertex Python tuples or lists.
+- Under `--geom-engine=python` (pure-Python fallback), the preprocessor unpacks the OGC GeoPackage Binary (`GPB`) header (`flags = blob[3]`, `env_ind = (flags >> 1) & 0x07`) to read the 32-byte bounding box `[minx, maxx, miny, maxy]` at byte offset `8` (`struct.unpack_from("<4d", blob, 8)`) without decoding vertex arrays unless a monitoring station is nearby, and decodes `LineString` / `MultiLineString` vertex arrays via `struct.unpack_from`.
 
 ### 3. Spatial Grid Snapping & Exact Along-Reach Projection (`point_to_polyline()`)
 - **2 km Spatial Hash Grid (`site_grid`)**: Buckets all candidate stations (1,382 for RSN; 313 for SSN; 1,695 for combined RSS) into 2 km × 2 km grid cells `(int(px // 2000), int(py // 2000))`. Each reach pads its bounding box by `snap_pad = max(1500.0, max_snap_m + 500.0)` before querying all overlapping and adjacent cells, so stations near bucket boundaries are never missed.

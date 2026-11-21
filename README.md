@@ -57,7 +57,7 @@ A full [interactive dashboard](https://benbell95.github.io/spatial_stream_model/
 
 ### 1. System Prerequisites
 
-- **Python ≥ 3.8** — uses Python standard library only for core `.gpkg`/CSV preprocessing (optional `pyproj` for custom CRS reprojection, `pyarrow` for GeoParquet).
+- **Python ≥ 3.8** — uses Python standard library only for core `.gpkg`/CSV preprocessing, accelerated automatically via OpenMP C++ (`src/s3n_fast_geom.cpp`, `--geom-engine=auto`) with seamless pure-Python fallback (optional `pyproj` for custom CRS reprojection, `pyarrow` for GeoParquet).
 - **R ≥ 3.5.0** — all NNGP estimation, spatial residual bootstrap CIs, and universal kriging run natively via [`src/s3n_fast_neighbors.cpp`](src/s3n_fast_neighbors.cpp) (`--engine=cpp`, default). Optional `data.table` is strongly recommended for 5–15× faster CSV I/O, `jsonlite` for faster JSON config parsing, and external `S3N` package is now **optional** (if using `--engine=brisc`).
 
 On Linux, install C++/OpenMP, BLAS/LAPACK, Cairo, and SQLite dev headers (if needed); on Windows, install **[Rtools](https://cran.r-project.org/bin/windows/Rtools/)** (or use **WSL2**).
@@ -71,19 +71,21 @@ install.packages(c("data.table", "jsonlite"))
 # install.packages(c("RANN", "rdist", "matrixStats", "pbapply", "dplyr", "remotes"))
 # remotes::install_github("jpierkunke/S3N")
 ```
-⚠️ Windows and MacOS users must compile the OpenMP C++ engine (`src/s3n_fast_neighbors.cpp`) in order to run these scripts. (This comes precompiled on Linux). More detailed information available in the [setup guide](docs/setup_and_architecture.md#13-compiled-c--openmp-library-srcs3n_fast_neighborscpp). 
+⚠️ Windows and macOS users **must** compile the R OpenMP C++ engine (`src/s3n_fast_neighbors.cpp`), since only Linux `x86_64` binaries are precompiled. The optional GIS preprocessor accelerator (`src/s3n_fast_geom.cpp`) auto-compiles if `g++`/`clang++` is on `PATH` and otherwise falls back automatically to pure Python. See the [setup guide](docs/setup_and_architecture.md#13-compiled-c--openmp-libraries) for full details.
 
 Run these commands from your terminal in the repository root directory.
 
 ```bash
-# Compile OpenMP C++ engine if needed
-# macOS (--preclean ensures any prebuilt Linux .so is rebuilt cleanly)
+# Compile R OpenMP C++ engine (required on macOS/Windows; --preclean ensures Linux .so is rebuilt cleanly)
 R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp
+
+# Optional: manually compile the Python GIS geometry accelerator (otherwise auto-compiled or falls back to Python)
+g++ -O3 -std=c++17 -shared -fPIC -fopenmp src/s3n_fast_geom.cpp -o src/s3n_fast_geom.so
 ```
 
 ```powershell
-# Windows PowerShell (omit full path if R's bin\x64 directory is on PATH; requires Rtools)
-& "C:\Program Files\R\R-<ver>\bin\x64\R.exe" CMD SHLIB src/s3n_fast_neighbors.cpp
+# Windows PowerShell (when R is not on PATH; requires Rtools)
+& "C:\Program Files\R\R-<ver>\bin\x64\R.exe" CMD SHLIB --preclean src/s3n_fast_neighbors.cpp
 ```
 
 Default workspace folders (`gis/`, `data/`, `output/`) are configured in [`configs/directories.json`](configs/directories.json) and can be overridden via environment variables or CLI flags (`--gis-dir=`, `--data-dir=`, `--processed-dir=`, `--output-dir=`). See [Setup, Architecture & Testing](docs/setup_and_architecture.md) for full OS package lists and configuration details.

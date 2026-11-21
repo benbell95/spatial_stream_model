@@ -11,14 +11,19 @@ Shared Python utilities for the S3N Stream Network Modeling toolkit:
 """
 
 from dataclasses import dataclass
+import array
 import bisect
 import csv
+import ctypes
+import ctypes.util
 from functools import lru_cache
 import glob
 import json
 import math
 import os
+import platform
 import re
+import shutil
 import statistics
 import struct
 import subprocess
@@ -1555,3 +1560,479 @@ def compute_polyline_metrics(poly):
     straight = math.hypot(poly[-1][0] - poly[0][0], poly[-1][1] - poly[0][1])
     sinuosity = max(1.0, tot / straight) if straight > 1e-3 else 1.0
     return tot, sinuosity, (poly[0][0], poly[0][1], mx, my, poly[-1][0], poly[-1][1])
+
+
+# ==============================================================================
+# 6. Optional C++/OpenMP Geometry & River-Tree Accelerator (s3n_fast_geom.so)
+# ==============================================================================
+
+_FAST_GEOM_LIB_CACHE = {}
+_NAN = float("nan")
+_AFV_SCHEME_CODE_MAP = {"length": 0, "shreve": 1, "order": 1, "magnitude": 1, "hydro_yield": 2, "yield": 2, "hydro": 2}
+
+
+def _fast_geom_shared_ext():
+    sys_name = platform.system().lower()
+    if sys_name == "windows":
+        return ".dll"
+    if sys_name == "darwin":
+        return ".dylib"
+    return ".so"
+
+
+def _buf_ptr(arr, n, ctype):
+    if n <= 0:
+        return None
+    if isinstance(arr, (bytes, memoryview)):
+        return ctypes.cast((ctype * n).from_buffer_copy(arr), ctypes.c_void_p)
+    return (ctype * n).from_buffer(arr)
+
+
+def _configure_fast_geom_lib(lib):
+    c_i32 = ctypes.c_int32
+    c_i64 = ctypes.c_int64
+    c_f64 = ctypes.c_double
+    c_vp = ctypes.c_void_p
+
+    lib.s3n_geom_get_omp_max_threads.argtypes = []
+    lib.s3n_geom_get_omp_max_threads.restype = c_i32
+
+    lib.s3n_geom_set_omp_threads.argtypes = [c_i32]
+    lib.s3n_geom_set_omp_threads.restype = None
+
+    lib.s3n_parse_wkb_metrics_batch.argtypes = [
+        c_i32, c_vp, c_vp,
+        c_vp, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp,
+        c_vp, c_vp, c_vp, c_vp,
+        c_vp, c_vp, c_vp,
+        c_vp, c_vp,
+    ]
+    lib.s3n_parse_wkb_metrics_batch.restype = None
+
+    lib.s3n_snap_stations_wkb_batch.argtypes = [
+        c_i32, c_vp, c_vp, c_f64, c_f64,
+        c_i32, c_vp, c_vp, c_i64,
+        c_vp, c_vp, c_vp,
+    ]
+    lib.s3n_snap_stations_wkb_batch.restype = None
+
+    lib.s3n_snap_endpoints.argtypes = [
+        c_i32, c_vp, c_vp, c_vp, c_vp, c_vp, c_f64, c_f64, c_vp,
+    ]
+    lib.s3n_snap_endpoints.restype = None
+
+    lib.s3n_break_cycles.argtypes = [c_i32, c_vp, c_vp, c_i32, c_vp, c_vp]
+    lib.s3n_break_cycles.restype = c_i32
+
+    lib.s3n_check_reach_orientation.argtypes = [
+        c_i32, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp,
+    ]
+    lib.s3n_check_reach_orientation.restype = c_i32
+
+    lib.s3n_accumulate_tree_hydro.argtypes = [
+        c_i32, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp,
+        c_vp, c_vp, c_vp, c_vp,
+    ]
+    lib.s3n_accumulate_tree_hydro.restype = None
+
+    lib.s3n_compute_log_afv_tree.argtypes = [
+        c_i32, c_vp, c_vp, c_vp, c_vp, c_vp, c_vp, c_i32, c_vp,
+    ]
+    lib.s3n_compute_log_afv_tree.restype = None
+
+    lib.s3n_impute_tree_index.argtypes = [c_i32, c_vp, c_vp, c_i32, c_vp]
+    lib.s3n_impute_tree_index.restype = None
+
+    lib.s3n_spatial_hash_query_batch.argtypes = [
+        c_i32, c_vp, c_vp, c_f64, c_i32, c_vp, c_vp, c_vp,
+    ]
+    lib.s3n_spatial_hash_query_batch.restype = None
+    return lib
+
+
+def load_fast_geom_lib(base_dir=DEFAULT_BASE_DIR, auto_compile=True):
+    """
+    Lazily loads `src/s3n_fast_geom.so` via ctypes, compiling it automatically if
+    missing or stale and a C++17 compiler is available. Returns None if unavailable.
+    """
+    root = os.path.abspath(base_dir if base_dir else _REPO_ROOT)
+    src_dir = os.path.join(root, "src")
+    cpp_path = os.path.join(src_dir, "s3n_fast_geom.cpp")
+    so_path = os.path.join(src_dir, "s3n_fast_geom" + _fast_geom_shared_ext())
+    if not os.path.isfile(cpp_path) and os.path.isdir(os.path.join(_REPO_ROOT, "src")):
+        src_dir = os.path.join(_REPO_ROOT, "src")
+        cpp_path = os.path.join(src_dir, "s3n_fast_geom.cpp")
+        so_path = os.path.join(src_dir, "s3n_fast_geom" + _fast_geom_shared_ext())
+
+    if so_path in _FAST_GEOM_LIB_CACHE and os.path.isfile(so_path):
+        cached = _FAST_GEOM_LIB_CACHE[so_path]
+        if cached is not None:
+            return cached
+
+    if array.array("i").itemsize != 4 or array.array("q").itemsize != 8:
+        return None
+
+    need_compile = not os.path.isfile(so_path)
+    if not need_compile and os.path.isfile(cpp_path):
+        try:
+            need_compile = os.path.getmtime(cpp_path) > os.path.getmtime(so_path)
+        except OSError:
+            need_compile = False
+
+    if need_compile and auto_compile and os.path.isfile(cpp_path):
+        cxx = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
+        if cxx:
+            for extra_flags in (["-fopenmp"], []):
+                cmd = [cxx, "-O3", "-std=c++17", "-shared", "-fPIC", *extra_flags, cpp_path, "-o", so_path]
+                try:
+                    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                    if res.returncode == 0 and os.path.isfile(so_path):
+                        break
+                except Exception:
+                    pass
+
+    if not os.path.isfile(so_path):
+        return None
+
+    try:
+        lib = _configure_fast_geom_lib(ctypes.CDLL(so_path))
+        _FAST_GEOM_LIB_CACHE[so_path] = lib
+        return lib
+    except OSError:
+        return None
+
+
+def cpp_geom_available(base_dir=DEFAULT_BASE_DIR, auto_compile=True):
+    return load_fast_geom_lib(base_dir=base_dir, auto_compile=auto_compile) is not None
+
+
+def cpp_get_geom_max_threads(lib=None):
+    lib = lib or load_fast_geom_lib()
+    return int(lib.s3n_geom_get_omp_max_threads()) if lib is not None else 1
+
+
+def cpp_set_geom_threads(n_threads, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is not None and n_threads is not None and int(n_threads) > 0:
+        lib.s3n_geom_set_omp_threads(int(n_threads))
+
+
+def cpp_pack_wkb_blobs(blobs):
+    """Packs an iterable of GPB/WKB bytes/memoryview/hex-str blobs into `(bytearray, array('q') offsets)`."""
+    buf = bytearray()
+    offsets = array.array("q", [0])
+    buf_extend = buf.extend
+    off_append = offsets.append
+    for b in blobs:
+        if not b:
+            off_append(len(buf))
+            continue
+        if isinstance(b, str):
+            s = b.strip()
+            if s:
+                try:
+                    b = bytes.fromhex(s[2:] if s.lower().startswith("0x") else s)
+                except ValueError:
+                    b = b""
+            else:
+                b = b""
+        buf_extend(b)
+        off_append(len(buf))
+    return buf, offsets
+
+
+def cpp_parse_wkb_metrics_batch(blobs, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(blobs)
+    tot_len_m = array.array("d", [0.0]) * n
+    sinuosity = array.array("d", [1.0]) * n
+    start_x = array.array("d", [0.0]) * n
+    start_y = array.array("d", [0.0]) * n
+    mid_x = array.array("d", [0.0]) * n
+    mid_y = array.array("d", [0.0]) * n
+    end_x = array.array("d", [0.0]) * n
+    end_y = array.array("d", [0.0]) * n
+    minx = array.array("d", [0.0]) * n
+    maxx = array.array("d", [0.0]) * n
+    miny = array.array("d", [0.0]) * n
+    maxy = array.array("d", [0.0]) * n
+    z_first = array.array("d", [_NAN]) * n
+    z_last = array.array("d", [_NAN]) * n
+    z_mean = array.array("d", [_NAN]) * n
+    n_pts = array.array("i", [0]) * n
+    z_count = array.array("i", [0]) * n
+
+    if n > 0:
+        buf, offsets = cpp_pack_wkb_blobs(blobs)
+        lib.s3n_parse_wkb_metrics_batch(
+            n,
+            _buf_ptr(buf, len(buf), ctypes.c_uint8),
+            _buf_ptr(offsets, len(offsets), ctypes.c_int64),
+            _buf_ptr(tot_len_m, n, ctypes.c_double),
+            _buf_ptr(sinuosity, n, ctypes.c_double),
+            _buf_ptr(start_x, n, ctypes.c_double),
+            _buf_ptr(start_y, n, ctypes.c_double),
+            _buf_ptr(mid_x, n, ctypes.c_double),
+            _buf_ptr(mid_y, n, ctypes.c_double),
+            _buf_ptr(end_x, n, ctypes.c_double),
+            _buf_ptr(end_y, n, ctypes.c_double),
+            _buf_ptr(minx, n, ctypes.c_double),
+            _buf_ptr(maxx, n, ctypes.c_double),
+            _buf_ptr(miny, n, ctypes.c_double),
+            _buf_ptr(maxy, n, ctypes.c_double),
+            _buf_ptr(z_first, n, ctypes.c_double),
+            _buf_ptr(z_last, n, ctypes.c_double),
+            _buf_ptr(z_mean, n, ctypes.c_double),
+            _buf_ptr(n_pts, n, ctypes.c_int32),
+            _buf_ptr(z_count, n, ctypes.c_int32),
+        )
+
+    return {
+        "tot_len_m": tot_len_m,
+        "sinuosity": sinuosity,
+        "start_x": start_x,
+        "start_y": start_y,
+        "mid_x": mid_x,
+        "mid_y": mid_y,
+        "end_x": end_x,
+        "end_y": end_y,
+        "minx": minx,
+        "maxx": maxx,
+        "miny": miny,
+        "maxy": maxy,
+        "z_first": z_first,
+        "z_last": z_last,
+        "z_mean": z_mean,
+        "n_pts": n_pts,
+        "z_count": z_count,
+    }
+
+
+def cpp_snap_stations_wkb_batch(
+    st_x,
+    st_y,
+    blobs,
+    best_dist_m,
+    best_reach_idx,
+    best_along_m,
+    chunk_base_idx=0,
+    cell_size=2000.0,
+    snap_pad=1500.0,
+    lib=None,
+):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n_st = len(st_x)
+    n_blobs = len(blobs)
+    if n_st <= 0 or n_blobs <= 0:
+        return
+    sx = st_x if isinstance(st_x, array.array) and st_x.typecode == "d" else array.array("d", st_x)
+    sy = st_y if isinstance(st_y, array.array) and st_y.typecode == "d" else array.array("d", st_y)
+    buf, offsets = cpp_pack_wkb_blobs(blobs)
+    if len(buf) == 0:
+        return
+    lib.s3n_snap_stations_wkb_batch(
+        n_st,
+        _buf_ptr(sx, n_st, ctypes.c_double),
+        _buf_ptr(sy, n_st, ctypes.c_double),
+        float(cell_size),
+        float(snap_pad),
+        n_blobs,
+        _buf_ptr(buf, len(buf), ctypes.c_uint8),
+        _buf_ptr(offsets, len(offsets), ctypes.c_int64),
+        int(chunk_base_idx),
+        _buf_ptr(best_dist_m, n_st, ctypes.c_double),
+        _buf_ptr(best_reach_idx, n_st, ctypes.c_int64),
+        _buf_ptr(best_along_m, n_st, ctypes.c_double),
+    )
+
+
+def cpp_snap_endpoints(file_idx, start_x, start_y, end_x, end_y, dn_idx, cell_size=50.0, max_dist=5.0, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(start_x)
+    if n <= 0:
+        return dn_idx
+    f_arr = file_idx if isinstance(file_idx, array.array) and file_idx.typecode == "i" else array.array("i", file_idx)
+    sx = start_x if isinstance(start_x, array.array) and start_x.typecode == "d" else array.array("d", start_x)
+    sy = start_y if isinstance(start_y, array.array) and start_y.typecode == "d" else array.array("d", start_y)
+    ex = end_x if isinstance(end_x, array.array) and end_x.typecode == "d" else array.array("d", end_x)
+    ey = end_y if isinstance(end_y, array.array) and end_y.typecode == "d" else array.array("d", end_y)
+    dn_arr = dn_idx if isinstance(dn_idx, array.array) and dn_idx.typecode == "i" else array.array("i", dn_idx)
+    lib.s3n_snap_endpoints(
+        n,
+        _buf_ptr(f_arr, n, ctypes.c_int32),
+        _buf_ptr(sx, n, ctypes.c_double),
+        _buf_ptr(sy, n, ctypes.c_double),
+        _buf_ptr(ex, n, ctypes.c_double),
+        _buf_ptr(ey, n, ctypes.c_double),
+        float(cell_size),
+        float(max_dist),
+        _buf_ptr(dn_arr, n, ctypes.c_int32),
+    )
+    return dn_arr
+
+
+def cpp_break_cycles(raw_parent, catch_id, mode=0, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(raw_parent)
+    rp = raw_parent if isinstance(raw_parent, array.array) and raw_parent.typecode == "i" else array.array("i", raw_parent)
+    cid = catch_id if isinstance(catch_id, array.array) and catch_id.typecode == "i" else array.array("i", catch_id)
+    out_dn = array.array("i", [-1]) * n
+    out_topo = array.array("i", [0]) * n
+    n_broken = 0
+    if n > 0:
+        n_broken = int(
+            lib.s3n_break_cycles(
+                n,
+                _buf_ptr(rp, n, ctypes.c_int32),
+                _buf_ptr(cid, n, ctypes.c_int32),
+                int(mode),
+                _buf_ptr(out_dn, n, ctypes.c_int32),
+                _buf_ptr(out_topo, n, ctypes.c_int32),
+            )
+        )
+    return out_dn, out_topo, n_broken
+
+
+def cpp_check_reach_orientation(parent_dn, start_x, start_y, end_x, end_y, z_first=None, z_last=None, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(parent_dn)
+    dn = parent_dn if isinstance(parent_dn, array.array) and parent_dn.typecode == "i" else array.array("i", parent_dn)
+    flipped = array.array("i", [0]) * n
+    if n <= 0:
+        return flipped, 0
+    n_flipped = int(
+        lib.s3n_check_reach_orientation(
+            n,
+            _buf_ptr(dn, n, ctypes.c_int32),
+            _buf_ptr(start_x, n, ctypes.c_double),
+            _buf_ptr(start_y, n, ctypes.c_double),
+            _buf_ptr(end_x, n, ctypes.c_double),
+            _buf_ptr(end_y, n, ctypes.c_double),
+            _buf_ptr(z_first, n, ctypes.c_double) if z_first is not None else None,
+            _buf_ptr(z_last, n, ctypes.c_double) if z_last is not None else None,
+            _buf_ptr(flipped, n, ctypes.c_int32),
+        )
+    )
+    return flipped, n_flipped
+
+
+def cpp_accumulate_tree_hydro(
+    parent_dn,
+    topo_order,
+    length_km,
+    raw_d2m_km,
+    raw_shreve,
+    raw_strahler,
+    raw_us_accum_km,
+    lib=None,
+):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(parent_dn)
+    out_d2m = array.array("d", [0.0]) * n
+    out_shr = array.array("i", [1]) * n
+    out_str = array.array("i", [1]) * n
+    out_acc = array.array("d", [0.0]) * n
+    if n > 0:
+        lib.s3n_accumulate_tree_hydro(
+            n,
+            _buf_ptr(parent_dn, n, ctypes.c_int32),
+            _buf_ptr(topo_order, n, ctypes.c_int32),
+            _buf_ptr(length_km, n, ctypes.c_double),
+            _buf_ptr(raw_d2m_km, n, ctypes.c_double),
+            _buf_ptr(raw_shreve, n, ctypes.c_int32),
+            _buf_ptr(raw_strahler, n, ctypes.c_int32),
+            _buf_ptr(raw_us_accum_km, n, ctypes.c_double),
+            _buf_ptr(out_d2m, n, ctypes.c_double),
+            _buf_ptr(out_shr, n, ctypes.c_int32),
+            _buf_ptr(out_str, n, ctypes.c_int32),
+            _buf_ptr(out_acc, n, ctypes.c_double),
+        )
+    return out_d2m, out_shr, out_str, out_acc
+
+
+def cpp_compute_log_afv_tree(
+    parent_dn,
+    topo_order,
+    us_accum_km,
+    shreve=None,
+    elev=None,
+    is_aq=None,
+    afv_scheme="length",
+    lib=None,
+):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(parent_dn)
+    out_log_afv = array.array("d", [0.0]) * n
+    if n > 0:
+        scheme_key = str(afv_scheme or "length").strip().lower().replace("-", "_")
+        scheme_code = _AFV_SCHEME_CODE_MAP.get(scheme_key, 0)
+        lib.s3n_compute_log_afv_tree(
+            n,
+            _buf_ptr(parent_dn, n, ctypes.c_int32),
+            _buf_ptr(topo_order, n, ctypes.c_int32),
+            _buf_ptr(us_accum_km, n, ctypes.c_double),
+            _buf_ptr(shreve, n, ctypes.c_int32) if shreve is not None else None,
+            _buf_ptr(elev, n, ctypes.c_double) if elev is not None else None,
+            _buf_ptr(is_aq, n, ctypes.c_int32) if is_aq is not None else None,
+            scheme_code,
+            _buf_ptr(out_log_afv, n, ctypes.c_double),
+        )
+    return out_log_afv
+
+
+def cpp_impute_tree_index(parent_dn, topo_order, cov_src, n_passes=3, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n = len(parent_dn)
+    arr = cov_src if isinstance(cov_src, array.array) and cov_src.typecode == "i" else array.array("i", cov_src)
+    if n > 0:
+        lib.s3n_impute_tree_index(
+            n,
+            _buf_ptr(parent_dn, n, ctypes.c_int32),
+            _buf_ptr(topo_order, n, ctypes.c_int32),
+            int(n_passes),
+            _buf_ptr(arr, n, ctypes.c_int32),
+        )
+    return arr
+
+
+def cpp_spatial_hash_query_batch(ref_x, ref_y, q_x, q_y, cell_size=2000.0, lib=None):
+    lib = lib or load_fast_geom_lib()
+    if lib is None:
+        raise RuntimeError("C++ geometry library s3n_fast_geom is unavailable.")
+    n_ref = len(ref_x)
+    n_q = len(q_x)
+    out_idx = array.array("i", [-1]) * n_q
+    if n_q <= 0:
+        return out_idx
+    rx = ref_x if isinstance(ref_x, array.array) and ref_x.typecode == "d" else array.array("d", ref_x)
+    ry = ref_y if isinstance(ref_y, array.array) and ref_y.typecode == "d" else array.array("d", ref_y)
+    qx = q_x if isinstance(q_x, array.array) and q_x.typecode == "d" else array.array("d", q_x)
+    qy = q_y if isinstance(q_y, array.array) and q_y.typecode == "d" else array.array("d", q_y)
+    lib.s3n_spatial_hash_query_batch(
+        n_ref,
+        _buf_ptr(rx, n_ref, ctypes.c_double),
+        _buf_ptr(ry, n_ref, ctypes.c_double),
+        float(cell_size),
+        n_q,
+        _buf_ptr(qx, n_q, ctypes.c_double),
+        _buf_ptr(qy, n_q, ctypes.c_double),
+        _buf_ptr(out_idx, n_q, ctypes.c_int32),
+    )
+    return out_idx
+

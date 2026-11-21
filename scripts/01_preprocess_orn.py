@@ -41,6 +41,7 @@ Outputs (written to both `data/processed/<network_abbr>/` and `data/processed/`)
 """
 
 import argparse
+import array
 import csv
 import ctypes
 import ctypes.util
@@ -81,6 +82,17 @@ from s3n_py_utils import (
     build_runtime_config,
     compute_polyline_metrics,
     compute_ros_plotting_positions,
+    cpp_accumulate_tree_hydro,
+    cpp_break_cycles,
+    cpp_check_reach_orientation,
+    cpp_compute_log_afv_tree,
+    cpp_get_geom_max_threads,
+    cpp_impute_tree_index,
+    cpp_parse_wkb_metrics_batch,
+    cpp_set_geom_threads,
+    cpp_snap_endpoints,
+    cpp_snap_stations_wkb_batch,
+    cpp_spatial_hash_query_batch,
     detect_range_mode as _shared_detect_range_mode,
     ensure_directory_config,
     ensure_network_configs,
@@ -92,6 +104,7 @@ from s3n_py_utils import (
     fit_ros_ols,
     impute_censored_by_site,
     load_directory_config,
+    load_fast_geom_lib,
     load_source_registry as _shared_load_source_registry,
     parse_datetime_iso,
     parse_gpkg_envelope,
@@ -1405,6 +1418,35 @@ def query_orn_spatial_grid(grid, mx, my):
     return best_rec
 
 
+def _flatten_orn_spatial_grid(grid):
+    if not grid:
+        return None
+    ref_x = array.array("d")
+    ref_y = array.array("d")
+    ref_recs = []
+    # Preserve deterministic insertion order across grid cells
+    for recs in grid.values():
+        for rec in recs:
+            ref_x.append(rec[0])
+            ref_y.append(rec[1])
+            ref_recs.append(rec)
+    return ref_x, ref_y, ref_recs
+
+
+def resolve_geom_engine(geom_engine_arg="auto", geom_threads=0, base_dir=BASE_DIR):
+    req = (geom_engine_arg or "auto").strip().lower()
+    if req == "python":
+        return None
+    lib = load_fast_geom_lib(base_dir=base_dir, auto_compile=True)
+    if lib is None:
+        if req == "cpp":
+            print("   [Geometry Engine] Requested 'cpp' unavailable; falling back to pure Python.")
+        return None
+    if geom_threads and int(geom_threads) > 0:
+        cpp_set_geom_threads(int(geom_threads), lib=lib)
+    return lib
+
+
 REACH_OBS_HEADER_COLS = [
     "has_obs", "site_id", "snap_dist_m", "obs_up_dist_km",
     "obs_mean", "obs_median", "trans_obs_mean",
@@ -1632,7 +1674,7 @@ def write_reaches_and_finalize(
 def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
                                trans_type="log", eff_lambda=None, eff_scale=1.0, pts_source=None, source_key="rsn",
                                range_mode=None, runtime_cfg=None, out_dir=None,
-                               unc_by_site=None, meth_by_site=None):
+                               unc_by_site=None, meth_by_site=None, geom_lib=None):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
@@ -1684,11 +1726,31 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
     station_bng_xy = [(pts[nid][0], pts[nid][1]) for nid in all_station_ids]
     station_net_xy = transform_coords_batch(station_bng_xy, 27700, crs_epsg)
 
+    use_cpp = (geom_lib is not None and not geo_to_bng)
+    if use_cpp:
+        print(f"   [Geometry Engine] Using OpenMP C++ s3n_fast_geom ({cpp_get_geom_max_threads(geom_lib)} threads).")
+    elif geom_lib is not None and geo_to_bng:
+        print("   [Geometry Engine] Geographic CRS reprojection active; using pure-Python path.")
+    else:
+        print("   [Geometry Engine] Using pure-Python geometry/tree path.")
+
     site_grid = defaultdict(list)
     for nid, (px, py) in zip(all_station_ids, station_net_xy):
         site_grid[(int(px // 2000), int(py // 2000))].append((nid, px, py))
 
     best_snap = {nid: (1e18, None, None, 0.0) for nid in all_station_ids}
+    n_st = len(all_station_ids)
+    st_x = array.array("d", (float(xy[0]) for xy in station_net_xy)) if use_cpp else None
+    st_y = array.array("d", (float(xy[1]) for xy in station_net_xy)) if use_cpp else None
+    cpp_best_dist = array.array("d", [1e18]) * n_st if use_cpp else None
+    cpp_best_ridx = array.array("q", [-1]) * n_st if use_cpp else None
+    cpp_best_along = array.array("d", [0.0]) * n_st if use_cpp else None
+    cpp_snap_meta = [None] * n_st if use_cpp else None
+    cpp_snap_blobs = []
+    cpp_snap_rows_meta = []
+    cpp_snap_base = [0]
+    snap_pad = max(1500.0, max_snap_m + 500.0)
+    cpp_chunk_size = 50000
 
     # Scan GeoPackage(s) and/or GeoParquet file(s) to snap stations and load reaches
     raw_reaches = []
@@ -1731,6 +1793,27 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         except ValueError:
             return (abs(hash(s)) % 90000) + 1
 
+    def _flush_cpp_snap_chunk():
+        if not cpp_snap_blobs:
+            return
+        base_i = cpp_snap_base[0]
+        end_i = base_i + len(cpp_snap_blobs)
+        cpp_snap_stations_wkb_batch(
+            st_x, st_y, cpp_snap_blobs,
+            cpp_best_dist, cpp_best_ridx, cpp_best_along,
+            chunk_base_idx=base_i,
+            cell_size=2000.0,
+            snap_pad=snap_pad,
+            lib=geom_lib,
+        )
+        for s_i in range(n_st):
+            gi = cpp_best_ridx[s_i]
+            if base_i <= gi < end_i:
+                cpp_snap_meta[s_i] = cpp_snap_rows_meta[gi - base_i]
+        cpp_snap_base[0] = end_i
+        cpp_snap_blobs.clear()
+        cpp_snap_rows_meta.clear()
+
     def _ingest_reach_row(file_idx, rdict, blob):
         raw_id_val = rdict.get(id_col) if id_col else None
         if raw_id_val is None:
@@ -1738,6 +1821,16 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         orig_id = str(raw_id_val)
         raw_cid = rdict.get(catch_col) if catch_col else None
         cid_key = (file_idx, _parse_cid_val(raw_cid))
+
+        if use_cpp:
+            if not blob:
+                return
+            cpp_snap_blobs.append(blob)
+            cpp_snap_rows_meta.append((file_idx, orig_id, cid_key))
+            raw_reaches.append((file_idx, orig_id, cid_key, None, (), rdict, blob))
+            if len(cpp_snap_blobs) >= cpp_chunk_size:
+                _flush_cpp_snap_chunk()
+            return
 
         env = parse_gpkg_envelope(blob)
         poly = None
@@ -1760,7 +1853,6 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             ys = [p[1] for p in poly]
             minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
 
-        snap_pad = max(1500.0, max_snap_m + 500.0)
         gx0, gx1 = int((minx - snap_pad) // 2000), int((maxx + snap_pad) // 2000)
         gy0, gy1 = int((miny - snap_pad) // 2000), int((maxy + snap_pad) // 2000)
         cand_sites = []
@@ -1818,6 +1910,13 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             finally:
                 conn.close()
 
+    if use_cpp:
+        _flush_cpp_snap_chunk()
+        for s_i, nid in enumerate(all_station_ids):
+            meta_s = cpp_snap_meta[s_i]
+            if meta_s is not None:
+                best_snap[nid] = (cpp_best_dist[s_i], (meta_s[0], meta_s[1]), meta_s[2], cpp_best_along[s_i])
+
     # Determine monitored catchments (or keep all if network has <= 5 catchments)
     monitored_cid_keys = {
         best_snap[nid][2]
@@ -1853,30 +1952,77 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
     global_orig_to_rivid = {}
     reaches_by_id = {}
     riv_idx = 0
-    for file_idx, orig_id, cid_key, poly, zs, rdict, blob in filtered_reaches:
-        if poly is None:
-            poly, zs = parse_gpkg_geometry(blob)
-            if len(poly) >= 2 and geo_to_bng:
-                poly = transform_coords_batch(poly, raw_crs_epsg, 27700)
-        if len(poly) < 2:
-            continue
-        riv_idx += 1
-        if len(gpkg_paths) == 1 and len(layers) == 1 and str(orig_id).isdigit():
-            riv_id = int(orig_id)
-        else:
-            riv_id = riv_idx
-        key_to_rivid[(file_idx, orig_id)] = riv_id
-        if orig_id not in global_orig_to_rivid:
-            global_orig_to_rivid[orig_id] = riv_id
-        reaches_by_id[riv_id] = {
-            "riv_id": riv_id,
-            "file_idx": file_idx,
-            "orig_id": orig_id,
-            "catch_id": cid_map[cid_key],
-            "poly": poly,
-            "zs": zs,
-            "row": rdict,
-        }
+    if use_cpp:
+        for ch_start in range(0, len(filtered_reaches), cpp_chunk_size):
+            chunk = filtered_reaches[ch_start : ch_start + cpp_chunk_size]
+            met = cpp_parse_wkb_metrics_batch([r[6] for r in chunk], lib=geom_lib)
+            n_pts_arr = met["n_pts"]
+            tot_arr = met["tot_len_m"]
+            sinu_arr = met["sinuosity"]
+            sx_c = met["start_x"]
+            sy_c = met["start_y"]
+            mx_c = met["mid_x"]
+            my_c = met["mid_y"]
+            ex_c = met["end_x"]
+            ey_c = met["end_y"]
+            zf_c = met["z_first"]
+            zl_c = met["z_last"]
+            zm_c = met["z_mean"]
+            zc_c = met["z_count"]
+            for k, (file_idx, orig_id, cid_key, _poly, _zs, rdict, _blob) in enumerate(chunk):
+                if n_pts_arr[k] < 2:
+                    continue
+                riv_idx += 1
+                if len(gpkg_paths) == 1 and len(layers) == 1 and str(orig_id).isdigit():
+                    riv_id = int(orig_id)
+                else:
+                    riv_id = riv_idx
+                key_to_rivid[(file_idx, orig_id)] = riv_id
+                if orig_id not in global_orig_to_rivid:
+                    global_orig_to_rivid[orig_id] = riv_id
+                tot_m = tot_arr[k]
+                reaches_by_id[riv_id] = {
+                    "riv_id": riv_id,
+                    "file_idx": file_idx,
+                    "orig_id": orig_id,
+                    "catch_id": cid_map[cid_key],
+                    "poly": None,
+                    "zs": (),
+                    "tot_m": tot_m,
+                    "length_km": max(1e-4, tot_m / 1000.0),
+                    "sinuosity": sinu_arr[k],
+                    "coords_net": (sx_c[k], sy_c[k], mx_c[k], my_c[k], ex_c[k], ey_c[k]),
+                    "z_first": zf_c[k],
+                    "z_last": zl_c[k],
+                    "z_mean": zm_c[k],
+                    "z_count": zc_c[k],
+                    "row": rdict,
+                }
+    else:
+        for file_idx, orig_id, cid_key, poly, zs, rdict, blob in filtered_reaches:
+            if poly is None:
+                poly, zs = parse_gpkg_geometry(blob)
+                if len(poly) >= 2 and geo_to_bng:
+                    poly = transform_coords_batch(poly, raw_crs_epsg, 27700)
+            if len(poly) < 2:
+                continue
+            riv_idx += 1
+            if len(gpkg_paths) == 1 and len(layers) == 1 and str(orig_id).isdigit():
+                riv_id = int(orig_id)
+            else:
+                riv_id = riv_idx
+            key_to_rivid[(file_idx, orig_id)] = riv_id
+            if orig_id not in global_orig_to_rivid:
+                global_orig_to_rivid[orig_id] = riv_id
+            reaches_by_id[riv_id] = {
+                "riv_id": riv_id,
+                "file_idx": file_idx,
+                "orig_id": orig_id,
+                "catch_id": cid_map[cid_key],
+                "poly": poly,
+                "zs": zs,
+                "row": rdict,
+            }
     n_raw_total = len(raw_reaches)
     filtered_reaches.clear()
     raw_reaches.clear()
@@ -1893,214 +2039,381 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
 
     # 3. Build directed river tree topology (supporting pointer, nodes, or geometry)
     print(f"3. Building directed river trees (mode='{topo_mode}') and verifying reach orientation...")
-    fnode_index = {}
-    start_pt_grid = defaultdict(list)
-    for riv_id, info in reaches_by_id.items():
-        f_idx = info["file_idx"]
-        rdict = info["row"]
-        fn = rdict.get(fnode_col) if fnode_col else None
-        if fn:
-            # Prefer main channel (MC == 1) when multiple reaches share an FNODE
-            mc = rdict.get("MC", 1)
-            key = (f_idx, info["catch_id"], str(fn))
-            if key not in fnode_index or mc == 1:
-                fnode_index[key] = riv_id
-            g_key = ("*", info["catch_id"], str(fn))
-            if g_key not in fnode_index or mc == 1:
-                fnode_index[g_key] = riv_id
-        p0 = info["poly"][0]
-        start_pt_grid[(f_idx, int(p0[0] // 50), int(p0[1] // 50))].append((riv_id, p0[0], p0[1]))
-        start_pt_grid[("*", int(p0[0] // 50), int(p0[1] // 50))].append((riv_id, p0[0], p0[1]))
+    if use_cpp:
+        fnode_index = {}
+        for riv_id, info in reaches_by_id.items():
+            f_idx = info["file_idx"]
+            rdict = info["row"]
+            fn = rdict.get(fnode_col) if fnode_col else None
+            if fn:
+                mc = rdict.get("MC", 1)
+                key = (f_idx, info["catch_id"], str(fn))
+                if key not in fnode_index or mc == 1:
+                    fnode_index[key] = riv_id
+                g_key = ("*", info["catch_id"], str(fn))
+                if g_key not in fnode_index or mc == 1:
+                    fnode_index[g_key] = riv_id
 
-    raw_parent_dn = {}
-    for riv_id, info in reaches_by_id.items():
-        f_idx = info["file_idx"]
-        rdict = info["row"]
-        dn_id = None
+        ordered_rivs = sorted(reaches_by_id.keys())
+        n_r = len(ordered_rivs)
+        riv_to_idx = {rid: idx for idx, rid in enumerate(ordered_rivs)}
 
-        # Mode A: Pointer (NEXTDOWNID)
-        if topo_mode == "pointer" and next_down_col:
-            nd_val = rdict.get(next_down_col)
-            if nd_val:
-                # Handle potential semicolon/comma list by taking primary target
-                first_tok = str(nd_val).split(";")[0].split(",")[0].strip()
-                dn_id = key_to_rivid.get((f_idx, first_tok)) or global_orig_to_rivid.get(first_tok)
+        def _build_cpp_tree_arrays(rids_sorted):
+            nn = len(rids_sorted)
+            r2i = {rid: idx for idx, rid in enumerate(rids_sorted)}
+            f_arr = array.array("i", (int(reaches_by_id[rid]["file_idx"]) for rid in rids_sorted))
+            cid_arr = array.array("i", (int(reaches_by_id[rid]["catch_id"]) for rid in rids_sorted))
+            sx_arr = array.array("d", (reaches_by_id[rid]["coords_net"][0] for rid in rids_sorted))
+            sy_arr = array.array("d", (reaches_by_id[rid]["coords_net"][1] for rid in rids_sorted))
+            ex_arr = array.array("d", (reaches_by_id[rid]["coords_net"][4] for rid in rids_sorted))
+            ey_arr = array.array("d", (reaches_by_id[rid]["coords_net"][5] for rid in rids_sorted))
+            zf_arr = array.array("d", (reaches_by_id[rid]["z_first"] for rid in rids_sorted))
+            zl_arr = array.array("d", (reaches_by_id[rid]["z_last"] for rid in rids_sorted))
+            rp_arr = array.array("i", [-1]) * nn
+            for i_r, rid in enumerate(rids_sorted):
+                info = reaches_by_id[rid]
+                f_idx = info["file_idx"]
+                rdict = info["row"]
+                dn_id = None
+                if topo_mode == "pointer" and next_down_col:
+                    nd_val = rdict.get(next_down_col)
+                    if nd_val:
+                        first_tok = str(nd_val).split(";")[0].split(",")[0].strip()
+                        dn_id = key_to_rivid.get((f_idx, first_tok)) or global_orig_to_rivid.get(first_tok)
+                if dn_id is None and topo_mode in ("nodes", "pointer") and tnode_col:
+                    tn_val = rdict.get(tnode_col)
+                    if tn_val:
+                        dn_id = fnode_index.get((f_idx, info["catch_id"], str(tn_val))) or fnode_index.get(
+                            ("*", info["catch_id"], str(tn_val))
+                        )
+                if dn_id is not None and dn_id != rid and dn_id in r2i:
+                    if not has_explicit_catch_id or reaches_by_id[dn_id]["catch_id"] == info["catch_id"]:
+                        rp_arr[i_r] = r2i[dn_id]
+            return r2i, f_arr, cid_arr, sx_arr, sy_arr, ex_arr, ey_arr, zf_arr, zl_arr, rp_arr
 
-        # Mode B / Fallback: Nodes (Tnode -> Fnode)
-        if dn_id is None and topo_mode in ("nodes", "pointer") and tnode_col:
-            tn_val = rdict.get(tnode_col)
-            if tn_val:
-                dn_id = fnode_index.get((f_idx, info["catch_id"], str(tn_val))) or fnode_index.get(
-                    ("*", info["catch_id"], str(tn_val))
+        riv_to_idx, f_arr, cid_arr, sx_arr, sy_arr, ex_arr, ey_arr, zf_arr, zl_arr, rp_arr = _build_cpp_tree_arrays(ordered_rivs)
+        if topo_mode == "geometry":
+            cpp_snap_endpoints(f_arr, sx_arr, sy_arr, ex_arr, ey_arr, rp_arr, cell_size=50.0, max_dist=5.0, lib=geom_lib)
+            if has_explicit_catch_id:
+                for i_r in range(n_r):
+                    dn_i = rp_arr[i_r]
+                    if dn_i >= 0 and cid_arr[dn_i] != cid_arr[i_r]:
+                        rp_arr[i_r] = -1
+
+        out_dn_idx, out_topo_idx, cycles_broken = cpp_break_cycles(rp_arr, cid_arr, mode=0, lib=geom_lib)
+        parent_dn = {ordered_rivs[i_r]: ordered_rivs[dn_i] for i_r, dn_i in enumerate(out_dn_idx) if dn_i >= 0}
+        parents = defaultdict(list)
+        mouths = []
+        for i_r, rid in enumerate(ordered_rivs):
+            dn_i = out_dn_idx[i_r]
+            if dn_i < 0:
+                mouths.append(rid)
+            else:
+                parents[ordered_rivs[dn_i]].append(rid)
+
+        if not has_explicit_catch_id and len(mouths) > 1:
+            tree_members = {}
+            for m_id in mouths:
+                comp = []
+                stack = [m_id]
+                while stack:
+                    u = stack.pop()
+                    comp.append(u)
+                    for p in parents[u]:
+                        stack.append(p)
+                tree_members[m_id] = comp
+
+            snapped_rivids = {
+                key_to_rivid[best_snap[nid][1]]
+                for nid in best_snap
+                if best_snap[nid][0] <= max_snap_m and best_snap[nid][1] in key_to_rivid
+            }
+            monitored_mouths = [
+                m_id for m_id in mouths if any(u in snapped_rivids for u in tree_members[m_id])
+            ]
+            active_mouths = monitored_mouths if monitored_mouths else mouths
+            active_mouths.sort(key=lambda m_id: (-len(tree_members[m_id]), m_id))
+
+            keep_rivids = set()
+            for new_cid, m_id in enumerate(active_mouths, 1):
+                for u in tree_members[m_id]:
+                    reaches_by_id[u]["catch_id"] = new_cid
+                    keep_rivids.add(u)
+
+            if len(keep_rivids) < len(reaches_by_id):
+                reaches_by_id = {u: info for u, info in reaches_by_id.items() if u in keep_rivids}
+                parent_dn = {u: dn for u, dn in parent_dn.items() if u in keep_rivids and dn in keep_rivids}
+                parents = defaultdict(list)
+                for u, dn in parent_dn.items():
+                    parents[dn].append(u)
+                key_to_rivid = {k: v for k, v in key_to_rivid.items() if v in keep_rivids}
+            mouths = active_mouths
+
+            ordered_rivs = sorted(reaches_by_id.keys())
+            n_r = len(ordered_rivs)
+            riv_to_idx = {rid: idx for idx, rid in enumerate(ordered_rivs)}
+            cid_arr = array.array("i", (int(reaches_by_id[rid]["catch_id"]) for rid in ordered_rivs))
+            sx_arr = array.array("d", (reaches_by_id[rid]["coords_net"][0] for rid in ordered_rivs))
+            sy_arr = array.array("d", (reaches_by_id[rid]["coords_net"][1] for rid in ordered_rivs))
+            ex_arr = array.array("d", (reaches_by_id[rid]["coords_net"][4] for rid in ordered_rivs))
+            ey_arr = array.array("d", (reaches_by_id[rid]["coords_net"][5] for rid in ordered_rivs))
+            zf_arr = array.array("d", (reaches_by_id[rid]["z_first"] for rid in ordered_rivs))
+            zl_arr = array.array("d", (reaches_by_id[rid]["z_last"] for rid in ordered_rivs))
+            rp_clean = array.array("i", (riv_to_idx[parent_dn[rid]] if rid in parent_dn else -1 for rid in ordered_rivs))
+            out_dn_idx, out_topo_idx, _ = cpp_break_cycles(rp_clean, cid_arr, mode=0, lib=geom_lib)
+
+        flipped_arr, flipped_cnt = cpp_check_reach_orientation(
+            out_dn_idx, sx_arr, sy_arr, ex_arr, ey_arr, zf_arr, zl_arr, lib=geom_lib
+        )
+        for i_r, rid in enumerate(ordered_rivs):
+            info = reaches_by_id[rid]
+            if flipped_arr[i_r]:
+                mx, my = info["coords_net"][2], info["coords_net"][3]
+                info["coords_net"] = (sx_arr[i_r], sy_arr[i_r], mx, my, ex_arr[i_r], ey_arr[i_r])
+                info["z_first"] = zf_arr[i_r]
+                info["z_last"] = zl_arr[i_r]
+                info["flipped"] = True
+
+        nan_v = float("nan")
+        raw_d2m_arr = array.array("d", (
+            ((v * d2m_scale) if (v is not None and v > 0) else nan_v)
+            for v in (_opt_float(reaches_by_id[rid]["row"].get(d2m_col)) if d2m_col else None for rid in ordered_rivs)
+        ))
+        raw_shr_arr = array.array("i", (
+            (int(v) if (v is not None and int(v) > 0) else -1)
+            for v in (_opt_float(reaches_by_id[rid]["row"].get(shreve_col)) if shreve_col else None for rid in ordered_rivs)
+        ))
+        raw_str_arr = array.array("i", (
+            (int(v) if (v is not None and int(v) > 0) else -1)
+            for v in (_opt_float(reaches_by_id[rid]["row"].get(strahler_col)) if strahler_col else None for rid in ordered_rivs)
+        ))
+        raw_acc_arr = array.array("d", (
+            ((v * afv_scale) if (v is not None and v > 0) else nan_v)
+            for v in (_opt_float(reaches_by_id[rid]["row"].get(afv_col)) if afv_col else None for rid in ordered_rivs)
+        ))
+        len_km_arr = array.array("d", (reaches_by_id[rid]["length_km"] for rid in ordered_rivs))
+
+        out_d2m_arr, out_shr_arr, out_str_arr, out_acc_arr = cpp_accumulate_tree_hydro(
+            out_dn_idx, out_topo_idx, len_km_arr,
+            raw_d2m_arr, raw_shr_arr, raw_str_arr, raw_acc_arr,
+            lib=geom_lib,
+        )
+        topo_order = [ordered_rivs[i_r] for i_r in out_topo_idx]
+        for i_r, rid in enumerate(ordered_rivs):
+            info = reaches_by_id[rid]
+            info["d2m_km"] = out_d2m_arr[i_r]
+            info["shreve"] = out_shr_arr[i_r]
+            info["strahler"] = out_str_arr[i_r]
+            info["us_accum_km"] = out_acc_arr[i_r]
+    else:
+        fnode_index = {}
+        start_pt_grid = defaultdict(list)
+        for riv_id, info in reaches_by_id.items():
+            f_idx = info["file_idx"]
+            rdict = info["row"]
+            fn = rdict.get(fnode_col) if fnode_col else None
+            if fn:
+                # Prefer main channel (MC == 1) when multiple reaches share an FNODE
+                mc = rdict.get("MC", 1)
+                key = (f_idx, info["catch_id"], str(fn))
+                if key not in fnode_index or mc == 1:
+                    fnode_index[key] = riv_id
+                g_key = ("*", info["catch_id"], str(fn))
+                if g_key not in fnode_index or mc == 1:
+                    fnode_index[g_key] = riv_id
+            p0 = info["poly"][0]
+            start_pt_grid[(f_idx, int(p0[0] // 50), int(p0[1] // 50))].append((riv_id, p0[0], p0[1]))
+            start_pt_grid[("*", int(p0[0] // 50), int(p0[1] // 50))].append((riv_id, p0[0], p0[1]))
+
+        raw_parent_dn = {}
+        for riv_id, info in reaches_by_id.items():
+            f_idx = info["file_idx"]
+            rdict = info["row"]
+            dn_id = None
+
+            # Mode A: Pointer (NEXTDOWNID)
+            if topo_mode == "pointer" and next_down_col:
+                nd_val = rdict.get(next_down_col)
+                if nd_val:
+                    # Handle potential semicolon/comma list by taking primary target
+                    first_tok = str(nd_val).split(";")[0].split(",")[0].strip()
+                    dn_id = key_to_rivid.get((f_idx, first_tok)) or global_orig_to_rivid.get(first_tok)
+
+            # Mode B / Fallback: Nodes (Tnode -> Fnode)
+            if dn_id is None and topo_mode in ("nodes", "pointer") and tnode_col:
+                tn_val = rdict.get(tnode_col)
+                if tn_val:
+                    dn_id = fnode_index.get((f_idx, info["catch_id"], str(tn_val))) or fnode_index.get(
+                        ("*", info["catch_id"], str(tn_val))
+                    )
+
+            # Mode C / Fallback: Geometry endpoint snapping within 5m
+            if dn_id is None and topo_mode == "geometry":
+                pe = info["poly"][-1]
+                gx0, gy0 = int(pe[0] // 50), int(pe[1] // 50)
+                best_d = 5.0
+                for gx in range(gx0 - 1, gx0 + 2):
+                    for gy in range(gy0 - 1, gy0 + 2):
+                        for cand_id, sx, sy in start_pt_grid.get((f_idx, gx, gy), ()):
+                            if cand_id != riv_id:
+                                d = math.hypot(pe[0] - sx, pe[1] - sy)
+                                if d < best_d:
+                                    best_d = d
+                                    dn_id = cand_id
+
+            if dn_id is not None and dn_id != riv_id and dn_id in reaches_by_id:
+                # Keep within same CatchID (or allow cross-file link when no explicit CatchID column exists)
+                if not has_explicit_catch_id or reaches_by_id[dn_id]["catch_id"] == info["catch_id"]:
+                    raw_parent_dn[riv_id] = dn_id
+
+        # Break any cycles so the directed graph is a strict forest of trees
+        parent_dn = {}
+        visited_state = {}  # 0 = visiting, 1 = done
+        cycles_broken = 0
+        for riv_id in sorted(reaches_by_id.keys()):
+            curr = riv_id
+            chain = []
+            while curr is not None and curr not in visited_state:
+                visited_state[curr] = 0
+                chain.append(curr)
+                nxt = raw_parent_dn.get(curr)
+                if nxt is not None and visited_state.get(nxt) == 0:
+                    # Cycle detected: break link at curr
+                    raw_parent_dn.pop(curr, None)
+                    cycles_broken += 1
+                    break
+                curr = nxt
+            for u in chain:
+                visited_state[u] = 1
+                if u in raw_parent_dn:
+                    parent_dn[u] = raw_parent_dn[u]
+
+        parents = defaultdict(list)
+        mouths = []
+        for riv_id in sorted(reaches_by_id.keys()):
+            dn = parent_dn.get(riv_id)
+            if dn is None:
+                mouths.append(riv_id)
+            else:
+                parents[dn].append(riv_id)
+
+        # If the input dataset lacked an explicit CatchID column, assign integer CatchIDs
+        # automatically from weakly connected river tree components rooted at each mouth
+        if not has_explicit_catch_id and len(mouths) > 1:
+            tree_members = {}
+            for m_id in mouths:
+                comp = []
+                stack = [m_id]
+                while stack:
+                    u = stack.pop()
+                    comp.append(u)
+                    for p in parents[u]:
+                        stack.append(p)
+                tree_members[m_id] = comp
+
+            snapped_rivids = {
+                key_to_rivid[best_snap[nid][1]]
+                for nid in best_snap
+                if best_snap[nid][0] <= max_snap_m and best_snap[nid][1] in key_to_rivid
+            }
+            monitored_mouths = [
+                m_id for m_id in mouths if any(u in snapped_rivids for u in tree_members[m_id])
+            ]
+            active_mouths = monitored_mouths if monitored_mouths else mouths
+            active_mouths.sort(key=lambda m_id: (-len(tree_members[m_id]), m_id))
+
+            keep_rivids = set()
+            for new_cid, m_id in enumerate(active_mouths, 1):
+                for u in tree_members[m_id]:
+                    reaches_by_id[u]["catch_id"] = new_cid
+                    keep_rivids.add(u)
+
+            if len(keep_rivids) < len(reaches_by_id):
+                reaches_by_id = {u: info for u, info in reaches_by_id.items() if u in keep_rivids}
+                parent_dn = {u: dn for u, dn in parent_dn.items() if u in keep_rivids and dn in keep_rivids}
+                parents = defaultdict(list)
+                for u, dn in parent_dn.items():
+                    parents[dn].append(u)
+                key_to_rivid = {k: v for k, v in key_to_rivid.items() if v in keep_rivids}
+            mouths = active_mouths
+
+        # Verify polyline vertex orientation (upstream -> downstream) and compute reach lengths
+        flipped_cnt = 0
+        for riv_id, info in reaches_by_id.items():
+            poly = info["poly"]
+            dn = parent_dn.get(riv_id)
+            if dn is not None:
+                dn_poly = reaches_by_id[dn]["poly"]
+                d_end_to_dn = min(
+                    math.hypot(poly[-1][0] - dn_poly[0][0], poly[-1][1] - dn_poly[0][1]),
+                    math.hypot(poly[-1][0] - dn_poly[-1][0], poly[-1][1] - dn_poly[-1][1]),
                 )
+                d_start_to_dn = min(
+                    math.hypot(poly[0][0] - dn_poly[0][0], poly[0][1] - dn_poly[0][1]),
+                    math.hypot(poly[0][0] - dn_poly[-1][0], poly[0][1] - dn_poly[-1][1]),
+                )
+                if d_start_to_dn + 10.0 < d_end_to_dn:
+                    poly = list(reversed(poly))
+                    info["poly"] = poly
+                    info["flipped"] = True
+                    if info["zs"]:
+                        info["zs"] = list(reversed(info["zs"]))
+                    flipped_cnt += 1
 
-        # Mode C / Fallback: Geometry endpoint snapping within 5m
-        if dn_id is None and topo_mode == "geometry":
-            pe = info["poly"][-1]
-            gx0, gy0 = int(pe[0] // 50), int(pe[1] // 50)
-            best_d = 5.0
-            for gx in range(gx0 - 1, gx0 + 2):
-                for gy in range(gy0 - 1, gy0 + 2):
-                    for cand_id, sx, sy in start_pt_grid.get((f_idx, gx, gy), ()):
-                        if cand_id != riv_id:
-                            d = math.hypot(pe[0] - sx, pe[1] - sy)
-                            if d < best_d:
-                                best_d = d
-                                dn_id = cand_id
+            tot_m, sinu, coords_net = compute_polyline_metrics(poly)
+            info["tot_m"] = tot_m
+            info["length_km"] = max(1e-4, tot_m / 1000.0)
+            info["sinuosity"] = sinu
+            info["coords_net"] = coords_net
 
-        if dn_id is not None and dn_id != riv_id and dn_id in reaches_by_id:
-            # Keep within same CatchID (or allow cross-file link when no explicit CatchID column exists)
-            if not has_explicit_catch_id or reaches_by_id[dn_id]["catch_id"] == info["catch_id"]:
-                raw_parent_dn[riv_id] = dn_id
-
-    # Break any cycles so the directed graph is a strict forest of trees
-    parent_dn = {}
-    visited_state = {}  # 0 = visiting, 1 = done
-    cycles_broken = 0
-    for riv_id in sorted(reaches_by_id.keys()):
-        curr = riv_id
-        chain = []
-        while curr is not None and curr not in visited_state:
-            visited_state[curr] = 0
-            chain.append(curr)
-            nxt = raw_parent_dn.get(curr)
-            if nxt is not None and visited_state.get(nxt) == 0:
-                # Cycle detected: break link at curr
-                raw_parent_dn.pop(curr, None)
-                cycles_broken += 1
-                break
-            curr = nxt
-        for u in chain:
-            visited_state[u] = 1
-            if u in raw_parent_dn:
-                parent_dn[u] = raw_parent_dn[u]
-
-    parents = defaultdict(list)
-    mouths = []
-    for riv_id in sorted(reaches_by_id.keys()):
-        dn = parent_dn.get(riv_id)
-        if dn is None:
-            mouths.append(riv_id)
-        else:
-            parents[dn].append(riv_id)
-
-    # If the input dataset lacked an explicit CatchID column, assign integer CatchIDs
-    # automatically from weakly connected river tree components rooted at each mouth
-    if not has_explicit_catch_id and len(mouths) > 1:
-        tree_members = {}
-        for m_id in mouths:
-            comp = []
+        # Downstream-to-upstream tree traversal: topological order & Dist2Mth_km
+        topo_order = []
+        for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
             stack = [m_id]
             while stack:
                 u = stack.pop()
-                comp.append(u)
+                topo_order.append(u)
+                u_info = reaches_by_id[u]
+                dn = parent_dn.get(u)
+                raw_d2m = _opt_float(u_info["row"].get(d2m_col)) if d2m_col else None
+                if raw_d2m is not None and raw_d2m > 0:
+                    u_info["d2m_km"] = raw_d2m * d2m_scale
+                else:
+                    base_d2m = reaches_by_id[dn]["d2m_km"] if dn is not None else 0.0
+                    u_info["d2m_km"] = base_d2m + u_info["length_km"]
                 for p in parents[u]:
                     stack.append(p)
-            tree_members[m_id] = comp
 
-        snapped_rivids = {
-            key_to_rivid[best_snap[nid][1]]
-            for nid in best_snap
-            if best_snap[nid][0] <= max_snap_m and best_snap[nid][1] in key_to_rivid
-        }
-        monitored_mouths = [
-            m_id for m_id in mouths if any(u in snapped_rivids for u in tree_members[m_id])
-        ]
-        active_mouths = monitored_mouths if monitored_mouths else mouths
-        active_mouths.sort(key=lambda m_id: (-len(tree_members[m_id]), m_id))
-
-        keep_rivids = set()
-        for new_cid, m_id in enumerate(active_mouths, 1):
-            for u in tree_members[m_id]:
-                reaches_by_id[u]["catch_id"] = new_cid
-                keep_rivids.add(u)
-
-        if len(keep_rivids) < len(reaches_by_id):
-            reaches_by_id = {u: info for u, info in reaches_by_id.items() if u in keep_rivids}
-            parent_dn = {u: dn for u, dn in parent_dn.items() if u in keep_rivids and dn in keep_rivids}
-            parents = defaultdict(list)
-            for u, dn in parent_dn.items():
-                parents[dn].append(u)
-            key_to_rivid = {k: v for k, v in key_to_rivid.items() if v in keep_rivids}
-        mouths = active_mouths
-
-    # Verify polyline vertex orientation (upstream -> downstream) and compute reach lengths
-    flipped_cnt = 0
-    for riv_id, info in reaches_by_id.items():
-        poly = info["poly"]
-        dn = parent_dn.get(riv_id)
-        if dn is not None:
-            dn_poly = reaches_by_id[dn]["poly"]
-            d_end_to_dn = min(
-                math.hypot(poly[-1][0] - dn_poly[0][0], poly[-1][1] - dn_poly[0][1]),
-                math.hypot(poly[-1][0] - dn_poly[-1][0], poly[-1][1] - dn_poly[-1][1]),
-            )
-            d_start_to_dn = min(
-                math.hypot(poly[0][0] - dn_poly[0][0], poly[0][1] - dn_poly[0][1]),
-                math.hypot(poly[0][0] - dn_poly[-1][0], poly[0][1] - dn_poly[-1][1]),
-            )
-            if d_start_to_dn + 10.0 < d_end_to_dn:
-                poly = list(reversed(poly))
-                info["poly"] = poly
-                info["flipped"] = True
-                if info["zs"]:
-                    info["zs"] = list(reversed(info["zs"]))
-                flipped_cnt += 1
-
-        tot_m, sinu, coords_net = compute_polyline_metrics(poly)
-        info["tot_m"] = tot_m
-        info["length_km"] = max(1e-4, tot_m / 1000.0)
-        info["sinuosity"] = sinu
-        info["coords_net"] = coords_net
-
-    # Downstream-to-upstream tree traversal: topological order & Dist2Mth_km
-    topo_order = []
-    for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
-        stack = [m_id]
-        while stack:
-            u = stack.pop()
-            topo_order.append(u)
+        # Upstream-to-downstream pass: compute Shreve, Strahler, and US_Accum_km where needed
+        for u in reversed(topo_order):
             u_info = reaches_by_id[u]
-            dn = parent_dn.get(u)
-            raw_d2m = _opt_float(u_info["row"].get(d2m_col)) if d2m_col else None
-            if raw_d2m is not None and raw_d2m > 0:
-                u_info["d2m_km"] = raw_d2m * d2m_scale
+            rdict = u_info["row"]
+            ps = parents[u]
+
+            # Shreve order
+            raw_shr = _opt_float(rdict.get(shreve_col)) if shreve_col else None
+            if raw_shr is not None and int(raw_shr) > 0:
+                u_info["shreve"] = int(raw_shr)
             else:
-                base_d2m = reaches_by_id[dn]["d2m_km"] if dn is not None else 0.0
-                u_info["d2m_km"] = base_d2m + u_info["length_km"]
-            for p in parents[u]:
-                stack.append(p)
+                u_info["shreve"] = sum(reaches_by_id[p]["shreve"] for p in ps) if ps else 1
 
-    # Upstream-to-downstream pass: compute Shreve, Strahler, and US_Accum_km where needed
-    for u in reversed(topo_order):
-        u_info = reaches_by_id[u]
-        rdict = u_info["row"]
-        ps = parents[u]
+            # Strahler order
+            raw_str = _opt_float(rdict.get(strahler_col)) if strahler_col else None
+            if raw_str is not None and int(raw_str) > 0:
+                u_info["strahler"] = int(raw_str)
+            elif not ps:
+                u_info["strahler"] = 1
+            else:
+                child_s = [reaches_by_id[p]["strahler"] for p in ps]
+                mx_s = max(child_s)
+                u_info["strahler"] = mx_s + 1 if child_s.count(mx_s) >= 2 else mx_s
 
-        # Shreve order
-        raw_shr = _opt_float(rdict.get(shreve_col)) if shreve_col else None
-        if raw_shr is not None and int(raw_shr) > 0:
-            u_info["shreve"] = int(raw_shr)
-        else:
-            u_info["shreve"] = sum(reaches_by_id[p]["shreve"] for p in ps) if ps else 1
-
-        # Strahler order
-        raw_str = _opt_float(rdict.get(strahler_col)) if strahler_col else None
-        if raw_str is not None and int(raw_str) > 0:
-            u_info["strahler"] = int(raw_str)
-        elif not ps:
-            u_info["strahler"] = 1
-        else:
-            child_s = [reaches_by_id[p]["strahler"] for p in ps]
-            mx_s = max(child_s)
-            u_info["strahler"] = mx_s + 1 if child_s.count(mx_s) >= 2 else mx_s
-
-        # US_Accum_km (AFV weight)
-        raw_afv = _opt_float(rdict.get(afv_col)) if afv_col else None
-        if raw_afv is not None and raw_afv > 0:
-            u_info["us_accum_km"] = max(1e-4, raw_afv * afv_scale)
-        else:
-            u_info["us_accum_km"] = u_info["length_km"] + sum(reaches_by_id[p]["us_accum_km"] for p in ps)
+            # US_Accum_km (AFV weight)
+            raw_afv = _opt_float(rdict.get(afv_col)) if afv_col else None
+            if raw_afv is not None and raw_afv > 0:
+                u_info["us_accum_km"] = max(1e-4, raw_afv * afv_scale)
+            else:
+                u_info["us_accum_km"] = u_info["length_km"] + sum(reaches_by_id[p]["us_accum_km"] for p in ps)
 
     # Transform reach (start, mid, end) coordinates to EPSG:27700 so all maps & Easting/Northing are in BNG
     if crs_epsg != 27700:
@@ -2121,17 +2434,33 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
 
     # Extract elevation, slope, and BGS geology (via spatial join with ORN reference grid if available)
     orn_grid, orn_rbd_names = load_orn_spatial_reference(runtime_cfg=eff_cfg)
-    for u in topo_order:
+    orn_flat = _flatten_orn_spatial_grid(orn_grid) if (use_cpp and orn_grid) else None
+    if orn_flat is not None and topo_order:
+        ref_x, ref_y, ref_recs = orn_flat
+        qx = array.array("d", (reaches_by_id[u]["coords_bng"][2] for u in topo_order))
+        qy = array.array("d", (reaches_by_id[u]["coords_bng"][3] for u in topo_order))
+        orn_idx_arr = cpp_spatial_hash_query_batch(ref_x, ref_y, qx, qy, cell_size=2000.0, lib=geom_lib)
+    else:
+        ref_recs = None
+        orn_idx_arr = None
+
+    for t_i, u in enumerate(topo_order):
         u_info = reaches_by_id[u]
         rdict = u_info["row"]
         f_idx = u_info["file_idx"]
         zs = u_info["zs"]
         _, _, mx, my, _, _ = u_info["coords_bng"]
-        orn_ref = query_orn_spatial_grid(orn_grid, mx, my)
+        if orn_idx_arr is not None:
+            ri = orn_idx_arr[t_i]
+            orn_ref = ref_recs[ri] if ri >= 0 else None
+        else:
+            orn_ref = query_orn_spatial_grid(orn_grid, mx, my)
 
         # Elevation: 1. explicit attribute, 2. 3D WKB Z mean, 3. Nodes table FNODE/TNODE, 4. ORN spatial join
         elev = _opt_float(rdict.get(elev_col)) if elev_col else None
-        if elev is None and zs:
+        if elev is None and use_cpp and u_info.get("z_count", 0) > 0:
+            elev = u_info["z_mean"]
+        elif elev is None and zs:
             elev = statistics.mean(zs)
         elif elev is None and node_lookup:
             fn_key = str(rdict.get(fnode_col))
@@ -2148,7 +2477,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         # Slope (m/m): 1. explicit attribute, 2. 3D WKB Z drop, 3. ORN spatial join
         raw_slope = _opt_float(rdict.get(slope_col)) if slope_col else None
         slope = raw_slope if (raw_slope is not None and raw_slope >= 0) else None
-        if slope is None and len(zs) >= 2 and u_info["length_km"] > 0:
+        if slope is None and use_cpp and u_info.get("z_count", 0) >= 2 and u_info["length_km"] > 0:
+            slope = max(0.0, (u_info["z_first"] - u_info["z_last"]) / (u_info["length_km"] * 1000.0))
+        elif slope is None and len(zs) >= 2 and u_info["length_km"] > 0:
             slope = max(0.0, (zs[0] - zs[-1]) / (u_info["length_km"] * 1000.0))
         if slope is None:
             slope = orn_ref[4] if orn_ref else 0.005
@@ -2176,28 +2507,39 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
 
     # Top-down pass: compute log_AFV AFTER elevation & aquifer extraction so hydro_yield scheme uses true reach attributes
     afv_scheme = cfg.get("afv_scheme", "length")
-    log_afv = {}
-    for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
-        log_afv[m_id] = 0.0
-        stack = [m_id]
-        while stack:
-            u = stack.pop()
-            ps = parents[u]
-            if ps:
-                p_weights = {
-                    p: compute_afv_reach_weight(
-                        afv_scheme,
-                        reaches_by_id[p]["us_accum_km"],
-                        reaches_by_id[p].get("shreve", 1),
-                        reaches_by_id[p].get("elevation", 0.0),
-                        reaches_by_id[p].get("is_aq", 0),
-                    )
-                    for p in ps
-                }
-                sum_us = sum(p_weights.values())
-                for p in ps:
-                    log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
-                    stack.append(p)
+    if use_cpp and n_r > 0:
+        us_acc_arr = array.array("d", (reaches_by_id[rid]["us_accum_km"] for rid in ordered_rivs))
+        shr_arr = array.array("i", (int(reaches_by_id[rid].get("shreve", 1)) for rid in ordered_rivs))
+        el_arr = array.array("d", (float(reaches_by_id[rid].get("elevation", 0.0)) for rid in ordered_rivs))
+        aq_arr = array.array("i", (int(reaches_by_id[rid].get("is_aq", 0)) for rid in ordered_rivs))
+        log_afv_arr = cpp_compute_log_afv_tree(
+            out_dn_idx, out_topo_idx, us_acc_arr, shr_arr, el_arr, aq_arr,
+            afv_scheme=afv_scheme, lib=geom_lib,
+        )
+        log_afv = {ordered_rivs[i_r]: log_afv_arr[i_r] for i_r in range(n_r)}
+    else:
+        log_afv = {}
+        for m_id in sorted(mouths, key=lambda x: (reaches_by_id[x]["catch_id"], x)):
+            log_afv[m_id] = 0.0
+            stack = [m_id]
+            while stack:
+                u = stack.pop()
+                ps = parents[u]
+                if ps:
+                    p_weights = {
+                        p: compute_afv_reach_weight(
+                            afv_scheme,
+                            reaches_by_id[p]["us_accum_km"],
+                            reaches_by_id[p].get("shreve", 1),
+                            reaches_by_id[p].get("elevation", 0.0),
+                            reaches_by_id[p].get("is_aq", 0),
+                        )
+                        for p in ps
+                    }
+                    sum_us = sum(p_weights.values())
+                    for p in ps:
+                        log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
+                        stack.append(p)
 
     # Write station-level snapping summary (rsn_sites.csv) and multi-period reach table (rsn_reach_periods.csv)
     if unc_by_site is None or meth_by_site is None:
@@ -2541,6 +2883,20 @@ def main():
         action="store_true",
         help="Rescan raw RSN/SSN CSVs to add any missing determinands to configs/determinands.json.",
     )
+    parser.add_argument(
+        "--geom-engine",
+        dest="geom_engine",
+        choices=["auto", "cpp", "python"],
+        default="auto",
+        help="Geometry/river-tree engine: 'auto' (use OpenMP C++ s3n_fast_geom if available), 'cpp', or 'python'.",
+    )
+    parser.add_argument(
+        "--geom-threads",
+        dest="geom_threads",
+        type=int,
+        default=0,
+        help="OpenMP thread count for C++ geometry engine (0 = OpenMP default).",
+    )
     args = parser.parse_args()
     runtime_cfg = configure_runtime_dirs(gis_dir=args.gis_dir, data_dir=args.data_dir, out_dir=args.out_dir)
     ensure_all_configs(BASE_DIR, data_dir=runtime_cfg.data_dir, update_determinands=args.update_determinands)
@@ -2716,6 +3072,8 @@ def main():
         and max(all_sample_vals, default=1.0) > 1.0
     ) else 1.0
 
+    geom_lib = resolve_geom_engine(args.geom_engine, args.geom_threads, base_dir=BASE_DIR)
+
     # Dispatch to generic network pipeline if not using standard ORN fast path
     if cfg.get("covariates", {}).get("mode") != "orn_100m_table" or args.topology_mode != "auto" or args.afv_col:
         preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
@@ -2723,13 +3081,18 @@ def main():
                                    pts_source=pts_source, source_key=source_key,
                                    range_mode=active_range_mode,
                                    runtime_cfg=runtime_cfg, out_dir=out_dir,
-                                   unc_by_site=unc_by_site, meth_by_site=meth_by_site)
+                                   unc_by_site=unc_by_site, meth_by_site=meth_by_site,
+                                   geom_lib=geom_lib)
         return
 
     # Standard ORN v2 fast path
     max_snap_m = float(args.max_snap_dist if args.max_snap_dist is not None else cfg.get("max_snap_dist_m", 250.0))
     gpkg_path = ensure_gpkg_paths(cfg)[0]
     print(f"2. Scanning {os.path.basename(gpkg_path)} geometry to snap {source_abbr} stations (<= {max_snap_m:.0f}m)...")
+    if geom_lib is not None:
+        print(f"   [Geometry Engine] Using OpenMP C++ s3n_fast_geom ({cpp_get_geom_max_threads(geom_lib)} threads).")
+    else:
+        print("   [Geometry Engine] Using pure-Python geometry/tree path.")
     conn = sqlite3.connect(gpkg_path)
     try:
         conn.execute("PRAGMA temp_store = MEMORY")
@@ -2744,38 +3107,86 @@ def main():
             site_grid[(int(px // 2000), int(py // 2000))].append((nid, px, py))
 
         best_snap = {nid: (1e18, None, None, 0.0, 0.0) for nid in all_station_ids}
+        snap_pad_orn = max(1500.0, max_snap_m + 500.0)
+        cpp_chunk_size = 50000
 
-        for row in c.execute("SELECT RivID, CatchID, Dist2Mth, Shape FROM ORN"):
-            riv_id, catch_id, d2m, blob = row
-            env = parse_gpkg_envelope(blob)
-            if env is not None:
-                minx, maxx, miny, maxy = env
-            else:
-                poly = parse_gpkg_multilinestring(blob)
-                if not poly:
+        if geom_lib is not None:
+            n_st = len(all_station_ids)
+            st_x = array.array("d", (float(pts[nid][0]) for nid in all_station_ids))
+            st_y = array.array("d", (float(pts[nid][1]) for nid in all_station_ids))
+            cpp_best_dist = array.array("d", [1e18]) * n_st
+            cpp_best_ridx = array.array("q", [-1]) * n_st
+            cpp_best_along = array.array("d", [0.0]) * n_st
+            best_meta = [None] * n_st
+            chunk_meta = []
+            chunk_blobs = []
+            chunk_base = 0
+
+            def _flush_orn_snap():
+                nonlocal chunk_base
+                if not chunk_blobs:
+                    return
+                chunk_end = chunk_base + len(chunk_blobs)
+                cpp_snap_stations_wkb_batch(
+                    st_x, st_y, chunk_blobs,
+                    cpp_best_dist, cpp_best_ridx, cpp_best_along,
+                    chunk_base_idx=chunk_base,
+                    cell_size=2000.0,
+                    snap_pad=snap_pad_orn,
+                    lib=geom_lib,
+                )
+                for s_i in range(n_st):
+                    gi = cpp_best_ridx[s_i]
+                    if chunk_base <= gi < chunk_end:
+                        best_meta[s_i] = chunk_meta[gi - chunk_base]
+                chunk_base = chunk_end
+                chunk_meta.clear()
+                chunk_blobs.clear()
+
+            for row in c.execute("SELECT RivID, CatchID, Dist2Mth, Shape FROM ORN"):
+                riv_id, catch_id, d2m, blob = row
+                if not blob:
                     continue
-                xs = [p[0] for p in poly]
-                ys = [p[1] for p in poly]
-                minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+                chunk_meta.append((riv_id, catch_id, d2m))
+                chunk_blobs.append(blob)
+                if len(chunk_blobs) >= cpp_chunk_size:
+                    _flush_orn_snap()
+            _flush_orn_snap()
+            for s_i, nid in enumerate(all_station_ids):
+                if best_meta[s_i] is not None:
+                    riv_id, catch_id, d2m = best_meta[s_i]
+                    best_snap[nid] = (cpp_best_dist[s_i], riv_id, catch_id, cpp_best_along[s_i], d2m)
+        else:
+            for row in c.execute("SELECT RivID, CatchID, Dist2Mth, Shape FROM ORN"):
+                riv_id, catch_id, d2m, blob = row
+                env = parse_gpkg_envelope(blob)
+                if env is not None:
+                    minx, maxx, miny, maxy = env
+                else:
+                    poly = parse_gpkg_multilinestring(blob)
+                    if not poly:
+                        continue
+                    xs = [p[0] for p in poly]
+                    ys = [p[1] for p in poly]
+                    minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
 
-            snap_pad_orn = max(1500.0, max_snap_m + 500.0)
-            gx0, gx1 = int((minx - snap_pad_orn) // 2000), int((maxx + snap_pad_orn) // 2000)
-            gy0, gy1 = int((miny - snap_pad_orn) // 2000), int((maxy + snap_pad_orn) // 2000)
-            cand_sites = []
-            for gx in range(gx0, gx1 + 1):
-                for gy in range(gy0, gy1 + 1):
-                    if (gx, gy) in site_grid:
-                        cand_sites.extend(site_grid[(gx, gy)])
-            if not cand_sites:
-                continue
+                gx0, gx1 = int((minx - snap_pad_orn) // 2000), int((maxx + snap_pad_orn) // 2000)
+                gy0, gy1 = int((miny - snap_pad_orn) // 2000), int((maxy + snap_pad_orn) // 2000)
+                cand_sites = []
+                for gx in range(gx0, gx1 + 1):
+                    for gy in range(gy0, gy1 + 1):
+                        if (gx, gy) in site_grid:
+                            cand_sites.extend(site_grid[(gx, gy)])
+                if not cand_sites:
+                    continue
 
-            poly = parse_gpkg_multilinestring(blob)
-            if len(poly) < 2:
-                continue
-            for nid, px, py in cand_sites:
-                d, along = point_to_polyline(px, py, poly)
-                if d < best_snap[nid][0]:
-                    best_snap[nid] = (d, riv_id, catch_id, along, d2m)
+                poly = parse_gpkg_multilinestring(blob)
+                if len(poly) < 2:
+                    continue
+                for nid, px, py in cand_sites:
+                    d, along = point_to_polyline(px, py, poly)
+                    if d < best_snap[nid][0]:
+                        best_snap[nid] = (d, riv_id, catch_id, along, d2m)
 
         active_monitored_sites = set(obs_by_site.keys()) | core_wq_sites
         monitored_catchments = {
@@ -2850,25 +3261,64 @@ def main():
         catch_main_river = {}
         catch_reach_cnt = defaultdict(int)
 
-        for row in c.execute(f"""
-            SELECT RivID, Fnode, Tnode, CatchID, RBD_ID, Dist2Mth, US_Accum, Shreve, Strahler, Hack, Shape, name1
-            FROM ORN
-            WHERE CatchID IN ({catch_list_sql})
-        """):
-            riv_id = row[0]
-            catch_id = row[3]
-            rbd_id = row[4]
-            shreve = row[7] or 0
-            nm1 = (row[11] or "").strip()
-            catch_reach_cnt[catch_id] += 1
-            if nm1 and (catch_id not in catch_main_river or shreve > catch_main_river[catch_id][0]):
-                catch_main_river[catch_id] = (shreve, nm1, rbd_id)
-            reaches[riv_id] = row[:10]
-            fnode_map[(catch_id, row[1])] = riv_id
-            poly = parse_gpkg_multilinestring(row[10])
-            tot, _, coords_tup = compute_polyline_metrics(poly)
-            reach_len[riv_id] = tot
-            reach_coords[riv_id] = coords_tup
+        if geom_lib is not None:
+            m_rivs = []
+            m_blobs = []
+
+            def _flush_orn_metrics():
+                if not m_blobs:
+                    return
+                met = cpp_parse_wkb_metrics_batch(m_blobs, lib=geom_lib)
+                t_a = met["tot_len_m"]
+                sx_a, sy_a = met["start_x"], met["start_y"]
+                mx_a, my_a = met["mid_x"], met["mid_y"]
+                ex_a, ey_a = met["end_x"], met["end_y"]
+                for k, m_rid in enumerate(m_rivs):
+                    reach_len[m_rid] = t_a[k]
+                    reach_coords[m_rid] = (sx_a[k], sy_a[k], mx_a[k], my_a[k], ex_a[k], ey_a[k])
+                m_rivs.clear()
+                m_blobs.clear()
+
+            for row in c.execute(f"""
+                SELECT RivID, Fnode, Tnode, CatchID, RBD_ID, Dist2Mth, US_Accum, Shreve, Strahler, Hack, Shape, name1
+                FROM ORN
+                WHERE CatchID IN ({catch_list_sql})
+            """):
+                riv_id = row[0]
+                catch_id = row[3]
+                rbd_id = row[4]
+                shreve = row[7] or 0
+                nm1 = (row[11] or "").strip()
+                catch_reach_cnt[catch_id] += 1
+                if nm1 and (catch_id not in catch_main_river or shreve > catch_main_river[catch_id][0]):
+                    catch_main_river[catch_id] = (shreve, nm1, rbd_id)
+                reaches[riv_id] = row[:10]
+                fnode_map[(catch_id, row[1])] = riv_id
+                m_rivs.append(riv_id)
+                m_blobs.append(row[10])
+                if len(m_blobs) >= cpp_chunk_size:
+                    _flush_orn_metrics()
+            _flush_orn_metrics()
+        else:
+            for row in c.execute(f"""
+                SELECT RivID, Fnode, Tnode, CatchID, RBD_ID, Dist2Mth, US_Accum, Shreve, Strahler, Hack, Shape, name1
+                FROM ORN
+                WHERE CatchID IN ({catch_list_sql})
+            """):
+                riv_id = row[0]
+                catch_id = row[3]
+                rbd_id = row[4]
+                shreve = row[7] or 0
+                nm1 = (row[11] or "").strip()
+                catch_reach_cnt[catch_id] += 1
+                if nm1 and (catch_id not in catch_main_river or shreve > catch_main_river[catch_id][0]):
+                    catch_main_river[catch_id] = (shreve, nm1, rbd_id)
+                reaches[riv_id] = row[:10]
+                fnode_map[(catch_id, row[1])] = riv_id
+                poly = parse_gpkg_multilinestring(row[10])
+                tot, _, coords_tup = compute_polyline_metrics(poly)
+                reach_len[riv_id] = tot
+                reach_coords[riv_id] = coords_tup
     finally:
         conn.close()
 
@@ -2886,59 +3336,6 @@ def main():
     print(f"   Loaded {len(reaches)} reaches across {len(monitored_catchments)} catchments.")
 
     print("4. Building directed river trees, computing log_AFV, and imputing covariates for short reaches...")
-    parents = defaultdict(list)
-    mouths = []
-    for riv_id, r in reaches.items():
-        catch_id = r[3]
-        dn = fnode_map.get((catch_id, r[2]))
-        if dn is None or dn == riv_id or dn not in reaches:
-            mouths.append(riv_id)
-        else:
-            parents[dn].append(riv_id)
-
-    parent_dn = {}
-    log_afv = {}
-    topo_order = []
-    visited = set()
-
-    def _traverse_from_mouth(m_id):
-        if m_id in visited:
-            return
-        visited.add(m_id)
-        log_afv[m_id] = 0.0
-        stack = [m_id]
-        while stack:
-            u = stack.pop()
-            topo_order.append(u)
-            ps = [p for p in parents[u] if p not in visited]
-            if ps:
-                for p in ps:
-                    visited.add(p)
-                    parent_dn[p] = u
-                    stack.append(p)
-
-    for m_id in sorted(mouths, key=lambda x: (reaches[x][3], x)):
-        _traverse_from_mouth(m_id)
-
-    # Break any disconnected cycles not reachable from existing mouths
-    for r_id in sorted(reaches.keys(), key=lambda x: (reaches[x][3], x)):
-        if r_id not in visited:
-            mouths.append(r_id)
-            _traverse_from_mouth(r_id)
-
-    for _ in range(3):
-        for u in topo_order:
-            if u not in reach_100m or reach_100m[u][0] is None:
-                dn = parent_dn.get(u)
-                if dn and dn in reach_100m and reach_100m[dn][0] is not None:
-                    reach_100m[u] = reach_100m[dn]
-        for u in reversed(topo_order):
-            if u not in reach_100m or reach_100m[u][0] is None:
-                for p in parents[u]:
-                    if p in reach_100m and reach_100m[p][0] is not None:
-                        reach_100m[u] = reach_100m[p]
-                        break
-
     def _classify_bedrock(b_desc):
         is_cl = 1 if ("CHALK" in b_desc or "LIMESTONE" in b_desc or "DOLOSTONE" in b_desc) else 0
         is_sd = 1 if ("SANDSTONE" in b_desc and "MUDSTONE" not in b_desc and "SILTSTONE" not in b_desc) else 0
@@ -2946,27 +3343,125 @@ def main():
 
     bedrock_flags_lu = {code: _classify_bedrock(desc) for code, desc in bedrock_lu.items()}
     superficial_peat_lu = {code: (1 if "PEAT" in desc else 0) for code, desc in superficial_lu.items()}
-
-    # Compute log_AFV using selected physical confluence weighting scheme (--afv-scheme)
     afv_scheme = cfg.get("afv_scheme", "length")
-    for u in topo_order:
-        ps = [p for p in parents[u] if parent_dn.get(p) == u]
-        if ps:
-            p_weights = {}
-            for p in ps:
-                r100 = reach_100m.get(p)
-                elev_p = (r100[0] or 0.0) if r100 else 0.0
-                aq_p = bedrock_flags_lu.get(r100[3], (0, 0, 0))[2] if (r100 and len(r100) > 3) else 0
-                p_weights[p] = compute_afv_reach_weight(
-                    afv_scheme,
-                    (reaches[p][6] or 0.0) / 1000.0,
-                    reaches[p][7] or 1,
-                    elev_p,
-                    aq_p,
-                )
-            sum_us = sum(p_weights.values())
-            for p in ps:
-                log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
+
+    if geom_lib is not None:
+        ordered_rivs = sorted(reaches.keys(), key=lambda x: (reaches[x][3], x))
+        n_orn = len(ordered_rivs)
+        riv_to_idx = {rid: idx for idx, rid in enumerate(ordered_rivs)}
+        raw_parent = array.array("i", [-1]) * n_orn
+        catch_arr = array.array("i", (int(reaches[rid][3] or 0) for rid in ordered_rivs))
+        for i_r, rid in enumerate(ordered_rivs):
+            r = reaches[rid]
+            dn_rid = fnode_map.get((r[3], r[2]))
+            if dn_rid is not None and dn_rid != rid and dn_rid in riv_to_idx:
+                raw_parent[i_r] = riv_to_idx[dn_rid]
+
+        out_dn_idx, out_topo_idx, _ = cpp_break_cycles(raw_parent, catch_arr, mode=1, lib=geom_lib)
+        parent_dn = {ordered_rivs[i_r]: ordered_rivs[dn_i] for i_r, dn_i in enumerate(out_dn_idx) if dn_i >= 0}
+        topo_order = [ordered_rivs[i_r] for i_r in out_topo_idx]
+
+        cov_src = array.array("i", (
+            (i_r if (rid in reach_100m and reach_100m[rid][0] is not None) else -1)
+            for i_r, rid in enumerate(ordered_rivs)
+        ))
+        cpp_impute_tree_index(out_dn_idx, out_topo_idx, cov_src, n_passes=3, lib=geom_lib)
+        for i_r, src_i in enumerate(cov_src):
+            if src_i >= 0 and src_i != i_r:
+                reach_100m[ordered_rivs[i_r]] = reach_100m[ordered_rivs[src_i]]
+
+        us_acc_arr = array.array("d", ((reaches[rid][6] or 0.0) / 1000.0 for rid in ordered_rivs))
+        shr_arr = array.array("i", (int(reaches[rid][7] or 1) for rid in ordered_rivs))
+        if afv_scheme in ("hydro_yield", "yield", "hydro"):
+            elev_arr = array.array("d", (
+                float((reach_100m[rid][0] or 0.0) if (rid in reach_100m) else 0.0)
+                for rid in ordered_rivs
+            ))
+            aq_arr = array.array("i", (
+                int(bedrock_flags_lu.get(reach_100m[rid][3], (0, 0, 0))[2] if (rid in reach_100m and len(reach_100m[rid]) > 3) else 0)
+                for rid in ordered_rivs
+            ))
+        else:
+            elev_arr = None
+            aq_arr = None
+        log_afv_arr = cpp_compute_log_afv_tree(
+            out_dn_idx, out_topo_idx, us_acc_arr, shr_arr, elev_arr, aq_arr,
+            afv_scheme=afv_scheme, lib=geom_lib,
+        )
+        log_afv = {ordered_rivs[i_r]: log_afv_arr[i_r] for i_r in range(n_orn)}
+    else:
+        parents = defaultdict(list)
+        mouths = []
+        for riv_id, r in reaches.items():
+            catch_id = r[3]
+            dn = fnode_map.get((catch_id, r[2]))
+            if dn is None or dn == riv_id or dn not in reaches:
+                mouths.append(riv_id)
+            else:
+                parents[dn].append(riv_id)
+
+        parent_dn = {}
+        log_afv = {}
+        topo_order = []
+        visited = set()
+
+        def _traverse_from_mouth(m_id):
+            if m_id in visited:
+                return
+            visited.add(m_id)
+            log_afv[m_id] = 0.0
+            stack = [m_id]
+            while stack:
+                u = stack.pop()
+                topo_order.append(u)
+                ps = [p for p in parents[u] if p not in visited]
+                if ps:
+                    for p in ps:
+                        visited.add(p)
+                        parent_dn[p] = u
+                        stack.append(p)
+
+        for m_id in sorted(mouths, key=lambda x: (reaches[x][3], x)):
+            _traverse_from_mouth(m_id)
+
+        # Break any disconnected cycles not reachable from existing mouths
+        for r_id in sorted(reaches.keys(), key=lambda x: (reaches[x][3], x)):
+            if r_id not in visited:
+                mouths.append(r_id)
+                _traverse_from_mouth(r_id)
+
+        for _ in range(3):
+            for u in topo_order:
+                if u not in reach_100m or reach_100m[u][0] is None:
+                    dn = parent_dn.get(u)
+                    if dn and dn in reach_100m and reach_100m[dn][0] is not None:
+                        reach_100m[u] = reach_100m[dn]
+            for u in reversed(topo_order):
+                if u not in reach_100m or reach_100m[u][0] is None:
+                    for p in parents[u]:
+                        if p in reach_100m and reach_100m[p][0] is not None:
+                            reach_100m[u] = reach_100m[p]
+                            break
+
+        # Compute log_AFV using selected physical confluence weighting scheme (--afv-scheme)
+        for u in topo_order:
+            ps = [p for p in parents[u] if parent_dn.get(p) == u]
+            if ps:
+                p_weights = {}
+                for p in ps:
+                    r100 = reach_100m.get(p)
+                    elev_p = (r100[0] or 0.0) if r100 else 0.0
+                    aq_p = bedrock_flags_lu.get(r100[3], (0, 0, 0))[2] if (r100 and len(r100) > 3) else 0
+                    p_weights[p] = compute_afv_reach_weight(
+                        afv_scheme,
+                        (reaches[p][6] or 0.0) / 1000.0,
+                        reaches[p][7] or 1,
+                        elev_p,
+                        aq_p,
+                    )
+                sum_us = sum(p_weights.values())
+                for p in ps:
+                    log_afv[p] = log_afv[u] + math.log(p_weights[p] / sum_us)
 
     missing_cnt = sum(1 for u in topo_order if u not in reach_100m or reach_100m[u][0] is None)
     print(f"   Tree traversal complete ({len(topo_order)} reaches, {missing_cnt} missing covariates).")

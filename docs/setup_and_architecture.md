@@ -46,18 +46,34 @@ The pipeline minimises external dependencies so it runs reliably in headless Lin
   | `splines`, `mgcv`, `rpart` | Bundled with standard R | Used when `--trend=spline\|gam\|rf\|gbm` is enabled (automatic fallback to `spline`/`linear` if unavailable). |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG/PDF/SVG plotting (`type = "cairo"`). |
 
-### 1.3 Compiled C++ / OpenMP Library
-R scripts dynamically load `src/s3n_fast_neighbors.so` (Linux/macOS) or `src/s3n_fast_neighbors.dll` (Windows via Rtools). [`src/Makevars`](../src/Makevars) and [`src/Makevars.win`](../src/Makevars.win) already configure `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root:
+### 1.3 Compiled C++ / OpenMP Libraries
+1. **R NNGP & Neighbour Engine (`src/s3n_fast_neighbors.cpp` — Required for R scripts)**:
+   R scripts dynamically load `src/s3n_fast_neighbors.so` (Linux/macOS) or `src/s3n_fast_neighbors.dll` (Windows via Rtools). [`src/Makevars`](../src/Makevars) and [`src/Makevars.win`](../src/Makevars.win) already configure `$(SHLIB_OPENMP_CXXFLAGS)`, so compile from the repository root:
 
-```bash
-# Linux / macOS (--preclean ensures any prebuilt Linux .so is rebuilt cleanly)
-R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp
-```
-```powershell
-# Windows PowerShell (omit full path if R's bin\x64 directory is on PATH; requires Rtools)
-& "C:\Program Files\R\R-<ver>\bin\x64\R.exe" CMD SHLIB src/s3n_fast_neighbors.cpp
-```
-*(Alternatively, run `system2(file.path(R.home("bin"), "R"), c("CMD", "SHLIB", "src/s3n_fast_neighbors.cpp"))` directly from an R or RStudio console without configuring `PATH`. A precompiled Linux `x86_64` `.so` is included; recompile on Windows/macOS, after editing C++ code, or on Linux distro ABI mismatches.)*
+   ```bash
+   # Linux / macOS (--preclean ensures any prebuilt Linux .so is rebuilt cleanly)
+   R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp
+   ```
+   ```powershell
+   # Windows PowerShell (omit full path if R's bin\x64 directory is on PATH; requires Rtools)
+   & "C:\Program Files\R\R-<ver>\bin\x64\R.exe" CMD SHLIB src/s3n_fast_neighbors.cpp
+   ```
+   *(Alternatively, run `system2(file.path(R.home("bin"), "R"), c("CMD", "SHLIB", "src/s3n_fast_neighbors.cpp"))` directly from an R or RStudio console without configuring `PATH`. A precompiled Linux `x86_64` `.so` is included; recompile on Windows/macOS, after editing C++ code, or on Linux distro ABI mismatches.)*
+
+2. **Python GIS Geometry & River-Tree Accelerator (`src/s3n_fast_geom.cpp` — Optional, Auto-Compiled)**:
+   [`scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) lazily loads `src/s3n_fast_geom.so` (Linux), `src/s3n_fast_geom.dylib` (macOS), or `src/s3n_fast_geom.dll` (Windows) via Python `ctypes` (`--geom-engine=auto`, default).
+   - **Auto-compile & fallback**: If the platform shared library is missing or older than `src/s3n_fast_geom.cpp`, `load_fast_geom_lib()` in [`scripts/s3n_py_utils.py`](../scripts/s3n_py_utils.py) automatically runs `g++` / `clang++` (with `-fopenmp`, or single-threaded without `-fopenmp` if OpenMP is unavailable). If no compiler is on `PATH`, preprocessing **automatically falls back to the built-in pure-Python path** with identical results (no manual compilation required unless scaling to 1M+ reach networks).
+   - **Manual build commands** (only needed if you prefer prebuilding explicitly):
+     ```bash
+     # Linux
+     g++ -O3 -std=c++17 -shared -fPIC -fopenmp src/s3n_fast_geom.cpp -o src/s3n_fast_geom.so
+     # macOS (omit -fopenmp if using stock Apple Clang without Homebrew libomp)
+     clang++ -O3 -std=c++17 -shared -fPIC src/s3n_fast_geom.cpp -o src/s3n_fast_geom.dylib
+     ```
+     ```powershell
+     # Windows (using Rtools MinGW g++ on PATH)
+     g++ -O3 -std=c++17 -shared -fopenmp src/s3n_fast_geom.cpp -o src/s3n_fast_geom.dll
+     ```
 
 ### 1.4 System Dependencies (Linux, macOS & Windows)
 | Dependency | Fedora / RHEL | Ubuntu / Debian | Purpose |
@@ -305,6 +321,7 @@ spatial_stream_model/
 ├── src/
 │   ├── Makevars                      # OpenMP compiler flags for Linux/macOS R CMD SHLIB
 │   ├── Makevars.win                  # OpenMP compiler flags for Windows Rtools R CMD SHLIB
+│   ├── s3n_fast_geom.cpp             # Optional OpenMP C++ WKB, snapping, and river-tree accelerator
 │   └── s3n_fast_neighbors.cpp        # OpenMP C++ Euler-tour & NNGP neighbor engine
 ├── tests/
 │   ├── test_python_utils.py          # Python unit tests

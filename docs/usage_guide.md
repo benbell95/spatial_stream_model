@@ -450,6 +450,8 @@ python3 scripts/01_preprocess_orn.py [OPTIONS]
 | `--topology-mode <MODE>` | `auto` | Override how river reach connectivity is constructed: `auto` (uses profile), `nodes` (`Fnode`/`Tnode` pairs), `pointer` (`NEXTDOWNID`), or `geometry` (coordinate snapping). |
 | `--afv-col <COL>` | `None` | Override attribute column used for Additive Function Value (AFV) confluence weights (e.g. `UP_CELLS`, `CATCHMENT_AREA`). |
 | `--afv-scheme <SCHEME>` | `length` | Physical confluence weighting scheme for `log_AFV`: `length` (cumulative upstream channel length `US_Accum_km`), `shreve` (Shreve link magnitude), or `hydro_yield` (elevation/orographic + Principal Aquifer baseflow hydrological yield proxy). |
+| `--geom-engine <MODE>` | `auto` | Geometry and river-tree acceleration engine: `auto` (uses OpenMP C++ [`src/s3n_fast_geom.cpp`](../src/s3n_fast_geom.cpp) when available, auto-compiling if possible and falling back to Python otherwise), `cpp`, or `python` (pure-Python reference path). |
+| `--geom-threads <N>` | `0` (OpenMP default) | OpenMP thread budget for the C++ geometry accelerator (`0` = OpenMP default / all available cores). |
 | `--list-networks` | — | Lists all configured water network profiles and exits. |
 | `--update-determinands` | `FALSE` | Scans all source monitoring files and regenerates [`configs/determinands.json`](../configs/determinands.json) with discovered codes, names, and units. |
 | `--convert-to-geoparquet <PATH>` | `None` | Converts the selected `--network` GeoPackage layer(s) into an OGC GeoParquet (`.parquet`) file and exits. |
