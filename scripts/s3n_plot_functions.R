@@ -658,7 +658,7 @@ plot_basin_map <- function(basin_pred, basin_title, domain_label, cv_tab, sc_val
   norm_tag    <- if (nm$mode == "none") "" else sprintf(" [%s]", nm$short_label)
   net_tag     <- if (has_net) sprintf(" [%s]", network_label) else ""
   src_tag     <- if (!is.null(source_label) && nzchar(source_label)) format_source_abbr(source_label) else "RSN"
-  cv_row      <- subset(cv_tab, (Domain == domain_label | grepl(paste0("^", basin_title), Domain)) &
+  cv_row      <- subset(cv_tab, (Domain == domain_label | startsWith(as.character(Domain), basin_title)) &
                                 Model == "S3N Combined (Tail-Up + Tail-Down)")
   sub_a <- if (nrow(cv_row) > 0) {
     if (has_vars) {
@@ -943,18 +943,20 @@ plot_fig4_diagnostics <- function(eng_pred, eng_cv, hum_cv, cv_tab, param_tab, d
   } else {
     "All England RSN Network"
   }
-  non_cov_params <- c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance")
+  non_cov_params <- c("Intercept", "sigma.sq", "tau.sq", "phi", "tau.sq (microscale)", "mean_meas_variance", "mean_source_penalty_var")
+  diag_rx_fig4 <- "^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|mean_source_penalty_var|gam_edf|spline_nl|rf_varimp|gbm_varimp|trend_cv|tobit_em)"
   eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
-                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter, ignore.case = TRUE))
+                     !grepl(diag_rx_fig4, Parameter, ignore.case = TRUE))
   eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
-                     !grepl("^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|gam_edf)", Parameter, ignore.case = TRUE))
+                     !grepl(diag_rx_fig4, Parameter, ignore.case = TRUE))
   if (nrow(eng_td_p) == 0) {
+    diag_rx_no_int <- "^(sigma\\.sq|tau\\.sq|phi|mean_meas_variance|mean_source_penalty_var|gam_edf|spline_nl|rf_varimp|gbm_varimp|trend_cv|tobit_em)"
     eng_td_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Down (Stream)" &
                        !(Parameter %in% setdiff(non_cov_params, "Intercept")) &
-                       !grepl("^gam_edf", Parameter, ignore.case = TRUE))
+                       !grepl(diag_rx_no_int, Parameter, ignore.case = TRUE))
     eng_tu_p <- subset(param_tab, Domain == eng_p_dom & Model == "S3N Tail-Up (FC + AFV)" &
                        !(Parameter %in% setdiff(non_cov_params, "Intercept")) &
-                       !grepl("^gam_edf", Parameter, ignore.case = TRUE))
+                       !grepl(diag_rx_no_int, Parameter, ignore.case = TRUE))
   }
   if (nrow(eng_td_p) > 0L && nrow(eng_tu_p) > 0L) {
     eng_tu_p <- eng_tu_p[match(eng_td_p$Parameter, eng_tu_p$Parameter), , drop = FALSE]

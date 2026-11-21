@@ -120,6 +120,8 @@ trans_obj <- build_transformer(trans_cli, lambda = lambda_cli, scale = scale_cli
 
 boot_arg   <- grep("^--(boot|n-boot)=", args, value = TRUE)
 n_boot_cli <- if (length(boot_arg) > 0) as.integer(sub("^--(boot|n-boot)=", "", boot_arg[1])) else 100L
+censor_arg <- grep("^--censor=", args, value = TRUE)
+censor_cli <- if (length(censor_arg) > 0) tolower(sub("^--censor=", "", censor_arg[1])) else "ros"
 
 load_s3n_backend(BASE_DIR)
 
@@ -186,6 +188,9 @@ if (trend_cli != "linear") {
 if (cv_mode_cli != "random") {
   sub_tag <- paste0(sub_tag, "_cv_", cv_mode_cli)
 }
+if (tolower(censor_cli) %in% c("em", "tobit")) {
+  sub_tag <- paste0(sub_tag, "_tobit")
+}
 OUT_ROOT <- rel_path(OUT_BASE, "results", sub_tag)
 dir.create(OUT_ROOT, recursive = TRUE, showWarnings = FALSE)
 
@@ -215,7 +220,8 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     cv_mode = cv_mode_cli,
     threshold = threshold_cli,
     threshold_dir = threshold_dir_cli,
-    design_sites = design_sites_cli
+    design_sites = design_sites_cli,
+    censor_mode = censor_cli
   )
 }
 

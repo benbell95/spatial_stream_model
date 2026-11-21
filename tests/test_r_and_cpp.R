@@ -1131,14 +1131,15 @@ assert_true(is.list(cfg_1) && identical(cfg_1, cfg_2),
             "load_directory_config returns identical cached configuration")
 
 # 12l. Warm-started fit_nngp_cpp converges closely to cold-start fit
-if (exists("fit_nngp_cpp", mode = "function") && exists("fit_u", inherits = FALSE) &&
-    !is.null(fit_u$Theta) && exists("nb_obs_tu", inherits = FALSE)) {
-  fit_warm <- fit_nngp_cpp(X_obs, y_obs, nb_obs_tu$obs_neighbors, var(y_obs),
-                           kernel_name = "exponential", init_theta = fit_u$Theta)
-  assert_true(all(is.finite(fit_warm$Beta)) && all(is.finite(fit_warm$Theta)) &&
-              abs(fit_warm$neg2loglik - fit_u$neg2loglik) < 0.5,
-              "warm-started fit_nngp_cpp reaches same log-likelihood optimum as cold start")
-}
+assert_true(exists("fit_nngp_cpp", mode = "function") && exists("nb_tu", inherits = FALSE) &&
+            exists("X_obs", inherits = FALSE) && exists("y_obs", inherits = FALSE),
+            "Test 12l prerequisites (fit_nngp_cpp, nb_tu, X_obs, y_obs) present")
+fit_cold <- fit_nngp_cpp(X_obs, as.double(y_obs), nb_tu$obs_neighbors, var(as.double(y_obs)), kernel_name = "exponential")
+fit_warm <- fit_nngp_cpp(X_obs, as.double(y_obs), nb_tu$obs_neighbors, var(as.double(y_obs)),
+                         kernel_name = "exponential", init_theta = fit_cold$Theta)
+assert_true(all(is.finite(fit_warm$Beta)) && all(is.finite(fit_warm$Theta)) &&
+            abs(fit_warm$neg2loglik - fit_cold$neg2loglik) < 0.5,
+            "warm-started fit_nngp_cpp reaches same log-likelihood optimum as cold start")
 
 # 12m. fast_read_csv / fast_write_csv preserve UTF-8 BOM, leading-zero colClasses, select=, and NA roundtrip
 csv_test_f <- tempfile(fileext = ".csv")
@@ -1218,6 +1219,37 @@ assert_true(file.exists(fig4_p1) && file.info(fig4_p1)$size > 1000L &&
             file.exists(fig4_p2) && file.info(fig4_p2)$size > 1000L,
             "plot_fig4_diagnostics renders 1-domain and multi-domain PNGs without matrix dimension drop")
 unlink(fig4_test_dir, recursive = TRUE)
+
+# 12o. Disconnected trees sharing a CatchID (anc == -1) receive wt = 0 and Euclidean penalty dist >= 1e6 in Tail-Down
+p0_disc  <- c(-1L, -1L)
+cid_disc <- c(1L, 1L)
+tt_disc  <- .Call("C_build_tree_tin_tout", as.integer(p0_disc))
+nb_td_disc <- .Call("C_compute_s3n_neighbors",
+                    2L, 1L, as.integer(p0_disc), as.integer(cid_disc),
+                    as.integer(tt_disc[[1]]), as.integer(tt_disc[[2]]),
+                    as.double(c(0.0, 0.0)), as.double(c(1.0, 1.0)), as.double(c(0.0, 0.0)),
+                    as.double(c(0.0, 3000.0)), as.double(c(0.0, 4000.0)), 1L)
+assert_near(nb_td_disc$obs_neighbors$nnWt[1], 0.0, tol = 1e-12,
+            msg = "disconnected trees sharing CatchID have wt = 0 in Tail-Down")
+assert_near(nb_td_disc$obsobs_wt[1, 2], 0.0, tol = 1e-12,
+            msg = "disconnected trees sharing CatchID have obsobs_wt = 0 in Tail-Down")
+assert_near(nb_td_disc$obs_neighbors$d[1], 1e6 + 5.0, tol = 1e-4,
+            msg = "disconnected trees sharing CatchID use 1e6 + Euclidean distance in Tail-Down")
+assert_near(nb_td_disc$obsobs_dist[1, 2], 1e6 + 5.0, tol = 1e-4,
+            msg = "disconnected trees sharing CatchID use 1e6 + Euclidean obsobs_dist in Tail-Down")
+
+# 12p. Order-invariance of impute_censored_ros() for tied < LOD observations
+ros_tied_in <- c(0.2, 0.2, 0.2, 0.5, 0.5, 1.0, 2.0, 4.0, 8.0)
+ros_tied_c  <- c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE)
+out_orig    <- impute_censored_ros(ros_tied_in, ros_tied_c)
+perm_ord    <- c(6L, 3L, 8L, 1L, 5L, 9L, 2L, 4L, 7L)
+out_perm    <- impute_censored_ros(ros_tied_in[perm_ord], ros_tied_c[perm_ord])
+inv_perm    <- match(seq_along(ros_tied_in), perm_ord)
+assert_true(length(unique(round(out_orig[1:3], 10))) == 1L &&
+            length(unique(round(out_orig[4:5], 10))) == 1L &&
+            max(abs(out_orig - out_perm[inv_perm])) < 1e-10 &&
+            all(out_orig[ros_tied_c] > 0 & out_orig[ros_tied_c] <= ros_tied_in[ros_tied_c]),
+            "impute_censored_ros is order-invariant across permutations for tied <LOD values")
 
 cat("  [PASS] Phase 5 regression suite passed\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

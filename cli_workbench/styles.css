@@ -735,7 +735,7 @@ tr.highlight-row { background: rgba(56, 189, 248, 0.08); font-weight: 600; }
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .wb-group-card.is-mode-active {
-  border-color: var(--accent);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.18), var(--shadow-card);
 }
 .wb-group-card-full {
@@ -1087,8 +1087,8 @@ tr.highlight-row { background: rgba(56, 189, 248, 0.08); font-weight: 600; }
 
 .modal-nav:hover {
   background: rgba(15, 23, 42, 0.94);
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .modal-nav:active {

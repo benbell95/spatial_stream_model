@@ -848,15 +848,32 @@ apply_range_mode_to_source <- function(source_tag, range_mode = "auto", base_dir
   }
   valid_modes <- c("tobit", "geometric", "midpoint", "lower", "upper")
   if (!(rm %in% valid_modes)) return(list(source_tag = source_tag, range_mode = rm))
-  if (grepl(paste0("_", rm, "$"), source_tag)) return(list(source_tag = source_tag, range_mode = rm))
-  if (grepl("[+]", source_tag) && any(endsWith(strsplit(source_tag, "[+]")[[1]], paste0("_", rm)))) {
-    return(list(source_tag = source_tag, range_mode = rm))
+  if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- resolve_base_dir()
+  reg <- load_source_registry(base_dir = base_dir)
+  cfg_dirs <- load_directory_config(base_dir = base_dir)
+
+  toks <- if (source_tag %in% names(reg$composites)) {
+    reg$composites[[source_tag]]$sources
+  } else {
+    unlist(strsplit(source_tag, "[+,]"))
   }
-  if (source_tag == "rsn" || source_tag == "ssn" || source_tag == "rss") {
-    return(list(source_tag = source_tag, range_mode = rm))
-  }
-  base_cand <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", source_tag)
-  eff_tag <- resolve_source_tag(paste0(base_cand, "_", rm), base_dir = base_dir)
+  toks <- trimws(toks[nzchar(trimws(toks))])
+  if (length(toks) == 0L) return(list(source_tag = source_tag, range_mode = rm))
+
+  upd <- vapply(toks, function(tok) {
+    if (tok %in% c("rsn", "ssn", "rss")) return(tok)
+    if (grepl(paste0("_", rm, "$"), tok)) return(tok)
+    base_cand <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", tok)
+    cand <- resolve_source_tag(paste0(base_cand, "_", rm), base_dir = base_dir)
+    in_reg <- cand %in% names(reg$sources)
+    in_dir <- dir.exists(rel_path(cfg_dirs$data_dir, cand)) ||
+      dir.exists(rel_path(cfg_dirs$data_dir, "custom", cand)) ||
+      dir.exists(file.path(base_dir, "data", "custom", cand)) ||
+      dir.exists(file.path(base_dir, "data", cand))
+    if (in_reg || in_dir || (length(toks) == 1L && base_cand != tok)) cand else tok
+  }, character(1))
+
+  eff_tag <- if (length(upd) > 1L) paste(upd, collapse = "+") else resolve_source_tag(upd[1], base_dir = base_dir)
   list(source_tag = eff_tag, range_mode = rm)
 }
 
@@ -915,10 +932,10 @@ resolve_network_processed_dir <- function(base_dir, network_arg = NULL, data_dir
     if (grepl("\\.(gpkg|parquet|geoparquet|pq|json)$", raw_net)) {
       stem <- sub("\\.(gpkg|parquet|geoparquet|pq|json)$", "", basename(raw_net))
       stem <- sub("\\.geo$", "", stem)
-      abbr <- tolower(stem)
+      abbr <- gsub("[^a-z0-9_]+", "_", tolower(stem))
       net_cli_arg <- raw_net_orig
     } else {
-      abbr <- raw_net
+      abbr <- gsub("[^a-z0-9_]+", "_", tolower(basename(raw_net_orig)))
       net_cli_arg <- raw_net_orig
     }
   }
@@ -965,17 +982,18 @@ load_network_metadata <- function(proc_dir) {
   meta_p <- file.path(proc_dir, "network_metadata.json")
   if (!file.exists(meta_p)) {
     return(list(
-      abbr         = "orn",
-      label        = "OS Open Rivers Network (ORN v2)",
-      short_label  = "ORN v2",
-      source       = "rsn",
-      source_abbr  = "RSN",
-      source_label = "River Surveillance Network (RSN)",
-      range_mode   = "",
-      meas_method  = "",
-      humber_cid   = 80L,
-      thames_cid   = 3055L,
-      severn_cid   = 2786L
+      abbr           = "orn",
+      label          = "OS Open Rivers Network (ORN v2)",
+      short_label    = "ORN v2",
+      source         = "rsn",
+      source_abbr    = "RSN",
+      source_label   = "River Surveillance Network (RSN)",
+      range_mode     = "",
+      meas_method    = "",
+      transform_type = "",
+      humber_cid     = 80L,
+      thames_cid     = 3055L,
+      severn_cid     = 2786L
     ))
   }
   j_obj <- read_json_safe(meta_p)
@@ -983,33 +1001,35 @@ load_network_metadata <- function(proc_dir) {
     src_key <- as.character(if (!is.null(j_obj$source)) j_obj$source else "rsn")
     cb <- if (is.list(j_obj$core_basins)) j_obj$core_basins else list()
     return(list(
-      abbr         = as.character(if (!is.null(j_obj$abbr)) j_obj$abbr else "orn"),
-      label        = as.character(if (!is.null(j_obj$label)) j_obj$label else "OS Open Rivers Network (ORN v2)"),
-      short_label  = as.character(if (!is.null(j_obj$short_label)) j_obj$short_label else "ORN v2"),
-      source       = src_key,
-      source_abbr  = as.character(if (!is.null(j_obj$source_abbr)) j_obj$source_abbr else format_source_abbr(src_key)),
-      source_label = as.character(if (!is.null(j_obj$source_label)) j_obj$source_label else format_source_label(src_key)),
-      range_mode   = as.character(if (!is.null(j_obj$range_mode)) j_obj$range_mode else ""),
-      meas_method  = as.character(if (!is.null(j_obj$meas_method)) j_obj$meas_method else ""),
-      humber_cid   = if (!is.null(cb$humber)) as.integer(cb$humber) else NA_integer_,
-      thames_cid   = if (!is.null(cb$thames)) as.integer(cb$thames) else NA_integer_,
-      severn_cid   = if (!is.null(cb$severn)) as.integer(cb$severn) else NA_integer_
+      abbr           = as.character(if (!is.null(j_obj$abbr)) j_obj$abbr else "orn"),
+      label          = as.character(if (!is.null(j_obj$label)) j_obj$label else "OS Open Rivers Network (ORN v2)"),
+      short_label    = as.character(if (!is.null(j_obj$short_label)) j_obj$short_label else "ORN v2"),
+      source         = src_key,
+      source_abbr    = as.character(if (!is.null(j_obj$source_abbr)) j_obj$source_abbr else format_source_abbr(src_key)),
+      source_label   = as.character(if (!is.null(j_obj$source_label)) j_obj$source_label else format_source_label(src_key)),
+      range_mode     = as.character(if (!is.null(j_obj$range_mode)) j_obj$range_mode else ""),
+      meas_method    = as.character(if (!is.null(j_obj$meas_method)) j_obj$meas_method else ""),
+      transform_type = as.character(if (!is.null(j_obj$transform_type)) j_obj$transform_type else ""),
+      humber_cid     = if (!is.null(cb$humber)) as.integer(cb$humber) else NA_integer_,
+      thames_cid     = if (!is.null(cb$thames)) as.integer(cb$thames) else NA_integer_,
+      severn_cid     = if (!is.null(cb$severn)) as.integer(cb$severn) else NA_integer_
     ))
   }
   lines <- readLines(meta_p, warn = FALSE)
   src_key <- parse_json_string_field(lines, "source", "rsn")
   list(
-    abbr         = parse_json_string_field(lines, "abbr", "orn"),
-    label        = parse_json_string_field(lines, "label", "OS Open Rivers Network (ORN v2)"),
-    short_label  = parse_json_string_field(lines, "short_label", "ORN v2"),
-    source       = src_key,
-    source_abbr  = parse_json_string_field(lines, "source_abbr", format_source_abbr(src_key)),
-    source_label = parse_json_string_field(lines, "source_label", format_source_label(src_key)),
-    range_mode   = parse_json_string_field(lines, "range_mode", ""),
-    meas_method  = parse_json_string_field(lines, "meas_method", ""),
-    humber_cid   = parse_json_int_field(lines, "humber", NA_integer_),
-    thames_cid   = parse_json_int_field(lines, "thames", NA_integer_),
-    severn_cid   = parse_json_int_field(lines, "severn", NA_integer_)
+    abbr           = parse_json_string_field(lines, "abbr", "orn"),
+    label          = parse_json_string_field(lines, "label", "OS Open Rivers Network (ORN v2)"),
+    short_label    = parse_json_string_field(lines, "short_label", "ORN v2"),
+    source         = src_key,
+    source_abbr    = parse_json_string_field(lines, "source_abbr", format_source_abbr(src_key)),
+    source_label   = parse_json_string_field(lines, "source_label", format_source_label(src_key)),
+    range_mode     = parse_json_string_field(lines, "range_mode", ""),
+    meas_method    = parse_json_string_field(lines, "meas_method", ""),
+    transform_type = parse_json_string_field(lines, "transform_type", ""),
+    humber_cid     = parse_json_int_field(lines, "humber", NA_integer_),
+    thames_cid     = parse_json_int_field(lines, "thames", NA_integer_),
+    severn_cid     = parse_json_int_field(lines, "severn", NA_integer_)
   )
 }
 
@@ -1187,7 +1207,7 @@ aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = num
       u_sq_sum <- as.numeric(rowsum(ifelse(ok_u, u_val^2, 0.0), g_id, reorder = FALSE))
       u_cnt    <- as.integer(rowsum(as.integer(ok_u), g_id, reorder = FALSE))
       has_u_g  <- u_cnt > 0L
-      unc_out[has_u_g] <- sqrt(u_sq_sum[has_u_g]) / counts[has_u_g]
+      unc_out[has_u_g] <- sqrt(u_sq_sum[has_u_g] / (u_cnt[has_u_g] * counts[has_u_g]))
     }
 
     m_val   <- df$meas_method
@@ -1246,7 +1266,7 @@ aggregate_samples_by_reach_weighted <- function(df, trans_obj, src_weights = num
       if (s_c[j]) s_lod[j] <- mean(trans_obj$fwd(df$raw_lod[sj]), na.rm = TRUE)
       u_j <- df$meas_uncertainty[sj]
       u_clean <- u_j[!is.na(u_j) & is.finite(u_j) & u_j >= 0]
-      if (length(u_clean) > 0L) s_u[j] <- sqrt(sum(u_clean^2)) / length(sj)
+      if (length(u_clean) > 0L) s_u[j] <- sqrt(sum(u_clean^2) / (length(u_clean) * length(sj)))
     }
     w_norm <- s_w / sum(s_w)
     val_out[k] <- sum(w_norm * s_val)

@@ -398,8 +398,9 @@ apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val 
   t_len <- length(valid_idx)
   if (t_len < 2L) return(list(slices = slice_list, rho_temporal = NA_real_))
 
-  # Estimate lag-1 temporal correlation from observed reaches aligned by RivID across consecutive slices
+  # Estimate lag-1 temporal correlation and innovation variance from observed reaches aligned by RivID
   cors <- numeric(0)
+  diffs_all <- numeric(0)
   for (k in seq_len(t_len - 1L)) {
     d1 <- slice_list[[valid_idx[k]]]$eng_pred
     d2 <- slice_list[[valid_idx[k + 1L]]]$eng_pred
@@ -409,10 +410,18 @@ apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val 
     if (length(both) >= 10L) {
       r_k <- suppressWarnings(cor(d1$obs_model_sc[both], d2$obs_model_sc[m12[both]]))
       if (is.finite(r_k)) cors <- c(cors, r_k)
+      diffs_all <- c(diffs_all, d2$obs_model_sc[m12[both]] - d1$obs_model_sc[both])
     }
   }
   rho_t <- if (length(cors) > 0L) min(0.85, max(0.15, mean(cors))) else 0.60
   R_t <- outer(seq_len(t_len), seq_len(t_len), function(a, b) rho_t^abs(a - b))
+  sigma2_temp_est <- if (length(diffs_all) >= 10L) {
+    v_d <- stats::var(diffs_all)
+    m2_d <- mean(diffs_all^2)
+    max(0.01, 0.5 * (if (is.finite(v_d) && v_d > 1e-6) v_d else m2_d))
+  } else {
+    NA_real_
+  }
 
   borrow_domain <- function(df_list) {
     if (any(vapply(df_list, is.null, logical(1)))) return(df_list)
@@ -420,7 +429,7 @@ apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val 
     q <- length(ref_riv)
     Z <- matrix(0.0, nrow = q, ncol = t_len)
     V <- matrix(1e12, nrow = q, ncol = t_len)
-    P <- matrix(0.0, nrow = q, ncol = t_len)
+    has_val <- matrix(FALSE, nrow = q, ncol = t_len)
     for (k in seq_len(t_len)) {
       d <- df_list[[k]]
       idx <- match(ref_riv, d$RivID)
@@ -432,19 +441,33 @@ apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val 
         ok_pos <- which(ok)[fin]
         Z[ok_pos, k] <- zk[fin]
         V[ok_pos, k] <- vk[fin]
-        P[ok_pos, k] <- 1.0 / vk[fin]
+        has_val[ok_pos, k] <- TRUE
       }
+    }
+    sig2_t <- if (is.finite(sigma2_temp_est)) {
+      sigma2_temp_est
+    } else {
+      v_obs_med <- stats::median(V[has_val], na.rm = TRUE)
+      if (is.finite(v_obs_med)) max(0.01, 0.25 * v_obs_med) else 0.05
     }
     S_mat <- sqrt(V)
     out_list <- df_list
     for (t_i in seq_len(t_len)) {
-      w_vec <- rho_t^abs(seq_len(t_len) - t_i)
-      Pw <- sweep(P, 2L, w_vec, "*")
-      prec_tot <- pmax(1e-12, rowSums(Pw))
-      z_new <- rowSums(Z * Pw) / prec_tot
-      Alpha <- sweep(Pw, 1L, prec_tot, "/")
+      # Temporal innovation variance for borrowing period k to predict period t_i: sigma2_t * (1 - rho_t^(2*|k - t_i|))
+      innov_vec <- sig2_t * (1.0 - rho_t^(2.0 * abs(seq_len(t_len) - t_i)))
+      V_eff <- sweep(V, 2L, innov_vec, "+")
+      P_eff <- ifelse(has_val, 1.0 / pmax(1e-8, V_eff), 0.0)
+      prec_tot <- pmax(1e-12, rowSums(P_eff))
+      z_new <- rowSums(Z * P_eff) / prec_tot
+      Alpha <- sweep(P_eff, 1L, prec_tot, "/")
       AlphaS <- Alpha * S_mat
-      se_new <- sqrt(pmax(1e-8, rowSums((AlphaS %*% R_t) * AlphaS)))
+      # Account for both spatial error correlation R_t and AR(1) temporal discrepancy covariance
+      M_ti <- sig2_t * outer(seq_len(t_len), seq_len(t_len), function(a, b) {
+        pmax(0.0, 1.0 + rho_t^abs(a - b) - rho_t^abs(a - t_i) - rho_t^abs(b - t_i))
+      })
+      var_spatial <- rowSums((AlphaS %*% R_t) * AlphaS)
+      var_temp    <- rowSums((Alpha %*% M_ti) * Alpha)
+      se_new <- pmin(S_mat[, t_i], sqrt(pmax(1e-8, var_spatial + var_temp)))
       d_upd <- out_list[[t_i]]
       back_idx <- match(d_upd$RivID, ref_riv)
       z_mapped <- z_new[back_idx]
@@ -473,6 +496,23 @@ apply_spatiotemporal_borrowing <- function(slice_list, trans_obj, threshold_val 
     slice_list[[idx]]$hum_pred <- hum_upd[[k]]
     slice_list[[idx]]$tha_pred <- tha_upd[[k]]
     slice_list[[idx]]$sev_pred <- sev_upd[[k]]
+  }
+
+  max_ex <- max(c(0L, vapply(valid_idx, function(i) length(slice_list[[i]]$extra_fits), integer(1))), na.rm = TRUE)
+  if (max_ex > 0L) {
+    for (j in seq_len(max_ex)) {
+      ex_v <- valid_idx[vapply(valid_idx, function(i) {
+        ex <- slice_list[[i]]$extra_fits
+        !is.null(ex) && length(ex) >= j && !is.null(ex[[j]]) && !is.null(ex[[j]]$pred_df)
+      }, logical(1))]
+      if (length(ex_v) >= 2L) {
+        ex_upd <- borrow_domain(lapply(ex_v, function(i) slice_list[[i]]$extra_fits[[j]]$pred_df))
+        for (k in seq_along(ex_v)) {
+          idx <- ex_v[k]
+          slice_list[[idx]]$extra_fits[[j]]$pred_df <- ex_upd[[k]]
+        }
+      }
+    }
   }
   list(slices = slice_list, rho_temporal = rho_t)
 }
@@ -699,6 +739,11 @@ build_cv_folds <- function(df_obs, cv_mode = "random", k_folds = 5L, seed = 2026
 }
 
 compute_exceedance_risk <- function(pred_sc, se_sc, threshold_val, trans_obj, dir = "above") {
+  if (!is.finite(threshold_val) ||
+      (!is.null(trans_obj$valid_fn) && !isTRUE(trans_obj$valid_fn(threshold_val)))) {
+    stop(sprintf("Threshold %.4g is outside the domain of transformation '%s'.",
+                 threshold_val, trans_obj$short_label))
+  }
   thresh_sc <- as.numeric(trans_obj$fwd(threshold_val))
   if (!is.finite(thresh_sc)) {
     stop(sprintf("Threshold %.4g is outside the domain of transformation '%s'.",
@@ -1145,14 +1190,15 @@ compute_reach_log_afv <- function(df, afv_scheme = "length", parent_0 = NULL) {
     w_vec <- if ("Shreve" %in% names(df)) pmax(1.0, as.double(df$Shreve)) else rep(1.0, nrow(df))
     return(.Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 1L))
   }
-  # hydro_yield: upstream length * orographic elevation factor * aquifer baseflow factor
-  us_km <- if ("US_Accum_km" %in% names(df)) pmax(0.05, as.double(df$US_Accum_km)) else rep(1.0, nrow(df))
-  elev  <- if ("Elevation" %in% names(df)) pmax(0.0, as.double(df$Elevation)) else rep(0.0, nrow(df))
-  aq    <- if ("Is_Aquifer" %in% names(df)) pmax(0.0, as.double(df$Is_Aquifer)) else rep(0.0, nrow(df))
+  # hydro_yield: local reach length * orographic elevation factor * aquifer baseflow factor, accumulated bottom-up
+  len_km <- if ("length_km" %in% names(df)) pmax(0.05, as.double(df$length_km)) else rep(1.0, nrow(df))
+  len_km[!is.finite(len_km)] <- 0.5
+  elev   <- if ("Elevation" %in% names(df)) pmax(0.0, as.double(df$Elevation)) else rep(0.0, nrow(df))
+  aq     <- if ("Is_Aquifer" %in% names(df)) pmax(0.0, as.double(df$Is_Aquifer)) else rep(0.0, nrow(df))
   elev[!is.finite(elev)] <- 0.0
   aq[!is.finite(aq)]     <- 0.0
-  w_vec <- us_km * (1.0 + 0.002 * elev) * (1.0 + 0.50 * aq)
-  .Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 1L)
+  w_vec <- len_km * (1.0 + 0.002 * elev) * (1.0 + 0.50 * aq)
+  .Call("C_compute_log_afv", as.integer(parent_0), as.double(w_vec), 0L)
 }
 
 fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponential", init_theta = NULL) {
@@ -1213,21 +1259,50 @@ fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponentia
   phi_hat <- exp(max(-9.0,  min(4.0, opt$par[2])))
   final   <- .Call("C_s3n_nngp_loglik", X_obs, y_dbl, obs_nb, eta_hat, phi_hat, kernel_id)
 
+  # Finite-difference Fisher information SEs for log-scale covariance parameters (sigma.sq, tau.sq, phi)
+  se_log_th <- rep(NA_real_, 3L)
+  tryCatch({
+    h_ep <- c(0.05, 0.05)
+    p0 <- c(log(eta_hat), log(phi_hat))
+    f0 <- final$neg2loglik
+    H <- matrix(0.0, 2L, 2L)
+    for (j in 1:2) {
+      dp <- c(0.0, 0.0); dp[j] <- h_ep[j]
+      fp <- eval_obj(p0 + dp); fm <- eval_obj(p0 - dp)
+      H[j, j] <- (fp - 2.0 * f0 + fm) / (h_ep[j]^2)
+    }
+    fpp <- eval_obj(p0 + h_ep); fpm <- eval_obj(p0 + c(h_ep[1], -h_ep[2]))
+    fmp <- eval_obj(p0 + c(-h_ep[1], h_ep[2])); fmm <- eval_obj(p0 - h_ep)
+    H[1, 2] <- (fpp - fpm - fmp + fmm) / (4.0 * h_ep[1] * h_ep[2])
+    H[2, 1] <- H[1, 2]
+    info_m <- 0.5 * H
+    ev <- eigen(info_m, symmetric = TRUE, only.values = TRUE)$values
+    if (all(is.finite(ev)) && all(ev > 1e-6)) {
+      V_ep <- solve(info_m)
+      se_log_eta <- sqrt(max(1e-6, V_ep[1, 1]))
+      se_log_phi <- sqrt(max(1e-6, V_ep[2, 2]))
+      se_log_sig <- sqrt(2.0 / max(10.0, n_obs))
+      se_log_tau <- sqrt(se_log_sig^2 + se_log_eta^2)
+      se_log_th <- pmin(1.5, pmax(0.02, c(se_log_sig, se_log_tau, se_log_phi)))
+    }
+  }, error = function(e) NULL)
+
   theta <- c(sigma.sq = final$sigma.sq, tau.sq = final$tau.sq, phi = phi_hat)
   names(theta) <- c("sigma.sq", "tau.sq", "phi")
   beta <- as.numeric(final$Beta)
   names(beta) <- colnames(X_obs)
 
   list(
-    Beta        = beta,
-    Theta       = theta,
-    cov.beta    = final$cov.beta,
-    neg2loglik  = final$neg2loglik,
-    loglik      = -0.5 * final$neg2loglik,
-    aic         = final$neg2loglik + 2.0 * (p_cov + 3.0),
-    kernel_name = kernel_name,
-    kernel_id   = kernel_id,
-    engine      = "cpp_nngp"
+    Beta         = beta,
+    Theta        = theta,
+    cov.beta     = final$cov.beta,
+    se.log.theta = se_log_th,
+    neg2loglik   = final$neg2loglik,
+    loglik       = -0.5 * final$neg2loglik,
+    aic          = final$neg2loglik + 2.0 * (p_cov + 3.0),
+    kernel_name  = kernel_name,
+    kernel_id    = kernel_id,
+    engine       = "cpp_nngp"
   )
 }
 
@@ -1236,10 +1311,15 @@ bootstrap_nngp_cpp <- function(fit_obj, X_obs) {
   ci_beta_lo <- fit_obj$Beta - 1.959964 * se_beta
   ci_beta_hi <- fit_obj$Beta + 1.959964 * se_beta
   n_obs <- nrow(X_obs)
-  se_fac <- max(0.08, min(0.45, sqrt(2.0 / max(10.0, n_obs))))
+  se_fallback <- max(0.08, min(0.45, sqrt(2.0 / max(10.0, n_obs))))
+  se_log_th <- if (!is.null(fit_obj$se.log.theta) && length(fit_obj$se.log.theta) == 3L && all(is.finite(fit_obj$se.log.theta))) {
+    fit_obj$se.log.theta
+  } else {
+    rep(se_fallback, 3L)
+  }
   th <- fit_obj$Theta
-  ci_th_lo <- th * exp(-1.959964 * se_fac)
-  ci_th_hi <- th * exp( 1.959964 * se_fac)
+  ci_th_lo <- th * exp(-1.959964 * se_log_th)
+  ci_th_hi <- th * exp( 1.959964 * se_log_th)
   ci_mat <- rbind(c(ci_beta_lo, ci_th_lo), c(ci_beta_hi, ci_th_hi))
   colnames(ci_mat) <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
   list(confidence.interval = ci_mat)
@@ -1268,6 +1348,8 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
     max(1e-5, 0.5 * (as.numeric(fit_tu$Theta["tau.sq"]) + as.numeric(fit_td$Theta["tau.sq"])) - (if (has_me) mean(v_use) else 0.0))
   }
 
+  kernel_id_euc <- if (as.integer(kernel_id_td) %in% c(0L, 1L)) as.integer(kernel_id_td) else 0L
+
   eval_joint <- function(par) {
     r_td   <- exp(max(-8.0, min(8.0, par[1])))
     r_euc  <- exp(max(-10.0, min(6.0, par[2])))
@@ -1275,7 +1357,7 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
     phi_eu <- exp(max(-7.0, min(3.0, par[4])))
     s_scale <- if (has_me) exp(max(-8.0, min(8.0, par[5]))) else 1.0
     params_vec <- c(s_scale * 1.0, s_scale * r_td, s_scale * r_euc, s_scale * r_tau,
-                    phi_tu, phi_td, phi_eu, as.double(kernel_id), as.double(kernel_id_td), as.double(kernel_id_td))
+                    phi_tu, phi_td, phi_eu, as.double(kernel_id), as.double(kernel_id_td), as.double(kernel_id_euc))
     res <- .Call("C_s3n_joint_nngp",
                  X_obs, y_dbl, v_use, X_obs, numeric(p_cov),
                  nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
@@ -1343,7 +1425,7 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
   s_scale <- if (has_me) exp(max(-8.0, min(8.0, par_hat[5]))) else 1.0
 
   params_raw <- c(s_scale * 1.0, s_scale * r_td, s_scale * r_euc, s_scale * r_tau,
-                  phi_tu, phi_td, phi_eu, as.double(kernel_id), as.double(kernel_id_td), as.double(kernel_id_td))
+                  phi_tu, phi_td, phi_eu, as.double(kernel_id), as.double(kernel_id_td), as.double(kernel_id_euc))
   fit_res <- .Call("C_s3n_joint_nngp",
                    X_obs, y_dbl, v_use, X_obs, numeric(p_cov),
                    nb_tu, nb_td, as.double(mid_x), as.double(mid_y),
@@ -1360,7 +1442,7 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
     phi_euc       = phi_eu,
     kernel_id     = as.double(kernel_id),
     kernel_id_td  = as.double(kernel_id_td),
-    kernel_id_euc = as.double(kernel_id_td)
+    kernel_id_euc = as.double(kernel_id_euc)
   )
   beta_hat <- as.numeric(fit_res$Beta)
   names(beta_hat) <- colnames(X_obs)
@@ -1544,11 +1626,14 @@ fit_s3n_domain <- function(df,
     fit_nngp_cpp(X_m, as.double(y_m), obs_nb_m, vy_m, kernel_name = k_name, init_theta = init_theta)
   }
 
+  y_vec_pre_em <- y_vec_obs
+  is_cens_obs_full <- rep(FALSE, n_obs)
   em_res <- NULL
   censor_req <- tolower(trimws(as.character(censor_mode)))
   if (censor_req %in% c("em", "tobit") &&
       ("is_censored" %in% names(df_ord)) && ("lod_sc" %in% names(df_ord))) {
     is_cens_obs <- !is.na(df_ord$is_censored[1:n_obs]) & (df_ord$is_censored[1:n_obs] == 1L)
+    is_cens_obs_full <- is_cens_obs
     if (any(is_cens_obs)) {
       lod_sc_obs <- as.numeric(df_ord$lod_sc[1:n_obs]) - trend_fit$g_perp_tr
       em_res <- run_spatial_tobit_em_kriging(
@@ -1565,8 +1650,8 @@ fit_s3n_domain <- function(df,
       cens_fin  <- which(is_cens_obs & is.finite(lod_sc_obs))
       if (length(cens_fin) == length(em_res$cond_var) && length(cens_fin) > 0L) {
         v_add <- ifelse(is.finite(em_res$cond_var) & em_res$cond_var > 0, em_res$cond_var, 0.0)
+        # Preserve v_bar_phys strictly as physical measurement error before adding conditional EM downweighting
         v_phys[cens_fin] <- v_phys[cens_fin] + v_add
-        v_bar_phys <- mean(v_phys)
         if (any(v_phys > 1e-12)) {
           has_phys_me <- TRUE
           has_me      <- TRUE
@@ -1678,8 +1763,11 @@ fit_s3n_domain <- function(df,
                 joint_fit$params["sigma.sq_tu"], joint_fit$params["sigma.sq_td"],
                 joint_fit$params["sigma.sq_euc"], joint_fit$params["tau.sq"]))
   } else {
-    pred_comb <- (info_tu * pr_tu$prediction + info_td * pr_td$prediction) / (info_tu + info_td)
-    se_comb   <- sqrt((info_tu^2 * se_tu^2 + info_td^2 * se_td^2) / ((info_tu + info_td)^2))
+    w_tu <- info_tu / (info_tu + info_td)
+    w_td <- info_td / (info_tu + info_td)
+    rho_err <- pmin(1.0, pmax(0.0, 1.0 - 0.5 * (info_tu + info_td)))
+    pred_comb <- w_tu * pr_tu$prediction + w_td * pr_td$prediction
+    se_comb   <- sqrt(pmax(1e-10, w_tu^2 * se_tu^2 + w_td^2 * se_td^2 + 2.0 * w_tu * w_td * rho_err * se_tu * se_td))
   }
   t_pred <- (proc.time() - t3)[3]
 
@@ -1800,7 +1888,8 @@ fit_s3n_domain <- function(df,
   cv_tu    <- rep(NA_real_, n_obs)
   cv_td    <- rep(NA_real_, n_obs)
   cv_comb  <- rep(NA_real_, n_obs)
-  y_vec    <- y_vec_obs
+  use_tobit_cv <- !is.null(em_res) && em_res$n_cens > 0L
+  y_vec    <- y_vec_pre_em
 
   riv_vec   <- df_ord$RivID
   par_vec   <- df_ord$parent_dn
@@ -1817,15 +1906,26 @@ fit_s3n_domain <- function(df,
     tr <- which(!is.na(folds) & folds != k)
     if (length(te) == 0L || length(tr) < ncol(X_obs)) next
 
+    # Prune zero-variance covariate columns inside training fold to avoid rank-deficient X_tr
+    if (ncol(X_obs) > 1L) {
+      col_sds <- apply(X_obs[tr, -1L, drop = FALSE], 2L, function(v) suppressWarnings(sd(v, na.rm = TRUE)))
+      keep_cols <- c(1L, 1L + which(is.finite(col_sds) & col_sds > 1e-8))
+    } else {
+      keep_cols <- 1L
+    }
+    X_tr_raw   <- X_obs[tr, keep_cols, drop = FALSE]
+    X_te_raw   <- X_obs[te, keep_cols, drop = FALSE]
+    X_eval_raw <- X_obs[c(tr, te), keep_cols, drop = FALSE]
+
     beta_ols <- tryCatch(
-      qr.solve(X_obs[tr, , drop = FALSE], y_vec[tr]),
+      qr.solve(X_tr_raw, y_vec[tr]),
       error = function(e) {
-        b <- suppressWarnings(lm.fit(X_obs[tr, , drop = FALSE], y_vec[tr])$coefficients)
+        b <- suppressWarnings(lm.fit(X_tr_raw, y_vec[tr])$coefficients)
         b[!is.finite(b)] <- 0.0
         b
       }
     )
-    cv_ols[te] <- as.numeric(X_obs[te, , drop = FALSE] %*% beta_ols)
+    cv_ols[te] <- as.numeric(X_te_raw %*% beta_ols)
 
     ord_cv     <- c(tr, te, unobs_tail)
     riv_cv     <- riv_vec[ord_cv]
@@ -1843,15 +1943,37 @@ fit_s3n_domain <- function(df,
     my_cv      <- my_vec[ord_cv]
     tt_cv      <- .Call("C_build_tree_tin_tout", as.integer(par_cv))
 
-    X_eval <- X_obs[c(tr, te), , drop = FALSE]
-    X_tr   <- X_obs[tr, , drop = FALSE]
+    X_eval <- X_eval_raw
+    X_tr   <- X_tr_raw
     tf_cv  <- fit_nonlinear_trend(
       X_tr = X_tr, y_tr_vec = y_vec[tr], X_eval = X_eval,
       trend_mode = trend_req, spline_df = spline_df, n_trees = n_trees, seed = 2026L + k
     )
     cv_trend[te] <- tf_cv$pred_eval[(n_tr + 1L):n_eval]
     g_te_cv      <- tf_cv$g_perp_eval[(n_tr + 1L):n_eval]
-    y_tr         <- as.matrix(y_vec[tr] - tf_cv$g_perp_tr)
+    y_tr_vec     <- y_vec[tr] - tf_cv$g_perp_tr
+    if (use_tobit_cv) {
+      # Out-of-fold Spatial Tobit EM on training fold tr only (zero test-fold leakage)
+      is_c_tr <- is_cens_obs_full[tr]
+      if (any(is_c_tr)) {
+        lod_tr <- as.numeric(df_ord$lod_sc[tr]) - tf_cv$g_perp_tr
+        df_tr_cv <- df_ord[ord_cv, , drop = FALSE]
+        nb_td_tr_cv <- .Call("C_compute_s3n_neighbors",
+                             as.integer(c(n_tr, n_eval)), as.integer(m_cv), as.integer(par_cv),
+                             as.integer(cid_cv), as.integer(tt_cv[[1]]), as.integer(tt_cv[[2]]),
+                             as.double(d2m_cv), as.double(up_cv), as.double(afv_cv),
+                             as.double(mx_cv), as.double(my_cv), 1L)
+        em_tr <- run_spatial_tobit_em_kriging(
+          df_ord = df_tr_cv, n_obs = n_tr, X_obs = X_tr, y_vec_init = y_tr_vec,
+          is_cens_obs = is_c_tr, lod_sc_obs = lod_tr,
+          m_use = m_cv, parent_0 = par_cv, tt = tt_cv, up_dist = up_cv,
+          nb_td = nb_td_tr_cv, estimate_component = estimate_component,
+          kernel_req = kernel_req, max_iter = 4L
+        )
+        y_tr_vec <- em_tr$y_em
+      }
+    }
+    y_tr         <- as.matrix(y_tr_vec)
     vy_cv        <- max(1e-4, var(as.numeric(y_tr)))
 
     run_cv_component <- function(model_int, k_name, kid, init_theta = NULL) {
@@ -1866,7 +1988,7 @@ fit_s3n_domain <- function(df,
         nnDist = nb_cv$pred_neighbors$nnDist[te_slice],
         nnWght = nb_cv$pred_neighbors$nnWght[te_slice]
       )
-      X_te <- X_obs[te, , drop = FALSE]
+      X_te <- X_te_raw
       f_cv <- estimate_component(X_tr, y_tr, nb_cv$obs_neighbors, vy_cv, k_name, init_theta = init_theta)
       if (has_me) {
         v_phys_tr  <- v_phys[tr]
@@ -1943,6 +2065,11 @@ fit_s3n_domain <- function(df,
       cv_comb[te] <- (res_tu_cv$inf * cv_tu[te] + res_td_cv$inf * cv_td[te]) / (res_tu_cv$inf + res_td_cv$inf)
     }
   }
+  # Evaluate CV metrics on uncensored test stations when Tobit EM was active (fallback to all if >85% censored)
+  cv_eval_mask <- rep(TRUE, n_obs)
+  if (use_tobit_cv && sum(!is_cens_obs_full) >= 10L) {
+    cv_eval_mask <- !is_cens_obs_full
+  }
 
   rmse <- function(a, b) { ok <- is.finite(a) & is.finite(b); if (!any(ok)) NA_real_ else sqrt(mean((a[ok] - b[ok])^2)) }
   mae  <- function(a, b) { ok <- is.finite(a) & is.finite(b); if (!any(ok)) NA_real_ else mean(abs(a[ok] - b[ok])) }
@@ -1974,9 +2101,18 @@ fit_s3n_domain <- function(df,
     CV_Mode        = cv_info$actual_mode,
     Model          = c("OLS (Non-Spatial)", "S3N Tail-Down (Stream Distance)", "S3N Tail-Up (Flow-Connected + AFV)", "S3N Combined (Tail-Up + Tail-Down)"),
     Spatial_Method = sp_method_lbl,
-    RMSE           = round(c(rmse(y_vec, cv_ols), rmse(y_vec, cv_td), rmse(y_vec, cv_tu), rmse(y_vec, cv_comb)), 4),
-    MAE            = round(c(mae(y_vec, cv_ols),  mae(y_vec, cv_td),  mae(y_vec, cv_tu),  mae(y_vec, cv_comb)), 4),
-    R2             = round(c(r2(y_vec, cv_ols),   r2(y_vec, cv_td),   r2(y_vec, cv_tu),   r2(y_vec, cv_comb)), 4)
+    RMSE           = round(c(rmse(y_vec[cv_eval_mask], cv_ols[cv_eval_mask]),
+                             rmse(y_vec[cv_eval_mask], cv_td[cv_eval_mask]),
+                             rmse(y_vec[cv_eval_mask], cv_tu[cv_eval_mask]),
+                             rmse(y_vec[cv_eval_mask], cv_comb[cv_eval_mask])), 4),
+    MAE            = round(c(mae(y_vec[cv_eval_mask], cv_ols[cv_eval_mask]),
+                             mae(y_vec[cv_eval_mask], cv_td[cv_eval_mask]),
+                             mae(y_vec[cv_eval_mask], cv_tu[cv_eval_mask]),
+                             mae(y_vec[cv_eval_mask], cv_comb[cv_eval_mask])), 4),
+    R2             = round(c(r2(y_vec[cv_eval_mask], cv_ols[cv_eval_mask]),
+                             r2(y_vec[cv_eval_mask], cv_td[cv_eval_mask]),
+                             r2(y_vec[cv_eval_mask], cv_tu[cv_eval_mask]),
+                             r2(y_vec[cv_eval_mask], cv_comb[cv_eval_mask])), 4)
   )
   print(cv_summary, row.names = FALSE)
 

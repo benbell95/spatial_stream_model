@@ -503,6 +503,7 @@ def transform_coords_batch(xy_list, from_epsg, to_epsg):
     if not xy_list or int(from_epsg) == int(to_epsg):
         return list(xy_list)
     src_e, dst_e = int(from_epsg), int(to_epsg)
+    ndigits = 8 if dst_e in (4326, 4258, 4277) else 3
 
     if _PyprojTransformer is not None:
         key = ("pyproj", src_e, dst_e)
@@ -513,7 +514,7 @@ def transform_coords_batch(xy_list, from_epsg, to_epsg):
         xs = [p[0] for p in xy_list]
         ys = [p[1] for p in xy_list]
         txs, tys = tr.transform(xs, ys)
-        return [(round(float(x), 3), round(float(y), 3)) for x, y in zip(txs, tys)]
+        return [(round(float(x), ndigits), round(float(y), ndigits)) for x, y in zip(txs, tys)]
 
     if _OsgeoOsr is not None:
         key = ("osr", src_e, dst_e)
@@ -528,7 +529,7 @@ def transform_coords_batch(xy_list, from_epsg, to_epsg):
             ct = _OsgeoOsr.CoordinateTransformation(srs_in, srs_out)
             _TRANSFORMER_CACHE[key] = ct
         pts3 = ct.TransformPoints([(float(x), float(y), 0.0) for x, y in xy_list])
-        return [(round(p[0], 3), round(p[1], 3)) for p in pts3]
+        return [(round(p[0], ndigits), round(p[1], ndigits)) for p in pts3]
 
     inp = "\n".join(f"{x:.8f} {y:.8f}" for x, y in xy_list)
     fmt = "%.8f" if dst_e in (4326, 4258, 4277) else "%.3f"
@@ -875,19 +876,24 @@ def detect_range_mode(source_key, sources_reg, custom_samples=None, custom_dir=N
 # ==============================================================================
 
 def normal_cdf(x):
-    """Standard normal cumulative distribution function Phi(x)."""
-    if x < -8.0:
-        return 1e-15
-    if x > 8.0:
-        return 1.0 - 1e-15
-    return max(1e-15, min(1.0 - 1e-15, 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))))
+    """Standard normal cumulative distribution function Phi(x) using erfc for tail precision."""
+    return max(1e-300, min(1.0 - 1e-16, 0.5 * math.erfc(-x / math.sqrt(2.0))))
 
 
 def normal_pdf(x):
     """Standard normal probability density function phi(x)."""
-    if abs(x) > 8.0:
-        return 1e-15
+    if abs(x) > 37.0:
+        return 0.0
     return (1.0 / math.sqrt(2.0 * math.pi)) * math.exp(-0.5 * x * x)
+
+
+def _inv_mills_left(beta):
+    """Stable inverse Mills ratio phi(beta)/Phi(beta) obeying Gordon's tail lower bound."""
+    asympt = 0.5 * (-beta + math.sqrt(beta * beta + 4.0))
+    if beta < -6.0:
+        return asympt
+    cdf = 0.5 * math.erfc(-beta / math.sqrt(2.0))
+    return max(asympt, normal_pdf(beta) / max(1e-300, cdf))
 
 
 _RE_CENS = re.compile(r"^(<|<=|>|>=)\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?:\s*[a-zA-Z/%_°][a-zA-Z0-9/%_°.\-]*)?$")
@@ -1067,19 +1073,22 @@ class IntervalTobitModel:
         if rec_type == "left":
             b_pos = max(1e-6, b) if b is not None else 1e-6
             beta = (math.log(b_pos) - m) / s
-            exp_log_y = m - s * (normal_pdf(beta) / max(1e-12, normal_cdf(beta)))
-            res = (round(math.exp(exp_log_y), 5), "<", 0.0, b, round(s / math.sqrt(12.0), 4), "tobit_interval")
+            exp_log_y = min(math.log(b_pos), m - s * _inv_mills_left(beta))
+            val_imp = min(b_pos, math.exp(exp_log_y))
+            res = (round(val_imp, 5), "<", 0.0, b, round(s / math.sqrt(12.0), 4), "tobit_interval")
         elif rec_type == "right":
             a_pos = max(1e-6, a) if a is not None else 1e-6
             alpha = (math.log(a_pos) - m) / s
-            exp_log_y = m + s * (normal_pdf(alpha) / max(1e-12, 1.0 - normal_cdf(alpha)))
-            res = (round(math.exp(exp_log_y), 5), ">", a, None, round(s / math.sqrt(12.0), 4), "tobit_interval")
+            exp_log_y = max(math.log(a_pos), m + s * _inv_mills_left(-alpha))
+            val_imp = max(a_pos, math.exp(exp_log_y))
+            res = (round(val_imp, 5), ">", a, None, round(s / math.sqrt(12.0), 4), "tobit_interval")
         elif rec_type == "interval":
             if a is None or a <= 0:
                 b_pos = max(1e-6, b) if b is not None else 1e-6
                 beta = (math.log(b_pos) - m) / s
-                exp_log_y = m - s * (normal_pdf(beta) / max(1e-12, normal_cdf(beta)))
-                res = (round(math.exp(exp_log_y), 5), "=", a if a is not None else 0.0, b, round(s / math.sqrt(12.0), 4), "tobit_interval")
+                exp_log_y = min(math.log(b_pos), m - s * _inv_mills_left(beta))
+                val_imp = min(b_pos, math.exp(exp_log_y))
+                res = (round(val_imp, 5), "=", a if a is not None else 0.0, b, round(s / math.sqrt(12.0), 4), "tobit_interval")
             else:
                 a_pos = max(1e-6, a)
                 b_pos = max(a_pos + 1e-9, b) if b is not None else a_pos + 1e-6
@@ -1090,8 +1099,9 @@ class IntervalTobitModel:
                 if denom < 1e-10:
                     res = (round(math.sqrt(a_pos * b_pos), 5), "=", a, b, round(unc, 4), "geometric_midpoint")
                 else:
-                    exp_log_y = m + s * ((normal_pdf(alpha) - normal_pdf(beta)) / denom)
-                    res = (round(math.exp(exp_log_y), 5), "=", a, b, round(unc, 4), "tobit_interval")
+                    exp_log_y = min(math.log(b_pos), max(math.log(a_pos), m + s * ((normal_pdf(alpha) - normal_pdf(beta)) / denom)))
+                    val_imp = min(b_pos, max(a_pos, math.exp(exp_log_y)))
+                    res = (round(val_imp, 5), "=", a, b, round(unc, 4), "tobit_interval")
         else:
             res = (val or 0.0, "=", a or 0.0, b or 0.0, 0.0, "unknown")
         self.cache[cache_key] = res
@@ -1104,9 +1114,13 @@ def compute_alternative_range_result(token, range_mode="geometric"):
     if rec_type == "point":
         return val, "=", val, val, 0.0, "exact_point"
     if rec_type == "left":
-        return b, "<", 0.0, b, round(0.5 * max(0.0, b) / math.sqrt(12.0), 4), f"{range_mode}_left"
+        unc_l = round(math.log(2.0) / math.sqrt(12.0), 4) if range_mode == "geometric" else round(0.5 * max(0.0, b) / math.sqrt(12.0), 4)
+        meth_l = "geometric_midpoint" if range_mode == "geometric" else f"{range_mode}_left"
+        return b, "<", 0.0, b, unc_l, meth_l
     if rec_type == "right":
-        return a, ">", a, None, round(0.5 * max(0.0, a) / math.sqrt(12.0), 4), f"{range_mode}_right"
+        unc_r = round(math.log(2.0) / math.sqrt(12.0), 4) if range_mode == "geometric" else round(0.5 * max(0.0, a) / math.sqrt(12.0), 4)
+        meth_r = "geometric_midpoint" if range_mode == "geometric" else f"{range_mode}_right"
+        return a, ">", a, None, unc_r, meth_r
     if rec_type == "interval":
         if range_mode == "geometric":
             a_pos = max(1e-6, a) if a is not None else 1e-6
@@ -1227,9 +1241,9 @@ def apply_forward_transform(val, ttype="log", lam=None, scale=1.0):
         return None
     t = (ttype or "log").lower().strip()
     if t in ("log", "ln"):
-        return math.log(max(1e-9, val)) if val > 0 else None
+        return math.log(max(1e-9, val)) if val >= 0 else None
     if t in ("log10", "log_10"):
-        return math.log10(max(1e-9, val)) if val > 0 else None
+        return math.log10(max(1e-9, val)) if val >= 0 else None
     if t in ("log1p", "log_1p"):
         return math.log1p(max(0.0, val)) if val >= 0 else None
     if t in ("sqrt", "square_root"):
@@ -1239,12 +1253,13 @@ def apply_forward_transform(val, ttype="log", lam=None, scale=1.0):
     if t in ("fourthrt", "qtrt"):
         return math.pow(max(0.0, val), 0.25) if val >= 0 else None
     if t in ("reciprocal", "inv", "inverse"):
-        return -1.0 / max(1e-6, val) if val > 0 else None
+        return -1.0 / max(1e-6, val) if val >= 0 else None
     if t in ("boxcox", "box_cox", "bc"):
-        if val <= 0:
+        if val < 0:
             return None
+        vp = max(1e-9, val)
         lv = lam if lam is not None else 0.5
-        return math.log(val) if abs(lv) < 1e-4 else (math.pow(val, lv) - 1.0) / lv
+        return math.log(vp) if abs(lv) < 1e-4 else (math.pow(vp, lv) - 1.0) / lv
     if t in ("yeojohnson", "yeo_johnson", "yj"):
         lv = lam if lam is not None else 0.5
         if val >= 0:
@@ -1338,12 +1353,14 @@ def fit_ros_ols(records, pp):
     return (ml - slope * mz, slope)
 
 
-def apply_ros_to_records(records, fallback_params=None):
+def apply_ros_to_records(records, fallback_params=None, pp=None, params=None):
     if not any(is_c for _, is_c in records):
         return [v for v, _ in records]
-    pp = compute_ros_plotting_positions(records)
-    n_unc = sum(1 for v, is_c in records if not is_c and v > 0)
-    params = fit_ros_ols(records, pp) if (n_unc >= 3 and (n_unc / len(records)) >= 0.20) else None
+    if pp is None:
+        pp = compute_ros_plotting_positions(records)
+    if params is None:
+        n_unc = sum(1 for v, is_c in records if not is_c and v > 0)
+        params = fit_ros_ols(records, pp) if (n_unc >= 3 and (n_unc / len(records)) >= 0.20) else None
     if params is None:
         params = fallback_params
     if params is None:
@@ -1366,7 +1383,7 @@ def impute_censored_by_site(raw_by_site, method="half_lod"):
     pp_glob = compute_ros_plotting_positions(flat_recs)
     glob_params = fit_ros_ols(flat_recs, pp_glob)
     if method == "ros":
-        flat_imp = apply_ros_to_records(flat_recs, fallback_params=glob_params)
+        flat_imp = apply_ros_to_records(flat_recs, fallback_params=glob_params, pp=pp_glob, params=glob_params)
         out = defaultdict(list)
         for nid, val in zip(flat_nids, flat_imp):
             out[nid].append(val)
@@ -1406,10 +1423,15 @@ def parse_gpkg_envelope(blob):
         return None
     if blob[0] == 0x47 and blob[1] == 0x50:
         flags = blob[3]
+        if flags & 0x10:
+            return None
         env_ind = (flags >> 1) & 0x07
         if env_ind in (1, 2, 3, 4):
             bo = "<" if (flags & 0x01) else ">"
-            return struct.unpack_from(bo + "4d", blob, 8)
+            env = struct.unpack_from(bo + "4d", blob, 8)
+            if any(math.isnan(v) for v in env):
+                return None
+            return env
     return None
 
 

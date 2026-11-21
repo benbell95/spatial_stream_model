@@ -62,12 +62,17 @@ for (i in seq_along(runs)) {
   y_obs_raw  <- m_cv$obs_value
   y_pred_raw <- tr$inv(m_cv$cv_comb)
   # Ensure Box-Cox / sqrt never yield NaN; leave Raw untransformed to show negative values honestly
+  ok_r <- is.finite(y_obs_raw) & is.finite(y_pred_raw)
   err_raw <- y_pred_raw - y_obs_raw
   rmse_raw <- sqrt(mean(err_raw^2, na.rm = TRUE))
   mae_raw  <- mean(abs(err_raw), na.rm = TRUE)
   bias_raw <- mean(err_raw, na.rm = TRUE)
   med_ae_raw <- median(abs(err_raw), na.rm = TRUE)
-  r2_raw <- 1.0 - sum(err_raw^2, na.rm = TRUE) / sum((y_obs_raw - mean(y_obs_raw, na.rm = TRUE))^2, na.rm = TRUE)
+  r2_raw <- if (sum(ok_r) >= 2L) {
+    1.0 - sum(err_raw[ok_r]^2) / sum((y_obs_raw[ok_r] - mean(y_obs_raw[ok_r]))^2)
+  } else {
+    NA_real_
+  }
   neg_cv <- sum(y_pred_raw < 0, na.rm = TRUE)
 
   resid_sc <- m_cv$obs_y - m_cv$cv_comb

@@ -110,27 +110,28 @@ compute_single_run_stat_tests <- function(b1) {
                  s1, s2, s2 - s1, "W", as.numeric(mw$statistic), mw$p.value, interp)
   }
 
-  # 2. Monitoring Representativeness: Observed Stations vs. Full Network Predictions
-  obs_v <- ep$obs_value[ep$has_obs == 1 & !is.na(ep$obs_value)]
-  if (length(obs_v) >= 5) {
-    mw_rep <- suppressWarnings(wilcox.test(ep$pred_combined, obs_v, paired = FALSE))
-    ks_rep <- suppressWarnings(ks.test(ep$pred_combined, obs_v))
-    add_stat_row("Network vs. Monitored Sites", "Monitoring Representativeness",
-                 "Mann-Whitney U Test (Full Network Predictions vs Observed Stations)",
-                 sprintf("Median (%s)", b1$det_unit), length(obs_v), nrow(ep),
-                 median(obs_v, na.rm = TRUE), median(ep$pred_combined, na.rm = TRUE),
-                 median(ep$pred_combined, na.rm = TRUE) - median(obs_v, na.rm = TRUE),
+  # 2. Monitoring Representativeness: Disjoint Monitored vs. Unmonitored Reach Predictions
+  mon_v   <- ep$pred_combined[!is.na(ep$has_obs) & ep$has_obs == 1 & is.finite(ep$pred_combined)]
+  unmon_v <- ep$pred_combined[(is.na(ep$has_obs) | ep$has_obs == 0) & is.finite(ep$pred_combined)]
+  if (length(mon_v) >= 5L && length(unmon_v) >= 5L) {
+    mw_rep <- suppressWarnings(wilcox.test(unmon_v, mon_v, paired = FALSE))
+    ks_rep <- suppressWarnings(ks.test(unmon_v, mon_v))
+    add_stat_row("Unmonitored vs. Monitored Reaches", "Monitoring Representativeness",
+                 "Mann-Whitney U Test (Unmonitored vs Monitored Reach Predictions)",
+                 sprintf("Median (%s)", b1$det_unit), length(mon_v), length(unmon_v),
+                 median(mon_v, na.rm = TRUE), median(unmon_v, na.rm = TRUE),
+                 median(unmon_v, na.rm = TRUE) - median(mon_v, na.rm = TRUE),
                  "W", as.numeric(mw_rep$statistic), mw_rep$p.value,
-                 sprintf("Pred/Obs median ratio = %s (%s)",
-                         fmt_med_ratio(median(ep$pred_combined, na.rm = TRUE), median(obs_v, na.rm = TRUE)),
+                 sprintf("Unmonitored/Monitored median ratio = %s (%s)",
+                         fmt_med_ratio(median(unmon_v, na.rm = TRUE), median(mon_v, na.rm = TRUE)),
                          sig_stars(mw_rep$p.value)))
-    add_stat_row("Network vs. Monitored Sites", "Monitoring Representativeness",
-                 "Two-Sample Kolmogorov-Smirnov Test (Predictions vs Observed Stations)",
-                 "Empirical CDF D-stat", length(obs_v), nrow(ep),
-                 mean(obs_v, na.rm = TRUE), mean(ep$pred_combined, na.rm = TRUE),
-                 mean(ep$pred_combined, na.rm = TRUE) - mean(obs_v, na.rm = TRUE),
+    add_stat_row("Unmonitored vs. Monitored Reaches", "Monitoring Representativeness",
+                 "Two-Sample Kolmogorov-Smirnov Test (Unmonitored vs Monitored Reach Predictions)",
+                 "Empirical CDF D-stat", length(mon_v), length(unmon_v),
+                 mean(mon_v, na.rm = TRUE), mean(unmon_v, na.rm = TRUE),
+                 mean(unmon_v, na.rm = TRUE) - mean(mon_v, na.rm = TRUE),
                  "D", as.numeric(ks_rep$statistic), ks_rep$p.value,
-                 sprintf("Distributional shift between gauged sites and full network (D = %.3f, %s)",
+                 sprintf("Distributional shift between monitored and unmonitored reaches (D = %.3f, %s)",
                          ks_rep$statistic, sig_stars(ks_rep$p.value)))
   }
 

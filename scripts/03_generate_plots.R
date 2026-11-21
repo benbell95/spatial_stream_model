@@ -236,7 +236,7 @@ if (length(bundles) == 1 && grepl("^(year_|season_|month_)", basename(target_dir
   parent_d <- dirname(target_dir)
   self_eng_p <- normalizePath(bundles[[1]]$eng_pred_file, mustWork = FALSE)
   sib_csvs <- list.files(parent_d, pattern = "^predictions_.*\\.csv$", recursive = TRUE, full.names = TRUE)
-  sib_csvs <- sib_csvs[!grepl("^predictions_(humber|thames|severn|basin_|river_|catchid_)", basename(sib_csvs))]
+  sib_csvs <- sib_csvs[!grepl("^predictions_(humber|thames|severn|basin_|river_|catchid_|exceedance_)", basename(sib_csvs))]
   sib_csvs <- sib_csvs[normalizePath(sib_csvs, mustWork = FALSE) != self_eng_p]
   if (length(sib_csvs) > 0) {
     for (sc in sib_csvs) {
@@ -324,15 +324,19 @@ for (b in bundles) {
                         vars_label = vars_sub, network_label = net_lbl,
                         source_label = b$source_label, norm_mode = norm_cli)
 
-  plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
-                       file.path(b$FIG_DIR, f2_name), reverse_color = reverse_color,
-                       sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl,
-                       source_label = b$source_label, norm_mode = norm_cli)
+  if (!is.null(b$hum_pred) && nrow(b$hum_pred) > 0L) {
+    plot_fig2_humber_map(b$hum_pred, b$cv_tab, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
+                         file.path(b$FIG_DIR, f2_name), reverse_color = reverse_color,
+                         sc_se = shared_sc_se_h, vars_label = vars_sub, network_label = net_lbl,
+                         source_label = b$source_label, norm_mode = norm_cli)
+  }
 
-  plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
-                              file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color,
-                              vars_label = vars_sub, network_label = net_lbl,
-                              source_label = b$source_label, norm_mode = norm_cli)
+  if ((!is.null(b$tha_pred) && nrow(b$tha_pred) > 0L) || (!is.null(b$sev_pred) && nrow(b$sev_pred) > 0L)) {
+    plot_fig3_thames_severn_map(b$tha_pred, b$sev_pred, shared_sc_val, b$det_code, b$det_name, b$det_unit, b$trans_obj,
+                                file.path(b$FIG_DIR, f3_name), reverse_color = reverse_color,
+                                vars_label = vars_sub, network_label = net_lbl,
+                                source_label = b$source_label, norm_mode = norm_cli)
+  }
 
   plot_fig4_diagnostics(b$eng_pred, b$eng_cv, b$hum_cv, b$cv_tab, b$param_tab,
                         b$det_code, b$det_name, b$det_unit, b$trans_obj,

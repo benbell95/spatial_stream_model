@@ -229,8 +229,8 @@ def format_custom_dataset(
     # Aliases
     id_aliases = [
         "site_id", "station_id", "monitoring_id", "location_id", "network_id",
-        "sample_id", "site_code", "station_code", "loc_id", "stn_id",
-        "site_name", "sitename", "site", "objectid", "globalid", "id"
+        "site_code", "station_code", "loc_id", "stn_id",
+        "site_name", "sitename", "site", "id"
     ]
     name_aliases = [
         "site_name", "station_name", "location_name", "monitoring_location_name",

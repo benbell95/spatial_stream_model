@@ -223,20 +223,24 @@ fit_multivariate_s3n_domain <- function(df_reaches,
   if (kernel_req == "auto") kernel_req <- "exponential"
   kid <- as.integer(S3N_KERNEL_SPECS[[kernel_req]]$id)
 
-  m_use <- min(as.integer(m_neighbors), max(2L, n_obs - 2L))
-  nb_tu <- .Call("C_compute_s3n_neighbors",
-                 as.integer(n_obs), as.integer(m_use), as.integer(parent_0),
-                 as.integer(df_ord$CatchID), as.integer(tt[[1]]), as.integer(tt[[2]]),
-                 as.double(df_ord$Dist2Mth_km), as.double(up_dist), as.double(df_ord$log_AFV),
-                 as.double(df_ord$mid_X), as.double(df_ord$mid_Y), 0L)
-  nb_td <- .Call("C_compute_s3n_neighbors",
-                 as.integer(n_obs), as.integer(m_use), as.integer(parent_0),
-                 as.integer(df_ord$CatchID), as.integer(tt[[1]]), as.integer(tt[[2]]),
-                 as.double(df_ord$Dist2Mth_km), as.double(up_dist), as.double(df_ord$log_AFV),
-                 as.double(df_ord$mid_X), as.double(df_ord$mid_Y), 1L)
-
   method_req <- tolower(trimws(as.character(method)))
   keep_coloc_nb <- (method_req == "colocated")
+
+  m_use <- min(as.integer(m_neighbors), max(2L, n_obs - 2L))
+  nb_tu <- NULL
+  nb_td <- NULL
+  if (!keep_coloc_nb) {
+    nb_tu <- .Call("C_compute_s3n_neighbors",
+                   as.integer(n_obs), as.integer(m_use), as.integer(parent_0),
+                   as.integer(df_ord$CatchID), as.integer(tt[[1]]), as.integer(tt[[2]]),
+                   as.double(df_ord$Dist2Mth_km), as.double(up_dist), as.double(df_ord$log_AFV),
+                   as.double(df_ord$mid_X), as.double(df_ord$mid_Y), 0L)
+    nb_td <- .Call("C_compute_s3n_neighbors",
+                   as.integer(n_obs), as.integer(m_use), as.integer(parent_0),
+                   as.integer(df_ord$CatchID), as.integer(tt[[1]]), as.integer(tt[[2]]),
+                   as.double(df_ord$Dist2Mth_km), as.double(up_dist), as.double(df_ord$log_AFV),
+                   as.double(df_ord$mid_X), as.double(df_ord$mid_Y), 1L)
+  }
 
   # Step 1: Warm-Start with fast univariate S3N fits on each variable's standardized observed subset
   uni_fits <- vector("list", P)
@@ -448,14 +452,6 @@ fit_multivariate_s3n_domain <- function(df_reaches,
     )
     pred_std <- pr_full$prediction
     se_std   <- pr_full$se
-
-    # Mode 2: Aux-Aided Leave-One-Target-Out CV across observed stations
-    pr_aux <- call_mv_nngp(
-      X_obs, Y_std, X_obs, Beta_fin,
-      nb_tu, nb_td, df_ord$mid_X[1:n_obs], df_ord$mid_Y[1:n_obs], m_use,
-      pars_fin, 2L, V_m = if (has_v_eff) V_eff else NULL
-    )
-    aux_cv_std <- pr_aux$aux_pred
     cat(sprintf("    Converged in %.2fs (-2*logL = %.2f, phi_tu = %.4f, phi_td = %.4f)\n",
                 (proc.time() - t_opt0)[3], fit_fin$nll, pars_fin$phi_tu, pars_fin$phi_td))
   }
@@ -463,24 +459,23 @@ fit_multivariate_s3n_domain <- function(df_reaches,
   # Unstandardize predictions & SEs onto each determinand's own transformed model scale
   pred_sc <- sweep(sweep(pred_std, 2L, y_sds, "*"), 2L, y_means, "+")
   se_sc   <- sweep(se_std, 2L, y_sds, "*")
-  aux_cv_sc <- sweep(sweep(aux_cv_std, 2L, y_sds, "*"), 2L, y_means, "+")
 
   # Save lightweight univariate Theta seeds for CV warm-starts before freeing full fits/neighbors
   uni_init_tu <- lapply(uni_fits, function(u) if (!is.null(u) && !is.null(u$f_tu)) u$f_tu$Theta else NULL)
   uni_init_td <- lapply(uni_fits, function(u) if (!is.null(u) && !is.null(u$f_td)) u$f_td$Theta else NULL)
 
   # Free large dense observation-observation neighbor matrices before 5-fold CV
-  suppressWarnings(rm(nb_tu, nb_td, pr_full, pr_aux, uni_fits))
+  suppressWarnings(rm(nb_tu, nb_td, pr_full, uni_fits))
   gc(FALSE)
 
-  # Full Hold-Out CV (All variables masked at test fold): Compare Univariate S3N vs. Co-Kriging
+  # Full Hold-Out & Out-of-Fold Aux-Aided CV: Compare Univariate S3N vs. Co-Kriging
   cv_info <- build_cv_folds(df_ord[1:n_obs, , drop = FALSE], cv_mode = cv_mode, k_folds = 5L, seed = 2026L)
   folds   <- cv_info$folds
   fold_ids <- sort(unique(folds[is.finite(folds) & folds > 0L]))
 
   cv_uni_sc <- matrix(NA_real_, nrow = n_obs, ncol = P)
   cv_all_sc <- matrix(NA_real_, nrow = n_obs, ncol = P)
-  cv_aux_sc <- if (method_req == "colocated") matrix(NA_real_, nrow = n_obs, ncol = P) else aux_cv_sc
+  cv_aux_sc <- matrix(NA_real_, nrow = n_obs, ncol = P)
 
   for (k in fold_ids) {
     te <- which(folds == k)
@@ -665,22 +660,54 @@ fit_multivariate_s3n_domain <- function(df_reaches,
                         as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
                         as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 1L)
       # Estimate fixed-effect Beta purely on training fold tr (no Beta_fin leakage)
+      # Prune zero-variance covariate columns inside training fold to prevent singular GLS
+      if (p_cov > 1L) {
+        col_sds_mv <- apply(X_obs[tr, -1L, drop = FALSE], 2L, function(v) suppressWarnings(sd(v, na.rm = TRUE)))
+        keep_mv <- c(1L, 1L + which(is.finite(col_sds_mv) & col_sds_mv > 1e-8))
+      } else {
+        keep_mv <- 1L
+      }
+      X_tr_mv   <- X_obs[tr, keep_mv, drop = FALSE]
+      X_eval_mv <- X_obs[c(tr, te), keep_mv, drop = FALSE]
       fit_mv_tr <- call_mv_nngp(
-        X_obs[tr, , drop = FALSE], Y_std[tr, , drop = FALSE],
-        X_obs[tr, , drop = FALSE], matrix(0.0, p_cov, P),
+        X_tr_mv, Y_std[tr, , drop = FALSE],
+        X_tr_mv, matrix(0.0, ncol(X_tr_mv), P),
         nb_mv_tu, nb_mv_td, df_ord$mid_X[tr], df_ord$mid_Y[tr], m_mv,
         pars_fin, 0L, V_m = if (has_v_eff) V_eff[tr, , drop = FALSE] else NULL
       )
       pr_cv <- call_mv_nngp(
-        X_obs[tr, , drop = FALSE], Y_std[tr, , drop = FALSE],
-        X_obs[c(tr, te), , drop = FALSE], fit_mv_tr$Beta,
+        X_tr_mv, Y_std[tr, , drop = FALSE],
+        X_eval_mv, fit_mv_tr$Beta,
         nb_mv_tu, nb_mv_td, df_ord$mid_X[c(tr, te)], df_ord$mid_Y[c(tr, te)], m_mv,
         pars_fin, 1L, V_m = if (has_v_eff) V_eff[tr, , drop = FALSE] else NULL
       )
       tl_mv <- (length(tr) + 1L):ne_mv
       pr_cv_sc <- sweep(sweep(pr_cv$prediction[tl_mv, , drop = FALSE], 2L, y_sds, "*"), 2L, y_means, "+")
       cv_all_sc[te, ] <- pr_cv_sc
-      rm(nb_mv_tu, nb_mv_td, fit_mv_tr, pr_cv, pr_cv_sc, tt_mv); gc(FALSE)
+
+      # Out-of-fold Aux-Aided Co-Kriging CV: condition test reaches on training fold tr + auxiliary targets (a != p) at test sites
+      m_aux_k <- min(as.integer(m_use), max(2L, ne_mv - 2L))
+      nb_aux_tu <- .Call("C_compute_s3n_neighbors", as.integer(c(ne_mv, ne_mv)), as.integer(m_aux_k), as.integer(p0_mv),
+                         as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
+                         as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
+                         as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 0L)
+      nb_aux_td <- .Call("C_compute_s3n_neighbors", as.integer(c(ne_mv, ne_mv)), as.integer(m_aux_k), as.integer(p0_mv),
+                         as.integer(df_ord$CatchID[ord_mv]), as.integer(tt_mv[[1]]), as.integer(tt_mv[[2]]),
+                         as.double(df_ord$Dist2Mth_km[ord_mv]), as.double(up_dist[ord_mv]), as.double(df_ord$log_AFV[ord_mv]),
+                         as.double(df_ord$mid_X[ord_mv]), as.double(df_ord$mid_Y[ord_mv]), 1L)
+      V_tr_te <- if (has_v_eff) V_eff[c(tr, te), , drop = FALSE] else NULL
+      for (p_aux in seq_len(P)) {
+        Y_aux_fold <- Y_std[c(tr, te), , drop = FALSE]
+        Y_aux_fold[tl_mv, p_aux] <- NA_real_
+        pr_aux_all <- call_mv_nngp(
+          X_eval_mv, Y_aux_fold,
+          X_eval_mv, fit_mv_tr$Beta,
+          nb_aux_tu, nb_aux_td, df_ord$mid_X[c(tr, te)], df_ord$mid_Y[c(tr, te)], m_aux_k,
+          pars_fin, 1L, V_m = V_tr_te
+        )
+        cv_aux_sc[te, p_aux] <- pr_aux_all$prediction[tl_mv, p_aux] * y_sds[p_aux] + y_means[p_aux]
+      }
+      rm(nb_mv_tu, nb_mv_td, nb_aux_tu, nb_aux_td, fit_mv_tr, pr_cv, pr_cv_sc, tt_mv); gc(FALSE)
     }
   }
   aux_cv_sc <- cv_aux_sc
@@ -813,6 +840,11 @@ fit_multivariate_s3n_domain <- function(df_reaches,
         Reach_Pct     = round(100 * as.numeric(tier_tab) / q_tot, 2),
         stringsAsFactors = FALSE
       )
+    }
+    ord_back_mv <- match(df_dom$RivID, pd$RivID)
+    if (!anyNA(ord_back_mv)) {
+      pd <- pd[ord_back_mv, , drop = FALSE]
+      rownames(pd) <- NULL
     }
     pred_dfs[[p]] <- pd
   }

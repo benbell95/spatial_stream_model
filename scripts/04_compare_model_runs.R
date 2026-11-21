@@ -66,23 +66,30 @@ match_reaches_between_runs <- function(df1, df2, same_network = FALSE, max_dist_
   cell_size <- max(250.0, max_dist_m)
   gx2 <- as.integer(floor(x2[valid2] / cell_size))
   gy2 <- as.integer(floor(y2[valid2] / cell_size))
-  # Expand target points into 3x3 neighboring grid cells so lookup is a single split()
+  # Expand target points into 3x3 neighboring grid cells using integer/numeric keys so lookup is a single split()
   offsets_x <- rep(-1L:1L, times = 3L)
   offsets_y <- rep(-1L:1L, each  = 3L)
   rep_v2 <- rep(valid2, times = 9L)
   rep_gx <- rep(gx2, times = 9L) + rep(offsets_x, each = length(valid2))
   rep_gy <- rep(gy2, times = 9L) + rep(offsets_y, each = length(valid2))
-  keys2  <- paste(rep_gx, rep_gy, sep = "_")
-  bucket2 <- split(rep_v2, keys2)
-
   gx1 <- as.integer(floor(x1[valid1] / cell_size))
   gy1 <- as.integer(floor(y1[valid1] / cell_size))
-  keys1 <- paste(gx1, gy1, sep = "_")
-  in_b  <- which(keys1 %in% names(bucket2))
+  use_int_key <- max(abs(c(rep_gx, rep_gy, gx1, gy1)), na.rm = TRUE) < 16000L
+  if (use_int_key) {
+    keys2 <- (rep_gx + 16000L) * 65536L + (rep_gy + 32768L)
+    keys1 <- (gx1 + 16000L) * 65536L + (gy1 + 32768L)
+    bucket2 <- split(rep_v2, keys2)
+    keys1_chr <- as.character(keys1)
+  } else {
+    keys2 <- paste(rep_gx, rep_gy, sep = "_")
+    bucket2 <- split(rep_v2, keys2)
+    keys1_chr <- paste(gx1, gy1, sep = "_")
+  }
+  in_b <- which(keys1_chr %in% names(bucket2))
   if (length(in_b) == 0L) {
     return(data.frame(idx1 = integer(0), idx2 = integer(0), dist_m = numeric(0)))
   }
-  cands_list <- bucket2[keys1[in_b]]
+  cands_list <- bucket2[keys1_chr[in_b]]
 
   out_i1   <- integer(length(in_b))
   out_i2   <- integer(length(in_b))
@@ -90,7 +97,8 @@ match_reaches_between_runs <- function(df1, df2, same_network = FALSE, max_dist_
   n_keep   <- 0L
   max_d2   <- max_dist_m * max_dist_m
 
-  has_obs_y <- require_obs_match && ("obs_y" %in% names(df1)) && ("obs_y" %in% names(df2))
+  has_obs_raw <- require_obs_match && ("obs_value" %in% names(df1)) && ("obs_value" %in% names(df2))
+  has_obs_y   <- require_obs_match && ("obs_y" %in% names(df1)) && ("obs_y" %in% names(df2))
 
   for (m in seq_along(in_b)) {
     k  <- in_b[m]
@@ -100,12 +108,24 @@ match_reaches_between_runs <- function(df1, df2, same_network = FALSE, max_dist_
     dy <- y2[cands] - y1[i1]
     d2 <- dx * dx + dy * dy
 
-    if (has_obs_y) {
-      dy_obs <- abs(df2$obs_y[cands] - df1$obs_y[i1])
-      ok <- which(d2 <= max_d2 & dy_obs < 0.25)
+    if (has_obs_raw && is.finite(df1$obs_value[i1])) {
+      v2 <- df2$obs_value[cands]
+      rel_dy <- abs(v2 - df1$obs_value[i1]) / pmax(1e-6, abs(df1$obs_value[i1]), abs(v2))
+      rel_dy[!is.finite(rel_dy)] <- 1.0
+      ok <- which(d2 <= max_d2 & rel_dy < 0.25)
       if (length(ok) == 0L) ok <- which(d2 <= max_d2)
       if (length(ok) == 0L) next
-      best_sub <- ok[which.min(d2[ok] + (dy_obs[ok] * 200.0)^2)]
+      best_sub <- ok[which.min(d2[ok] + (rel_dy[ok] * 200.0)^2)]
+      best_i2  <- cands[best_sub]
+      best_d2  <- d2[best_sub]
+    } else if (has_obs_y && is.finite(df1$obs_y[i1])) {
+      y2_c <- df2$obs_y[cands]
+      rel_dy <- abs(y2_c - df1$obs_y[i1]) / pmax(1.0, abs(df1$obs_y[i1]), abs(y2_c))
+      rel_dy[!is.finite(rel_dy)] <- 1.0
+      ok <- which(d2 <= max_d2 & rel_dy < 0.25)
+      if (length(ok) == 0L) ok <- which(d2 <= max_d2)
+      if (length(ok) == 0L) next
+      best_sub <- ok[which.min(d2[ok] + (rel_dy[ok] * 200.0)^2)]
       best_i2  <- cands[best_sub]
       best_d2  <- d2[best_sub]
     } else {
@@ -592,35 +612,85 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     i <- pr[1]; j <- pr[2]
     b1 <- bundles[[i]]; b2 <- bundles[[j]]
     comp_lbl <- sprintf("%s vs. %s", b1$label, b2$label)
-    same_net <- (b1$net_abbr == b2$net_abbr) &&
+    same_net   <- (b1$net_abbr == b2$net_abbr) &&
       ("RivID" %in% names(b1$eng_pred)) && ("RivID" %in% names(b2$eng_pred))
-    same_det <- (b1$det_code == b2$det_code)
+    same_det   <- (b1$det_code == b2$det_code)
+    same_scale <- runs_share_scale(list(b1, b2))
+    tr1 <- build_transformer(b1$trans_type,
+                             lambda = if (is.null(b1$trans_lambda) || is.na(b1$trans_lambda)) NULL else b1$trans_lambda,
+                             scale  = if (is.null(b1$trans_scale) || is.na(b1$trans_scale)) NULL else b1$trans_scale)
+    tr2 <- build_transformer(b2$trans_type,
+                             lambda = if (is.null(b2$trans_lambda) || is.na(b2$trans_lambda)) NULL else b2$trans_lambda,
+                             scale  = if (is.null(b2$trans_scale) || is.na(b2$trans_scale)) NULL else b2$trans_scale)
 
-    # A. Fisher's z-test on All England S3N Combined CV R2
+    m_cv <- if (!is.null(b1$eng_cv) && !is.null(b2$eng_cv)) {
+      match_reaches_between_runs(b1$eng_cv, b2$eng_cv, same_network = same_net,
+                                 max_dist_m = 500.0, require_obs_match = same_det)
+    } else {
+      NULL
+    }
+
+    # A. Dependent Overlapping CV Correlation (Williams' 1959 t-test) or Independent Fisher's z-test
     r1_row <- subset(b1$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
     r2_row <- subset(b2$cv_tab, grepl("All England", Canon_Domain) & Canon_Model == "S3N Combined")
     if (nrow(r1_row) > 0 && nrow(r2_row) > 0) {
       r2_1 <- r1_row$R2[1]; n1 <- r1_row$n_obs[1]
       r2_2 <- r2_row$R2[1]; n2 <- r2_row$n_obs[1]
-      cor1 <- sqrt(max(0, min(0.9999, r2_1)))
-      cor2 <- sqrt(max(0, min(0.9999, r2_2)))
-      z_f  <- (atanh(cor2) - atanh(cor1)) / sqrt(1 / max(4, n1 - 3) + 1 / max(4, n2 - 3))
-      p_f  <- 2 * pnorm(-abs(z_f))
-      better_cv <- if (r2_2 > r2_1) b2$label else b1$label
-      add_stat_row(comp_lbl, "Cross-Validation", "Fisher's r-to-z Test (All England S3N Combined R2)",
-                   "5-Fold CV R2", n1, n2, r2_1, r2_2, r2_2 - r2_1, "z", z_f, p_f,
-                   sprintf("%s has higher CV R2 (%.4f vs %.4f, %s)", better_cv, max(r2_1, r2_2), min(r2_1, r2_2), sig_stars(p_f)))
+      used_williams <- FALSE
+      if (same_det && !is.null(m_cv) && nrow(m_cv) >= 10) {
+        y_w  <- if (same_scale) b1$eng_cv$obs_y[m_cv$idx1] else tr1$inv(b1$eng_cv$obs_y[m_cv$idx1])
+        p1_w <- if (same_scale) b1$eng_cv$cv_comb[m_cv$idx1] else tr1$inv(b1$eng_cv$cv_comb[m_cv$idx1])
+        p2_w <- if (same_scale) b2$eng_cv$cv_comb[m_cv$idx2] else tr2$inv(b2$eng_cv$cv_comb[m_cv$idx2])
+        ok_w <- is.finite(y_w) & is.finite(p1_w) & is.finite(p2_w)
+        n_w  <- sum(ok_w)
+        if (n_w >= 10L) {
+          r_y1 <- suppressWarnings(stats::cor(y_w[ok_w], p1_w[ok_w]))
+          r_y2 <- suppressWarnings(stats::cor(y_w[ok_w], p2_w[ok_w]))
+          r_12 <- suppressWarnings(stats::cor(p1_w[ok_w], p2_w[ok_w]))
+          if (all(is.finite(c(r_y1, r_y2, r_12))) && abs(r_12) < 0.9999) {
+            R_det   <- abs(1.0 - r_y1^2 - r_y2^2 - r_12^2 + 2.0 * r_y1 * r_y2 * r_12)
+            r_bar   <- 0.5 * (r_y1 + r_y2)
+            denom_w <- max(1e-12, (2.0 * (n_w - 1.0) / (n_w - 3.0)) * R_det + (r_bar^2) * ((1.0 - r_12)^3))
+            t_w     <- (r_y2 - r_y1) * sqrt((n_w - 1.0) * (1.0 + r_12) / denom_w)
+            p_w     <- 2.0 * stats::pt(-abs(t_w), df = n_w - 3L)
+            better_wcv <- if (abs(r_y2) >= abs(r_y1)) b2$label else b1$label
+            add_stat_row(comp_lbl, "Cross-Validation", "Williams' Paired t-Test (Dependent Overlapping CV r)",
+                         "5-Fold CV R2", n_w, n_w, r2_1, r2_2, r2_2 - r2_1, "t", t_w, p_w,
+                         sprintf("%s has higher overlapping CV r (%.4f vs %.4f, %s)", better_wcv, max(r_y1, r_y2), min(r_y1, r_y2), sig_stars(p_w)))
+            used_williams <- TRUE
+          }
+        }
+      }
+      if (!used_williams) {
+        cor1 <- sqrt(max(0, min(0.9999, r2_1)))
+        cor2 <- sqrt(max(0, min(0.9999, r2_2)))
+        z_f  <- (atanh(cor2) - atanh(cor1)) / sqrt(1 / max(4, n1 - 3) + 1 / max(4, n2 - 3))
+        p_f  <- 2 * pnorm(-abs(z_f))
+        better_cv <- if (r2_2 > r2_1) b2$label else b1$label
+        add_stat_row(comp_lbl, "Cross-Validation", "Fisher's r-to-z Test (All England S3N Combined R2)",
+                     "5-Fold CV R2", n1, n2, r2_1, r2_2, r2_2 - r2_1, "z", z_f, p_f,
+                     sprintf("%s has higher CV R2 (%.4f vs %.4f, %s)", better_cv, max(r2_1, r2_2), min(r2_1, r2_2), sig_stars(p_f)))
+      }
     }
 
-    # B. Out-of-Sample Station CV Error Tests (Paired co-located & Unpaired)
-    if (!is.null(b1$eng_cv) && !is.null(b2$eng_cv)) {
-      e1_all <- b1$eng_cv$obs_y - b1$eng_cv$cv_comb
-      e2_all <- b2$eng_cv$obs_y - b2$eng_cv$cv_comb
+    # B. Out-of-Sample Station CV Error Tests (model-scale if same_scale, else raw back-transformed if same_det)
+    if (!is.null(b1$eng_cv) && !is.null(b2$eng_cv) && (same_scale || same_det)) {
+      if (same_scale) {
+        e1_all <- b1$eng_cv$obs_y - b1$eng_cv$cv_comb
+        e2_all <- b2$eng_cv$obs_y - b2$eng_cv$cv_comb
+        cv_err_tag <- ""
+      } else {
+        y1_obs_raw <- if ("obs_value" %in% names(b1$eng_cv) && any(is.finite(b1$eng_cv$obs_value))) b1$eng_cv$obs_value else tr1$inv(b1$eng_cv$obs_y)
+        y2_obs_raw <- if ("obs_value" %in% names(b2$eng_cv) && any(is.finite(b2$eng_cv$obs_value))) b2$eng_cv$obs_value else tr2$inv(b2$eng_cv$obs_y)
+        e1_all <- y1_obs_raw - tr1$inv(b1$eng_cv$cv_comb)
+        e2_all <- y2_obs_raw - tr2$inv(b2$eng_cv$cv_comb)
+        cv_err_tag <- " [Raw Scale]"
+      }
 
       # Unpaired Mann-Whitney U test on |e|
       wt_unp <- suppressWarnings(wilcox.test(abs(e1_all), abs(e2_all), paired = FALSE))
-      add_stat_row(comp_lbl, "Cross-Validation", "Mann-Whitney U Test (Unpaired Absolute CV Error)",
-                   "Mean |CV Error|", length(e1_all), length(e2_all),
+      add_stat_row(comp_lbl, "Cross-Validation", paste0("Mann-Whitney U Test (Unpaired Absolute CV Error", cv_err_tag, ")"),
+                   paste0("Mean |CV Error|", cv_err_tag), length(e1_all), length(e2_all),
                    mean(abs(e1_all), na.rm = TRUE), mean(abs(e2_all), na.rm = TRUE),
                    mean(abs(e2_all), na.rm = TRUE) - mean(abs(e1_all), na.rm = TRUE),
                    "W", as.numeric(wt_unp$statistic), wt_unp$p.value,
@@ -628,17 +698,15 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
 
       # Unpaired Welch's t-test on squared CV error e^2
       tt_unp <- suppressWarnings(t.test(e2_all^2, e1_all^2, paired = FALSE))
-      add_stat_row(comp_lbl, "Cross-Validation", "Welch's Two-Sample t-Test (Unpaired Squared CV Error)",
-                   "Mean Squared CV Error (MSE)", length(e1_all), length(e2_all),
+      add_stat_row(comp_lbl, "Cross-Validation", paste0("Welch's Two-Sample t-Test (Unpaired Squared CV Error", cv_err_tag, ")"),
+                   paste0("Mean Squared CV Error (MSE)", cv_err_tag), length(e1_all), length(e2_all),
                    mean(e1_all^2, na.rm = TRUE), mean(e2_all^2, na.rm = TRUE),
                    mean(e2_all^2, na.rm = TRUE) - mean(e1_all^2, na.rm = TRUE),
                    "t", as.numeric(tt_unp$statistic), tt_unp$p.value,
                    sprintf("Unpaired station MSE comparison (%s)", sig_stars(tt_unp$p.value)))
 
       # Match co-located observed stations across Run i and Run j
-      m_cv <- match_reaches_between_runs(b1$eng_cv, b2$eng_cv, same_network = same_net,
-                                         max_dist_m = 500.0, require_obs_match = same_det)
-      if (nrow(m_cv) >= 10) {
+      if (!is.null(m_cv) && nrow(m_cv) >= 10) {
         e1_m <- e1_all[m_cv$idx1]
         e2_m <- e2_all[m_cv$idx2]
         if (i == 1L && j == 2L) {
@@ -646,10 +714,10 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
             RivID_1 = b1$eng_cv$RivID[m_cv$idx1],
             RivID_2 = b2$eng_cv$RivID[m_cv$idx2],
             dist_m  = m_cv$dist_m,
-            obs_1   = b1$eng_cv$obs_y[m_cv$idx1],
-            obs_2   = b2$eng_cv$obs_y[m_cv$idx2],
-            cv_1    = b1$eng_cv$cv_comb[m_cv$idx1],
-            cv_2    = b2$eng_cv$cv_comb[m_cv$idx2],
+            obs_1   = if (same_scale) b1$eng_cv$obs_y[m_cv$idx1] else tr1$inv(b1$eng_cv$obs_y[m_cv$idx1]),
+            obs_2   = if (same_scale) b2$eng_cv$obs_y[m_cv$idx2] else tr2$inv(b2$eng_cv$obs_y[m_cv$idx2]),
+            cv_1    = if (same_scale) b1$eng_cv$cv_comb[m_cv$idx1] else tr1$inv(b1$eng_cv$cv_comb[m_cv$idx1]),
+            cv_2    = if (same_scale) b2$eng_cv$cv_comb[m_cv$idx2] else tr2$inv(b2$eng_cv$cv_comb[m_cv$idx2]),
             abs_e1  = abs(e1_m),
             abs_e2  = abs(e2_m),
             sq_e1   = e1_m^2,
@@ -659,8 +727,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
         # Paired Diebold-Mariano / Paired t-test on squared errors
         tt_pair <- safe_paired_ttest(e2_m^2, e1_m^2)
         better_p <- if (mean(e2_m^2, na.rm = TRUE) < mean(e1_m^2, na.rm = TRUE)) b2$label else b1$label
-        add_stat_row(comp_lbl, "Cross-Validation", "Paired t-Test / Diebold-Mariano (Co-located Squared CV Error)",
-                     "Paired Station MSE", nrow(m_cv), nrow(m_cv),
+        add_stat_row(comp_lbl, "Cross-Validation", paste0("Paired t-Test / Diebold-Mariano (Co-located Squared CV Error", cv_err_tag, ")"),
+                     paste0("Paired Station MSE", cv_err_tag), nrow(m_cv), nrow(m_cv),
                      mean(e1_m^2, na.rm = TRUE), mean(e2_m^2, na.rm = TRUE),
                      mean(e2_m^2, na.rm = TRUE) - mean(e1_m^2, na.rm = TRUE),
                      "t", as.numeric(tt_pair$statistic), tt_pair$p.value,
@@ -669,8 +737,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
         # Paired Wilcoxon Signed-Rank Test on |e|
         wt_pair <- safe_paired_wilcox(abs(e2_m), abs(e1_m))
         better_w <- if (median(abs(e2_m), na.rm = TRUE) < median(abs(e1_m), na.rm = TRUE)) b2$label else b1$label
-        add_stat_row(comp_lbl, "Cross-Validation", "Paired Wilcoxon Signed-Rank Test (Co-located |CV Error|)",
-                     "Paired Station |Error|", nrow(m_cv), nrow(m_cv),
+        add_stat_row(comp_lbl, "Cross-Validation", paste0("Paired Wilcoxon Signed-Rank Test (Co-located |CV Error|", cv_err_tag, ")"),
+                     paste0("Paired Station |Error|", cv_err_tag), nrow(m_cv), nrow(m_cv),
                      mean(abs(e1_m), na.rm = TRUE), mean(abs(e2_m), na.rm = TRUE),
                      mean(abs(e2_m), na.rm = TRUE) - mean(abs(e1_m), na.rm = TRUE),
                      "V", as.numeric(wt_pair$statistic), wt_pair$p.value,
@@ -682,38 +750,64 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
     p1_sc <- b1$eng_pred$pred_model_sc; p2_sc <- b2$eng_pred$pred_model_sc
     se1   <- b1$eng_pred$se_model_sc;   se2   <- b2$eng_pred$se_model_sc
 
-    tt_pred <- suppressWarnings(t.test(p2_sc, p1_sc, paired = FALSE))
-    add_stat_row(comp_lbl, "Reach Predictions", "Welch's Two-Sample t-Test (Predicted Model-Scale Values)",
-                 "Mean pred_model_sc", length(p1_sc), length(p2_sc),
-                 mean(p1_sc, na.rm = TRUE), mean(p2_sc, na.rm = TRUE),
-                 mean(p2_sc, na.rm = TRUE) - mean(p1_sc, na.rm = TRUE),
-                 "t", as.numeric(tt_pred$statistic), tt_pred$p.value,
-                 sprintf("Difference in network-wide mean prediction (%s)", sig_stars(tt_pred$p.value)))
+    if (same_scale) {
+      tt_pred <- suppressWarnings(t.test(p2_sc, p1_sc, paired = FALSE))
+      add_stat_row(comp_lbl, "Reach Predictions", "Welch's Two-Sample t-Test (Predicted Model-Scale Values)",
+                   "Mean pred_model_sc", length(p1_sc), length(p2_sc),
+                   mean(p1_sc, na.rm = TRUE), mean(p2_sc, na.rm = TRUE),
+                   mean(p2_sc, na.rm = TRUE) - mean(p1_sc, na.rm = TRUE),
+                   "t", as.numeric(tt_pred$statistic), tt_pred$p.value,
+                   sprintf("Difference in network-wide mean prediction (%s)", sig_stars(tt_pred$p.value)))
 
-    ks_pred <- suppressWarnings(ks.test(p1_sc, p2_sc))
-    add_stat_row(comp_lbl, "Reach Predictions", "Two-Sample Kolmogorov-Smirnov Test (Prediction Distribution)",
-                 "Empirical CDF D-stat", length(p1_sc), length(p2_sc),
-                 median(p1_sc, na.rm = TRUE), median(p2_sc, na.rm = TRUE),
-                 median(p2_sc, na.rm = TRUE) - median(p1_sc, na.rm = TRUE),
-                 "D", as.numeric(ks_pred$statistic), ks_pred$p.value,
-                 sprintf("Distributional shift in reach predictions (D = %.4f, %s)", ks_pred$statistic, sig_stars(ks_pred$p.value)))
+      ks_pred <- suppressWarnings(ks.test(p1_sc, p2_sc))
+      add_stat_row(comp_lbl, "Reach Predictions", "Two-Sample Kolmogorov-Smirnov Test (Prediction Distribution)",
+                   "Empirical CDF D-stat", length(p1_sc), length(p2_sc),
+                   median(p1_sc, na.rm = TRUE), median(p2_sc, na.rm = TRUE),
+                   median(p2_sc, na.rm = TRUE) - median(p1_sc, na.rm = TRUE),
+                   "D", as.numeric(ks_pred$statistic), ks_pred$p.value,
+                   sprintf("Distributional shift in reach predictions (D = %.4f, %s)", ks_pred$statistic, sig_stars(ks_pred$p.value)))
 
-    wt_se <- suppressWarnings(wilcox.test(se2, se1, paired = FALSE))
-    lower_se_lbl <- if (mean(se2, na.rm = TRUE) < mean(se1, na.rm = TRUE)) b2$label else b1$label
-    add_stat_row(comp_lbl, "Kriging Uncertainty", "Mann-Whitney U Test (Kriging Standard Error se_model_sc)",
-                 "Mean Kriging SE", length(se1), length(se2),
-                 mean(se1, na.rm = TRUE), mean(se2, na.rm = TRUE),
-                 mean(se2, na.rm = TRUE) - mean(se1, na.rm = TRUE),
-                 "W", as.numeric(wt_se$statistic), wt_se$p.value,
-                 sprintf("Lower network-wide prediction uncertainty in %s (%s)", lower_se_lbl, sig_stars(wt_se$p.value)))
+      wt_se <- suppressWarnings(wilcox.test(se2, se1, paired = FALSE))
+      lower_se_lbl <- if (mean(se2, na.rm = TRUE) < mean(se1, na.rm = TRUE)) b2$label else b1$label
+      add_stat_row(comp_lbl, "Kriging Uncertainty", "Mann-Whitney U Test (Kriging Standard Error se_model_sc)",
+                   "Mean Kriging SE", length(se1), length(se2),
+                   mean(se1, na.rm = TRUE), mean(se2, na.rm = TRUE),
+                   mean(se2, na.rm = TRUE) - mean(se1, na.rm = TRUE),
+                   "W", as.numeric(wt_se$statistic), wt_se$p.value,
+                   sprintf("Lower network-wide prediction uncertainty in %s (%s)", lower_se_lbl, sig_stars(wt_se$p.value)))
 
-    fk_se <- suppressWarnings(fligner.test(list(se1, se2)))
-    add_stat_row(comp_lbl, "Kriging Uncertainty", "Fligner-Killeen Variance Homogeneity Test (Kriging SE)",
-                 "SD of Kriging SE", length(se1), length(se2),
-                 sd(se1, na.rm = TRUE), sd(se2, na.rm = TRUE),
-                 sd(se2, na.rm = TRUE) - sd(se1, na.rm = TRUE),
-                 "ChiSq", as.numeric(fk_se$statistic), fk_se$p.value,
-                 sprintf("Dispersion of kriging standard errors (%s)", sig_stars(fk_se$p.value)))
+      fk_se <- suppressWarnings(fligner.test(list(se1, se2)))
+      add_stat_row(comp_lbl, "Kriging Uncertainty", "Fligner-Killeen Variance Homogeneity Test (Kriging SE)",
+                   "SD of Kriging SE", length(se1), length(se2),
+                   sd(se1, na.rm = TRUE), sd(se2, na.rm = TRUE),
+                   sd(se2, na.rm = TRUE) - sd(se1, na.rm = TRUE),
+                   "ChiSq", as.numeric(fk_se$statistic), fk_se$p.value,
+                   sprintf("Dispersion of kriging standard errors (%s)", sig_stars(fk_se$p.value)))
+    } else if (same_det) {
+      p1_raw <- b1$eng_pred$pred_combined; p2_raw <- b2$eng_pred$pred_combined
+      tt_pred <- suppressWarnings(t.test(p2_raw, p1_raw, paired = FALSE))
+      add_stat_row(comp_lbl, "Reach Predictions", "Welch's Two-Sample t-Test (Predicted Raw Values)",
+                   "Mean pred_combined (Raw)", length(p1_raw), length(p2_raw),
+                   mean(p1_raw, na.rm = TRUE), mean(p2_raw, na.rm = TRUE),
+                   mean(p2_raw, na.rm = TRUE) - mean(p1_raw, na.rm = TRUE),
+                   "t", as.numeric(tt_pred$statistic), tt_pred$p.value,
+                   sprintf("Difference in network-wide raw mean prediction (%s)", sig_stars(tt_pred$p.value)))
+
+      ks_pred <- suppressWarnings(ks.test(p1_raw, p2_raw))
+      add_stat_row(comp_lbl, "Reach Predictions", "Two-Sample Kolmogorov-Smirnov Test (Raw Prediction Distribution)",
+                   "Empirical CDF D-stat (Raw)", length(p1_raw), length(p2_raw),
+                   median(p1_raw, na.rm = TRUE), median(p2_raw, na.rm = TRUE),
+                   median(p2_raw, na.rm = TRUE) - median(p1_raw, na.rm = TRUE),
+                   "D", as.numeric(ks_pred$statistic), ks_pred$p.value,
+                   sprintf("Distributional shift in raw reach predictions (D = %.4f, %s)", ks_pred$statistic, sig_stars(ks_pred$p.value)))
+    } else {
+      ks_z <- suppressWarnings(ks.test(safe_zscore(p1_sc), safe_zscore(p2_sc)))
+      add_stat_row(comp_lbl, "Reach Predictions", "Two-Sample Kolmogorov-Smirnov Test (Z-Score Standardized Shape)",
+                   "Empirical CDF D-stat (Z-Score)", length(p1_sc), length(p2_sc),
+                   0.0, 0.0, 0.0,
+                   "D", as.numeric(ks_z$statistic), ks_z$p.value,
+                   sprintf("Standardized distribution shape difference (D = %.4f, %s)", ks_z$statistic, sig_stars(ks_z$p.value)))
+    }
 
     # D. Co-located Reach Spatial Agreement & Relationship Tests (Matched by RivID or <=250m BNG proximity)
     m_pred <- match_reaches_between_runs(b1$eng_pred, b2$eng_pred, same_network = same_net, max_dist_m = 250.0)
@@ -786,7 +880,7 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
                    sprintf("%.1f%% concordant reaches (High/High + Low/Low), Odds Ratio = %.2f (%s)",
                            conc_m, or_m, sig_stars(csq_m$p.value)))
 
-      if (same_det) {
+      if (same_scale) {
         add_stat_row(comp_lbl, "Spatial Co-location", "Paired Student's t-Test (Co-located Reach Mean Bias)",
                      "Mean Prediction Bias", nrow(m_pred), nrow(m_pred),
                      mean(mp1, na.rm = TRUE), mean(mp2, na.rm = TRUE),
@@ -794,6 +888,17 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
                      "t", as.numeric(tt_mp$statistic), tt_mp$p.value,
                      sprintf("Mean bias (Run2 - Run1) = %+.4f across %d co-located reaches (%s)",
                              mean(mp2 - mp1, na.rm = TRUE), nrow(m_pred), sig_stars(tt_mp$p.value)))
+      } else if (same_det) {
+        m_r1 <- b1$eng_pred$pred_combined[m_pred$idx1]
+        m_r2 <- b2$eng_pred$pred_combined[m_pred$idx2]
+        tt_mraw <- suppressWarnings(t.test(m_r2, m_r1, paired = TRUE))
+        add_stat_row(comp_lbl, "Spatial Co-location", "Paired Student's t-Test (Co-located Raw Prediction Bias)",
+                     "Mean Raw Prediction Bias", nrow(m_pred), nrow(m_pred),
+                     mean(m_r1, na.rm = TRUE), mean(m_r2, na.rm = TRUE),
+                     mean(m_r2 - m_r1, na.rm = TRUE),
+                     "t", as.numeric(tt_mraw$statistic), tt_mraw$p.value,
+                     sprintf("Mean raw bias (Run2 - Run1) = %+.4f across %d co-located reaches (%s)",
+                             mean(m_r2 - m_r1, na.rm = TRUE), nrow(m_pred), sig_stars(tt_mraw$p.value)))
       }
     }
   }
@@ -880,7 +985,8 @@ compare_s3n_runs <- function(run_dirs, labels = NULL, out_dir = NULL, quiet = FA
       pt <- bundles[[i]]$param_tab
       pt$Run_Index <- i
       pt$Run_Label <- bundles[[i]]$label
-      pt$Approx_SE <- pmax(1e-6, (pt$CI_Upper - pt$CI_Lower) / (2 * 1.96))
+      ci_w <- pt$CI_Upper - pt$CI_Lower
+      pt$Approx_SE <- ifelse(is.finite(ci_w) & ci_w > 1e-12, ci_w / (2 * 1.96), NA_real_)
       pt[, c("Run_Index", "Run_Label", "Canon_Domain", "Canon_Model", "Parameter",
              "Estimate", "CI_Lower", "CI_Upper", "Approx_SE")]
     })
@@ -1246,7 +1352,12 @@ plot_comp2_predictions <- function(bundles, pred_sum_df, pair12_pred_match, stat
             format(pred_sum_df$n_reaches[i], big.mark = ","))
   })
   legend("topright", legend = leg_b, col = run_cols, lwd = 2.5, bty = "n", cex = 0.78)
-  ks_p <- suppressWarnings(ks.test(bundles[[1]]$eng_pred$pred_model_sc, bundles[[2]]$eng_pred$pred_model_sc))
+  ks_p <- if (same_scale) {
+    suppressWarnings(ks.test(bundles[[1]]$eng_pred$pred_model_sc, bundles[[2]]$eng_pred$pred_model_sc))
+  } else {
+    suppressWarnings(ks.test(safe_zscore(bundles[[1]]$eng_pred$pred_model_sc),
+                             safe_zscore(bundles[[2]]$eng_pred$pred_model_sc)))
+  }
   draw_plot_header(
     main_title = main_b,
     sub_title  = sprintf("Two-Sample KS Test (Run 1 vs Run 2): D = %.4f, p = %s (%s)",
@@ -1339,10 +1450,10 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
   par(mfrow = c(1, 2), mar = c(5.0, 9.5, 3.8, 2.0), oma = c(0.5, 0.5, 2.2, 0.5), bg = "white")
 
   # Panel A: Forest Plot of All England Tail-Up Fixed-Effect Coefficients
-  cov_names <- c("sigma.sq", "tau.sq", "phi")
+  diag_rx <- "^(Intercept|sigma\\.sq|tau\\.sq|phi|mean_meas_variance|mean_source_penalty_var|gam_edf|spline_nl|rf_varimp|gbm_varimp|trend_cv|tobit_em)"
   fe_sub <- subset(param_comp_df, grepl("All England", Canon_Domain) &
                                   Canon_Model == "S3N Tail-Up" &
-                                  !(Parameter %in% c("Intercept", cov_names)))
+                                  !grepl(diag_rx, Parameter, ignore.case = TRUE))
   if (nrow(fe_sub) > 0) {
     params_u <- unique(fe_sub$Parameter)
     n_p <- length(params_u)
@@ -1382,7 +1493,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
 
   # Panel B: Spatial Variance Partitioning (Partial Sill sigma.sq vs Nugget tau.sq)
   par(mar = c(5.0, 5.0, 3.8, 2.0))
-  cov_sub <- subset(param_comp_df, grepl("All England", Canon_Domain) & Parameter %in% c("sigma.sq", "tau.sq"))
+  cov_sub <- subset(param_comp_df, grepl("All England", Canon_Domain) & Parameter %in% c("sigma.sq", "tau.sq", "tau.sq (microscale)"))
   if (nrow(cov_sub) > 0) {
     mods_u <- c("S3N Tail-Up", "S3N Tail-Down")
     bar_vals <- matrix(0, nrow = 2, ncol = K * length(mods_u))
@@ -1394,7 +1505,7 @@ plot_comp3_parameters <- function(bundles, param_comp_df, run_cols, out_file) {
       for (i in seq_len(K)) {
         col_idx <- col_idx + 1L
         s_row <- subset(cov_sub, Canon_Model == m_name & Run_Index == i & Parameter == "sigma.sq")
-        t_row <- subset(cov_sub, Canon_Model == m_name & Run_Index == i & Parameter == "tau.sq")
+        t_row <- subset(cov_sub, Canon_Model == m_name & Run_Index == i & Parameter %in% c("tau.sq", "tau.sq (microscale)"))
         s_val <- if (nrow(s_row) > 0) s_row$Estimate[1] else 0
         t_val <- if (nrow(t_row) > 0) t_row$Estimate[1] else 0
         bar_vals[1, col_idx] <- s_val
@@ -1791,8 +1902,10 @@ write_comparison_markdown_report <- function(bundles, cv_comp_df, pred_sum_df, d
       mse2 <- mean(pair12_cv_match$sq_e2, na.rm = TRUE)
       mae1 <- mean(pair12_cv_match$abs_e1, na.rm = TRUE)
       mae2 <- mean(pair12_cv_match$abs_e2, na.rm = TRUE)
-      r2_m1 <- 1 - sum(pair12_cv_match$sq_e1) / sum((pair12_cv_match$obs_1 - mean(pair12_cv_match$obs_1))^2)
-      r2_m2 <- 1 - sum(pair12_cv_match$sq_e2) / sum((pair12_cv_match$obs_2 - mean(pair12_cv_match$obs_2))^2)
+      ok_m1 <- is.finite(pair12_cv_match$sq_e1) & is.finite(pair12_cv_match$obs_1)
+      ok_m2 <- is.finite(pair12_cv_match$sq_e2) & is.finite(pair12_cv_match$obs_2)
+      r2_m1 <- if (sum(ok_m1) >= 2L) 1 - sum(pair12_cv_match$sq_e1[ok_m1], na.rm = TRUE) / sum((pair12_cv_match$obs_1[ok_m1] - mean(pair12_cv_match$obs_1[ok_m1], na.rm = TRUE))^2, na.rm = TRUE) else NA_real_
+      r2_m2 <- if (sum(ok_m2) >= 2L) 1 - sum(pair12_cv_match$sq_e2[ok_m2], na.rm = TRUE) / sum((pair12_cv_match$obs_2[ok_m2] - mean(pair12_cv_match$obs_2[ok_m2], na.rm = TRUE))^2, na.rm = TRUE) else NA_real_
       dm_test <- safe_paired_ttest(pair12_cv_match$sq_e2, pair12_cv_match$sq_e1)
       wx_test <- safe_paired_wilcox(pair12_cv_match$abs_e2, pair12_cv_match$abs_e1)
       coloc_winner <- if (mse1 <= mse2) bundles[[1]]$label else bundles[[2]]$label

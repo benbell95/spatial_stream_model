@@ -187,7 +187,7 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   }
 
   eng_file  <- find_first_file(dir_p, "^predictions_.*\\.csv$",
-                               "^predictions_(humber|thames|severn|basin_|river_|catchid_).*\\.csv$")
+                               "^predictions_(humber|thames|severn|basin_|river_|catchid_|exceedance_).*\\.csv$")
   hum_file  <- find_first_file(dir_p, "^predictions_humber_.*\\.csv$")
   tha_file  <- find_first_file(dir_p, "^predictions_thames_.*\\.csv$")
   sev_file  <- find_first_file(dir_p, "^predictions_severn_.*\\.csv$")
@@ -210,9 +210,12 @@ load_model_run_bundle <- function(dir_path, custom_label = NULL, out_root = NULL
   eng_cv    <- if (!is.null(cv_e_file) && file.exists(cv_e_file)) fast_read_csv(cv_e_file) else NULL
   hum_cv    <- if (!is.null(cv_h_file) && file.exists(cv_h_file)) fast_read_csv(cv_h_file) else NULL
 
-  hum_cid <- read_basin_catch_id(hum_file, 80L)
-  tha_cid <- read_basin_catch_id(tha_file, 3055L)
-  sev_cid <- read_basin_catch_id(sev_file, 2786L)
+  hum_cid <- read_basin_catch_id(hum_file, NA_integer_)
+  if (is.na(hum_cid)) hum_cid <- resolve_core_basin(eng_pred, target = "humber")$catch_id
+  tha_cid <- read_basin_catch_id(tha_file, NA_integer_)
+  if (is.na(tha_cid)) tha_cid <- resolve_core_basin(eng_pred, target = "thames")$catch_id
+  sev_cid <- read_basin_catch_id(sev_file, NA_integer_)
+  if (is.na(sev_cid)) sev_cid <- resolve_core_basin(eng_pred, target = "severn")$catch_id
 
   cv_tab$Canon_Domain <- canonical_domain(cv_tab$Domain)
   cv_tab$Canon_Model  <- canonical_model(cv_tab$Model)
@@ -465,23 +468,26 @@ compute_detailed_descriptives <- function(bundles) {
       desc_rows[[length(desc_rows) + 1L]] <- cbind(meta_df, s_df)
     }
 
-    # Representativeness test: Observed stations vs. Full network predictions
+    # Representativeness test: Disjoint Monitored vs. Unmonitored reach predictions (pred_combined)
     if (nrow(obs_sub) >= 5 && nrow(unmon_sub) >= 5) {
-      mw_rep <- suppressWarnings(wilcox.test(ep$pred_combined, obs_sub$obs_value, paired = FALSE))
-      ks_rep <- suppressWarnings(ks.test(ep$pred_combined, obs_sub$obs_value))
-      obs_med  <- median(obs_sub$obs_value, na.rm = TRUE)
-      pred_med <- median(ep$pred_combined, na.rm = TRUE)
-      obs_mn   <- mean(obs_sub$obs_value, na.rm = TRUE)
-      pred_mn  <- mean(ep$pred_combined, na.rm = TRUE)
+      mon_p <- obs_sub$pred_combined[is.finite(obs_sub$pred_combined)]
+      unm_p <- unmon_sub$pred_combined[is.finite(unmon_sub$pred_combined)]
+      if (length(mon_p) >= 5L && length(unm_p) >= 5L) {
+      mw_rep <- suppressWarnings(wilcox.test(unm_p, mon_p, paired = FALSE))
+      ks_rep <- suppressWarnings(ks.test(unm_p, mon_p))
+      obs_med  <- median(mon_p, na.rm = TRUE)
+      pred_med <- median(unm_p, na.rm = TRUE)
+      obs_mn   <- mean(mon_p, na.rm = TRUE)
+      pred_mn  <- mean(unm_p, na.rm = TRUE)
       ratio_med <- if (abs(obs_med) > 1e-9) pred_med / obs_med else NA_real_
       ratio_mn  <- if (abs(obs_mn) > 1e-9)  pred_mn / obs_mn   else NA_real_
 
       dir_txt <- if (!is.na(ratio_med) && ratio_med < 0.95) {
-        "Full network median is lower than monitored station median (unmonitored upland headwaters dilute network average)"
+        "Unmonitored reach median prediction is lower than monitored reach median (unmonitored upland headwaters dilute network average)"
       } else if (!is.na(ratio_med) && ratio_med > 1.05) {
-        "Full network median is higher than monitored station median"
+        "Unmonitored reach median prediction is higher than monitored reach median"
       } else {
-        "Full network median closely matches monitored station median"
+        "Unmonitored reach median prediction closely matches monitored reach median"
       }
 
       rep_rows[[length(rep_rows) + 1L]] <- data.frame(
@@ -489,8 +495,8 @@ compute_detailed_descriptives <- function(bundles) {
         Run_Label              = b$label,
         Determinand_Code       = b$det_code,
         Unit                   = b$det_unit,
-        n_Obs_Stations         = nrow(obs_sub),
-        n_Total_Reaches        = nrow(ep),
+        n_Obs_Stations         = length(mon_p),
+        n_Total_Reaches        = length(unm_p),
         Obs_Mean_Raw           = round(obs_mn, 5),
         Pred_Mean_Raw          = round(pred_mn, 5),
         Pred_to_Obs_Mean_Ratio = round(ratio_mn, 4),
@@ -505,6 +511,7 @@ compute_detailed_descriptives <- function(bundles) {
         Interpretation         = dir_txt,
         stringsAsFactors       = FALSE
       )
+      }
     }
   }
 

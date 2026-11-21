@@ -77,7 +77,7 @@
     <!-- ===================================================================
          TAB 1: OVERVIEW & PLATFORM ARCHITECTURE
          =================================================================== -->
-    <section id="tab-overview" class="tab-panel active">
+    <section id="tab-overview" class="tab-panel active" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">High-Speed Dendritic River Geostatistics</span>
         <h2>National &amp; Basin Stream Water Quality &amp; Ecological Modelling</h2>
@@ -217,7 +217,7 @@
     <!-- ===================================================================
          TAB 1B: HOW IT WORKS & DATASETS (PLAIN-ENGLISH GUIDE)
          =================================================================== -->
-    <section id="tab-how-it-works" class="tab-panel">
+    <section id="tab-how-it-works" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Plain-English Reference · Datasets, Kriging &amp; Methods</span>
         <h2>How Scalable Spatial Stream Modelling Works</h2>
@@ -609,7 +609,7 @@
     <!-- ===================================================================
          TAB 2: CASE STUDY 1 - ENGLAND NITRATE (0117) & NON-LINEAR GAM
          =================================================================== -->
-    <section id="tab-cs1" class="tab-panel">
+    <section id="tab-cs1" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 1 · National Univariate Regression Kriging</span>
         <h2>Nitrate as N (<code>0117</code>): Linear S3N vs. Non-Linear <code>GAM + S3N</code></h2>
@@ -653,7 +653,7 @@
               <li><strong>East–West Gradient:</strong> Arable Chalk/Limestone catchments in eastern &amp; southern England consistently exceed 5–9 mg/L N, while upland Wales &amp; Pennine headwaters remain low (&lt; 0.5 mg/L).</li>
               <li><strong>Robust Z-Score View (<code>--norm=robust_zscore</code>):</strong> Standardizes predictions as <code>(x − median) / (1.4826 × MAD)</code> in model space, stripping concentration units so anomalous arable sub-catchments (red, &gt; +1.5 SD) and pristine upland headwaters (blue, &lt; −1.5 SD) stand out cleanly on one symmetric scale.</li>
               <li><strong>Panel B Kriging SE:</strong> Uncertainty collapses cleanly along monitored tributaries and flows smoothly downstream via Shreve/AFV confluence weights.</li>
-              <li><strong>GAM vs Linear:</strong> Notice 5-fold CV $R^2$ is nearly identical (<code>0.6784</code> vs <code>0.6743</code>), showing spatial residuals already absorb mild fixed-effect curvature—so keep linear when interpretability of covariate slopes matters.</li>
+              <li><strong>GAM vs Linear:</strong> Notice 5-fold CV <code>R&sup2;</code> is nearly identical (<code>0.6784</code> vs <code>0.6743</code>), showing spatial residuals already absorb mild fixed-effect curvature—so keep linear when interpretability of covariate slopes matters.</li>
             </ul>
           </div>
         </div>
@@ -703,7 +703,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --des
     <!-- ===================================================================
          TAB 3: CASE STUDY 2 - ECOLOGY, EXCEEDANCE RISK & TRANSFORMS
          =================================================================== -->
-    <section id="tab-cs2" class="tab-panel">
+    <section id="tab-cs2" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 4 · National Univariate Ecological Health (WHPT ASPT)</span>
         <h2>Macroinvertebrate Ecological Health (<code>whpt_aspt</code>)</h2>
@@ -743,7 +743,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --kernel=auto --afv=hydro_yield --des
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">4-Panel Diagnostics &amp; Cross-Validation (SVG)</h3>
+            <h3 class="card-title">4-Panel Diagnostics &amp; Cross-Validation</h3>
           </div>
           <div id="fig-slot-cs2-diag"></div>
           <div id="cs2-r2-svg" class="svg-panel" style="margin-top:14px;"></div>
@@ -771,7 +771,7 @@ Rscript scripts/run_s3n_determinand.R whpt_aspt --dataset=inverts --reverse-colo
     <!-- ===================================================================
          TAB 4: CASE STUDY 4 - THRESHOLD EXCEEDANCE RISK & ANOMALIES
          =================================================================== -->
-    <section id="tab-cs15" class="tab-panel">
+    <section id="tab-cs15" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 9 · Regulatory Compliance &amp; Uncertainty</span>
         <h2>Threshold Exceedance Risk</h2>
@@ -848,7 +848,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
     <!-- ===================================================================
          TAB 4: CASE STUDY 3 - SPATIO-TEMPORAL NITRATE DYNAMICS
          =================================================================== -->
-    <section id="tab-cs3" class="tab-panel">
+    <section id="tab-cs3" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 8 · Multi-Period Batching &amp; Dynamic Borrowing</span>
         <h2>Spatio-Temporal Nitrate Trends (<code>2021–2024</code> &amp; Seasonal Cycles)</h2>
@@ -900,8 +900,8 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=my_gam_data --meas-error --c
           <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
           <div class="interp-box" style="margin-top:0;">
             <ul>
-              <li><strong>Winter Peak Hydrology:</strong> Notice Winter Nitrate achieves higher national CV $R^2$ (`0.7164`) than Summer because sustained winter runoff connects agricultural soils cleanly along flow paths.</li>
-              <li><strong>Why <code>--st-borrow</code> Matters:</strong> When a tributary gauge is missed during one summer campaign, Dynamic Borrowing shrinks the single-period kriging variance toward neighboring periods weighted by $1/\mathrm{SE}^2$, avoiding false jump artefacts in <code>fig6</code>.</li>
+              <li><strong>Winter Peak Hydrology:</strong> Notice Winter Nitrate achieves higher national CV <code>R&sup2;</code> (<code>0.7164</code>) than Summer because sustained winter runoff connects agricultural soils cleanly along flow paths.</li>
+              <li><strong>Why <code>--st-borrow</code> Matters:</strong> When a tributary gauge is missed during one summer campaign, Dynamic Borrowing shrinks the single-period kriging variance toward neighboring periods weighted by <code>1 / SE&sup2;</code>, avoiding false jump artefacts in <code>fig6</code>.</li>
             </ul>
           </div>
         </div>
@@ -929,12 +929,12 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter</pre>
     <!-- ===================================================================
          TAB 5: CASE STUDY 4 - CO-KRIGING & MULTI-SOURCE FUSION
          =================================================================== -->
-    <section id="tab-cs4" class="tab-panel">
+    <section id="tab-cs4" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 5 · Heterotopic Coregionalization &amp; Network Fusion</span>
         <h2>Factor-LMC Co-Kriging (<code>0117 + 0180</code>) &amp; Multi-Source Fusion (<code>RSN + SSN</code>)</h2>
         <p>
-          Jointly models coupled nutrients via OpenMP Factor-LMC NNGP (`8 of 8` Strong Benefit across England &amp; basins; median Aux-Aided $\Delta R^2 = +0.2062$, $-16.6\%$ RMSE) and showcases explicit network priority &amp; reliability weighting across statistically designed `RSN` + headwater `SSN` surveillance surveys.
+          Jointly models coupled nutrients via OpenMP Factor-LMC NNGP (<code>8 of 8</code> Strong Benefit across England &amp; basins; median Aux-Aided <code>&Delta;R&sup2; = +0.2062</code>, <code>&minus;16.6%</code> RMSE) and showcases explicit network priority &amp; reliability weighting across statistically designed <code>RSN</code> + headwater <code>SSN</code> surveillance surveys.
         </p>
         <div class="interp-box" style="margin-top:14px;">
           <h4>Method Explainer: Factor-LMC Co-Kriging &amp; RSN + SSN Fusion</h4>
@@ -950,7 +950,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter</pre>
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Co-Kriged Surfaces &amp; Multi-Source Fusion (`RSN + SSN`)</h3>
+            <h3 class="card-title">Co-Kriged Surfaces &amp; Multi-Source Fusion (<code>RSN + SSN</code>)</h3>
             <div class="fig-toggle-bar" data-group="cs4-ms">
               <button class="fig-toggle-btn active" data-fig="rss_england">RSN+SSN Nitrate Map</button>
               <button class="fig-toggle-btn" data-fig="cokrig_0117">Co-Kriged Nitrate</button>
@@ -965,8 +965,8 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter</pre>
           <div class="card-header"><h3 class="card-title">Suggested Interpretation</h3></div>
           <div class="interp-box" style="margin-top:0;">
             <ul>
-              <li><strong>Look at Severn Nitrate:</strong> Univariate $R^2 = 0.270$ jumps to `0.371` (`All-Holdout`) and `0.552` (`Aux-Aided`, $-21.7\%$ RMSE) once coupled with Orthophosphate.</li>
-              <li><strong>Why Co-Kriging &amp; Source Weighting Beat Naive Pooling:</strong> Keeping heterogeneous surveys weighted via <code>--prefer-source=rsn</code> and <code>--source-weight</code> adds analytical variance $(1/w - 1)\tau^2$ onto lower-priority or noisier surveys, preventing headwater/campaign offsets from diluting routine <code>RSN</code> medians on co-located reaches.</li>
+              <li><strong>Look at Severn Nitrate:</strong> Univariate <code>R&sup2; = 0.270</code> jumps to <code>0.371</code> (<em>All-Holdout</em>) and <code>0.552</code> (<em>Aux-Aided</em>, <code>&minus;21.7%</code> RMSE) once coupled with Orthophosphate.</li>
+              <li><strong>Why Co-Kriging &amp; Source Weighting Beat Naive Pooling:</strong> Keeping heterogeneous surveys weighted via <code>--prefer-source=rsn</code> and <code>--source-weight</code> adds analytical variance <code>(1/w &minus; 1)&tau;&sup2;</code> onto lower-priority or noisier surveys, preventing headwater/campaign offsets from diluting routine <code>RSN</code> medians on co-located reaches.</li>
             </ul>
           </div>
         </div>
@@ -987,13 +987,13 @@ Rscript scripts/run_s3n_determinand.R 0117 --year=2023 --season=winter</pre>
         </div>
 
         <div class="card">
-          <div class="card-header"><h3 class="card-title">Dual CV Benchmark (`Univariate` vs `All-Holdout` vs `Aux-Aided`)</h3></div>
+          <div class="card-header"><h3 class="card-title">Dual CV Benchmark (<code>Univariate</code> vs <code>All-Holdout</code> vs <code>Aux-Aided</code>)</h3></div>
           <div id="cs4-cv-table" class="table-scroll"></div>
         </div>
       </div>
 
       <div class="card" style="margin-bottom:16px;">
-        <div class="card-header"><h3 class="card-title">Analytical Reliability Penalty $V_{\text{wt}} = (1/w - 1)\tau^2$ &amp; Cross-Covariance</h3></div>
+        <div class="card-header"><h3 class="card-title">Analytical Reliability Penalty <code>V<sub>wt</sub> = (1/w &minus; 1)&tau;&sup2;</code> &amp; Cross-Covariance</h3></div>
         <div id="cs4-weight-svg" class="svg-panel"></div>
         <div id="cs4-cov-table" class="table-scroll"></div>
       </div>
@@ -1014,7 +1014,7 @@ Rscript scripts/run_s3n_determinand.R 0117 --source=rsn+ssn --prefer-source=rsn 
     <!-- ===================================================================
          TAB 6: CASE STUDY 10 - DESCRIPTIVE STATS & N:P STOICHIOMETRY
          =================================================================== -->
-    <section id="tab-cs5" class="tab-panel">
+    <section id="tab-cs5" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 10 · Environmental Gradients, Bias &amp; Cross-Run Audits</span>
         <h2>Descriptive Statistics, Monitoring Bias &amp; <code>N:P</code> Stoichiometry</h2>
@@ -1100,7 +1100,7 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/r
     <!-- ===================================================================
          TAB 6B: CASE STUDY 11 - STATION-TO-REACH SNAPPING AUDITS
          =================================================================== -->
-    <section id="tab-cs16" class="tab-panel">
+    <section id="tab-cs16" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 11 · Station-to-Reach Snapping Geometry &amp; Outlier QC</span>
         <h2>Station-to-Reach Snapping Audits (<code>ORN v2</code>)</h2>
@@ -1158,7 +1158,7 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/r
     <!-- ===================================================================
          TAB 7: CASE STUDY 6 - WATERBLITZ CITIZEN SCIENCE CO-KRIGING FUSION
          =================================================================== -->
-    <section id="tab-cs6" class="tab-panel">
+    <section id="tab-cs6" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 6 · Citizen Science Fusion (RSN + SSN + Earthwatch WaterBlitz)</span>
         <h2>Equal-Source vs. Surveillance-Favoured Co-Kriging (Nitrate &amp; Orthophosphate)</h2>
@@ -1210,7 +1210,7 @@ Rscript scripts/04_compare_model_runs.R output/results/det_0117_orn_rsn output/r
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Multi-Stratum Diagnostics &amp; Cross-Covariance (SVG)</h3>
+            <h3 class="card-title">Multi-Stratum Diagnostics &amp; Cross-Covariance</h3>
             <div class="fig-toggle-bar" data-group="cs6-charts">
               <button class="fig-toggle-btn active" data-fig="wb_comp_svg">Equal vs. Favoured Summary</button>
               <button class="fig-toggle-btn" data-fig="wb_eq_xcorr">Equal Cross-Correlation</button>
@@ -1264,7 +1264,7 @@ Rscript scripts/07_compare_cokriging_runs.R</pre>
     <!-- ===================================================================
          TAB 8: CASE STUDY 7 - DATA TRANSFORMATIONS (NO3-N 0117)
          =================================================================== -->
-    <section id="tab-cs7" class="tab-panel">
+    <section id="tab-cs7" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 2 · Response Scale Transformations (Nitrate-N 0117)</span>
         <h2>Raw vs. Log vs. Square-Root vs. Profile-MLE Box-Cox on England Nitrate</h2>
@@ -1357,7 +1357,7 @@ Rscript scripts/08_compare_transforms.R</pre>
     <!-- ===================================================================
          TAB 9: CASE STUDY 8 - OPTIMAL MONITORING NETWORK DESIGN
          =================================================================== -->
-    <section id="tab-cs8" class="tab-panel">
+    <section id="tab-cs8" class="tab-panel" role="tabpanel">
       <div class="hero-card">
         <span class="hero-eyebrow">Case Study 12 · Active-Learning Optimal Monitoring Design (<code>--design-sites=50</code>)</span>
         <h2>Pinpointing Uncertainty Gaps &amp; Highest-Impact Station Placements (Nitrate 0117)</h2>
@@ -1623,7 +1623,7 @@ Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_
         <div class="card-header"><h3 class="card-title">Pros &amp; Cons of Each Eutrophication Approach</h3></div>
         <div class="interp-box" style="margin-top:0;">
           <ul>
-            <li><strong>1. Factor-LMC Co-Kriging (<code>0180 + 0117 + rmni</code>):</strong> <em>Pros:</em> +0.106 to +0.584 Aux-Aided $R^2$ gain; rescues data-sparse basins (Thames, Severn); fills heterotopic biological gaps (<code>118</code> RMNI gap reaches) using dense WQ stations; quantifies P/N&ndash;ecology cross-correlation. <em>Cons:</em> Linear trend only; higher compute (<code>~29s</code> national LMC fit); requires multi-target alignment.</li>
+            <li><strong>1. Factor-LMC Co-Kriging (<code>0180 + 0117 + rmni</code>):</strong> <em>Pros:</em> +0.106 to +0.584 Aux-Aided <code>R&sup2;</code> gain; rescues data-sparse basins (Thames, Severn); fills heterotopic biological gaps (<code>118</code> RMNI gap reaches) using dense WQ stations; quantifies P/N&ndash;ecology cross-correlation. <em>Cons:</em> Linear trend only; higher compute (<code>~29s</code> national LMC fit); requires multi-target alignment.</li>
             <li><strong>2. Non-Linear GAM + S3N (<code>rmni --trend=gam</code>):</strong> <em>Pros:</em> Best overall All-England RMNI CV <code>R&sup2; = 0.7607</code>; captures physical slope/drainage thresholds; single-command univariate workflow. <em>Cons:</em> Cannot borrow strength from Orthophosphate/Nitrate stations; does not rescue sparse regional basins (Thames GAM <code>R&sup2; = 0.0795</code>).</li>
             <li><strong>3. Seasonal DO &amp; P&ndash;RMNI Coupling (<code>9901 --by=season</code> + <code>04_compare_model_runs.R</code>):</strong> <em>Pros:</em> Captures acute summer oxygen stress and separates High-P/High-RMNI hotspots from High-P/Low-RMNI (light/flow-limited) reaches with formal Fisher-z/concordance tests. <em>Cons:</em> Instantaneous DO has high diel noise (<code>R&sup2; = 0.1574</code> in summer); cross-run comparison is post-hoc rather than joint likelihood.</li>
           </ul>
@@ -1633,7 +1633,7 @@ Rscript scripts/03_generate_plots.R --dir=output/results/inverts_whpt_ntaxa_orn_
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Approach 2 Diagnostics &amp; RMNI CV Benchmark (SVG)</h3>
+            <h3 class="card-title">Approach 2 Diagnostics &amp; RMNI CV Benchmark</h3>
             <div class="fig-toggle-bar" data-group="cs10-diag">
               <button class="fig-toggle-btn active" data-fig="eut_rmni_gam_diag">GAM+S3N</button>
               <button class="fig-toggle-btn" data-fig="eut_rmni_diag">Linear S3N</button>

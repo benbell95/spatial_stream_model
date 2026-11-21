@@ -265,6 +265,18 @@
 
       if (postCardEl) {
         postCardEl.classList.toggle("is-mode-active", mode === "stats" || mode === "compare");
+        const isStatsOnly = mode === "stats";
+        if (els.wbCompareMode) {
+          els.wbCompareMode.disabled = isStatsOnly;
+          const cmpField = els.wbCompareMode.closest(".field");
+          if (cmpField) cmpField.classList.toggle("is-disabled", isStatsOnly);
+        }
+        if (postDir2Wrap) {
+          const disableDir2 = isStatsOnly || (els.wbCompareMode && els.wbCompareMode.value !== "dirs");
+          postDir2Wrap.classList.toggle("is-disabled", Boolean(disableDir2));
+          if (els.wbPostDir2) els.wbPostDir2.disabled = Boolean(disableDir2);
+          if (postDir2AddBtn) postDir2AddBtn.disabled = Boolean(disableDir2);
+        }
       }
       if (snapCardEl) {
         snapCardEl.classList.toggle("is-mode-active", mode === "snap");
@@ -325,22 +337,23 @@
     }
 
     function formatArg(arg) {
+      const clean = String(arg).replace(/[\r\n]+/g, " ");
       if (shellMode === "powershell") {
-        if (/[,;\s"'$&|<>(){}@`~]/.test(arg)) {
-          return `"${arg.replace(/"/g, "`\"")}"`;
+        if (/[^A-Za-z0-9_.,:/\\=@+-]/.test(clean)) {
+          return `'${clean.replace(/'/g, "''")}'`;
         }
-        return arg;
+        return clean;
       }
       if (shellMode === "cmd") {
-        if (/[\s"&|<>^()]/.test(arg)) {
-          return `"${arg.replace(/"/g, '\\"')}"`;
+        if (/[^A-Za-z0-9_.,:/\\=@+-]/.test(clean)) {
+          return `"${clean.replace(/"/g, '""').replace(/%/g, "%%")}"`;
         }
-        return arg;
+        return clean;
       }
-      if (/[\s"'$&|;<>()!*?{}~]/.test(arg)) {
-        return `'${arg.replace(/'/g, "'\\''")}'`;
+      if (/[^A-Za-z0-9_.,:/=@+-]/.test(clean)) {
+        return `'${clean.replace(/'/g, "'\\''")}'`;
       }
-      return arg;
+      return clean;
     }
 
     function formatCommand(runner, scriptPath, args) {
@@ -464,7 +477,8 @@
       const trend = els.wbTrend ? els.wbTrend.value : "linear";
       const kernel = els.wbKernel ? els.wbKernel.value : "exponential";
       const afv = els.wbAfv ? els.wbAfv.value : "length";
-      const cvMode = els.wbCvMode ? els.wbCvMode.value : "random";
+      const rawCvMode = els.wbCvMode ? els.wbCvMode.value : "random";
+      const cvMode = rawCvMode === "spatial" ? "spatial_block" : rawCvMode;
       const thresholdMode = els.wbThresholdSel ? els.wbThresholdSel.value : "none";
       const thresholdVal = els.wbThresholdVal ? els.wbThresholdVal.value.trim() : "10";
       const thresholdDir = els.wbThresholdDir ? els.wbThresholdDir.value : "above";
@@ -742,13 +756,15 @@
 
       function resolveRunnerInfo(baseRunner) {
         if (shellMode !== "bash" && baseRunner === "Rscript" && winFullPathEl && winFullPathEl.checked) {
-          const rawVer = resolveSelectOrCustom(els.wbRVersionSel, els.wbRVersionCustom, "4.4.3");
+          const rawVer = resolveSelectOrCustom(els.wbRVersionSel, els.wbRVersionCustom, "4.4.3").replace(/[\r\n]+/g, "");
           const looksLikePath = /[\\/]|\.exe$/i.test(rawVer);
-          const rExePath = looksLikePath
+          const rExePath = (looksLikePath
             ? rawVer
-            : `C:\\Program Files\\R\\R-${rawVer.replace(/^R-/i, "")}\\bin\\x64\\Rscript.exe`;
+            : `C:\\Program Files\\R\\R-${rawVer.replace(/^R-/i, "")}\\bin\\x64\\Rscript.exe`).replace(/[\r\n]+/g, "");
           return {
-            runner: shellMode === "powershell" ? `& "${rExePath}"` : `"${rExePath}"`,
+            runner: shellMode === "powershell"
+              ? `& '${rExePath.replace(/'/g, "''")}'`
+              : `"${rExePath.replace(/"/g, '""').replace(/%/g, "%%")}"`,
             rExePath
           };
         }
@@ -900,7 +916,7 @@
         cv: {
           script: "scripts/run_s3n_determinand.R",
           args: ["--list-cv"],
-          desc: "Lists the 5 hydrological cross-validation holdout strategies (<code>random</code>, <code>spatial</code>, <code>catchment</code>, <code>downstream</code>, <code>upstream</code>) for <code>--cv-mode=</code>."
+          desc: "Lists the 4 hydrological cross-validation holdout strategies (<code>random</code>, <code>spatial_block</code>, <code>catchment</code>, <code>strahler</code>) for <code>--cv-mode=</code>."
         },
         thresholds: {
           script: "scripts/run_s3n_determinand.R",
@@ -961,6 +977,8 @@
           }
         } else if (snapFieldIds.has(id) && els.wbMode) {
           els.wbMode.value = "snap";
+        } else if (plotFieldIds.has(id) && els.wbMode) {
+          els.wbMode.value = "plots";
         } else if ((id === "wbTargetSel" || id === "wbTargetCustom") && els.wbMode && els.wbMode.value === "det") {
           const selOpt = els.wbTargetSel && els.wbTargetSel.selectedOptions ? els.wbTargetSel.selectedOptions[0] : null;
           const curTarget = resolveSelectOrCustom(els.wbTargetSel, els.wbTargetCustom, "0117");
@@ -1383,7 +1401,7 @@
     [
       [postDir1Sel, els.wbPostDir1, "stats"],
       [postDir2Sel, els.wbPostDir2, "compare"],
-      [plotDirSel, els.wbPlotDir, null]
+      [plotDirSel, els.wbPlotDir, "plots"]
     ].forEach(([selEl, inpEl, targetMode]) => {
       if (!selEl || !inpEl) return;
       selEl.addEventListener("change", () => {

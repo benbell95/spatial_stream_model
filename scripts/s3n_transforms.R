@@ -7,17 +7,35 @@
 # Automatically sourced by scripts/s3n_plot_functions.R.
 # ==============================================================================
 
-estimate_boxcox_lambda <- function(y, lower = -2.0, upper = 2.0) {
-  y_pos <- y[!is.na(y) & y > 0]
+estimate_boxcox_lambda <- function(y, lower = -2.0, upper = 2.0, X = NULL) {
+  y_num <- as.numeric(y)
+  valid <- !is.na(y_num) & is.finite(y_num) & (y_num > 0)
+  qr_x <- NULL
+  if (!is.null(X)) {
+    X_mat <- as.matrix(X)
+    if (nrow(X_mat) == length(y_num)) {
+      valid <- valid & apply(X_mat, 1L, function(r) all(is.finite(r)))
+    }
+  }
+  y_pos <- y_num[valid]
   n <- length(y_pos)
   if (n < 10) return(0.5)
+  if (!is.null(X)) {
+    X_mat <- as.matrix(X)
+    if (nrow(X_mat) == length(y_num) && ncol(X_mat) > 0L) {
+      X_sub <- X_mat[valid, , drop = FALSE]
+      has_int <- any(apply(X_sub, 2L, function(c) all(abs(c - 1.0) < 1e-12)))
+      if (!has_int) X_sub <- cbind(1.0, X_sub)
+      if (ncol(X_sub) < n - 2L) qr_x <- qr(X_sub)
+    }
+  }
   log_y <- log(y_pos)
   sum_log_y <- sum(log_y)
 
   ll_fn <- function(lam) {
     z <- if (abs(lam) < 1e-4) log_y else ((y_pos^lam) - 1.0) / lam
-    z_mean <- mean(z)
-    var_z  <- mean((z - z_mean)^2)
+    res <- if (!is.null(qr_x)) qr.resid(qr_x, z) else (z - mean(z))
+    var_z <- mean(res^2)
     if (var_z < 1e-12) return(-1e12)
     -0.5 * n * log(var_z) + (lam - 1.0) * sum_log_y
   }
@@ -29,10 +47,28 @@ estimate_boxcox_lambda <- function(y, lower = -2.0, upper = 2.0) {
   round(opt$maximum, 4)
 }
 
-estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
-  y_val <- y[!is.na(y) & is.finite(y)]
+estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0, X = NULL) {
+  y_num <- as.numeric(y)
+  valid <- !is.na(y_num) & is.finite(y_num)
+  qr_x <- NULL
+  if (!is.null(X)) {
+    X_mat <- as.matrix(X)
+    if (nrow(X_mat) == length(y_num)) {
+      valid <- valid & apply(X_mat, 1L, function(r) all(is.finite(r)))
+    }
+  }
+  y_val <- y_num[valid]
   n <- length(y_val)
   if (n < 10) return(0.5)
+  if (!is.null(X)) {
+    X_mat <- as.matrix(X)
+    if (nrow(X_mat) == length(y_num) && ncol(X_mat) > 0L) {
+      X_sub <- X_mat[valid, , drop = FALSE]
+      has_int <- any(apply(X_sub, 2L, function(c) all(abs(c - 1.0) < 1e-12)))
+      if (!has_int) X_sub <- cbind(1.0, X_sub)
+      if (ncol(X_sub) < n - 2L) qr_x <- qr(X_sub)
+    }
+  }
   pos <- (y_val >= 0)
   neg <- (!pos)
 
@@ -46,8 +82,8 @@ estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
       yn <- y_val[neg]
       z[neg] <- if (abs(2.0 - lam) < 1e-4) -log(-yn + 1.0) else -(((-yn + 1.0)^(2.0 - lam)) - 1.0) / (2.0 - lam)
     }
-    z_mean <- mean(z)
-    var_z  <- mean((z - z_mean)^2)
+    res <- if (!is.null(qr_x)) qr.resid(qr_x, z) else (z - mean(z))
+    var_z <- mean(res^2)
     if (var_z < 1e-12) return(-1e12)
     jac <- sum(log(abs(y_val) + 1.0) * ifelse(pos, lam - 1.0, 1.0 - lam))
     -0.5 * n * log(var_z) + jac
@@ -60,7 +96,25 @@ estimate_yeojohnson_lambda <- function(y, lower = -2.0, upper = 2.0) {
   round(opt$maximum, 4)
 }
 
+.s3n_gh7_x <- c(-3.750439717725742, -2.366759410734543, -1.154405394739972, 0.0,
+                 1.154405394739972,  2.366759410734543,  3.750439717725742)
+.s3n_gh7_w <- c(0.000548268855972, 0.030757123967586, 0.240123178605012, 0.457142857142857,
+                0.240123178605012, 0.030757123967586, 0.000548268855972)
+.s3n_gh7_w <- .s3n_gh7_w / sum(.s3n_gh7_w)
+
+.s3n_gh7_mean_se <- function(inv_fn, z, se) {
+  n <- length(z)
+  y_mat <- vapply(seq_along(.s3n_gh7_x), function(k) {
+    as.numeric(inv_fn(z + .s3n_gh7_x[k] * se))
+  }, numeric(n))
+  if (n == 1L) y_mat <- matrix(y_mat, nrow = 1L)
+  mu <- as.numeric(y_mat %*% .s3n_gh7_w)
+  se_out <- sqrt(pmax(0.0, as.numeric(((y_mat - mu)^2) %*% .s3n_gh7_w)))
+  list(mean = mu, se = se_out)
+}
+
 build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NULL, scale = NULL) {
+  tr <- (function(transform_type, y_obs, lambda, scale) {
   t_raw <- if (is.null(transform_type) || length(transform_type) == 0L || is.na(transform_type[1])) "" else tolower(trimws(as.character(transform_type[1])))
   if (!nzchar(t_raw)) t_raw <- "log"
 
@@ -307,7 +361,7 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
       is_log         = FALSE,
       lambda         = NA_real_,
       scale          = sc_val,
-      valid_fn       = function(y) !is.na(y) & y >= 0,
+      valid_fn       = function(y) !is.na(y) & is.finite(y) & y >= 0 & y <= sc_val,
       fwd            = function(y) asin(sqrt(pmin(1.0, pmax(0.0, y / sc_val)))),
       inv            = function(z) sc_val * (sin(pmin(pi / 2.0, pmax(0.0, z))))^2
     ))
@@ -326,7 +380,7 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
       is_log         = FALSE,
       lambda         = NA_real_,
       scale          = sc_val,
-      valid_fn       = function(y) !is.na(y) & y >= 0,
+      valid_fn       = function(y) !is.na(y) & is.finite(y) & y >= 0 & y <= sc_val,
       fwd            = function(y) {
         p <- pmin(1.0 - 1e-4, pmax(1e-4, y / sc_val))
         qlogis(p)
@@ -349,6 +403,76 @@ build_transformer <- function(transform_type = "log", y_obs = NULL, lambda = NUL
     fwd            = function(y) y,
     inv            = function(z) z
   )
+  })(transform_type, y_obs, lambda, scale)
+
+  tt_fin <- tolower(tr$type)
+  inv_fn <- tr$inv
+
+  tr$inv_mean <- function(z, se = 0) {
+    z_num <- as.numeric(z)
+    n <- length(z_num)
+    if (n == 0L) return(numeric(0))
+    se_num <- if (length(se) == 1L) rep(as.numeric(se), n) else as.numeric(se)
+    if (length(se_num) != n) se_num <- rep(se_num[1L], n)
+    out <- as.numeric(inv_fn(z_num))
+    ok <- is.finite(z_num) & is.finite(se_num) & (se_num > 0)
+    if (!any(ok)) return(out)
+    if (tt_fin == "none") {
+      out[ok] <- z_num[ok]
+    } else if (tt_fin == "log") {
+      s2 <- pmin(50.0, se_num[ok]^2)
+      out[ok] <- exp(pmin(30.0, z_num[ok] + 0.5 * s2))
+    } else if (tt_fin == "log1p") {
+      s2 <- pmin(50.0, se_num[ok]^2)
+      out[ok] <- pmax(0.0, exp(pmin(30.0, z_num[ok] + 0.5 * s2)) - 1.0)
+    } else if (tt_fin == "log10") {
+      ln10 <- log(10.0)
+      s2 <- pmin(50.0, (ln10 * se_num[ok])^2)
+      out[ok] <- exp(pmin(30.0, ln10 * z_num[ok] + 0.5 * s2))
+    } else if (tt_fin == "sqrt") {
+      mu_pos <- pmax(0.0, z_num[ok])
+      out[ok] <- mu_pos^2 + se_num[ok]^2
+    } else {
+      out[ok] <- .s3n_gh7_mean_se(inv_fn, z_num[ok], se_num[ok])$mean
+    }
+    out
+  }
+
+  tr$inv_se <- function(z, se = 0) {
+    z_num <- as.numeric(z)
+    n <- length(z_num)
+    if (n == 0L) return(numeric(0))
+    se_num <- if (length(se) == 1L) rep(as.numeric(se), n) else as.numeric(se)
+    if (length(se_num) != n) se_num <- rep(se_num[1L], n)
+    out <- ifelse(is.finite(z_num), 0.0, NA_real_)
+    ok <- is.finite(z_num) & is.finite(se_num) & (se_num > 0)
+    if (!any(ok)) return(out)
+    if (tt_fin == "none") {
+      out[ok] <- pmax(0.0, se_num[ok])
+    } else if (tt_fin == "log") {
+      s2 <- pmin(50.0, se_num[ok]^2)
+      m_ok <- exp(pmin(30.0, z_num[ok] + 0.5 * s2))
+      out[ok] <- m_ok * sqrt(expm1(s2))
+    } else if (tt_fin == "log1p") {
+      s2 <- pmin(50.0, se_num[ok]^2)
+      ez <- exp(pmin(30.0, z_num[ok] + 0.5 * s2))
+      out[ok] <- ez * sqrt(expm1(s2))
+    } else if (tt_fin == "log10") {
+      ln10 <- log(10.0)
+      s2 <- pmin(50.0, (ln10 * se_num[ok])^2)
+      m_ok <- exp(pmin(30.0, ln10 * z_num[ok] + 0.5 * s2))
+      out[ok] <- m_ok * sqrt(expm1(s2))
+    } else if (tt_fin == "sqrt") {
+      mu_pos <- pmax(0.0, z_num[ok])
+      s2 <- se_num[ok]^2
+      out[ok] <- sqrt(4.0 * (mu_pos^2) * s2 + 2.0 * (s2^2))
+    } else {
+      out[ok] <- .s3n_gh7_mean_se(inv_fn, z_num[ok], se_num[ok])$se
+    }
+    out
+  }
+
+  tr
 }
 
 as_transformer <- function(obj, y_obs = NULL, lambda = NULL, scale = NULL) {
@@ -527,7 +651,7 @@ impute_censored_ros <- function(vals, is_cens) {
   thresholds <- c(min_thr, c_limits, Inf)
 
   cens_mask <- is_cens
-  unc_mask  <- !is_cens & is.finite(vals)
+  unc_mask  <- !is_cens & is.finite(vals) & (vals > 0)
   unc_bin   <- integer(n)
   if (any(unc_mask)) {
     unc_bin[unc_mask] <- findInterval(vals[unc_mask], c_limits, left.open = FALSE) + 1L
@@ -577,5 +701,11 @@ impute_censored_ros <- function(vals, is_cens) {
   out <- vals
   c_idx <- which(cens_mask)
   out[c_idx] <- pmin(vals[c_idx], pmax(1e-6, exp(inter + slope * stats::qnorm(pp[c_idx]))))
+  for (j in 2:(J + 1L)) {
+    idx_c <- which(cens_mask & cens_bin == j)
+    if (length(idx_c) > 1L) {
+      out[idx_c] <- mean(out[idx_c])
+    }
+  }
   out
 }

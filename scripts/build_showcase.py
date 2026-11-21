@@ -115,26 +115,10 @@ def stage_figure(rel_base_no_ext, alias_name, allow_svg=True, dpi=300):
     dest_file = alias_name + ".webp"
     dest_path = os.path.join(FIG_DEST_DIR, dest_file)
 
-    if os.path.exists(png_src):
-        with Image.open(png_src) as img:
-            if dpi < 300:
-                scale = dpi / 300.0
-                new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-            stamped = stamp_illustrative_badge(img, add_top_pad=False)
-            stamped.save(dest_path, format="WEBP", quality=WEBP_QUALITY, method=6)
-        raw_kb = os.path.getsize(png_src) / 1024.0
-        size_kb = os.path.getsize(dest_path) / 1024.0
-        print(f"  [WebP] {dest_file}: {raw_kb:.0f} KB PNG -> {size_kb:.0f} KB ({dpi} DPI, q={WEBP_QUALITY})")
-        return {
-            "path": f"assets/figures/{dest_file}",
-            "format": f"WebP ({dpi} DPI)",
-            "size_kb": round(size_kb, 1),
-        }
-
-    if os.path.exists(svg_src):
+    if os.path.exists(svg_src) and (allow_svg or not os.path.exists(png_src)):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_png = os.path.join(tmpdir, f"{alias_name}.png")
+            ink_env = dict(os.environ, INKSCAPE_PROFILE_DIR=tmpdir, DBUS_SESSION_BUS_ADDRESS="")
             subprocess.run(
                 [
                     "inkscape",
@@ -145,6 +129,7 @@ def stage_figure(rel_base_no_ext, alias_name, allow_svg=True, dpi=300):
                     "--export-background=#ffffff",
                 ],
                 check=True,
+                env=ink_env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -153,10 +138,36 @@ def stage_figure(rel_base_no_ext, alias_name, allow_svg=True, dpi=300):
                 stamped.save(dest_path, format="WEBP", quality=92)
         raw_kb = os.path.getsize(svg_src) / 1024.0
         size_kb = os.path.getsize(dest_path) / 1024.0
-        print(f"  [WebP] {dest_file}: {raw_kb:.0f} KB SVG -> {size_kb:.0f} KB (2400px, q=92)")
+        print(f"  [WebP] {dest_file}: {raw_kb:.0f} KB SVG -> {size_kb:.0f} KB (2400px from SVG, q=92)")
         return {
             "path": f"assets/figures/{dest_file}",
             "format": "WebP (2400px from SVG)",
+            "size_kb": round(size_kb, 1),
+        }
+
+    if os.path.exists(png_src):
+        with Image.open(png_src) as img:
+            if dpi < 300:
+                scale = dpi / 300.0
+                new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            stamped = stamp_illustrative_badge(img, add_top_pad=bool(allow_svg))
+            stamped.save(dest_path, format="WEBP", quality=WEBP_QUALITY, method=6)
+        raw_kb = os.path.getsize(png_src) / 1024.0
+        size_kb = os.path.getsize(dest_path) / 1024.0
+        print(f"  [WebP] {dest_file}: {raw_kb:.0f} KB PNG -> {size_kb:.0f} KB ({dpi} DPI, q={WEBP_QUALITY})")
+        return {
+            "path": f"assets/figures/{dest_file}",
+            "format": f"WebP ({dpi} DPI)",
+            "size_kb": round(size_kb, 1),
+        }
+
+    if os.path.exists(dest_path):
+        size_kb = os.path.getsize(dest_path) / 1024.0
+        print(f"  [KEEP] {dest_file}: preserving existing staged asset ({size_kb:.0f} KB)")
+        return {
+            "path": f"assets/figures/{dest_file}",
+            "format": "WebP (2400px from SVG)" if allow_svg else f"WebP ({dpi} DPI)",
             "size_kb": round(size_kb, 1),
         }
 
@@ -166,9 +177,24 @@ def stage_figure(rel_base_no_ext, alias_name, allow_svg=True, dpi=300):
 
 def main():
     print("Building modelling_dashboard/ showcase bundle...")
-    if os.path.exists(FIG_DEST_DIR):
-        shutil.rmtree(FIG_DEST_DIR)
     os.makedirs(FIG_DEST_DIR, exist_ok=True)
+    if prev_tables:
+        for t_key, t_val in payload["tables"].items():
+            if not t_val and prev_tables.get(t_key):
+                payload["tables"][t_key] = prev_tables[t_key]
+
+    data_js_path = os.path.join(DASH_DIR, "data.js")
+    prev_tables = {}
+    if os.path.exists(data_js_path):
+        try:
+            with open(data_js_path, "r", encoding="utf-8") as f:
+                raw_js = f.read().strip()
+            prefix = "window.MODELLING_DASHBOARD_DATA ="
+            if raw_js.startswith(prefix):
+                body = raw_js[len(prefix):].strip().rstrip(";")
+                prev_tables = json.loads(body).get("tables", {})
+        except Exception:
+            prev_tables = {}
 
     _CSV_CACHE.clear()
     figure_specs = {
@@ -356,6 +382,11 @@ def main():
             "cs7_cv_comp": read_csv_rows("output/comparisons/cs7_transforms_0117/cv_metrics_comparison.csv"),
         },
     }
+
+    if prev_tables:
+        for t_key, t_val in payload["tables"].items():
+            if not t_val and prev_tables.get(t_key):
+                payload["tables"][t_key] = prev_tables[t_key]
 
     data_js_path = os.path.join(DASH_DIR, "data.js")
     with open(data_js_path, "w", encoding="utf-8") as f:

@@ -165,7 +165,16 @@ apply_covariate_specs <- function(specs, base_terms) {
   } else {
     terms <- character(0)
     for (sp in specs[!is_mod]) {
-      if (tolower(sp) %in% c("intercept", "none")) next
+      sp_low <- tolower(trimws(sp))
+      if (sp_low %in% c("intercept", "none")) next
+      if (sp_low == "default") {
+        terms <- union(terms, base_terms)
+        next
+      }
+      if (sp_low == "all") {
+        terms <- union(terms, names(COVARIATE_CATALOG))
+        next
+      }
       nm <- match_covariate_token(sp)
       if (!(nm %in% terms)) terms <- c(terms, nm)
     }
@@ -452,7 +461,7 @@ resolve_basin_spec <- function(spec, c_lu) {
     } else {
       rows <- which(!is.na(c_lu$RBD_Name) & tolower(c_lu$RBD_Name) == tolower(rest))
       if (length(rows) == 0L) {
-        rows <- which(!is.na(c_lu$RBD_Name) & grepl(rest, c_lu$RBD_Name, ignore.case = TRUE))
+        rows <- which(!is.na(c_lu$RBD_Name) & grepl(tolower(rest), tolower(c_lu$RBD_Name), fixed = TRUE))
       }
       rid <- if (length(rows) > 0L) c_lu$RBD_ID[rows[1]] else NA_integer_
       if (!is.na(rid)) rows <- which(!is.na(c_lu$RBD_ID) & c_lu$RBD_ID == rid)
@@ -507,7 +516,7 @@ resolve_basin_spec <- function(spec, c_lu) {
   }
 
   # 5. Match on Main_River (preferring highest n_obs_reaches, n_reaches)
-  m_idx <- which(!is.na(c_lu$Main_River) & grepl(spec_trim, c_lu$Main_River, ignore.case = TRUE))
+  m_idx <- which(!is.na(c_lu$Main_River) & grepl(tolower(spec_trim), tolower(c_lu$Main_River), fixed = TRUE))
   if (length(m_idx) > 0L) {
     sub_m <- c_lu[m_idx, , drop = FALSE]
     sub_m <- sub_m[order(-sub_m$n_obs_reaches, -sub_m$n_reaches), , drop = FALSE]
@@ -527,7 +536,7 @@ resolve_basin_spec <- function(spec, c_lu) {
   }
 
   # 6. Substring match on RBD_Name
-  r_idx <- which(!is.na(c_lu$RBD_Name) & grepl(spec_trim, c_lu$RBD_Name, ignore.case = TRUE))
+  r_idx <- which(!is.na(c_lu$RBD_Name) & grepl(tolower(spec_trim), tolower(c_lu$RBD_Name), fixed = TRUE))
   if (length(r_idx) > 0L) {
     rid   <- c_lu$RBD_ID[r_idx[1]]
     rname <- c_lu$RBD_Name[r_idx[1]]

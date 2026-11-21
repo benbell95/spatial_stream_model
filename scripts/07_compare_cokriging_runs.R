@@ -53,6 +53,8 @@ export_cokrig_svg <- function(r_dir, label_txt) {
   cc_d <- fast_read_csv(file.path(r_dir, "cokriging_cross_covariance.csv"))
   cv_e <- cv_d[grepl("^All England", cv_d$Domain), , drop = FALSE]
   cc_e <- cc_d[grepl("^All England", cc_d$Domain), , drop = FALSE]
+  old_fmt <- getOption("s3n.fig_format", "png")
+  on.exit(configure_plot_options(format = old_fmt), add = TRUE)
   configure_plot_options(format = "svg")
   out_svg <- file.path(r_dir, "fig_cokrig_cross_correlation.svg")
   plot_fig_cokrig_diagnostics(
@@ -81,7 +83,7 @@ ex_wt_f <- file.path(wt_dir, "exceedance_summary_cokriging.csv")
 ex_eq <- if (file.exists(ex_eq_f)) fast_read_csv(ex_eq_f) else data.frame()
 ex_wt <- if (file.exists(ex_wt_f)) fast_read_csv(ex_wt_f) else data.frame()
 
-m_cv <- merge(cv_eq, cv_wt, by = c("Domain", "Target", "Target_Code", "Dataset", "CV_Mode", "Method", "n_obs", "Model"),
+m_cv <- merge(cv_eq, cv_wt, by = c("Domain", "Target", "Target_Code", "Dataset", "CV_Mode", "Model"),
               suffixes = c("_Equal", "_Favoured"), sort = FALSE)
 m_cv$Domain_Short <- sub(" \\(CatchID=.*\\)$", "", sub(" RSN\\+SSN\\+WATERB_TOB Network$", "", m_cv$Domain))
 m_cv$R2_Diff   <- round(m_cv$R2_Favoured - m_cv$R2_Equal, 4)
@@ -216,6 +218,8 @@ fast_write_csv(reach_sum, file.path(out_dir, "cs6_reach_comparison_summary.csv")
 # 5. Render Vector SVG Comparison Chart (CV, Cross-Correlation & Tier Uncertainty)
 # ------------------------------------------------------------------------------
 out_svg <- file.path(out_dir, "fig_cs6_equal_vs_favoured_comparison.svg")
+old_fmt_main <- getOption("s3n.fig_format", "png")
+on.exit(configure_plot_options(format = old_fmt_main), add = TRUE)
 configure_plot_options(format = "svg")
 open_png_device(out_svg, width = 2000, height = 1150, res = 150)
 tryCatch({
@@ -237,16 +241,26 @@ legend("topleft", legend = c("Equal Sources (w_all = 1)", "Favoured RSN+SSN (w_W
 text(bp1, mat_se + max(mat_se) * 0.04, labels = sprintf("%.3f", mat_se), cex = 0.85, font = 2)
 
 # Panel B: Uncertain Tier Reaches (%) across Domains for Orthophosphate (0180)
-ex0_eq <- ex_eq[ex_eq$Target == "Orthophosphate" & ex_eq$Tier == "Uncertain / Priority Monitoring", ]
-ex0_wt <- ex_wt[ex_wt$Target == "Orthophosphate" & ex_wt$Tier == "Uncertain / Priority Monitoring", ]
-ex0_m  <- merge(ex0_eq, ex0_wt, by = c("Domain", "Target", "Tier"), suffixes = c("_eq", "_wt"), sort = FALSE)
-dom_lbl <- sub(" \\(CatchID=.*\\)$", "", sub(" RSN\\+SSN\\+WATERB_TOB Network$", "", ex0_m$Domain))
-mat_unc <- rbind(ex0_m$Reach_Pct_eq, ex0_m$Reach_Pct_wt)
-bp2 <- barplot(mat_unc, beside = TRUE, names.arg = dom_lbl, col = c("#f59e0b", "#10b981"),
-               ylim = c(0, 82), ylab = "Uncertain Tier Reaches (%)",
-               main = "B. Orthophosphate (0.069 mg/L) Tier Uncertainty Reduction", border = NA)
-legend("topleft", legend = c("Equal Sources", "Favoured RSN+SSN"), fill = c("#f59e0b", "#10b981"), bty = "n", cex = 0.88)
-text(bp2, mat_unc + 2.5, labels = sprintf("%.1f%%", mat_unc), cex = 0.82, font = 2)
+if (nrow(ex_eq) > 0L && nrow(ex_wt) > 0L && all(c("Target", "Tier") %in% names(ex_eq))) {
+  ex0_eq <- ex_eq[ex_eq$Target == "Orthophosphate" & ex_eq$Tier == "Uncertain / Priority Monitoring", ]
+  ex0_wt <- ex_wt[ex_wt$Target == "Orthophosphate" & ex_wt$Tier == "Uncertain / Priority Monitoring", ]
+  ex0_m  <- merge(ex0_eq, ex0_wt, by = c("Domain", "Target", "Tier"), suffixes = c("_eq", "_wt"), sort = FALSE)
+} else {
+  ex0_m <- data.frame()
+}
+if (nrow(ex0_m) > 0L) {
+  dom_lbl <- sub(" \\(CatchID=.*\\)$", "", sub(" RSN\\+SSN\\+WATERB_TOB Network$", "", ex0_m$Domain))
+  mat_unc <- rbind(ex0_m$Reach_Pct_eq, ex0_m$Reach_Pct_wt)
+  bp2 <- barplot(mat_unc, beside = TRUE, names.arg = dom_lbl, col = c("#f59e0b", "#10b981"),
+                 ylim = c(0, 82), ylab = "Uncertain Tier Reaches (%)",
+                 main = "B. Orthophosphate (0.069 mg/L) Tier Uncertainty Reduction", border = NA)
+  legend("topleft", legend = c("Equal Sources", "Favoured RSN+SSN"), fill = c("#f59e0b", "#10b981"), bty = "n", cex = 0.88)
+  text(bp2, mat_unc + 2.5, labels = sprintf("%.1f%%", mat_unc), cex = 0.82, font = 2)
+} else {
+  plot.new()
+  title(main = "B. Orthophosphate Tier Uncertainty Reduction")
+  text(0.5, 0.5, "Exceedance summary CSVs unavailable", cex = 0.95, col = "#64748b")
+}
 
 # Panel C: Cross-Correlation Decomposition (Nitrate <-> Orthophosphate, England)
 ce <- cc_pair_eq[grepl("^All England", cc_pair_eq$Domain), ][1, ]

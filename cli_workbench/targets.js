@@ -13,12 +13,13 @@ window.WORKBENCH_TARGETS = [
       { "value": "0301", "label": "0301 — Carbon, Organic, Dissolved as C (DOC, mg/l)", "ds": "wq", "rsnOnly": false },
       { "value": "0077", "label": "0077 — Conductivity at 25 C (uS/cm)", "ds": "wq", "rsnOnly": false },
       { "value": "0162", "label": "0162 — Alkalinity to pH 4.5 as CaCO3 (mg/l)", "ds": "wq", "rsnOnly": false },
-      { "value": "0253", "label": "0253 — Magnesium, Dissolved (mg/l)", "ds": "wq", "rsnOnly": false },
-      { "value": "0241", "label": "0241 — Calcium, Dissolved (mg/l)", "ds": "wq", "rsnOnly": false },
+      { "value": "0235", "label": "0235 — Magnesium, Dissolved (mg/l)", "ds": "wq", "rsnOnly": false },
+      { "value": "0239", "label": "0239 — Calcium, Dissolved (mg/l)", "ds": "wq", "rsnOnly": false },
       { "value": "6396", "label": "6396 — Turbidity : In Situ (FTU)", "ds": "wq", "rsnOnly": false },
       { "value": "0061", "label": "0061 — pH : In Situ (pH units)", "ds": "wq", "rsnOnly": false },
       { "value": "0076", "label": "0076 — Temperature of Water (CEL)", "ds": "wq", "rsnOnly": false },
-      { "value": "0085", "label": "0085 — Oxygen, Dissolved, % Saturation (%)", "ds": "wq", "rsnOnly": false },
+      { "value": "9901", "label": "9901 — Oxygen, Dissolved, % Saturation (%)", "ds": "wq", "rsnOnly": false },
+      { "value": "0085", "label": "0085 — BOD : 5 Day ATU (mg/l)", "ds": "wq", "rsnOnly": false },
       { "value": "9924", "label": "9924 — Oxygen, Dissolved as O2 : In Situ (mg/l)", "ds": "wq", "rsnOnly": false }
     ]
   },

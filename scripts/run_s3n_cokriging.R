@@ -502,6 +502,7 @@ for (p in seq_len(P)) {
               p, P, res_p$meta$label, res_p$meta$dataset, res_p$meta$code,
               res_p$trans$type, nrow(merged_p), nrow(reach_tables[[p]])))
 }
+rm(list = ls(envir = .wq_csv_cache), envir = .wq_csv_cache)
 
 # Build union of observed RivIDs across all P targets (supporting heterotopic designs!)
 all_obs_rivs <- sort(unique(unlist(lapply(reach_tables, function(tb) tb$RivID))))
@@ -586,6 +587,8 @@ method_lbl      <- if (method_cli == "colocated") "Sequential Co-Located Residua
 
 eng_pred_ref <- NULL
 eng_norm_stats_list <- vector("list", P)
+eng_sc_val_list     <- vector("list", P)
+eng_sc_se_list      <- vector("list", P)
 for (dom in domains) {
   res_dom <- fit_multivariate_s3n_domain(
     df_reaches      = df_reaches,
@@ -633,8 +636,14 @@ for (dom in domains) {
     out_csv <- file.path(OUT_DIR, sprintf("predictions_%s_%s.csv", dom$slug, c_slug))
     fast_write_csv(res_dom$pred_dfs[[p]], out_csv)
 
+    ftag <- norm_meta$file_tag
     if (dom$slug == "england") {
-      ftag <- norm_meta$file_tag
+      eng_sc_val_list[[p]] <- if (norm_cli == "none") {
+        compute_color_scale(res_dom$pred_dfs[[p]][[norm_meta$pred_col]], trans_list[[p]])
+      } else {
+        compute_norm_color_scale(res_dom$pred_dfs[[p]][[norm_meta$pred_col]], norm_cli)
+      }
+      eng_sc_se_list[[p]] <- compute_se_scale(res_dom$pred_dfs[[p]]$se_model_sc)
       fig_map <- file.path(OUT_DIR, sprintf("fig_cokrig_england_%s%s.png", c_slug, ftag))
       plot_fig1_england_map(
         res_dom$pred_dfs[[p]], m_p$code, paste0(m_p$name, " [Co-Kriging]"), m_p$unit, trans_list[[p]], fig_map,
@@ -645,6 +654,46 @@ for (dom in domains) {
         fig_ex <- file.path(OUT_DIR, sprintf("fig_exceedance_england_%s.png", c_slug))
         plot_fig_exceedance_england(
           res_dom$pred_dfs[[p]], m_p$code, paste0(m_p$name, " [Co-Kriging]"), m_p$unit, fig_ex,
+          threshold_val = thresholds_vec[p], threshold_dir = threshold_dirs_vec[p],
+          vars_label = vars_sub, network_label = net_meta$short_label, source_label = source_label
+        )
+      }
+    } else {
+      sc_p <- if (!is.null(eng_sc_val_list[[p]])) {
+        eng_sc_val_list[[p]]
+      } else if (norm_cli == "none") {
+        compute_color_scale(res_dom$pred_dfs[[p]][[norm_meta$pred_col]], trans_list[[p]])
+      } else {
+        compute_norm_color_scale(res_dom$pred_dfs[[p]][[norm_meta$pred_col]], norm_cli)
+      }
+      sc_se_p <- eng_sc_se_list[[p]]
+      cv_row_p <- subset(res_dom$cv_compare_df, Target_Code == m_p$code & Model == "Co-Kriging (All-Holdout)")
+      cv_tab_p <- if (nrow(cv_row_p) > 0L) {
+        data.frame(
+          Domain = dom$domain_label,
+          Model  = "S3N Combined (Tail-Up + Tail-Down)",
+          RMSE   = cv_row_p$RMSE[1],
+          MAE    = cv_row_p$MAE[1],
+          R2     = cv_row_p$R2[1],
+          stringsAsFactors = FALSE
+        )
+      } else {
+        data.frame(Domain = character(0), Model = character(0), RMSE = numeric(0), MAE = numeric(0), R2 = numeric(0))
+      }
+      fig_map <- file.path(OUT_DIR, sprintf("fig_cokrig_%s_%s%s.png", dom$slug, c_slug, ftag))
+      b_title_short <- trimws(sub("\\s*\\(.*$", "", dom$domain_label))
+      plot_basin_map(
+        res_dom$pred_dfs[[p]], b_title_short, dom$domain_label,
+        cv_tab_p, sc_p, m_p$code, paste0(m_p$name, " [Co-Kriging]"), m_p$unit,
+        trans_list[[p]], fig_map,
+        reverse_color = reverse_color, sc_se = sc_se_p,
+        vars_label = vars_sub, network_label = net_meta$short_label,
+        source_label = source_label, norm_mode = norm_cli
+      )
+      if (!is.null(thresholds_vec) && is.finite(thresholds_vec[p]) && ("compliance_tier" %in% names(res_dom$pred_dfs[[p]]))) {
+        fig_ex <- file.path(OUT_DIR, sprintf("fig_exceedance_%s_%s.png", dom$slug, c_slug))
+        plot_fig_exceedance_basin(
+          res_dom$pred_dfs[[p]], dom$domain_label, m_p$code, paste0(m_p$name, " [Co-Kriging]"), m_p$unit, fig_ex,
           threshold_val = thresholds_vec[p], threshold_dir = threshold_dirs_vec[p],
           vars_label = vars_sub, network_label = net_meta$short_label, source_label = source_label
         )

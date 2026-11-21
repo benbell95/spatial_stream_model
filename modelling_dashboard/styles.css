@@ -707,7 +707,8 @@ pre {
 }
 
 /* Tables */
-.table-scroll {
+.table-scroll,
+.table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -738,8 +739,10 @@ th {
 
 tr:last-child td { border-bottom: 0; }
 tr.highlight-row { background: rgba(56, 189, 248, 0.08); font-weight: 600; }
+td.highlight-cell { background: rgba(56, 189, 248, 0.14); color: var(--accent-primary); font-weight: 600; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .pos { color: var(--accent-secondary); font-weight: 600; }
+.warn, .amber { color: var(--accent-warn); font-weight: 600; }
 .neg { color: var(--accent-danger); font-weight: 600; }
 
 /* Feature Chips & Accordion */
@@ -859,8 +862,8 @@ tr.highlight-row { background: rgba(56, 189, 248, 0.08); font-weight: 600; }
 
 .modal-nav:hover {
   background: rgba(15, 23, 42, 0.94);
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .modal-nav:active {

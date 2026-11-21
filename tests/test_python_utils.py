@@ -150,6 +150,18 @@ class TestMeasurementTokensAndTobit(unittest.TestCase):
         self.assertEqual(iv_zero[2], 0.0)
         self.assertTrue(0.0 < iv_zero[0] <= 3.0)
 
+        # Extreme tail left/right censoring must remain finite & within censoring bounds without CDF underflow
+        tail_mod = u.IntervalTobitModel("TailTest")
+        tail_mod.mu = 1.0
+        tail_mod.sigma = 0.5
+        tail_mod.fitted = True
+        tail_left = tail_mod.predict("left", 0.0, 0.05)
+        self.assertTrue(math.isfinite(tail_left[0]) and 0.0 < tail_left[0] <= 0.05)
+        self.assertTrue(math.isfinite(tail_left[4]) and tail_left[4] > 0.0)
+        tail_right = tail_mod.predict("right", 100.0, None)
+        self.assertTrue(math.isfinite(tail_right[0]) and tail_right[0] >= 100.0)
+        self.assertTrue(math.isfinite(tail_right[4]) and tail_right[4] > 0.0)
+
     def test_match_known_determinand(self):
         d_n = fcd.match_known_determinand("Nitrate (mg/L)")
         self.assertEqual(d_n["code"], "0117")

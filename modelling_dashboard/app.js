@@ -24,12 +24,12 @@
       note: "Regional sub-models allow aquifer and slope fixed effects to adapt locally per drainage basin."
     },
     no3_diag: {
-      title: "4-Panel Nitrate Diagnostics, Cross-Validation & Parameter CIs (SVG)",
+      title: "4-Panel Nitrate Diagnostics, Cross-Validation & Parameter CIs",
       note: "Compares OLS, Tail-Down, Tail-Up, and Combined NNGP CV accuracy alongside bootstrap covariate & variance intervals."
     },
     no3_gam_diag: {
-      title: "4-Panel GAM + S3N Diagnostics & Cross-Validation (SVG)",
-      note: "Vector SVG diagnostic summary for non-linear --trend=gam Nitrate model (CV R2 = 0.6743)."
+      title: "4-Panel GAM + S3N Diagnostics & Cross-Validation",
+      note: "Diagnostic summary for non-linear --trend=gam Nitrate model (CV R2 = 0.6743)."
     },
     ntaxa_england: {
       title: "England WHPT N-Taxa (whpt_ntaxa) — Joint TU+TD+Euc Surface & SE (--reverse-color)",
@@ -48,12 +48,12 @@
       note: "Severn CV R2 rises from 0.0200 (OLS) to 0.1750 (Joint S3N), while Thames exhibits localized heterogeneity at n=107."
     },
     ntaxa_diag: {
-      title: "4-Panel WHPT N-Taxa Diagnostics, CV & Parameter CIs (SVG)",
+      title: "4-Panel WHPT N-Taxa Diagnostics, CV & Parameter CIs",
       note: "Compares OLS (R2 = 0.1371), Tail-Up (0.1834), Tail-Down (0.2391), and Combined Joint NNGP (0.2648) across England."
     },
     ntaxa_gam_diag: {
-      title: "4-Panel GAM + S3N WHPT N-Taxa Diagnostics & CV (SVG)",
-      note: "Vector SVG diagnostic summary for non-linear --trend=gam WHPT N-Taxa model (All-England CV R2 = 0.2664, RMSE = 5.3926 taxa)."
+      title: "4-Panel GAM + S3N WHPT N-Taxa Diagnostics & CV",
+      note: "Diagnostic summary for non-linear --trend=gam WHPT N-Taxa model (All-England CV R2 = 0.2664, RMSE = 5.3926 taxa)."
     },
     ntaxa_z_england: {
       title: "England WHPT N-Taxa Robust Z-Score Map (--norm=robust_zscore --reverse-color)",
@@ -88,12 +88,12 @@
       note: "Highest national RMNI accuracy: CV R2 = 0.7607 (RMSE = 0.6846), capturing non-linear slope and drainage-area thresholds."
     },
     eut_rmni_diag: {
-      title: "4-Panel RMNI Linear S3N Diagnostics & Parameter CIs (SVG)",
-      note: "Vector SVG CV and parameter summary for Linear Joint S3N on macrophytes:rmni."
+      title: "4-Panel RMNI Linear S3N Diagnostics & Parameter CIs",
+      note: "CV and parameter summary for Linear Joint S3N on macrophytes:rmni."
     },
     eut_rmni_gam_diag: {
-      title: "4-Panel RMNI GAM + S3N Diagnostics & Parameter CIs (SVG)",
-      note: "Vector SVG diagnostic summary for --trend=gam RMNI model (All-England CV R2 = 0.7607)."
+      title: "4-Panel RMNI GAM + S3N Diagnostics & Parameter CIs",
+      note: "Diagnostic summary for --trend=gam RMNI model (All-England CV R2 = 0.7607)."
     },
     eut_do_season_grid: {
       title: "England Dissolved Oxygen % Saturation (9901) Across 4 Seasons (--reverse-color)",
@@ -172,7 +172,7 @@
       note: "Biological communities integrate chronic organic/nutrient stress; S3N captures strong stream-network spatial continuity."
     },
     whpt_diag: {
-      title: "WHPT ASPT Cross-Validation & Diagnostics (SVG)",
+      title: "WHPT ASPT Cross-Validation & Diagnostics",
       note: "Combined S3N boosts All-England WHPT ASPT CV R2 from 0.4932 (OLS) to 0.6402."
     },
     no3_z_england: {
@@ -236,7 +236,7 @@
       note: "Visualizes Winter -> Spring -> Summer -> Autumn hydrological flushing and dilution shifts."
     },
     cokrig_xcorr: {
-      title: "Factor-LMC Cross-Correlation Matrices & Dual CV Gains (SVG)",
+      title: "Factor-LMC Cross-Correlation Matrices & Dual CV Gains",
       note: "Decomposes Nitrate-Orthophosphate coupling into Tail-Up (0.362), Tail-Down (0.691), and Co-Located Nugget (-0.734) correlations plus CV gains."
     },
     cokrig_0117: {
@@ -252,7 +252,7 @@
       note: "Expands observed network to 1,384 reaches across 91,118 stream segments while prioritizing RSN on co-located sites."
     },
     rss_diag: {
-      title: "Multi-Source RSN+SSN Diagnostics & Measurement Error CV (SVG)",
+      title: "Multi-Source RSN+SSN Diagnostics & Measurement Error CV",
       note: "Analytic (1/w - 1)*tau^2 penalty weighting preserves surveillance RSN primacy while extracting headwater signal from SSN."
     },
     desc_dist: {
@@ -260,15 +260,15 @@
       note: "Shows why monitored RSN mean (4.09 mg/L) exceeds predicted full-network mean (2.61 mg/L, p = 5.1e-45)."
     },
     desc_grad: {
-      title: "Stratified Landscape, Aquifer & Strahler Order Gradients (SVG)",
-      note: "Vector SVG breakdown comparing upland vs lowland, Principal Aquifers, Strahler stream orders, and major RBDs."
+      title: "Stratified Landscape, Aquifer & Strahler Order Gradients",
+      note: "Stratified breakdown comparing upland vs lowland, Principal Aquifers, Strahler stream orders, and major RBDs."
     },
     comp_cv: {
-      title: "Nitrate vs. Orthophosphate Cross-Validation Benchmark (SVG)",
+      title: "Nitrate vs. Orthophosphate Cross-Validation Benchmark",
       note: "Side-by-side R2 & RMSE comparison across England, Humber, Thames, and Severn."
     },
     comp_forest: {
-      title: "Covariate Effect Forest Plot: Nitrate vs. Orthophosphate (SVG)",
+      title: "Covariate Effect Forest Plot: Nitrate vs. Orthophosphate",
       note: "Two-sample Wald Z-tests highlight how Chalk/Limestone aquifers increase Nitrate (+0.18) while slope dilutes Orthophosphate."
     },
     comp_maps: {
@@ -320,15 +320,15 @@
       note: "38,921 stations plotted across 268 catchments (Thames 18,017; Humber 4,402); 33,013 stations snapped <=350 m onto 8,346 active reaches."
     },
     wb_comp_svg: {
-      title: "Equal vs. Favoured RSN+SSN Multi-Stratum Summary Comparison (SVG)",
+      title: "Equal vs. Favoured RSN+SSN Multi-Stratum Summary Comparison",
       note: "Compares median raw predictions, SE inflation/reduction across strata, compliance tier agreement, and latent cross-correlation."
     },
     wb_eq_xcorr: {
-      title: "Equal-Sources Latent Cross-Correlation Matrix (0117 vs. 0180, SVG)",
+      title: "Equal-Sources Latent Cross-Correlation Matrix (0117 vs. 0180)",
       note: "All-England Corr_TU = +0.5214, Corr_TD = +0.5230, Corr_Nugget = +0.1335, Corr_Total = +0.2989."
     },
     wb_wt_xcorr: {
-      title: "Favoured RSN+SSN Latent Cross-Correlation Matrix (0117 vs. 0180, SVG)",
+      title: "Favoured RSN+SSN Latent Cross-Correlation Matrix (0117 vs. 0180)",
       note: "De-weighting citizen noise lifts England Corr_Nugget (+0.1335 -> +0.7083) and Corr_Total (+0.2989 -> +0.4308)."
     },
     tr_diff_map: {
@@ -352,7 +352,7 @@
       note: "Identical 1,210 RSN stations on 90,876 reaches: Raw (none), Log (ln), Sqrt (0.50), and Profile-MLE Box-Cox (0.50)."
     },
     tr_comp_svg: {
-      title: "6-Panel Transform Diagnostics Summary (SVG)",
+      title: "6-Panel Transform Diagnostics Summary",
       note: "Compares CV R2 (model vs. raw scale), Raw RMSE/MAE, Skewness & Negatives, River Quantiles, Management Tiers, and Spearman Rank Concordance."
     },
     tr_pred_dens: {
@@ -384,12 +384,12 @@
     { cat: "major", badge: "CS16", title: "North West Optimal Monitoring Design (K=50)", desc: "OpenMP C++ Schur-complement active learning in North West RBD cuts variance by 45.95% (Mean SE 0.6956 -> 0.4887).", tab: "cs14" },
     { cat: "minor", badge: "Kernels", title: "5 Stream Covariance Kernels (--kernel)", desc: "exponential, spherical, mariah, linear, or auto (selects best kernel by Profile MLE likelihood).", tab: "cs1" },
     { cat: "minor", badge: "Confluence", title: "3 Physical AFV Weighting Schemes (--afv)", desc: "Branch weights by upstream length, Shreve link magnitude, or hydro_yield (orographic + aquifer proxy).", tab: "cs1" },
-    { cat: "minor", badge: "Covariates", title: "15 Covariates & Mixed +/- Selection (--vars)", desc: "Customize predictors with --vars=+Soil_Idx,-Slope_z; inspect full catalog via --list-vars.", tab: "cs1" },
+    { cat: "minor", badge: "Covariates", title: "15 Covariates & Mixed +/- Selection (--vars)", desc: "Customize predictors with --vars=+sinuosity,-slope; inspect full catalog via --list-vars.", tab: "cs1" },
     { cat: "minor", badge: "Transforms", title: "12 Transforms & 4 Normalisations", desc: "boxcox, yeojohnson, log, sqrt, logit, asin + Taylor/Duan back-transform; robust_zscore, zscore, minmax, percentile.", tab: "cs7" },
     { cat: "minor", badge: "Multi-Source", title: "Network Preference & Reliability Weighting", desc: "Combine EA surveillance RSN + headwater SSN networks using --prefer-source, --source-weight & --source-se.", tab: "cs4" },
     { cat: "minor", badge: "Censoring", title: "ROS, Site-ROS & Spatial Tobit EM (< LOD)", desc: "Handle left-censored '<' detection limits (--censor=ros|ros_site|em) and colorimetric ranges (--range-mode=tobit).", tab: "cs15" },
     { cat: "minor", badge: "Uncertainty", title: "Two-Stage Approach A Meas-Error Kriging", desc: "--meas-error / --gam and --source-se propagate Delta-Method observation SE into prediction SE maps.", tab: "cs15" },
-    { cat: "minor", badge: "Validation", title: "Hydrological CV Modes (--cv-mode)", desc: "--cv-mode=random|spatial|catchment|downstream|upstream evaluates geographic & downstream extrapolation.", tab: "cs1" }
+    { cat: "minor", badge: "Validation", title: "Hydrological CV Modes (--cv-mode)", desc: "--cv-mode=random|catchment|strahler|spatial_block evaluates geographic & hydrological extrapolation.", tab: "cs1" }
   ];
 
   function esc(val) {
@@ -432,7 +432,9 @@
     const groupChanged = activeGroup !== prevGroup;
 
     document.querySelectorAll(".group-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.group === activeGroup);
+      const isGrp = btn.dataset.group === activeGroup;
+      btn.classList.toggle("active", isGrp);
+      btn.setAttribute("aria-selected", isGrp ? "true" : "false");
     });
 
     const subtabStrip = document.getElementById("subtabStrip");
@@ -441,8 +443,10 @@
     }
 
     document.querySelectorAll(".tab-btn").forEach((btn) => {
+      const isActiveTab = btn.dataset.tab === tabId;
       btn.classList.toggle("hidden-in-group", btn.dataset.group !== activeGroup);
-      btn.classList.toggle("active", btn.dataset.tab === tabId);
+      btn.classList.toggle("active", isActiveTab);
+      btn.setAttribute("aria-selected", isActiveTab ? "true" : "false");
     });
     document.querySelectorAll(".tab-panel").forEach((p) => {
       p.classList.toggle("active", p.id === "tab-" + tabId);
@@ -1370,10 +1374,12 @@
 
     const index = [
       ...FEATURE_CATALOG.map((f) => ({ title: f.title, sub: f.desc, tab: f.tab })),
-      ...Object.entries(FIGURE_META).map(([k, m]) => ({
+      ...Object.entries(FIGURE_META)
+        .filter(([k]) => Boolean((DATA.figures || {})[k]))
+        .map(([k, m]) => ({
         title: m.title,
         sub: m.note,
-        tab: k === "no3_z_thames_severn" || k.startsWith("cs1") || k.startsWith("no3_gam") || k === "no3_england" || k === "no3_humber" || k === "no3_thames_severn" || k === "no3_diag" ? "cs1"
+        tab: k === "no3_z_england" || k === "no3_z_thames_severn" || k.startsWith("cs1") || k.startsWith("no3_gam") || k === "no3_england" || k === "no3_humber" || k === "no3_thames_severn" || k === "no3_diag" ? "cs1"
           : k.startsWith("whpt") ? "cs2"
           : k.includes("exceed") || k.includes("no3_z") ? "cs15"
           : k.startsWith("st_") ? "cs3"
@@ -1553,15 +1559,6 @@
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
-  document.querySelectorAll("[data-jump-tab]").forEach((el) => {
-    el.addEventListener("click", () => switchTab(el.dataset.jumpTab));
-    el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        switchTab(el.dataset.jumpTab);
-      }
-    });
-  });
   const STAGE_EXPLAINERS = {
     "1": {
       title: "Stage 1 · Python Stdlib Preprocessing (GIS, ROS & Snapping)",
@@ -1603,6 +1600,12 @@
   const KPI_EXPLAINERS = {
     "Linear S3N CV R²": "5-fold cross-validation R² for Nitrate (0117) using linear environmental covariates plus Joint Tail-Up, Tail-Down, and Euclidean NNGP stream covariance.",
     "GAM + S3N CV R²": "5-fold CV R² when linear fixed effects are replaced by REML-penalised cubic regression splines (mgcv::gam) before fitting spatial stream-network residuals.",
+    "Joint S3N CV R²": "5-fold out-of-sample CV R² for WHPT ASPT ecological quality across England using Joint Tail-Up + Tail-Down + Euclidean NNGP stream covariance.",
+    "Humber Basin CV R²": "5-fold CV R² for WHPT ASPT within the Humber Basin (CatchID=80), improving from 0.5028 (non-spatial OLS) to 0.5704.",
+    "Nitrate Compliant (≤ 11.3)": "Share of England reaches (90.8%) classified as Confidently or Likely Compliant below the 11.3 mg/L N Nitrates Directive standard.",
+    "PO4 Uncertain Tier": "Percentage of England reaches (47.5%, 43,202 reaches) with exceedance probability P(exceed 0.069 mg/L P) in [0.20, 0.80] needing priority monitoring.",
+    "Orthophosphate CV R²": "5-fold CV R² for reactive Orthophosphate (0180) on the natural-log scale under Joint S3N.",
+    "National Reach Coverage": "Total OS Open Rivers Network (ORN v2) reaches across 141 monitored England catchments covered by full-network S3N prediction and tier mapping.",
     "Spatial Variance Gain": "Additional out-of-sample variance explained (+0.2126 R²) purely from modelling river-network and Euclidean spatial correlation over non-spatial OLS.",
     "Observed Sites": "1,210 ORN v2 reaches with EA surveillance (RSN) Nitrate samples used to condition predictions across all 90,876 reaches in 141 monitored catchments.",
 
@@ -1728,14 +1731,19 @@
       });
     }
 
-    document.querySelectorAll(".info-wrap").forEach((wrap) => {
-      wrap.addEventListener("mouseenter", () => positionPopover(wrap));
-      wrap.addEventListener("focusin", () => positionPopover(wrap));
+    document.addEventListener("mouseover", (e) => {
+      const wrap = e.target.closest(".info-wrap");
+      if (wrap && !wrap.contains(e.relatedTarget)) positionPopover(wrap);
     });
 
-    document.querySelectorAll(".info-tip-btn").forEach((btn) => {
-      btn.setAttribute("aria-expanded", "false");
-      btn.addEventListener("click", (e) => {
+    document.addEventListener("focusin", (e) => {
+      const wrap = e.target.closest(".info-wrap");
+      if (wrap) positionPopover(wrap);
+    });
+
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".info-tip-btn");
+      if (btn) {
         e.preventDefault();
         e.stopPropagation();
         const wrap = btn.closest(".info-wrap");
@@ -1744,8 +1752,15 @@
         closeAll(wrap);
         if (willOpen) positionPopover(wrap);
         wrap.classList.toggle("open", willOpen);
-        btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
-      });
+        document.querySelectorAll(".info-tip-btn").forEach((b) => {
+          b.setAttribute("aria-expanded", b === btn && willOpen ? "true" : "false");
+        });
+        return;
+      }
+      if (!e.target.closest(".info-wrap")) {
+        closeAll(null);
+        document.querySelectorAll(".info-tip-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      }
     });
 
     window.addEventListener("resize", () => {
@@ -1755,13 +1770,6 @@
     window.addEventListener("scroll", () => {
       document.querySelectorAll(".info-wrap.open").forEach(positionPopover);
     }, true);
-
-    document.addEventListener("click", (e) => {
-      if (!e.target.closest(".info-wrap")) {
-        closeAll(null);
-        document.querySelectorAll(".info-tip-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
-      }
-    });
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -1895,6 +1903,17 @@
         }
       }
     });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        const jumpEl = e.target.closest("[data-jump-tab], [data-pager-tab]");
+        if (jumpEl && jumpEl.tagName !== "BUTTON" && jumpEl.tagName !== "A") {
+          e.preventDefault();
+          const targetTab = jumpEl.dataset.jumpTab || jumpEl.dataset.pagerTab;
+          if (targetTab) switchTab(targetTab);
+        }
+      }
+    });
   }
 
   function initChromeHeightSync() {
@@ -1935,6 +1954,7 @@
     history.replaceState({ tab: initialHash }, "", "#" + initialHash);
     switchTab(initialHash, false);
   } else {
+    ensureTabRendered("overview");
     history.replaceState({ tab: "overview" }, "", window.location.pathname + window.location.search);
   }
 })();

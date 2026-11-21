@@ -1049,7 +1049,7 @@ def iter_geoparquet_rows(parquet_path, geom_col_hint=None):
                     rdict = {k: v[r_idx] for k, v in cols_py.items()}
                     if "FID" not in rdict:
                         rdict["FID"] = row_num
-                    blob = rdict.get(gcol) if gcol else None
+                    blob = rdict.pop(gcol, None) if gcol else None
                     yield rdict, blob
             return
         except ImportError:
@@ -1111,12 +1111,16 @@ def iter_geoparquet_rows(parquet_path, geom_col_hint=None):
                             if gdal.OGR_G_ExportToIsoWkb(geom, 1, buf) == 0:
                                 wkb_bytes = buf.raw
                     if gcol:
-                        rdict[gcol] = wkb_bytes
+                        rdict.pop(gcol, None)
                     yield rdict, wkb_bytes
                 finally:
                     gdal.OGR_F_Destroy(feat)
     finally:
         gdal.GDALClose(ds)
+
+
+def _quote_ident(name):
+    return '"' + str(name).replace('"', '""') + '"'
 
 
 def convert_gpkg_to_geoparquet(src_gpkg_path, dst_parquet_path, layers=None):
@@ -1144,7 +1148,7 @@ def convert_gpkg_to_geoparquet(src_gpkg_path, dst_parquet_path, layers=None):
                 layer_cols = []
                 all_cols_ordered = []
                 for lyr in layers:
-                    c_list = [r[1] for r in c.execute(f'PRAGMA table_info("{lyr}")').fetchall()]
+                    c_list = [r[1] for r in c.execute(f"PRAGMA table_info({_quote_ident(lyr)})").fetchall()]
                     layer_cols.append((lyr, set(c_list)))
                     for cn in c_list:
                         if cn not in all_cols_ordered:
@@ -1153,8 +1157,8 @@ def convert_gpkg_to_geoparquet(src_gpkg_path, dst_parquet_path, layers=None):
                 conn.close()
             sql_parts = []
             for lyr, c_set in layer_cols:
-                sel_exprs = [f'"{cn}"' if cn in c_set else f'NULL AS "{cn}"' for cn in all_cols_ordered]
-                sql_parts.append(f'SELECT {", ".join(sel_exprs)} FROM "{lyr}"')
+                sel_exprs = [_quote_ident(cn) if cn in c_set else f"NULL AS {_quote_ident(cn)}" for cn in all_cols_ordered]
+                sql_parts.append(f"SELECT {', '.join(sel_exprs)} FROM {_quote_ident(lyr)}")
             union_sql = " UNION ALL ".join(sql_parts)
             opt_tokens.extend([b"-sql", os.fsencode(union_sql)])
 
@@ -1235,8 +1239,8 @@ def _build_auto_network_config(file_path, layer, geom_col, crs_epsg, cols, is_pa
             "rbd_id_col": cols.get("rbd_id"),
         },
         "attributes": {
-            "dist_to_mouth_col": cols.get("dist2mth", cols.get("dist_dn_km")),
-            "dist_to_mouth_unit": "km" if "dist_dn_km" in cols else "m",
+            "dist_to_mouth_col": cols.get("dist2mth"),
+            "dist_to_mouth_unit": "m",
             "afv_weight_col": cols.get("us_accum", cols.get("cum_len", cols.get("upland_skm"))),
             "afv_weight_unit": "km" if "upland_skm" in cols else "m",
             "shreve_col": cols.get("shreve"),
@@ -1295,8 +1299,10 @@ def load_network_config(network_arg, config_path=None):
             try:
                 c = conn.cursor()
                 row = c.execute("SELECT table_name, srs_id FROM gpkg_contents WHERE data_type='features' LIMIT 1").fetchone()
+                if not row:
+                    raise ValueError(f"No feature layer found in GeoPackage gpkg_contents: {cand_p}")
                 layer, srs_id = row[0], row[1]
-                cols = {r[1].lower(): r[1] for r in c.execute(f'PRAGMA table_info("{layer}")').fetchall()}
+                cols = {r[1].lower(): r[1] for r in c.execute(f"PRAGMA table_info({_quote_ident(layer)})").fetchall()}
             finally:
                 conn.close()
             geom_col = cols.get("shape", cols.get("geom", cols.get("geometry", "Shape")))
@@ -1324,8 +1330,13 @@ def ensure_gpkg_paths(cfg):
             zip_p = resolve_gis_path(zip_rel)
             if os.path.exists(zip_p):
                 print(f"   Extracting {zip_p}...")
+                dest_dir = os.path.realpath(os.path.dirname(zip_p))
                 with zipfile.ZipFile(zip_p, "r") as zf:
-                    zf.extractall(os.path.dirname(zip_p))
+                    for member in zf.namelist():
+                        target_p = os.path.realpath(os.path.join(dest_dir, member))
+                        if not (target_p == dest_dir or target_p.startswith(dest_dir + os.sep)):
+                            raise ValueError(f"Unsafe path in ZIP archive {zip_p}: {member}")
+                    zf.extractall(dest_dir)
         if not os.path.exists(full_p):
             raise FileNotFoundError(f"Water network file not found: {full_p}")
         resolved.append(full_p)
@@ -1355,7 +1366,7 @@ def load_orn_spatial_reference(runtime_cfg=None):
                 my,
                 int(r["RBD_ID"] or 0),
                 float(r["Elevation"] or 50.0),
-                float(r["Slope"] or 0.5),
+                float(r["Slope"] or 0.005),
                 float(r["SrcElevation"] or 100.0),
                 int(r["Is_Chalk_Limestone"] or 0),
                 int(r["Is_Sandstone"] or 0),
@@ -1402,6 +1413,10 @@ REACH_OBS_HEADER_COLS = [
 
 
 def _pick_reach_meas_method(m_set):
+    pref_order = ("tobit_interval", "tobit_raw_sd", "geometric_midpoint", "arithmetic_midpoint", "lower_bound", "upper_bound")
+    for p_m in pref_order:
+        if p_m in m_set:
+            return p_m
     non_pt = sorted(m for m in m_set if m and m != "exact_point")
     if non_pt:
         return non_pt[0]
@@ -1416,7 +1431,8 @@ def summarize_reach_site_obs(s_list, d2m_km, trans_type="log", eff_lambda=None, 
     all_meths = {m for s in s_list for m in s[5] if m}
     n_tot = sum(len(s[3]) for s in s_list)
     along_m = (sum(s[2] * len(s[3]) for s in s_list) / n_tot) if n_tot > 0 else statistics.mean(s[2] for s in s_list)
-    snap_d = min(s[1] for s in s_list)
+    best_site = min(s_list, key=lambda s: s[1])
+    snap_d = best_site[1]
     obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
     m_val = statistics.mean(all_vals)
     med_val = statistics.median(all_vals)
@@ -1438,7 +1454,7 @@ def summarize_reach_site_obs(s_list, d2m_km, trans_type="log", eff_lambda=None, 
     r_unc = round(math.sqrt(sum(u * u for u in all_uncs)) / n_tot, 6) if (all_uncs and n_tot > 0) else ""
     r_meth = _pick_reach_meas_method(all_meths)
     return [
-        1, s_list[0][0], round(snap_d, 2), round(obs_up_km, 5),
+        1, best_site[0], round(snap_d, 2), round(obs_up_km, 5),
         round(m_val, 4), round(med_val, 4), trans_str,
         r_unc, r_meth, len(all_vals),
     ]
@@ -1527,7 +1543,6 @@ def write_snapped_sites_and_periods(
             continue
         _d, riv_id, catch_id, along_m, d2m_km, inc = snap_info[nid]
         if inc == 1:
-            reach_along_map[riv_id].append(along_m)
             reach_meta_map[riv_id] = (catch_id, d2m_km)
             for p_type, p_val in (
                 ("all", "all"),
@@ -1536,6 +1551,7 @@ def write_snapped_sites_and_periods(
                 ("month", f"{mo:02d}"),
                 ("year_season", f"{yr}_{seas}"),
             ):
+                reach_along_map[(riv_id, p_type, p_val)].append(along_m)
                 reach_period_vals[(riv_id, p_type, p_val)].append(imp_val)
                 if unc_val is not None:
                     reach_period_unc[(riv_id, p_type, p_val)].append(unc_val)
@@ -1552,7 +1568,7 @@ def write_snapped_sites_and_periods(
         ])
         for (riv_id, p_type, p_val), vals in sorted(reach_period_vals.items()):
             catch_id, d2m_km = reach_meta_map[riv_id]
-            along_m = statistics.mean(reach_along_map[riv_id])
+            along_m = statistics.mean(reach_along_map[(riv_id, p_type, p_val)])
             obs_up_km = max(0.0, d2m_km - along_m / 1000.0)
             m_v = statistics.mean(vals)
             med_v = statistics.median(vals)
@@ -1615,7 +1631,8 @@ def write_reaches_and_finalize(
 
 def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, obs_by_site, period_label, t0,
                                trans_type="log", eff_lambda=None, eff_scale=1.0, pts_source=None, source_key="rsn",
-                               range_mode=None, runtime_cfg=None, out_dir=None):
+                               range_mode=None, runtime_cfg=None, out_dir=None,
+                               unc_by_site=None, meth_by_site=None):
     """
     Network-agnostic preprocessing pipeline for any configured GeoPackage network
     (such as EU-Hydro Thames, EU-Hydro Tweed, combined EU-Hydro, OS Water Network, etc.).
@@ -1628,7 +1645,9 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
     net_abbr = cfg["abbr"]
     net_label = cfg.get("label", net_abbr)
     short_label = cfg.get("short_label", net_label)
-    crs_epsg = int(cfg.get("crs_epsg", 27700))
+    raw_crs_epsg = int(cfg.get("crs_epsg", 27700))
+    geo_to_bng = raw_crs_epsg in (4326, 4258, 4277)
+    crs_epsg = 27700 if geo_to_bng else raw_crs_epsg
     max_snap_m = float(args.max_snap_dist if args.max_snap_dist is not None else cfg.get("max_snap_dist_m", 250.0))
     gpkg_paths = ensure_gpkg_paths(cfg)
     layers = cfg.get("layers", ["ORN"])
@@ -1725,10 +1744,18 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         zs = ()
         if env is not None:
             minx, maxx, miny, maxy = env
+            if geo_to_bng:
+                (minx, miny), (maxx, maxy) = transform_coords_batch([(minx, miny), (maxx, maxy)], raw_crs_epsg, 27700)
+                if minx > maxx:
+                    minx, maxx = maxx, minx
+                if miny > maxy:
+                    miny, maxy = maxy, miny
         else:
             poly, zs = parse_gpkg_geometry(blob)
             if len(poly) < 2:
                 return
+            if geo_to_bng:
+                poly = transform_coords_batch(poly, raw_crs_epsg, 27700)
             xs = [p[0] for p in poly]
             ys = [p[1] for p in poly]
             minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
@@ -1747,6 +1774,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
                 poly, zs = parse_gpkg_geometry(blob)
                 if len(poly) < 2:
                     return
+                if geo_to_bng:
+                    poly = transform_coords_batch(poly, raw_crs_epsg, 27700)
             for nid, px, py in cand_sites:
                 d, along = point_to_polyline(px, py, poly)
                 if d < best_snap[nid][0]:
@@ -1758,7 +1787,7 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
         if is_parquet_path(gpkg_p):
             for rdict, blob in iter_geoparquet_rows(gpkg_p, geom_col_hint=geom_col):
                 if blob is None and geom_col in rdict:
-                    blob = rdict.get(geom_col)
+                    blob = rdict.pop(geom_col, None)
                 _ingest_reach_row(file_idx, rdict, blob)
         else:
             conn = sqlite3.connect(gpkg_p)
@@ -1775,13 +1804,14 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
                     nel_c = nodes_cfg.get("elev_col", "ELEV")
                     nlt_c = nodes_cfg.get("dist_to_mouth_col", "LEN_TOM")
                     try:
-                        for nr in c.execute(f'SELECT "{nid_c}", "{nel_c}", "{nlt_c}" FROM "{ntbl}"'):
+                        q_sql = f"SELECT {_quote_ident(nid_c)}, {_quote_ident(nel_c)}, {_quote_ident(nlt_c)} FROM {_quote_ident(ntbl)}"
+                        for nr in c.execute(q_sql):
                             node_lookup[(file_idx, str(nr[0]))] = (nr[1], nr[2])
                     except sqlite3.Error:
                         pass
 
                 for layer in layers:
-                    for row in c.execute(f'SELECT * FROM "{layer}"'):
+                    for row in c.execute(f"SELECT * FROM {_quote_ident(layer)}"):
                         rdict = dict(row)
                         blob = rdict.pop(geom_col, None)
                         _ingest_reach_row(file_idx, rdict, blob)
@@ -1826,6 +1856,8 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
     for file_idx, orig_id, cid_key, poly, zs, rdict, blob in filtered_reaches:
         if poly is None:
             poly, zs = parse_gpkg_geometry(blob)
+            if len(poly) >= 2 and geo_to_bng:
+                poly = transform_coords_batch(poly, raw_crs_epsg, 27700)
         if len(poly) < 2:
             continue
         riv_idx += 1
@@ -2113,13 +2145,13 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
             elev = orn_ref[3] if orn_ref else 50.0
         u_info["elevation"] = elev
 
-        # Slope (%): 1. explicit attribute (e.g. PENTE), 2. 3D WKB Z drop, 3. ORN spatial join
+        # Slope (m/m): 1. explicit attribute, 2. 3D WKB Z drop, 3. ORN spatial join
         raw_slope = _opt_float(rdict.get(slope_col)) if slope_col else None
         slope = raw_slope if (raw_slope is not None and raw_slope >= 0) else None
         if slope is None and len(zs) >= 2 and u_info["length_km"] > 0:
-            slope = max(0.0, (zs[0] - zs[-1]) / (u_info["length_km"] * 10.0))
+            slope = max(0.0, (zs[0] - zs[-1]) / (u_info["length_km"] * 1000.0))
         if slope is None:
-            slope = orn_ref[4] if orn_ref else 0.5
+            slope = orn_ref[4] if orn_ref else 0.005
         u_info["slope"] = slope
 
         # Geology & RBD_ID from ORN spatial reference (if in England)
@@ -2168,16 +2200,17 @@ def preprocess_generic_network(cfg, args, pts, core_wq_sites, imputed_records, o
                     stack.append(p)
 
     # Write station-level snapping summary (rsn_sites.csv) and multi-period reach table (rsn_reach_periods.csv)
-    unc_by_site = defaultdict(list)
-    meth_by_site = defaultdict(set)
-    for rec in imputed_records:
-        nid = rec[0]
-        unc_val = rec[6] if len(rec) > 6 else None
-        meth_val = rec[7] if len(rec) > 7 else ""
-        if unc_val is not None:
-            unc_by_site[nid].append(unc_val)
-        if meth_val:
-            meth_by_site[nid].add(meth_val)
+    if unc_by_site is None or meth_by_site is None:
+        unc_by_site = defaultdict(list)
+        meth_by_site = defaultdict(set)
+        for rec in imputed_records:
+            nid = rec[0]
+            unc_val = rec[6] if len(rec) > 6 else None
+            meth_val = rec[7] if len(rec) > 7 else ""
+            if unc_val is not None:
+                unc_by_site[nid].append(unc_val)
+            if meth_val:
+                meth_by_site[nid].add(meth_val)
 
     snap_info = {}
     for nid in all_station_ids:
@@ -2689,7 +2722,8 @@ def main():
                                    trans_type=trans_type, eff_lambda=eff_lambda, eff_scale=eff_scale,
                                    pts_source=pts_source, source_key=source_key,
                                    range_mode=active_range_mode,
-                                   runtime_cfg=runtime_cfg, out_dir=out_dir)
+                                   runtime_cfg=runtime_cfg, out_dir=out_dir,
+                                   unc_by_site=unc_by_site, meth_by_site=meth_by_site)
         return
 
     # Standard ORN v2 fast path
@@ -2736,6 +2770,8 @@ def main():
                 continue
 
             poly = parse_gpkg_multilinestring(blob)
+            if len(poly) < 2:
+                continue
             for nid, px, py in cand_sites:
                 d, along = point_to_polyline(px, py, poly)
                 if d < best_snap[nid][0]:
@@ -2745,8 +2781,16 @@ def main():
         monitored_catchments = {
             best_snap[nid][2]
             for nid in active_monitored_sites
-            if nid in best_snap and best_snap[nid][0] <= max_snap_m
+            if nid in best_snap and best_snap[nid][0] <= max_snap_m and best_snap[nid][2] is not None
         }
+        if not monitored_catchments:
+            monitored_catchments = {
+                best_snap[nid][2]
+                for nid in best_snap
+                if best_snap[nid][0] <= max_snap_m and best_snap[nid][2] is not None
+            }
+        if not monitored_catchments:
+            raise ValueError(f"No monitoring stations snapped within max_snap_dist_m={max_snap_m:.1f} m of the ORN network.")
         snap_info = {}
         for nid in all_station_ids:
             d, riv_id, catch_id, along, d2m = best_snap[nid]
@@ -2941,7 +2985,7 @@ def main():
     reaches_rows = []
     for riv_id in topo_order:
         r = reaches[riv_id]
-        rc = reach_100m.get(riv_id, (50.0, 0.5, 1.05, 0, 0, 100.0))
+        rc = reach_100m.get(riv_id, (50.0, 0.005, 1.05, 0, 0, 100.0))
         is_chalk_lime, is_sand, is_aq = bedrock_flags_lu.get(rc[3], (0, 0, 0))
         is_peat = superficial_peat_lu.get(rc[4], 0)
 

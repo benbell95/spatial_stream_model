@@ -84,11 +84,9 @@ compute_snapped_reach_point <- function(st_x, st_y, sx, sy, mx, my, ex, ey, snap
   v_norm <- sqrt(vx * vx + vy * vy)
   d_true <- ifelse(is.na(snap_dist_m[v_idx]), v_norm, snap_dist_m[v_idx])
 
-  # If the station sits already on the reach chord (v_norm <= 1e-6), keep (qx, qy) on the reach
-  # instead of pushing it off along a normal; otherwise step toward the chord clamped to [0, v_norm].
-  step <- ifelse(v_norm > 1e-6, pmin(d_true, v_norm) / pmax(1e-12, v_norm), 0.0)
-  px_out <- ifelse(v_norm > 1e-6, st_x[v_idx] + step * vx, qx)
-  py_out <- ifelse(v_norm > 1e-6, st_y[v_idx] + step * vy, qy)
+  # Project onto the 2-chord reach segment directly so the plotted snap point always lies on the reach
+  px_out <- qx
+  py_out <- qy
 
   out_x[v_idx] <- round(px_out, 2)
   out_y[v_idx] <- round(py_out, 2)
@@ -360,7 +358,7 @@ resolve_snapping_catchments <- function(specs, catch_sum) {
 get_snap_dist_colors <- function(dist_m, inc_flag) {
   cols <- character(length(dist_m))
   for (i in seq_along(dist_m)) {
-    if (is.na(inc_flag[i]) || inc_flag[i] == 0L || dist_m[i] > 250.0) {
+    if (is.na(inc_flag[i]) || inc_flag[i] == 0L || is.na(dist_m[i]) || dist_m[i] > 250.0) {
       cols[i] <- "#B2182B" # Crimson Red (> 250 m excluded)
     } else if (dist_m[i] <= 5.0) {
       cols[i] <- "#1B7837" # Dark Green (<= 5 m)
@@ -496,36 +494,42 @@ plot_catchment_snapping <- function(cid, snap_df, reaches_df, catch_sum, net_lab
   # PANEL B: Snapping Distance Distribution (in Metres) for the Catchment
   # ============================================================================
   par(mar = c(4.2, 4.2, 3.8, 1.5))
-  d_inc <- sub_s$snap_dist_m[sub_s$included_250m == 1L]
-  d_plot <- if (length(d_inc) > 0) d_inc else sub_s$snap_dist_m
-  brks <- seq(0, max(25, ceiling(max(d_plot, na.rm = TRUE) * 1.05)), length.out = 22)
+  d_inc <- sub_s$snap_dist_m[sub_s$included_250m == 1L & is.finite(sub_s$snap_dist_m)]
+  d_plot <- if (length(d_inc) > 0L) d_inc else sub_s$snap_dist_m[is.finite(sub_s$snap_dist_m)]
+  if (length(d_plot) > 0L) {
+    brks <- seq(0, max(25, ceiling(max(d_plot, na.rm = TRUE) * 1.05)), length.out = 22)
 
-  hist(d_plot, breaks = brks, col = "#38BDF8", border = "#0369A1",
-       main = wrap_title(sprintf("B. Snapping Distance Distribution (%s, n = %d)", c_name, length(d_plot)), 60),
-       xlab = "Station-to-Reach Snapping Distance (metres)", ylab = "Number of Stations",
-       cex.main = 1.12, cex.lab = 1.0)
-  grid(col = "#E2E8F0", lty = 1)
-  rug(d_plot, col = "#0F172A", lwd = 1.2)
+    hist(d_plot, breaks = brks, col = "#38BDF8", border = "#0369A1",
+         main = wrap_title(sprintf("B. Snapping Distance Distribution (%s, n = %d)", c_name, length(d_plot)), 60),
+         xlab = "Station-to-Reach Snapping Distance (metres)", ylab = "Number of Stations",
+         cex.main = 1.12, cex.lab = 1.0)
+    grid(col = "#E2E8F0", lty = 1)
+    rug(d_plot, col = "#0F172A", lwd = 1.2)
 
-  med_d <- median(d_plot, na.rm = TRUE)
-  p95_d <- quantile(d_plot, probs = 0.95, na.rm = TRUE, names = FALSE)
-  mean_d <- mean(d_plot, na.rm = TRUE)
-  abline(v = med_d, col = "#15803D", lwd = 2.4, lty = 2)
-  abline(v = p95_d, col = "#D97706", lwd = 2.2, lty = 3)
+    med_d <- median(d_plot, na.rm = TRUE)
+    p95_d <- quantile(d_plot, probs = 0.95, na.rm = TRUE, names = FALSE)
+    mean_d <- mean(d_plot, na.rm = TRUE)
+    abline(v = med_d, col = "#15803D", lwd = 2.4, lty = 2)
+    abline(v = p95_d, col = "#D97706", lwd = 2.2, lty = 3)
 
-  legend("topright",
-         legend = c(
-           sprintf("Median Snap Distance: %.2f m", med_d),
-           sprintf("Mean Snap Distance:   %.2f m", mean_d),
-           sprintf("95th Percentile (P95): %.2f m", p95_d),
-           sprintf("Min / Max Distance:   %.2f / %.2f m", min(d_plot, na.rm = TRUE), max(d_plot, na.rm = TRUE)),
-           sprintf("Within <= 10 m:       %.1f%% of stations", 100 * mean(d_plot <= 10.0)),
-           sprintf("Within <= 50 m:       %.1f%% of stations", 100 * mean(d_plot <= 50.0))
-         ),
-         col = c("#15803D", NA, "#D97706", NA, NA, NA),
-         lty = c(2, NA, 3, NA, NA, NA),
-         lwd = c(2.2, NA, 2.2, NA, NA, NA),
-         bg = "#FFFFFFEE", box.col = "#CBD5E1", cex = 0.84, title = "Catchment Snapping Summary")
+    legend("topright",
+           legend = c(
+             sprintf("Median Snap Distance: %.2f m", med_d),
+             sprintf("Mean Snap Distance:   %.2f m", mean_d),
+             sprintf("95th Percentile (P95): %.2f m", p95_d),
+             sprintf("Min / Max Distance:   %.2f / %.2f m", min(d_plot, na.rm = TRUE), max(d_plot, na.rm = TRUE)),
+             sprintf("Within <= 10 m:       %.1f%% of stations", 100 * mean(d_plot <= 10.0)),
+             sprintf("Within <= 50 m:       %.1f%% of stations", 100 * mean(d_plot <= 50.0))
+           ),
+           col = c("#15803D", NA, "#D97706", NA, NA, NA),
+           lty = c(2, NA, 3, NA, NA, NA),
+           lwd = c(2.2, NA, 2.2, NA, NA, NA),
+           bg = "#FFFFFFEE", box.col = "#CBD5E1", cex = 0.84, title = "Catchment Snapping Summary")
+  } else {
+    plot.new()
+    title(main = wrap_title(sprintf("B. Snapping Distance Distribution (%s, n = 0)", c_name), 60))
+    text(0.5, 0.5, "No finite snapping distances available", cex = 1.0, col = "#64748b")
+  }
 
   # ============================================================================
   # PANEL C (4 Zoomed Sub-Panels): Metre-Scale Local View of Station -> Reach Snap
@@ -664,25 +668,31 @@ plot_network_snapping_overview <- function(snap_df, catch_sum, net_label, out_pn
          pt.cex = 1.2, bg = "#FFFFFFEE", box.col = "#CBD5E1", cex = 0.85, title = "Snapping Distance Tier")
 
   # Panel B: Empirical CDF & Histogram of Included Station Snapping Distances (0 - 250 m)
-  d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L]
-  hist(d_inc, breaks = 30, col = "#38BDF8", border = "#0284C7",
-       main = wrap_title(sprintf("B. Snapping Distance Distribution (Included <= 250 m, n = %d)", length(d_inc)), 60),
-       xlab = "Snapping Distance to Nearest River Reach (metres)", ylab = "Station Count",
-       cex.main = 1.15, cex.lab = 1.0)
-  grid(col = "#E2E8F0", lty = 1)
-  med_inc <- median(d_inc, na.rm = TRUE)
-  p95_inc <- quantile(d_inc, 0.95, na.rm = TRUE, names = FALSE)
-  abline(v = med_inc, col = "#15803D", lwd = 2.4, lty = 2)
-  abline(v = p95_inc, col = "#D97706", lwd = 2.4, lty = 3)
-  legend("topright",
-         legend = c(
-           sprintf("Median: %.2f m (IQR: %.2f m)", med_inc, IQR(d_inc, na.rm = TRUE)),
-           sprintf("Mean:   %.2f m (SD:  %.2f m)", mean(d_inc, na.rm = TRUE), sd(d_inc, na.rm = TRUE)),
-           sprintf("95th Percentile (P95): %.2f m", p95_inc),
-           sprintf("<= 10 m: %.1f%% | <= 50 m: %.1f%%", 100 * mean(d_inc <= 10), 100 * mean(d_inc <= 50))
-         ),
-         col = c("#15803D", NA, "#D97706", NA), lty = c(2, NA, 3, NA), lwd = 2.2,
-         bg = "#FFFFFFEE", box.col = "#CBD5E1", cex = 0.86)
+  d_inc <- snap_df$snap_dist_m[snap_df$included_250m == 1L & is.finite(snap_df$snap_dist_m)]
+  if (length(d_inc) > 0L) {
+    hist(d_inc, breaks = 30, col = "#38BDF8", border = "#0284C7",
+         main = wrap_title(sprintf("B. Snapping Distance Distribution (Included <= 250 m, n = %d)", length(d_inc)), 60),
+         xlab = "Snapping Distance to Nearest River Reach (metres)", ylab = "Station Count",
+         cex.main = 1.15, cex.lab = 1.0)
+    grid(col = "#E2E8F0", lty = 1)
+    med_inc <- median(d_inc, na.rm = TRUE)
+    p95_inc <- quantile(d_inc, 0.95, na.rm = TRUE, names = FALSE)
+    abline(v = med_inc, col = "#15803D", lwd = 2.4, lty = 2)
+    abline(v = p95_inc, col = "#D97706", lwd = 2.4, lty = 3)
+    legend("topright",
+           legend = c(
+             sprintf("Median: %.2f m (IQR: %.2f m)", med_inc, IQR(d_inc, na.rm = TRUE)),
+             sprintf("Mean:   %.2f m (SD:  %.2f m)", mean(d_inc, na.rm = TRUE), sd(d_inc, na.rm = TRUE)),
+             sprintf("95th Percentile (P95): %.2f m", p95_inc),
+             sprintf("<= 10 m: %.1f%% | <= 50 m: %.1f%%", 100 * mean(d_inc <= 10), 100 * mean(d_inc <= 50))
+           ),
+           col = c("#15803D", NA, "#D97706", NA), lty = c(2, NA, 3, NA), lwd = 2.2,
+           bg = "#FFFFFFEE", box.col = "#CBD5E1", cex = 0.86)
+  } else {
+    plot.new()
+    title(main = "B. Snapping Distance Distribution (Included <= 250 m, n = 0)")
+    text(0.5, 0.5, "No included stations with finite snapping distance", cex = 1.0, col = "#64748b")
+  }
 
   # Panel C: Snapping Distance by Strahler Stream Order (Included Stations)
   sub_inc <- snap_df[snap_df$included_250m == 1L & !is.na(snap_df$Strahler), ]

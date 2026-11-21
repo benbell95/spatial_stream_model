@@ -15,6 +15,11 @@ struct Cand {
     int idx; // 0-based obs index
     bool operator<(const Cand& o) const {
         if (fc != o.fc) return fc > o.fc; // FC = true comes first
+        if (fc && wt > 0.0 && o.wt > 0.0) {
+            double eff_d = dist - 20.0 * std::log(std::max(1e-12, wt));
+            double o_eff_d = o.dist - 20.0 * std::log(std::max(1e-12, o.wt));
+            if (eff_d != o_eff_d) return eff_d < o_eff_d;
+        }
         if (dist != o.dist) return dist < o.dist;
         return idx < o.idx;
     }
@@ -32,7 +37,7 @@ SEXP C_build_tree_tin_tout(SEXP parent_dn_r) {
     std::vector<int> roots;
     for (int i = 0; i < q; ++i) {
         int p = parent_dn[i];
-        if (p < 0 || p >= q) {
+        if (p < 0 || p >= q || p == i) {
             roots.push_back(i);
         } else {
             children[p].push_back(i);
@@ -122,11 +127,11 @@ SEXP C_compute_s3n_neighbors(
                 fc = true;
                 dist = std::max(1e-4, std::fabs(up_dist_km[a] - up_dist_km[b]));
                 if (model_type == 1) {
-                    wt = std::min(1.0 - 1e-6, std::exp(-0.001 * dist));
+                    wt = 1.0 - 1e-6;
                 } else {
                     double afv_up = std::min(log_afv[a], log_afv[b]);
                     double afv_dn = std::max(log_afv[a], log_afv[b]);
-                    wt = std::min(1.0 - 1e-6, std::exp(0.5 * (afv_up - afv_dn) - 0.001 * dist));
+                    wt = std::min(1.0 - 1e-6, std::exp(0.5 * (afv_up - afv_dn)));
                 }
             } else {
                 int anc = parent_dn[a];
@@ -135,14 +140,23 @@ SEXP C_compute_s3n_neighbors(
                     anc = parent_dn[anc];
                     ++hops;
                 }
-                double ncj_up = (anc >= 0 && anc < q && hops < q) ? d2m_km[anc] : 0.0;
-                dist = std::max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * ncj_up);
-                if (model_type == 1) {
-                    fc = true;
-                    wt = std::min(1.0 - 1e-6, std::exp(-0.001 * dist));
+                bool found_lca = (anc >= 0 && anc < q && hops < q && (tin[anc] <= tb && tout[b] <= tout[anc]));
+                if (found_lca) {
+                    double ncj_up = d2m_km[anc];
+                    dist = std::max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * ncj_up);
+                    if (model_type == 1) {
+                        fc = true;
+                        wt = 1.0 - 1e-6;
+                    } else {
+                        fc = false;
+                        wt = 0.0;
+                    }
                 } else {
                     fc = false;
                     wt = 0.0;
+                    double dx = (mid_x[a] - mid_x[b]) * 0.001;
+                    double dy = (mid_y[a] - mid_y[b]) * 0.001;
+                    dist = 1e6 + std::sqrt(dx * dx + dy * dy);
                 }
             }
         } else {
@@ -1192,7 +1206,7 @@ SEXP C_s3n_joint_nngp(
                 cand_tu_w[c] = tu_p_wt[base_p + k];
                 if (cand_tu_w[c] > 0.0 && cand_tu_d[c] < 1e5) {
                     cand_td_d[c] = cand_tu_d[c];
-                    cand_td_w[c] = std::min(1.0 - 1e-6, std::exp(-0.001 * cand_tu_d[c]));
+                    cand_td_w[c] = 1.0 - 1e-6;
                 }
             }
         }
@@ -1241,6 +1255,20 @@ SEXP C_s3n_joint_nngp(
             }
             for (int k = 0; k < n_best; ++k) {
                 find_or_add(best_j[k]);
+            }
+        }
+
+        // Ensure complete TU/TD distances & weights across all pooled candidates
+        for (int c = 0; c < n_cand; ++c) {
+            int j = cand_ids[c];
+            if (i < n) {
+                cand_tu_d[c] = tu_oo_dist[i + j * n];
+                cand_tu_w[c] = tu_oo_wt[i + j * n];
+                cand_td_d[c] = td_oo_dist[i + j * n];
+                cand_td_w[c] = td_oo_wt[i + j * n];
+            } else if (cand_tu_d[c] < 1e5 && cand_td_d[c] >= 1e5) {
+                cand_td_d[c] = cand_tu_d[c];
+                cand_td_w[c] = 1.0 - 1e-6;
             }
         }
 
@@ -1404,11 +1432,27 @@ SEXP C_s3n_optimal_design(
         return w_str * r_str + w_euc * r_euc;
     };
 
+    double min_pos_v = 1e18;
+    for (int e = 0; e < n_eval; ++e) {
+        int ei = eval_idx[e];
+        if (ei >= 0 && ei < q && se_curr[ei] > 0.0) {
+            min_pos_v = std::min(min_pos_v, se_curr[ei] * se_curr[ei]);
+        }
+    }
+    for (int c = 0; c < n_cand; ++c) {
+        int ci = cand_idx[c];
+        if (ci >= 0 && ci < q && se_curr[ci] > 0.0) {
+            min_pos_v = std::min(min_pos_v, se_curr[ci] * se_curr[ci]);
+        }
+    }
+    double tau_floor = (min_pos_v < 1e17 && tau_sq < 0.75 * min_pos_v) ? tau_sq : 0.0;
+
     std::vector<double> v_eval(n_eval, 0.0);
     double base_var_sum = 0.0;
     for (int e = 0; e < n_eval; ++e) {
-        double s = se_curr[eval_idx[e]];
-        v_eval[e] = std::max(0.0, s * s);
+        int ei = eval_idx[e];
+        double s = (ei >= 0 && ei < q) ? se_curr[ei] : 0.0;
+        v_eval[e] = std::max(tau_floor, s * s);
         base_var_sum += v_eval[e];
     }
     if (base_var_sum < 1e-12) base_var_sum = 1e-12;
@@ -1416,8 +1460,9 @@ SEXP C_s3n_optimal_design(
     std::vector<double> v_cand(n_cand, 0.0);
     std::vector<char>   chosen(n_cand, 0);
     for (int c = 0; c < n_cand; ++c) {
-        double s = se_curr[cand_idx[c]];
-        v_cand[c] = std::max(0.0, s * s);
+        int ci = cand_idx[c];
+        double s = (ci >= 0 && ci < q) ? se_curr[ci] : 0.0;
+        v_cand[c] = std::max(tau_floor, s * s);
     }
 
     SEXP sel_pos_r    = PROTECT(Rf_allocVector(INTSXP, K));
@@ -1448,10 +1493,12 @@ SEXP C_s3n_optimal_design(
         #pragma omp parallel for schedule(dynamic, 4)
         for (int c = 0; c < n_cand; ++c) {
             int u = cand_idx[c];
+            if (u < 0 || u >= q) continue;
             int net_u = net_id[u];
             float* row_c = &R_ce[(size_t)c * n_eval];
             for (int e = 0; e < n_eval; ++e) {
                 int ev = eval_idx[e];
+                if (ev < 0 || ev >= q) continue;
                 if (w_euc == 0.0 && net_id[ev] != net_u) continue;
                 row_c[e] = (float)pair_corr(ev, u);
             }
@@ -1468,20 +1515,24 @@ SEXP C_s3n_optimal_design(
         std::vector<double> cand_gains(n_cand, -1.0);
         #pragma omp parallel for schedule(dynamic, 4)
         for (int c = 0; c < n_cand; ++c) {
-            if (chosen[c] || v_cand[c] <= 1e-10) continue;
+            double vc_sp = std::max(0.0, v_cand[c] - tau_floor);
+            if (chosen[c] || vc_sp <= 1e-10) continue;
             int u = cand_idx[c];
+            if (u < 0 || u >= q) continue;
             int net_u = net_id[u];
-            double vc = v_cand[c];
-            double denom = vc + tau_sq;
+            double denom = vc_sp + std::max(1e-8, tau_sq);
             double total_dv = 0.0;
             const float* row_c = use_cache ? &R_ce[(size_t)c * n_eval] : nullptr;
             for (int e = 0; e < n_eval; ++e) {
-                if (v_eval[e] <= 1e-10) continue;
-                double r = row_c ? (double)row_c[e] : ((w_euc == 0.0 && net_id[eval_idx[e]] != net_u) ? 0.0 : pair_corr(eval_idx[e], u));
+                double ve_sp = std::max(0.0, v_eval[e] - tau_floor);
+                if (ve_sp <= 1e-10) continue;
+                int ev = eval_idx[e];
+                if (ev < 0 || ev >= q) continue;
+                double r = row_c ? (double)row_c[e] : ((w_euc == 0.0 && net_id[ev] != net_u) ? 0.0 : pair_corr(ev, u));
                 if (r <= 1e-6) continue;
-                double cov_ec = std::sqrt(v_eval[e] * vc) * r;
+                double cov_ec = std::sqrt(ve_sp * vc_sp) * r;
                 double dv = (cov_ec * cov_ec) / denom;
-                if (dv > v_eval[e]) dv = v_eval[e];
+                if (dv > ve_sp) dv = ve_sp;
                 total_dv += dv;
             }
             cand_gains[c] = total_dv;
@@ -1499,30 +1550,36 @@ SEXP C_s3n_optimal_design(
 
         chosen[best_c] = 1;
         int u_best = cand_idx[best_c];
-        int net_best = net_id[u_best];
-        double vc_best = v_cand[best_c];
-        double denom_best = vc_best + tau_sq;
+        int net_best = (u_best >= 0 && u_best < q) ? net_id[u_best] : -1;
+        double vc_best_sp = std::max(0.0, v_cand[best_c] - tau_floor);
+        double denom_best = vc_best_sp + std::max(1e-8, tau_sq);
 
         // Update remaining evaluation and candidate variances in parallel
         const float* best_row = use_cache ? &R_ce[(size_t)best_c * n_eval] : nullptr;
         #pragma omp parallel for schedule(static)
         for (int e = 0; e < n_eval; ++e) {
-            if (v_eval[e] <= 1e-10) continue;
-            double r = best_row ? (double)best_row[e] : ((w_euc == 0.0 && net_id[eval_idx[e]] != net_best) ? 0.0 : pair_corr(eval_idx[e], u_best));
+            double ve_sp = std::max(0.0, v_eval[e] - tau_floor);
+            if (ve_sp <= 1e-10) continue;
+            int ev = eval_idx[e];
+            if (ev < 0 || ev >= q) continue;
+            double r = best_row ? (double)best_row[e] : ((w_euc == 0.0 && net_id[ev] != net_best) ? 0.0 : pair_corr(ev, u_best));
             if (r <= 1e-6) continue;
-            double cov_ec = std::sqrt(v_eval[e] * vc_best) * r;
-            double dv = (cov_ec * cov_ec) / denom_best;
-            v_eval[e] = std::max(0.0, v_eval[e] - dv);
+            double cov_ec = std::sqrt(ve_sp * vc_best_sp) * r;
+            double dv = std::min(ve_sp, (cov_ec * cov_ec) / denom_best);
+            v_eval[e] = std::max(tau_floor, v_eval[e] - dv);
         }
         #pragma omp parallel for schedule(static)
         for (int c = 0; c < n_cand; ++c) {
-            if (chosen[c] || v_cand[c] <= 1e-10) continue;
-            if (w_euc == 0.0 && net_id[cand_idx[c]] != net_best) continue;
-            double r = pair_corr(cand_idx[c], u_best);
+            double vc_sp = std::max(0.0, v_cand[c] - tau_floor);
+            if (chosen[c] || vc_sp <= 1e-10) continue;
+            int cu = cand_idx[c];
+            if (cu < 0 || cu >= q) continue;
+            if (w_euc == 0.0 && net_id[cu] != net_best) continue;
+            double r = pair_corr(cu, u_best);
             if (r <= 1e-6) continue;
-            double cov_cc = std::sqrt(v_cand[c] * vc_best) * r;
-            double dv = (cov_cc * cov_cc) / denom_best;
-            v_cand[c] = std::max(0.0, v_cand[c] - dv);
+            double cov_cc = std::sqrt(vc_sp * vc_best_sp) * r;
+            double dv = std::min(vc_sp, (cov_cc * cov_cc) / denom_best);
+            v_cand[c] = std::max(tau_floor, v_cand[c] - dv);
         }
 
         double mean_se_a = 0.0;
@@ -1953,7 +2010,8 @@ static SEXP s3n_multivariate_nngp_impl(
         const int*    td_p_idx  = INTEGER(VECTOR_ELT(pred_nb_td, 0));
         const double* td_p_dist = REAL(VECTOR_ELT(pred_nb_td, 1));
         const double* td_p_wt   = REAL(VECTOR_ELT(pred_nb_td, 2));
-        int m_stride = Rf_length(VECTOR_ELT(pred_nb_tu, 0)) / std::max(1, q);
+        int m_stride_tu = Rf_length(VECTOR_ELT(pred_nb_tu, 0)) / std::max(1, q);
+        int m_stride_td = Rf_length(VECTOR_ELT(pred_nb_td, 0)) / std::max(1, q);
 
         SEXP pred_r = PROTECT(Rf_allocMatrix(REALSXP, q, P));
         SEXP se_r   = PROTECT(Rf_allocMatrix(REALSXP, q, P));
@@ -1965,7 +2023,8 @@ static SEXP s3n_multivariate_nngp_impl(
             std::vector<double> L_N;
             #pragma omp for schedule(dynamic, 32)
             for (int i = 0; i < q; ++i) {
-                int base_p = i * m_stride;
+                int base_p_tu = i * m_stride_tu;
+                int base_p_td = i * m_stride_td;
                 int cand_ids[128];
                 double cand_wtu[128], cand_wtd[128], cand_weuc[128], cand_sc[128];
                 int n_cand = 0;
@@ -1980,24 +2039,29 @@ static SEXP s3n_multivariate_nngp_impl(
                     return c;
                 };
 
-                for (int k = 0; k < m_stride; ++k) {
-                    int c = add_cand(tu_p_idx[base_p + k]);
+                for (int k = 0; k < m_stride_tu; ++k) {
+                    int c = add_cand(tu_p_idx[base_p_tu + k]);
                     if (c >= 0) {
-                        double d = tu_p_dist[base_p + k], w = tu_p_wt[base_p + k];
+                        double d = tu_p_dist[base_p_tu + k], w = tu_p_wt[base_p_tu + k];
                         if (w > 0.0 && d < 1e5 && has_tu) cand_wtu[c] = w * eval_stream_kernel(d, phi_tu, kernel_id);
                         if (w > 0.0 && d < 1e5 && has_td) {
-                            double w_td_raw = std::min(1.0 - 1e-6, std::exp(-0.001 * d));
+                            double w_td_raw = 1.0 - 1e-6;
                             cand_wtd[c] = w_td_raw * eval_stream_kernel(d, phi_td, kernel_id);
                         }
                     }
                 }
-                for (int k = 0; k < m_stride; ++k) {
-                    int c = add_cand(td_p_idx[base_p + k]);
+                for (int k = 0; k < m_stride_td; ++k) {
+                    int c = add_cand(td_p_idx[base_p_td + k]);
                     if (c >= 0) {
-                        double d = td_p_dist[base_p + k], w = td_p_wt[base_p + k];
+                        double d = td_p_dist[base_p_td + k], w = td_p_wt[base_p_td + k];
                         if (w > 0.0 && d < 1e5 && has_td) {
                             cand_wtd[c] = std::max(cand_wtd[c], w * eval_stream_kernel(d, phi_td, kernel_id));
                         }
+                    }
+                }
+                if (i < n) {
+                    for (int c = 0; c < n_cand; ++c) {
+                        obs_spatial_weights(i, cand_ids[c], cand_wtu[c], cand_wtd[c], cand_weuc[c]);
                     }
                 }
                 if (has_euc) {
@@ -2023,7 +2087,13 @@ static SEXP s3n_multivariate_nngp_impl(
                     }
                     for (int e = 0; e < nb_e; ++e) {
                         int c = add_cand(best_j[e]);
-                        if (c >= 0) cand_weuc[c] = eval_stream_kernel(std::sqrt(best_d2[e]), phi_euc, kernel_id);
+                        if (c >= 0) {
+                            cand_weuc[c] = eval_stream_kernel(std::sqrt(best_d2[e]), phi_euc, kernel_id);
+                            if (i < n) {
+                                double dum_euc = 0.0;
+                                obs_spatial_weights(i, cand_ids[c], cand_wtu[c], cand_wtd[c], dum_euc);
+                            }
+                        }
                     }
                 }
 
@@ -2099,7 +2169,7 @@ static SEXP s3n_multivariate_nngp_impl(
                             if (has_tu  && w_tu_s  > 0.0) cov += w_tu_s  * A_tu[idx];
                             if (has_td  && w_td_s  > 0.0) cov += w_td_s  * A_td[idx];
                             if (has_euc && w_euc_s > 0.0) cov += w_euc_s * A_euc[idx];
-                            if (nb_u[s] == i && nb_a[s] != b) cov += Psi[idx];
+                            if (nb_u[s] == i) cov += Psi[idx];
                             c_b[s] = cov;
                             shift += cov * alpha[s];
                         }

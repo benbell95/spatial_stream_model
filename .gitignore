@@ -54,6 +54,7 @@ data/
 gis/
 output/
 readings/
+planned_features/
 
 # Pycache
 scripts/__pycache__/

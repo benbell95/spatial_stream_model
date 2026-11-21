@@ -376,13 +376,13 @@
                 <label for="wbVarsSel">Covariate Subset (<code>--vars</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about Vars flag">i</button>
-                  <span class="info-popover"><strong>Custom Covariate Subset (<code>--vars</code>)</strong>Modify the default 6 predictors (<code>elev,slope,urban,chalk,sand,clay</code>) using modifiers like <code>-chalk,-sand,+aquifer</code> or an explicit list. Use <em>List Covariates</em> under Discovery for all columns.</span>
+                  <span class="info-popover"><strong>Custom Covariate Subset (<code>--vars</code>)</strong>Modify the default 8 predictors (<code>elev,slope,us_accum,chalk,sand,peat,easting,northing</code>) using modifiers like <code>-chalk,-sand,+aquifer</code> or an explicit list. Use <em>List Covariates</em> under Discovery for all columns.</span>
                 </span>
               </div>
               <select id="wbVarsSel">
-                <option value="">Default 6 Covariates (elev,slope,urban,chalk,sand,clay)</option>
+                <option value="">Default 8 Covariates (elev,slope,us_accum,chalk,sand,peat,easting,northing)</option>
                 <option value="-chalk,-sand,+aquifer">-chalk,-sand,+aquifer (Swap Geology for Aquifer)</option>
-                <option value="elev,slope,urban,aquifer">elev,slope,urban,aquifer (4-Var Subset)</option>
+                <option value="elev,slope,us_accum,aquifer">elev,slope,us_accum,aquifer (4-Var Subset)</option>
                 <option value="custom">Custom covariate expression...</option>
               </select>
               <input id="wbVarsCustom" class="wb-custom-sub" type="text" value="" placeholder="e.g. -chalk,+aquifer or elev,slope" hidden />
@@ -405,15 +405,14 @@
                 <label for="wbCvMode">Cross-Validation (<code>--cv-mode</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about CV Mode flag">i</button>
-                  <span class="info-popover"><strong>Holdout Validation Strategy (<code>--cv-mode</code>)</strong><code>random</code> uses 5-fold random splits; <code>spatial</code> uses K-means geographic blocks; <code>catchment</code> tests whole-basin extrapolation; <code>downstream</code> / <code>upstream</code> test flow-direction generalization.</span>
+                  <span class="info-popover"><strong>Holdout Validation Strategy (<code>--cv-mode</code>)</strong><code>random</code> uses 5-fold random splits; <code>spatial_block</code> uses K-means geographic blocks; <code>catchment</code> tests whole-basin extrapolation; <code>strahler</code> tests mainstem-to-headwater generalization.</span>
                 </span>
               </div>
               <select id="wbCvMode">
                 <option value="random">random — 5-Fold Random CV (Default)</option>
-                <option value="spatial">spatial — K-Means Spatial Blocks</option>
+                <option value="spatial_block">spatial_block — K-Means Spatial Blocks</option>
                 <option value="catchment">catchment — Leave-Catchment-Out CV</option>
-                <option value="downstream">downstream — Hold Out Lower Reaches</option>
-                <option value="upstream">upstream — Hold Out Headwaters</option>
+                <option value="strahler">strahler — Mainstem-to-Headwater Extrapolation</option>
               </select>
             </div>
 

@@ -113,41 +113,6 @@ threshold_dir_cli <- parse_threshold_dir_arg(args, default = "above")
 design_sites_cli  <- parse_design_sites_arg(args, default = 0L)
 st_borrow_cli     <- parse_st_borrow_arg(args)
 
-PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
-                                                source = source_cli, processed_dir = dir_cfg$processed_dir,
-                                                custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
-                                                custom_sites = custom_sites_cli)
-net_meta       <- load_network_metadata(PROC_DIR)
-REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
-SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
-CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
-
-if ("--list-basins" %in% args) {
-  cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s), Source: %s]:\n\n",
-              net_meta$label, net_meta$abbr, source_abbr))
-  c_lu <- fast_read_csv(CATCHMENTS_CSV)
-  rbd_tab <- aggregate(cbind(n_reaches, n_obs_reaches) ~ RBD_ID + RBD_Name, data = c_lu, FUN = sum)
-  rbd_tab <- rbd_tab[order(-rbd_tab$n_obs_reaches), ]
-  cat("=== 1. River Basin Districts (specify via --basin=\"<RBD_Name>\" or --basin=rbd:<RBD_ID>) ===\n")
-  cat(sprintf("%-8s | %-22s | %-12s | %-12s\n", "RBD_ID", "RBD_Name", "Reaches", "Obs Reaches"))
-  cat(strrep("-", 62), "\n")
-  for (i in seq_len(nrow(rbd_tab))) {
-    cat(sprintf("%-8d | %-22s | %-12d | %-12d\n",
-                rbd_tab$RBD_ID[i], rbd_tab$RBD_Name[i], rbd_tab$n_reaches[i], rbd_tab$n_obs_reaches[i]))
-  }
-  cat("\n=== 2. Top 30 Monitored Catchments (specify via --basin=<CatchID> or --basin=\"<Main_River>\") ===\n")
-  cat(sprintf("%-8s | %-28s | %-18s | %-10s | %-11s\n",
-              "CatchID", "Main_River", "RBD_Name", "Reaches", "Obs Reaches"))
-  cat(strrep("-", 86), "\n")
-  top_c <- head(c_lu[order(-c_lu$n_obs_reaches, -c_lu$n_reaches), ], 30)
-  for (i in seq_len(nrow(top_c))) {
-    cat(sprintf("%-8d | %-28s | %-18s | %-10d | %-11d\n",
-                top_c$CatchID[i], substr(top_c$Main_River[i], 1, 28),
-                substr(top_c$RBD_Name[i], 1, 18), top_c$n_reaches[i], top_c$n_obs_reaches[i]))
-  }
-  quit(save = "no", status = 0)
-}
-
 if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% args) {
   list_ds <- if (!is.na(ds_mode)) ds_mode else "wq"
   if (!(list_ds %in% names(DATASET_FILES))) {
@@ -266,6 +231,149 @@ cat("Usage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq
   quit(save = "no", status = 0)
 }
 
+# Pre-network range mode detection so resolve_network_processed_dir() only runs once for the resolved source
+range_arg <- grep("^--range-mode=", args, value = TRUE)
+range_cli <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
+src_tokens_init <- unlist(strsplit(source_cli, "[+,]+"))
+src_tokens_init <- trimws(src_tokens_init[nzchar(trimws(src_tokens_init))])
+
+detected_range_mode <- NA_character_
+if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
+  detected_range_mode <- range_cli
+} else if (!is.na(range_cli) && range_cli == "none") {
+  detected_range_mode <- NA_character_
+} else {
+  for (rm in c("tobit", "geometric", "midpoint", "lower", "upper")) {
+    if (any(grepl(paste0("_", rm, "$"), src_tokens_init))) {
+      detected_range_mode <- rm
+      break
+    }
+  }
+  if (is.na(detected_range_mode)) {
+    reg <- load_source_registry(BASE_DIR)
+    for (tok in src_tokens_init) {
+      if (tok %in% names(reg$sources)) {
+        rm_cfg <- reg$sources[[tok]]$range_mode
+        if (!is.null(rm_cfg) && nzchar(rm_cfg)) {
+          detected_range_mode <- rm_cfg
+          break
+        }
+      }
+    }
+  }
+  if (is.na(detected_range_mode)) {
+    cand_smp <- custom_samples_cli
+    if (is.null(cand_smp) && !is.null(custom_dir_cli)) {
+      cand_smp <- file.path(custom_dir_cli, "samples.csv")
+    }
+    if (is.null(cand_smp)) {
+      for (tok in names(src_dirs$active_dirs)) {
+        s_d <- src_dirs$active_dirs[[tok]]
+        cand_try <- file.path(s_d, "samples.csv")
+        if (file.exists(cand_try)) {
+          cand_smp <- cand_try
+          break
+        }
+      }
+    }
+    if (!is.null(cand_smp) && file.exists(cand_smp)) {
+      tryCatch({
+        samp_hdr <- colnames(fast_read_csv(cand_smp, nrows = 1L, fileEncoding = "UTF-8-BOM"))
+        if ("meas_method" %in% samp_hdr) {
+          samp_preview <- fast_read_csv(cand_smp, nrows = 200L, fileEncoding = "UTF-8-BOM")
+          mm_vals <- tolower(unique(as.character(samp_preview$meas_method)))
+          mm_vals <- mm_vals[!is.na(mm_vals) & nzchar(mm_vals)]
+          if (any(grepl("tobit", mm_vals))) detected_range_mode <- "tobit"
+          else if (any(grepl("geometric", mm_vals))) detected_range_mode <- "geometric"
+          else if (any(grepl("midpoint|arithmetic", mm_vals))) detected_range_mode <- "midpoint"
+          else if (any(grepl("lower", mm_vals))) detected_range_mode <- "lower"
+          else if (any(grepl("upper", mm_vals))) detected_range_mode <- "upper"
+        }
+      }, error = function(e) NULL)
+    }
+  }
+}
+
+if (!is.na(detected_range_mode)) {
+  rm_upd       <- apply_range_mode_to_source(source_cli, detected_range_mode, base_dir = BASE_DIR)
+  source_cli   <- rm_upd$source_tag
+  source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
+  source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
+  source_tag   <- format_source_folder_tag(source_cli)
+  if (!grepl(paste0("_", detected_range_mode, "(\\+|$)"), source_tag)) {
+    source_tag <- if (nzchar(source_tag)) paste0(source_tag, "_", detected_range_mode) else detected_range_mode
+  }
+  src_dirs     <- resolve_data_source_dirs(DATA_DIR, source = source_cli, base_dir = BASE_DIR,
+                                           custom_dir = custom_dir_cli,
+                                           custom_samples = custom_samples_cli,
+                                           custom_sites = custom_sites_cli)
+  RSN_DIR      <- src_dirs$rsn_dir
+  SSN_DIR      <- src_dirs$ssn_dir
+}
+
+PROC_DIR       <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
+                                                source = source_cli, processed_dir = dir_cfg$processed_dir,
+                                                custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
+                                                custom_sites = custom_sites_cli)
+net_meta       <- load_network_metadata(PROC_DIR)
+
+if (is.na(detected_range_mode) && (is.na(range_cli) || range_cli != "none") &&
+    !is.null(net_meta$range_mode) && nzchar(net_meta$range_mode)) {
+  detected_range_mode <- net_meta$range_mode
+  rm_upd       <- apply_range_mode_to_source(source_cli, detected_range_mode, base_dir = BASE_DIR)
+  source_cli_new <- rm_upd$source_tag
+  if (!identical(source_cli_new, source_cli)) {
+    source_cli   <- source_cli_new
+    source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
+    source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
+    src_dirs     <- resolve_data_source_dirs(DATA_DIR, source = source_cli, base_dir = BASE_DIR,
+                                             custom_dir = custom_dir_cli,
+                                             custom_samples = custom_samples_cli,
+                                             custom_sites = custom_sites_cli)
+    RSN_DIR      <- src_dirs$rsn_dir
+    SSN_DIR      <- src_dirs$ssn_dir
+    PROC_DIR     <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
+                                                  source = source_cli, processed_dir = dir_cfg$processed_dir,
+                                                  custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
+                                                  custom_sites = custom_sites_cli)
+    net_meta     <- load_network_metadata(PROC_DIR)
+  }
+  source_tag <- format_source_folder_tag(source_cli)
+  if (!grepl(paste0("_", detected_range_mode, "(\\+|$)"), source_tag)) {
+    source_tag <- if (nzchar(source_tag)) paste0(source_tag, "_", detected_range_mode) else detected_range_mode
+  }
+}
+
+REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
+SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
+CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
+
+if ("--list-basins" %in% args) {
+  cat(sprintf("Available River Basin Districts (RBD) and Top Monitored Catchments [Network: %s (%s), Source: %s]:\n\n",
+              net_meta$label, net_meta$abbr, source_abbr))
+  c_lu <- fast_read_csv(CATCHMENTS_CSV)
+  rbd_tab <- aggregate(cbind(n_reaches, n_obs_reaches) ~ RBD_ID + RBD_Name, data = c_lu, FUN = sum)
+  rbd_tab <- rbd_tab[order(-rbd_tab$n_obs_reaches), ]
+  cat("=== 1. River Basin Districts (specify via --basin=\"<RBD_Name>\" or --basin=rbd:<RBD_ID>) ===\n")
+  cat(sprintf("%-8s | %-22s | %-12s | %-12s\n", "RBD_ID", "RBD_Name", "Reaches", "Obs Reaches"))
+  cat(strrep("-", 62), "\n")
+  for (i in seq_len(nrow(rbd_tab))) {
+    cat(sprintf("%-8d | %-22s | %-12d | %-12d\n",
+                rbd_tab$RBD_ID[i], rbd_tab$RBD_Name[i], rbd_tab$n_reaches[i], rbd_tab$n_obs_reaches[i]))
+  }
+  cat("\n=== 2. Top 30 Monitored Catchments (specify via --basin=<CatchID> or --basin=\"<Main_River>\") ===\n")
+  cat(sprintf("%-8s | %-28s | %-18s | %-10s | %-11s\n",
+              "CatchID", "Main_River", "RBD_Name", "Reaches", "Obs Reaches"))
+  cat(strrep("-", 86), "\n")
+  top_c <- head(c_lu[order(-c_lu$n_obs_reaches, -c_lu$n_reaches), ], 30)
+  for (i in seq_len(nrow(top_c))) {
+    cat(sprintf("%-8d | %-28s | %-18s | %-10d | %-11d\n",
+                top_c$CatchID[i], substr(top_c$Main_River[i], 1, 28),
+                substr(top_c$RBD_Name[i], 1, 18), top_c$n_reaches[i], top_c$n_obs_reaches[i]))
+  }
+  quit(save = "no", status = 0)
+}
+
 skip_idx <- integer(0)
 src_sp_idx <- which(args == "--source")
 if (length(src_sp_idx) > 0L) skip_idx <- c(skip_idx, src_sp_idx + 1L)
@@ -366,111 +474,7 @@ src_se_cli         <- parse_source_kv_arg(args, "--source-se=", min_val = 0.0, n
 norm_cli           <- parse_norm_mode(args, default = "none")
 norm_meta      <- get_norm_meta(norm_cli)
 
-# Range mode handling and folder tagging
-range_arg <- grep("^--range-mode=", args, value = TRUE)
-range_cli <- if (length(range_arg) > 0) tolower(sub("^--range-mode=", "", range_arg[1])) else NA_character_
-
-src_tokens_init <- unlist(strsplit(source_cli, "[+,]+"))
-src_tokens_init <- trimws(src_tokens_init[nzchar(trimws(src_tokens_init))])
-
-detected_range_mode <- NA_character_
-if (!is.na(range_cli) && !(range_cli %in% c("auto", "none"))) {
-  detected_range_mode <- range_cli
-} else if (!is.na(range_cli) && range_cli == "none") {
-  detected_range_mode <- NA_character_
-} else {
-  # 1. Suffix in source_cli or any '+' constituent token
-  for (rm in c("tobit", "geometric", "midpoint", "lower", "upper")) {
-    if (any(grepl(paste0("_", rm, "$"), src_tokens_init))) {
-      detected_range_mode <- rm
-      break
-    }
-  }
-  # 2. Network metadata in PROC_DIR
-  if (is.na(detected_range_mode) && !is.null(net_meta$range_mode) && nzchar(net_meta$range_mode)) {
-    detected_range_mode <- net_meta$range_mode
-  }
-  # 3. Source config registry (single or composite constituent)
-  if (is.na(detected_range_mode)) {
-    reg <- load_source_registry(BASE_DIR)
-    for (tok in src_tokens_init) {
-      if (tok %in% names(reg$sources)) {
-        rm_cfg <- reg$sources[[tok]]$range_mode
-        if (!is.null(rm_cfg) && nzchar(rm_cfg)) {
-          detected_range_mode <- rm_cfg
-          break
-        }
-      }
-    }
-  }
-  # 4. Check meas_method in samples.csv
-  if (is.na(detected_range_mode)) {
-    cand_smp <- custom_samples_cli
-    if (is.null(cand_smp) && !is.null(custom_dir_cli)) {
-      cand_smp <- file.path(custom_dir_cli, "samples.csv")
-    }
-    if (is.null(cand_smp)) {
-      for (tok in names(src_dirs$active_dirs)) {
-        s_d <- src_dirs$active_dirs[[tok]]
-        cand_try <- file.path(s_d, "samples.csv")
-        if (file.exists(cand_try)) {
-          cand_smp <- cand_try
-          break
-        }
-      }
-    }
-    if (!is.null(cand_smp) && file.exists(cand_smp)) {
-      tryCatch({
-        samp_hdr <- colnames(fast_read_csv(cand_smp, nrows = 1L, fileEncoding = "UTF-8-BOM"))
-        if ("meas_method" %in% samp_hdr) {
-          samp_preview <- fast_read_csv(cand_smp, nrows = 200L, fileEncoding = "UTF-8-BOM")
-          mm_vals <- tolower(unique(as.character(samp_preview$meas_method)))
-          mm_vals <- mm_vals[!is.na(mm_vals) & nzchar(mm_vals)]
-          if (any(grepl("tobit", mm_vals))) detected_range_mode <- "tobit"
-          else if (any(grepl("geometric", mm_vals))) detected_range_mode <- "geometric"
-          else if (any(grepl("midpoint|arithmetic", mm_vals))) detected_range_mode <- "midpoint"
-          else if (any(grepl("lower", mm_vals))) detected_range_mode <- "lower"
-          else if (any(grepl("upper", mm_vals))) detected_range_mode <- "upper"
-        }
-      }, error = function(e) NULL)
-    }
-  }
-}
-
-if (!is.na(detected_range_mode)) {
-  has_token_mode <- any(grepl(paste0("_", detected_range_mode, "$"), src_tokens_init))
-  if (!has_token_mode) {
-    base_st <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", source_tag)
-    if (nzchar(base_st)) {
-      source_tag <- paste0(base_st, "_", detected_range_mode)
-    } else {
-      source_tag <- detected_range_mode
-    }
-    if (!grepl("[+,]", source_cli)) {
-      base_sc <- sub("_(tobit|geometric|midpoint|lower|upper)$", "", source_cli)
-      source_cli <- paste0(base_sc, "_", detected_range_mode)
-    }
-  }
-  source_abbr  <- format_source_abbr(source_cli, base_dir = BASE_DIR)
-  source_label <- format_source_label(source_cli, base_dir = BASE_DIR)
-  src_dirs     <- resolve_data_source_dirs(DATA_DIR, source = source_cli, base_dir = BASE_DIR,
-                                           custom_dir = custom_dir_cli,
-                                           custom_samples = custom_samples_cli,
-                                           custom_sites = custom_sites_cli)
-  RSN_DIR      <- src_dirs$rsn_dir
-  SSN_DIR      <- src_dirs$ssn_dir
-  PROC_DIR_NEW <- resolve_network_processed_dir(BASE_DIR, network_cli, data_dir = DATA_DIR, gis_dir = GIS_DIR,
-                                                source = source_cli, processed_dir = dir_cfg$processed_dir,
-                                                custom_dir = custom_dir_cli, custom_samples = custom_samples_cli,
-                                                custom_sites = custom_sites_cli)
-  if (!identical(PROC_DIR_NEW, PROC_DIR)) {
-    PROC_DIR       <- PROC_DIR_NEW
-    net_meta       <- load_network_metadata(PROC_DIR)
-    REACHES_CSV    <- rel_path(PROC_DIR, "england_rsn_reaches.csv")
-    SITES_CSV      <- rel_path(PROC_DIR, "rsn_sites.csv")
-    CATCHMENTS_CSV <- rel_path(PROC_DIR, "rsn_catchments_lookup.csv")
-  }
-}
+# Range mode status message (resolved before network preprocessing above)
 
 if (!is.na(detected_range_mode)) {
   cat(sprintf("   [Range Handling] Active range mode: %s (Output folder tagged with _%s)\n",
@@ -554,7 +558,8 @@ read_wq_samples_file <- function(f_path, source_label_tag, det_code, allow_subst
 }
 
 if (ds_mode == "wq") {
-  sample_dfs <- list()
+  sample_dfs   <- list()
+  loaded_paths <- character(0)
   for (s_name in names(src_dirs$active_dirs)) {
     s_dir  <- src_dirs$active_dirs[[s_name]]
     f_path <- file.path(s_dir, paste0(toupper(s_name), " Water Quality Samples.csv"))
@@ -567,14 +572,26 @@ if (ds_mode == "wq") {
       cands <- list.files(s_dir, pattern = "(sample|wq).*\\.csv$", ignore.case = TRUE, full.names = TRUE)
       if (length(cands) > 0) f_path <- cands[1]
     }
-    sub_df <- read_wq_samples_file(f_path, toupper(s_name), det_code, allow_substr_det = FALSE)
-    if (!is.null(sub_df)) sample_dfs[[s_name]] <- sub_df
+    norm_fp <- if (nzchar(f_path)) normalizePath(f_path, mustWork = FALSE) else ""
+    if (nzchar(norm_fp) && !(norm_fp %in% loaded_paths)) {
+      sub_df <- read_wq_samples_file(f_path, toupper(s_name), det_code, allow_substr_det = FALSE)
+      if (!is.null(sub_df)) {
+        sample_dfs[[s_name]] <- sub_df
+        loaded_paths <- c(loaded_paths, norm_fp)
+      }
+    }
   }
 
   # Direct custom samples injection if specified via CLI
-  if (!is.null(custom_samples_cli) && file.exists(custom_samples_cli) && !"custom" %in% names(sample_dfs)) {
-    c_sub <- read_wq_samples_file(custom_samples_cli, "CUSTOM", det_code, allow_substr_det = TRUE)
-    if (!is.null(c_sub)) sample_dfs[["custom"]] <- c_sub
+  if (!is.null(custom_samples_cli) && file.exists(custom_samples_cli)) {
+    norm_cs <- normalizePath(custom_samples_cli, mustWork = FALSE)
+    if (!(norm_cs %in% loaded_paths) && !("custom" %in% names(sample_dfs))) {
+      c_sub <- read_wq_samples_file(custom_samples_cli, "CUSTOM", det_code, allow_substr_det = TRUE)
+      if (!is.null(c_sub)) {
+        sample_dfs[["custom"]] <- c_sub
+        loaded_paths <- c(loaded_paths, norm_cs)
+      }
+    }
   }
 
   if (length(sample_dfs) == 0) {
@@ -666,9 +683,32 @@ det_samples <- det_samples[valid_k, ]
 raw_vals    <- raw_vals[valid_k]
 is_cens     <- is_cens[valid_k]
 
+det_samples$year  <- suppressWarnings(as.integer(substr(det_samples$sample_datetime, 1, 4)))
+det_samples$month <- suppressWarnings(as.integer(substr(det_samples$sample_datetime, 6, 7)))
+season_lu <- c("winter", "winter", "spring", "spring", "spring",
+               "summer", "summer", "summer", "autumn", "autumn", "autumn", "winter")
+valid_mo  <- !is.na(det_samples$month) & det_samples$month >= 1L & det_samples$month <= 12L
+det_samples$season <- ifelse(valid_mo, season_lu[pmin(12L, pmax(1L, det_samples$month))], NA_character_)
+
+sites_lu <- fast_read_csv(SITES_CSV)
+sites_lu <- sites_lu[!is.na(sites_lu$included_250m) & sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
+
+if (is.na(by_mode)) {
+  keep_pre <- det_samples$network_id %in% sites_lu$site_id
+  if (!is.na(year_f))   keep_pre <- keep_pre & (!is.na(det_samples$year) & det_samples$year == year_f)
+  if (!is.na(season_f)) keep_pre <- keep_pre & (!is.na(det_samples$season) & det_samples$season == season_f)
+  if (!is.na(month_f))  keep_pre <- keep_pre & (!is.na(det_samples$month) & det_samples$month == month_f)
+  det_samples <- det_samples[keep_pre, , drop = FALSE]
+  raw_vals    <- raw_vals[keep_pre]
+  is_cens     <- is_cens[keep_pre]
+  if (nrow(det_samples) == 0L) {
+    stop(sprintf("No snapped samples remain for '%s' after temporal/spatial filtering.", det_code))
+  }
+}
+
 det_samples$is_cens <- is_cens
 det_samples$raw_lod <- raw_vals
-if (any(is_cens) && tolower(censor_m) %in% c("ros", "em", "tobit")) {
+if (any(is_cens) && tolower(censor_m) %in% c("ros", "ros_site", "em", "tobit")) {
   det_samples$val <- impute_censored_ros(raw_vals, is_cens)
 } else if (any(is_cens)) {
   det_samples$val <- ifelse(is_cens, 0.5 * raw_vals, raw_vals)
@@ -731,18 +771,10 @@ threshold_dir_cli <- th_res$dir
 OUT_DIR <- rel_path(OUT_BASE, "results", out_folder_name)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
-det_samples$year   <- as.integer(substr(det_samples$sample_datetime, 1, 4))
-det_samples$month  <- as.integer(substr(det_samples$sample_datetime, 6, 7))
-season_lu          <- c("winter", "winter", "spring", "spring", "spring",
-                        "summer", "summer", "summer", "autumn", "autumn", "autumn", "winter")
-det_samples$season <- season_lu[det_samples$month]
-
 cat(sprintf("Extracted %d total valid samples (%d censored '<' [%.2f%%] via '%s') for '%s' (%s) across %d sites.\n",
             nrow(det_samples), sum(is_cens), 100 * mean(is_cens), censor_m,
             det_name, det_unit, length(unique(det_samples$network_id))))
 
-sites_lu   <- fast_read_csv(SITES_CSV)
-sites_lu   <- sites_lu[!is.na(sites_lu$included_250m) & sites_lu$included_250m == 1, c("site_id", "RivID", "obs_up_dist_km")]
 df_reaches <- fast_read_csv(REACHES_CSV)
 
 # Fitting/CV engine (load_s3n_backend, parse_n_omp_arg, fit_s3n_domain) lives in scripts/s3n_model_functions.R
@@ -1261,11 +1293,26 @@ if (!is.na(by_mode)) {
       if (!is.null(sl$hum_pred)) sl$hum_pred <- add_normalised_columns(sl$hum_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
       if (!is.null(sl$tha_pred)) sl$tha_pred <- add_normalised_columns(sl$tha_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
       if (!is.null(sl$sev_pred)) sl$sev_pred <- add_normalised_columns(sl$sev_pred, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
+      if (length(sl$extra_fits) > 0L) {
+        for (ek in seq_along(sl$extra_fits)) {
+          if (!is.null(sl$extra_fits[[ek]]$pred_df)) {
+            sl$extra_fits[[ek]]$pred_df <- add_normalised_columns(sl$extra_fits[[ek]]$pred_df, ref_df = sl$eng_pred, ref_stats = sl_norm_stats)
+          }
+        }
+      }
       batch_res[[bi]] <- sl
       fast_write_csv(sl$eng_pred, file.path(sl$out_subdir, sprintf("predictions_%s.csv", det_code)))
       if (!is.null(sl$hum_pred)) fast_write_csv(sl$hum_pred, file.path(sl$out_subdir, sprintf("predictions_humber_%s.csv", det_code)))
       if (!is.null(sl$tha_pred)) fast_write_csv(sl$tha_pred, file.path(sl$out_subdir, sprintf("predictions_thames_%s.csv", det_code)))
       if (!is.null(sl$sev_pred)) fast_write_csv(sl$sev_pred, file.path(sl$out_subdir, sprintf("predictions_severn_%s.csv", det_code)))
+      if (length(sl$extra_fits) > 0L) {
+        for (ek in seq_along(sl$extra_fits)) {
+          ef <- sl$extra_fits[[ek]]
+          if (!is.null(ef$pred_df) && !is.null(ef$info)) {
+            fast_write_csv(ef$pred_df, file.path(sl$out_subdir, sprintf("predictions_basin_%s_%s.csv", ef$info$slug, det_code)))
+          }
+        }
+      }
       if (!is.na(threshold_cli) && is.finite(threshold_cli) && ("compliance_tier" %in% names(sl$eng_pred))) {
         mk_ex <- function(df_p, dom_lbl) {
           if (is.null(df_p) || !("compliance_tier" %in% names(df_p))) return(NULL)
@@ -1279,11 +1326,14 @@ if (!is.na(by_mode)) {
             stringsAsFactors = FALSE
           )
         }
-        ex_list <- Filter(Negate(is.null), list(
-          mk_ex(sl$eng_pred, sl$cv$Domain[1]),
-          if (!is.null(sl$hum_pred) && !is.null(sl$res_hum)) mk_ex(sl$hum_pred, sl$res_hum$cv_summary$Domain[1]) else NULL,
-          if (!is.null(sl$tha_pred) && !is.null(sl$res_tha)) mk_ex(sl$tha_pred, sl$res_tha$cv_summary$Domain[1]) else NULL,
-          if (!is.null(sl$sev_pred) && !is.null(sl$res_sev)) mk_ex(sl$sev_pred, sl$res_sev$cv_summary$Domain[1]) else NULL
+        ex_list <- Filter(Negate(is.null), c(
+          list(mk_ex(sl$eng_pred, sl$cv$Domain[1])),
+          if (!is.null(sl$hum_pred) && !is.null(sl$res_hum)) list(mk_ex(sl$hum_pred, sl$res_hum$cv_summary$Domain[1])) else NULL,
+          if (!is.null(sl$tha_pred) && !is.null(sl$res_tha)) list(mk_ex(sl$tha_pred, sl$res_tha$cv_summary$Domain[1])) else NULL,
+          if (!is.null(sl$sev_pred) && !is.null(sl$res_sev)) list(mk_ex(sl$sev_pred, sl$res_sev$cv_summary$Domain[1])) else NULL,
+          lapply(sl$extra_fits, function(ef) {
+            if (!is.null(ef$pred_df) && !is.null(ef$info)) mk_ex(ef$pred_df, ef$info$domain_label) else NULL
+          })
         ))
         if (length(ex_list) > 0L) {
           fast_write_csv(do.call(rbind, ex_list),
