@@ -32,7 +32,7 @@ Set the notebook default language to **R** (or **Python**) and transition betwee
 
 ### Cell 1: Compile C++ Engine & Check Dependencies (`%sh` and `%r`)
 
-`scripts/01_preprocess_orn.py` uses only the Python standard library for `.gpkg`/CSV preprocessing (optional `pyarrow`/`pyproj` for GeoParquet or CRS reprojection). On the R side, install `S3N`, its CRAN dependencies, recommended `data.table` (fast CSV I/O), and `mgcv`/`rpart` (if using `--trend=gam|rf|gbm`), and compile `src/s3n_fast_neighbors.so` on the driver node:
+`scripts/01_preprocess_orn.py` uses only the Python standard library for `.gpkg`/CSV preprocessing (optional `pyarrow`/`pyproj` for GeoParquet or CRS reprojection). On the R side, core NNGP fitting and spatial residual bootstrapping run natively via [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) (`--engine=cpp`, default) with zero required third-party NNGP packages—just compile `src/s3n_fast_neighbors.so` on the driver node, and optionally install `data.table` (fast CSV I/O), `jsonlite`, `mgcv`/`rpart` (if using `--trend=gam|rf|gbm`), or `S3N` (only if explicitly testing `--engine=brisc`):
 
 ```sh
 %sh
@@ -40,14 +40,16 @@ R CMD SHLIB src/s3n_fast_neighbors.cpp
 ```
 
 ```r
-required_pkgs <- c("RANN", "rdist", "matrixStats", "pbapply", "dplyr",
-                   "jsonlite", "data.table", "remotes", "mgcv", "rpart")
-new_pkgs <- required_pkgs[!required_pkgs %in% installed.packages()[, "Package"]]
+recommended_pkgs <- c("data.table", "jsonlite", "mgcv", "rpart")
+new_pkgs <- recommended_pkgs[!recommended_pkgs %in% installed.packages()[, "Package"]]
 if (length(new_pkgs) > 0) install.packages(new_pkgs, repos = "https://cloud.r-project.org")
-if (!requireNamespace("S3N", quietly = TRUE)) remotes::install_github("jpierkunke/S3N")
+
+# Optional: only needed if explicitly running --engine=brisc
+# optional_brisc <- c("RANN", "rdist", "matrixStats", "pbapply", "dplyr", "remotes")
+# if (!requireNamespace("S3N", quietly = TRUE)) remotes::install_github("jpierkunke/S3N")
 ```
 
-*(See [`./setup_and_architecture.md`](./setup_and_architecture.md) for full Linux OS and `jpierkunke/S3N` installation details.)*
+*(See [`./setup_and_architecture.md`](./setup_and_architecture.md) for full Linux OS and optional `jpierkunke/S3N` installation details.)*
 
 ---
 

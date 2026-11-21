@@ -47,7 +47,8 @@ src_dirs       <- resolve_data_source_dirs(DATA_DIR, source = src_cli, base_dir 
                                           custom_sites = custom_sites_cli)
 RSN_DIR        <- src_dirs$rsn_dir
 SSN_DIR        <- src_dirs$ssn_dir
-n_omp_cli      <- parse_n_omp_arg(args, default = 1L)
+n_omp_cli      <- parse_n_omp_arg(args, default = NA_integer_)
+engine_cli     <- parse_engine_arg(args, default = "cpp")
 
 if ("--list-sources" %in% args) {
   print_available_sources(base_dir = BASE_DIR)
@@ -87,6 +88,10 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
 }
 if ("--list-kernels" %in% args) {
   print_available_kernels()
+  quit(save = "no", status = 0)
+}
+if ("--list-engines" %in% args) {
+  print_available_engines()
   quit(save = "no", status = 0)
 }
 if ("--list-trends" %in% args) {
@@ -218,7 +223,7 @@ if (length(args) == 0 || "--list" %in% args || "-h" %in% args || "--help" %in% a
   }
 cat("Usage:\n  Rscript scripts/run_s3n_determinand.R <code_or_var> [--dataset=wq|inverts|diatoms|macrophytes|rhs|lcms]\n")
   cat("        [--source=rsn|ssn|rss] [--list-sources] [--prefer-source=<s1,s2>] [--source-weight=<s:w,...>] [--source-se=<s:sd,...>]\n")
-  cat("        [--transform=<type>] [--lambda=<val>] [--scale=<val>]\n")
+  cat("        [--transform=<type>] [--lambda=<val>] [--scale=<val>] [--engine=cpp|brisc] [--threads=N]\n")
   cat("        [--reverse-color] [--censor=ros|half_lod] [--boot=50] [--basin=<CatchID_or_Name>] [--list-basins]\n")
   cat("        [--network=<name>] [--list-networks] [--gis-dir=<dir>] [--data-dir=<dir>] [--output-dir=<dir>]\n")
   cat("        [--year=YYYY] [--season=winter|spring|summer|autumn] [--month=1..12] [--by=year|season|month]\n")
@@ -801,6 +806,7 @@ slice_ctx <- list(
   source_label   = source_label,
   n_boot         = n_boot,
   n_omp          = n_omp_cli,
+  engine         = engine_cli,
   extra_basins   = extra_basins,
   det_code       = det_code,
   det_name       = det_name,
@@ -913,7 +919,8 @@ fit_temporal_slice <- function(sub_samples, out_subdir, period_tag, ctx) {
       threshold = ctx$threshold,
       threshold_dir = ctx$threshold_dir,
       design_sites = ctx$design_sites,
-      censor_mode = ctx$censor_mode
+      censor_mode = ctx$censor_mode,
+      engine = ctx$engine
     )
   }
 

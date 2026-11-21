@@ -5,7 +5,7 @@ This document covers the technical architecture across all three stages of the *
 2. **Part II — OpenMP C++ Stream-Tree Neighbour Engine** ([`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp))
 3. **Part III — R Spatial Estimation, Prediction & Cross-Validation** ([`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R) & [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R))
 
-> **Full Mathematical & Kriging Guide**: For the step-by-step derivation of `S3N` covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbour Gaussian Process (`NNGP`) estimation (`BRISC_estimation_stream`), Universal Stream Kriging (`BRISC_prediction_stream`), and spatial information-gain weighting, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
+> **Full Mathematical & Kriging Guide**: For the step-by-step derivation of `S3N` covariance functions (`Tail-Up` & `Tail-Down`), Nearest-Neighbour Gaussian Process (`NNGP`) estimation (`C_s3n_nngp_loglik()` / optional `BRISC_estimation_stream()`), spatial residual bootstrapping (`C_s3n_nngp_bootstrap()`), Universal Stream Kriging (`C_s3n_predict_meas_error()` / `C_s3n_joint_nngp()`), and spatial information-gain weighting, see [`./s3n_modelling_and_kriging_guide.md`](./s3n_modelling_and_kriging_guide.md).
 
 ---
 
@@ -93,7 +93,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 > **In plain English:** Walking a 90,000-reach river tree in pure R to measure distances between every pair of monitoring sites takes minutes or runs out of memory. This C++ module pre-indexes every river basin in a single pass so the solver can instantly check whether two reaches sit upstream/downstream of each other, measure exact channel distance through junctions, and keep only the `m = 15` closest stream neighbours in memory.
 
-[`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) replaces `SSN2::createDistMat()` and `S3N`'s R tree walks (`order_stream()` / `get_neighbor_stream()`), computing exact stream distances, flow-connectedness flags, CSR NNGP neighbour buffers, multi-kernel profile likelihoods, measurement-error kriging, Joint Additive `TU + TD + Euclidean` kriging, optimal monitoring design, and multivariate co-kriging across all 90,876 reaches in **< 1 second**.
+[`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) replaces `SSN2::createDistMat()` and `S3N`'s R tree walks (`order_stream()` / `get_neighbor_stream()`), and implements the default `--engine=cpp` NNGP solver—computing exact stream distances, flow-connectedness flags, CSR NNGP neighbour buffers, multi-kernel profile likelihoods, Saha & Datta (2018) spatial residual bootstrapping, measurement-error kriging, Joint Additive `TU + TD + Euclidean` kriging, optimal monitoring design, and multivariate co-kriging across all 90,876 reaches in **~2–3 seconds**.
 
 ### 1. O(1) Flow-Connectedness via Euler-Tour DFS Timestamps (`C_build_tree_tin_tout()`)
 - Runs a linear `O(q)` iterative depth-first search from every river mouth root (`parent_dn < 0`), recording entry time `tin[u]` and exit time `tout[u]` for every reach `u`.
@@ -102,13 +102,13 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 ### 2. Pairwise Stream Distance & Weight Kernel (`calc_pair`)
 - **Same Catchment & Flow-Connected**:
   - Hydrologic distance: `dist = max(1e-4, abs(up_dist_km[a] - up_dist_km[b]))`.
-  - Weight (with `-0.001 * dist` numerical tie-breaking stabiliser and `1 - 1e-6` clamp):
-    - Tail-Up (`model_type == 0`): `wt = min(1.0 - 1e-6, exp(0.5 * (min(log_afv[a], log_afv[b]) - max(log_afv[a], log_afv[b])) - 0.001 * dist))`
-    - Tail-Down (`model_type == 1`): `wt = min(1.0 - 1e-6, exp(-0.001 * dist))`
+  - Weight (`1 - 1e-6` off-diagonal numerical stability cap):
+    - Tail-Up (`model_type == 0`): `wt = min(1.0 - 1e-6, exp(0.5 * (min(log_afv[a], log_afv[b]) - max(log_afv[a], log_afv[b]))))`
+    - Tail-Down (`model_type == 1`): `wt = 1.0 - 1e-6`
 - **Same Catchment & Flow-Unconnected (Bifurcated Tributaries)**:
   - Walks `anc = parent_dn[anc]` downstream from `a` until `tin[anc] <= tin[b] && tout[b] <= tout[anc]` to locate the Lowest Common Ancestor confluence reach `anc`.
-  - Hydrologic distance across the confluence junction: `dist = max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * d2m_km[anc])`.
-  - Tail-Up sets `fc = false, wt = 0.0`; Tail-Down sets `fc = true, wt = min(1.0 - 1e-6, exp(-0.001 * dist))`.
+  - When a valid confluence `anc` exists (`found_lca == true`): hydrologic distance is `dist = max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 * d2m_km[anc])`; Tail-Up sets `fc = false, wt = 0.0`, while Tail-Down sets `fc = true, wt = 1.0 - 1e-6`.
+  - When disconnected trees share a `CatchID` (`!found_lca`): sets `fc = false, wt = 0.0` and `dist = 1e6 + euclidean_dist_km`.
 - **Different Catchments**:
   - Sets `fc = false, wt = 0.0` and `dist = 1e6 + euclidean_dist_km` for Vecchia zero-weight padding.
 
@@ -118,11 +118,13 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 | `C_build_tree_tin_tout()` | Euler-tour DFS `tin`/`tout` intervals for $O(1)$ flow-connectedness checks. |
 | `C_compute_s3n_neighbors()` | OpenMP `std::partial_sort` builder for CSR `obs_neighbors` (`d`, `nnWt`, `nnIndx`, `nnIndxLU`, `D`, `Dwt`, `CIndx`, `Length.D`) and `pred_neighbors` (`nnIndx`, `nnDist`, `nnWght`). |
 | `C_compute_log_afv()` | Dynamic DAG recomputation of `log_AFV` for `length`, `shreve`, and `hydro_yield`. |
-| `C_s3n_nngp_loglik()` | Multi-kernel (`exponential`, `spherical`, `mariah`, `linear`) sparse Vecchia NNGP profile log-likelihood & GLS solver. |
-| `C_s3n_predict_meas_error()` | Heteroskedastic measurement-error kriging predictor (and Tobit EM E-step conditioning). |
+| `C_s3n_nngp_loglik()` | Multi-kernel (`exponential`, `spherical`, `mariah`, `linear`) sparse Vecchia NNGP profile log-likelihood & GLS solver (`--engine=cpp` default). |
+| `C_s3n_nngp_bootstrap()` | OpenMP Saha & Datta (2018) spatial residual bootstrap across all 4 covariance kernels (`--engine=cpp` default). |
+| `C_s3n_predict_meas_error()` | Homoskedastic and heteroskedastic measurement-error kriging predictor (and Tobit EM E-step conditioning). |
 | `C_s3n_joint_nngp()` | Joint Additive `Tail-Up + Tail-Down + Euclidean` NNGP MLE and kriging engine (`--combine=joint`). |
 | `C_s3n_optimal_design()` | Greedy Schur-complement active-learning site selector (`--design-sites=<K>`). |
 | `C_s3n_multivariate_nngp()` / `C_s3n_multivariate_nngp_weighted()` | Factor-LMC Joint NNGP multivariate co-kriging likelihood and predictor (unweighted and source-weighted/SE modes). |
+| `C_s3n_get_omp_max_threads()` / `C_s3n_set_omp_threads()` | Thread-budget helpers preserving `cpp` OpenMP concurrency and shielding against `BRISC`'s global `omp_set_num_threads()` calls. |
 
 ---
 
@@ -130,7 +132,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 1. **High-Speed CSV I/O (`fast_read_csv()` / `fast_write_csv()`)**: Automatically uses multi-threaded `data.table::fread()` / `fwrite()` when `data.table` is installed, with transparent fallback to base R `read.csv()` / `write.csv()`.
 2. **Downstream-to-Upstream Vecchia Ordering**: Orders observed reaches by `CatchID` and increasing `obs_up_dist_km` (`1..n_obs`), followed by prediction reaches (`n_obs+1..q_tot`).
-3. **Multi-Kernel Maximum Likelihood Estimation (`--kernel=exponential|spherical|mariah|linear|auto`)**: Fits both S3N Tail-Up (`model_type = 0`) and S3N Tail-Down (`model_type = 1`) via sparse NNGP profile maximum likelihood (`BRISC_estimation_stream` or `C_s3n_nngp_loglik`), supporting Exponential, Spherical, Mariah, Linear-with-Sill, and automatic AIC selection (`--kernel=auto`), plus 95% confidence intervals.
+3. **Multi-Kernel Maximum Likelihood Estimation (`--engine=cpp|brisc`, `--kernel=exponential|spherical|mariah|linear|auto`)**: Fits both S3N Tail-Up (`model_type = 0`) and S3N Tail-Down (`model_type = 1`) via sparse NNGP profile maximum likelihood (`C_s3n_nngp_loglik()` by default under `--engine=cpp`, or optional `BRISC_estimation_stream()` when `--engine=brisc` is explicitly chosen for Exponential fits without ME), supporting Exponential, Spherical, Mariah, Linear-with-Sill, and automatic AIC selection (`--kernel=auto`), plus 95% confidence intervals (`C_s3n_nngp_bootstrap()` by default or `--boot=0` analytical Fisher SEs).
 4. **Joint Additive (`TU + TD + Euclidean`) & Variance-Weighted Stream Kriging (`--combine=joint|precision`)**:
    - In **`joint` mode** (*default*, `--combine=joint`), estimates joint variance components $(\sigma^2_{\text{TU}}, \sigma^2_{\text{TD}}, \sigma^2_{\text{Euc}}, \tau^2)$ and solves a single unified Cholesky kriging system (`C_s3n_joint_nngp`) combining flow-connected `Tail-Up`, hydrologic-distance `Tail-Down`, and 2D overland `Euclidean` covariance across all 90,876 reaches.
    - In **`precision` mode** (`--combine=precision`), combines separate `Tail-Up` and `Tail-Down` predictions using local spatial information-gain weights `info = pmax(1e-4, 1 - se^2 / (sigma.sq + tau.sq))`.
@@ -140,7 +142,7 @@ Custom base paths (`data_dir`, `gis_dir`, `output_dir`) are resolved via `config
 
 ## Part IV: System Requirements, Environment & Dependencies
 
-- **Runtime & Setup**: See [`./setup_and_architecture.md`](./setup_and_architecture.md) for Python/R versions, optional `data.table` / `pyarrow` / `pyproj` packages, all `scripts/s3n_*.R` shared modules, OS headers, OpenMP compilation (`R CMD SHLIB`), and automated tests.
+- **Runtime & Setup**: See [`./setup_and_architecture.md`](./setup_and_architecture.md) for Python/R versions, optional `data.table` / `pyarrow` / `pyproj` / `S3N` packages, all `scripts/s3n_*.R` shared modules, OS headers, OpenMP compilation (`R CMD SHLIB`), and automated tests.
 - **Required Data Files** (default locations under `gis/` and `data/`): `ORN_v2.gpkg` (~10.4 GB, only needed for `01_preprocess_orn.py`), `NCEA_River_Surveillance_Network_ARD_Open/` (~235 MB), and `NCEA_Small_Streams_Network_ARD_Open/` (~48 MB for `ssn`/`rss`).
-- **Memory & CPU**: ~1.5 GB peak RAM; R scripts default to **`1` OpenMP thread** (`--omp=1`) and accept `--omp=4` (or higher) for multi-core acceleration (~18–25 s for a full national + 3-basin run).
+- **Memory & CPU**: ~1.5 GB peak RAM; single-determinand R scripts default to **`auto`** OpenMP threads under native `--engine=cpp` (using all available CPU cores; overridable via `--threads=<N>` / `--omp=<N>`). On a 20-core workstation, a full All-England Nitrate fit (`90,876` reaches) with 50-replicate spatial residual bootstrapping (`boot_sec ≈ 0.55 s`) and 5-fold CV completes in **~2.8 s** (plus CSV I/O and map rendering).
 

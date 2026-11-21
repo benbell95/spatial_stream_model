@@ -620,16 +620,31 @@
               </select>
             </div>
 
+            <div class="field" data-applies="det">
+              <div class="field-head">
+                <label for="wbEngine">NNGP Engine (<code>--engine</code>)</label>
+                <span class="info-wrap">
+                  <button type="button" class="info-tip-btn" aria-label="Info about Engine flag">i</button>
+                  <span class="info-popover"><strong>Spatial Fitting &amp; Bootstrap Engine (<code>--engine</code>)</strong><code>cpp</code> (default) uses our thread-safe C++ OpenMP NNGP solver and Saha &amp; Datta spatial residual bootstrap across all 4 kernels. Select <code>brisc</code> only to use the legacy external <code>S3N::BRISC</code> package fallback (Exponential without ME).</span>
+                </span>
+              </div>
+              <select id="wbEngine">
+                <option value="cpp">Native C++ OpenMP (Default)</option>
+                <option value="brisc">Legacy S3N / BRISC Fallback</option>
+              </select>
+            </div>
+
             <div class="field" data-applies="det,cokrig">
               <div class="field-head">
                 <label for="wbOmp">OpenMP Threads (<code>--omp</code>)</label>
                 <span class="info-wrap">
                   <button type="button" class="info-tip-btn" aria-label="Info about OpenMP flag">i</button>
-                  <span class="info-popover"><strong>Parallel C++ Compute (<code>--omp</code>)</strong>Controls thread count inside <code>s3n_fast_neighbors.so</code> for NNGP likelihood, kriging prediction, weighted Co-Kriging, and Greedy Optimal Monitoring Design. Defaults to <code>1</code> in R; pass <code>4</code> on laptops or <code>8+</code> on workstations.</span>
+                  <span class="info-popover"><strong>Parallel C++ Compute (<code>--omp</code>)</strong>Controls thread count inside <code>s3n_fast_neighbors.so</code> for NNGP likelihood, spatial residual bootstrap, kriging prediction, weighted Co-Kriging, and Greedy Optimal Monitoring Design. Defaults to all available CPU cores for single-target runs (or pass <code>1</code> / <code>4</code> / <code>8</code>).</span>
                 </span>
               </div>
               <select id="wbOmp">
-                <option value="1">1 thread (Script Default)</option>
+                <option value="auto">Auto — All Available Cores (Default)</option>
+                <option value="1">1 thread (Single-Threaded)</option>
                 <option value="4">4 threads (Multi-Core)</option>
                 <option value="8">8 threads (Workstation Fast)</option>
               </select>

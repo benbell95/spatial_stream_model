@@ -4,6 +4,8 @@
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
+#include <random>
+#include <cstdint>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -700,6 +702,182 @@ SEXP C_compute_log_afv(SEXP parent_dn_r, SEXP local_w_r, SEXP is_accum_r) {
 }
 
 // =============================================================================
+// OpenMP Thread Query / Restore Helpers
+// Allows S3N domain fitting to shield C++ OpenMP loops from BRISC's global
+// omp_set_num_threads() side effects.
+// =============================================================================
+SEXP C_s3n_get_omp_max_threads() {
+    int thr = 1;
+#ifdef _OPENMP
+    thr = omp_get_max_threads();
+#endif
+    return Rf_ScalarInteger(thr);
+}
+
+SEXP C_s3n_set_omp_threads(SEXP n_threads_r) {
+    int prev = 1;
+#ifdef _OPENMP
+    prev = omp_get_max_threads();
+    int req = Rf_asInteger(n_threads_r);
+    if (req != NA_INTEGER && req >= 1) {
+        omp_set_num_threads(req);
+    }
+#else
+    (void)n_threads_r;
+#endif
+    return Rf_ScalarInteger(prev);
+}
+
+// =============================================================================
+// Shared Internal NNGP Helpers (pure C++, thread-safe, zero R API calls)
+// =============================================================================
+static inline void nngp_node_factors(
+    int i, int n,
+    const double* d, const double* nnWt,
+    const int* nnIndxLU,
+    const double* D, const double* Dwt, const int* CIndx,
+    double eta, double phi, int kernel_id,
+    double* b_out, double& f_out, int& k_out
+) {
+    int start = nnIndxLU[i];
+    int k     = nnIndxLU[n + i];
+    if (k > 64) k = 64;
+    double diag_i = 1.0 + eta;
+
+    if (k <= 0) {
+        f_out = std::max(1e-8, diag_i);
+        k_out = 0;
+        return;
+    }
+
+    double c_vec[64];
+    double C_mat[64 * 64];
+
+    int valid_k = 0;
+    for (int l = 0; l < k; ++l) {
+        double w_il = nnWt[start + l];
+        double d_il = d[start + l];
+        c_vec[l] = (w_il > 0.0 && d_il < 1e5)
+                   ? (w_il * eval_stream_kernel(d_il, phi, kernel_id))
+                   : 0.0;
+        if (c_vec[l] > 0.0) valid_k++;
+    }
+
+    if (valid_k == 0) {
+        for (int l = 0; l < k; ++l) b_out[l] = 0.0;
+        f_out = std::max(1e-8, diag_i);
+        k_out = k;
+        return;
+    }
+
+    int c_start = CIndx[i];
+    int k_full  = nnIndxLU[n + i];
+    for (int l1 = 0; l1 < k; ++l1) {
+        C_mat[l1 * k + l1] = diag_i;
+        for (int l2 = l1 + 1; l2 < k; ++l2) {
+            int idx = c_start + l1 * k_full + l2;
+            double w_12 = Dwt[idx];
+            double d_12 = D[idx];
+            double cov = (w_12 > 0.0 && d_12 < 1e5)
+                         ? (w_12 * eval_stream_kernel(d_12, phi, kernel_id))
+                         : 0.0;
+            C_mat[l1 * k + l2] = cov;
+            C_mat[l2 * k + l1] = cov;
+        }
+    }
+
+    solve_chol_stack(k, C_mat, c_vec, b_out);
+
+    double c_dot_b = 0.0;
+    for (int l = 0; l < k; ++l) {
+        c_dot_b += c_vec[l] * b_out[l];
+    }
+    f_out = std::max(1e-8, diag_i - c_dot_b);
+    k_out = k;
+}
+
+static inline void nngp_solve_gls(
+    int n, int p, double eta,
+    const double* X_tilde, const double* y_tilde, const double* log_f,
+    double* XtX, double* Xty,
+    double* beta_out, double& sigma_sq_out, double& tau_sq_out, double& neg2ll_out
+) {
+    for (int j1 = 0; j1 < p; ++j1) {
+        const double* col1 = &X_tilde[(size_t)j1 * n];
+        double s_y = 0.0;
+        for (int i = 0; i < n; ++i) s_y += col1[i] * y_tilde[i];
+        Xty[j1] = s_y;
+        for (int j2 = j1; j2 < p; ++j2) {
+            const double* col2 = &X_tilde[(size_t)j2 * n];
+            double s_xx = 0.0;
+            for (int i = 0; i < n; ++i) s_xx += col1[i] * col2[i];
+            XtX[j1 * p + j2] = s_xx;
+            XtX[j2 * p + j1] = s_xx;
+        }
+    }
+
+    solve_chol_stack(p, XtX, Xty, beta_out);
+
+    double rss = 0.0;
+    double sum_log_f = 0.0;
+    for (int i = 0; i < n; ++i) {
+        double mu_i = 0.0;
+        for (int j = 0; j < p; ++j) mu_i += X_tilde[i + (size_t)j * n] * beta_out[j];
+        double res = y_tilde[i] - mu_i;
+        rss += res * res;
+        sum_log_f += log_f[i];
+    }
+
+    sigma_sq_out = std::max(1e-10, rss / (double)n);
+    tau_sq_out   = eta * sigma_sq_out;
+    neg2ll_out   = (double)n * std::log(sigma_sq_out) + sum_log_f + (double)n;
+}
+
+static double nngp_eval_serial(
+    int n, int p,
+    const double* X, const double* y,
+    const double* d, const double* nnWt, const int* nnIndx, const int* nnIndxLU,
+    const double* D, const double* Dwt, const int* CIndx,
+    double eta, double phi, int kernel_id,
+    std::vector<double>& y_tilde, std::vector<double>& X_tilde, std::vector<double>& log_f,
+    std::vector<double>& XtX, std::vector<double>& Xty,
+    double* beta_out, double& sigma_sq_out, double& tau_sq_out
+) {
+    eta = std::max(0.0, eta);
+    phi = std::max(1e-6, phi);
+    double b_vec[64];
+
+    for (int i = 0; i < n; ++i) {
+        double f_i = 1.0 + eta;
+        int k = 0;
+        nngp_node_factors(i, n, d, nnWt, nnIndxLU, D, Dwt, CIndx, eta, phi, kernel_id, b_vec, f_i, k);
+
+        log_f[i] = std::log(f_i);
+        double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+        int start = nnIndxLU[i];
+
+        double y_hat_nb = 0.0;
+        for (int l = 0; l < k; ++l) {
+            y_hat_nb += b_vec[l] * y[nnIndx[start + l]];
+        }
+        y_tilde[i] = (y[i] - y_hat_nb) * inv_sqrt_f;
+
+        for (int j = 0; j < p; ++j) {
+            double x_hat_nb = 0.0;
+            for (int l = 0; l < k; ++l) {
+                x_hat_nb += b_vec[l] * X[nnIndx[start + l] + (size_t)j * n];
+            }
+            X_tilde[i + (size_t)j * n] = (X[i + (size_t)j * n] - x_hat_nb) * inv_sqrt_f;
+        }
+    }
+
+    double neg2ll = 1e30;
+    nngp_solve_gls(n, p, eta, X_tilde.data(), y_tilde.data(), log_f.data(),
+                   XtX.data(), Xty.data(), beta_out, sigma_sq_out, tau_sq_out, neg2ll);
+    return std::isfinite(neg2ll) ? neg2ll : 1e30;
+}
+
+// =============================================================================
 // C_s3n_nngp_loglik:
 // Fast OpenMP NNGP profile log-likelihood and GLS solver for any stream kernel
 // (0 = exponential, 1 = spherical, 2 = mariah, 3 = linear).
@@ -730,120 +908,38 @@ SEXP C_s3n_nngp_loglik(
 
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < n; ++i) {
-        int start = nnIndxLU[i];
-        int k     = nnIndxLU[n + i];
-        if (k > 64) k = 64;
-        double diag_i = 1.0 + eta;
-
-        if (k <= 0) {
-            double f_i = std::max(1e-8, diag_i);
-            log_f[i] = std::log(f_i);
-            double inv_sqrt_f = 1.0 / std::sqrt(f_i);
-            y_tilde[i] = y[i] * inv_sqrt_f;
-            for (int j = 0; j < p; ++j) {
-                X_tilde[i + j * n] = X[i + j * n] * inv_sqrt_f;
-            }
-            continue;
-        }
-
-        double c_vec[64];
-        double C_mat[64 * 64];
         double b_vec[64];
+        double f_i = 1.0 + eta;
+        int k = 0;
+        nngp_node_factors(i, n, d, nnWt, nnIndxLU, D, Dwt, CIndx, eta, phi, kernel_id, b_vec, f_i, k);
 
-        int valid_k = 0;
-        for (int l = 0; l < k; ++l) {
-            double w_il = nnWt[start + l];
-            double d_il = d[start + l];
-            c_vec[l] = (w_il > 0.0 && d_il < 1e5)
-                       ? (w_il * eval_stream_kernel(d_il, phi, kernel_id))
-                       : 0.0;
-            if (c_vec[l] > 0.0) valid_k++;
-        }
-
-        if (valid_k == 0) {
-            double f_i = std::max(1e-8, diag_i);
-            log_f[i] = std::log(f_i);
-            double inv_sqrt_f = 1.0 / std::sqrt(f_i);
-            y_tilde[i] = y[i] * inv_sqrt_f;
-            for (int j = 0; j < p; ++j) {
-                X_tilde[i + j * n] = X[i + j * n] * inv_sqrt_f;
-            }
-            continue;
-        }
-
-        int c_start = CIndx[i];
-        int k_full  = nnIndxLU[n + i];
-        for (int l1 = 0; l1 < k; ++l1) {
-            C_mat[l1 * k + l1] = 1.0 + eta;
-            for (int l2 = l1 + 1; l2 < k; ++l2) {
-                int idx = c_start + l1 * k_full + l2;
-                double w_12 = Dwt[idx];
-                double d_12 = D[idx];
-                double cov = (w_12 > 0.0 && d_12 < 1e5)
-                             ? (w_12 * eval_stream_kernel(d_12, phi, kernel_id))
-                             : 0.0;
-                C_mat[l1 * k + l2] = cov;
-                C_mat[l2 * k + l1] = cov;
-            }
-        }
-
-        solve_chol_stack(k, C_mat, c_vec, b_vec);
-
-        double c_dot_b = 0.0;
-        double y_hat_nb = 0.0;
-        for (int l = 0; l < k; ++l) {
-            int nb = nnIndx[start + l];
-            c_dot_b  += c_vec[l] * b_vec[l];
-            y_hat_nb += b_vec[l] * y[nb];
-        }
-        double f_i = std::max(1e-8, diag_i - c_dot_b);
         log_f[i] = std::log(f_i);
         double inv_sqrt_f = 1.0 / std::sqrt(f_i);
+        int start = nnIndxLU[i];
 
+        double y_hat_nb = 0.0;
+        for (int l = 0; l < k; ++l) {
+            y_hat_nb += b_vec[l] * y[nnIndx[start + l]];
+        }
         y_tilde[i] = (y[i] - y_hat_nb) * inv_sqrt_f;
+
         for (int j = 0; j < p; ++j) {
             double x_hat_nb = 0.0;
             for (int l = 0; l < k; ++l) {
-                int nb = nnIndx[start + l];
-                x_hat_nb += b_vec[l] * X[nb + j * n];
+                x_hat_nb += b_vec[l] * X[nnIndx[start + l] + (size_t)j * n];
             }
-            X_tilde[i + j * n] = (X[i + j * n] - x_hat_nb) * inv_sqrt_f;
+            X_tilde[i + (size_t)j * n] = (X[i + (size_t)j * n] - x_hat_nb) * inv_sqrt_f;
         }
     }
 
-    std::vector<double> XtX(p * p, 0.0);
+    std::vector<double> XtX((size_t)p * p, 0.0);
     std::vector<double> Xty(p, 0.0);
-    for (int j1 = 0; j1 < p; ++j1) {
-        const double* col1 = &X_tilde[j1 * n];
-        double s_y = 0.0;
-        for (int i = 0; i < n; ++i) s_y += col1[i] * y_tilde[i];
-        Xty[j1] = s_y;
-        for (int j2 = j1; j2 < p; ++j2) {
-            const double* col2 = &X_tilde[j2 * n];
-            double s_xx = 0.0;
-            for (int i = 0; i < n; ++i) s_xx += col1[i] * col2[i];
-            XtX[j1 * p + j2] = s_xx;
-            XtX[j2 * p + j1] = s_xx;
-        }
-    }
-
     SEXP beta_r = PROTECT(Rf_allocVector(REALSXP, p));
     double* beta = REAL(beta_r);
-    solve_chol_stack(p, XtX.data(), Xty.data(), beta);
+    double sigma_sq = 0.0, tau_sq = 0.0, neg2ll = 0.0;
 
-    double rss = 0.0;
-    double sum_log_f = 0.0;
-    for (int i = 0; i < n; ++i) {
-        double mu_i = 0.0;
-        for (int j = 0; j < p; ++j) mu_i += X_tilde[i + j * n] * beta[j];
-        double res = y_tilde[i] - mu_i;
-        rss += res * res;
-        sum_log_f += log_f[i];
-    }
-
-    double sigma_sq = std::max(1e-10, rss / (double)n);
-    double tau_sq   = eta * sigma_sq;
-    double neg2ll   = (double)n * std::log(sigma_sq) + sum_log_f + (double)n;
+    nngp_solve_gls(n, p, eta, X_tilde.data(), y_tilde.data(), log_f.data(),
+                   XtX.data(), Xty.data(), beta, sigma_sq, tau_sq, neg2ll);
 
     SEXP cov_beta_r = PROTECT(Rf_allocMatrix(REALSXP, p, p));
     double* cov_beta = REAL(cov_beta_r);
@@ -873,6 +969,267 @@ SEXP C_s3n_nngp_loglik(
     Rf_setAttrib(out, R_NamesSymbol, names);
 
     UNPROTECT(4);
+    return out;
+}
+
+// =============================================================================
+// C_s3n_nngp_bootstrap:
+// Clean-room OpenMP implementation of the decorrelated spatial residual
+// bootstrap (Saha & Datta 2018, "BRISC: Bootstrap for Rapid Inference on Spatial
+// Covariances", Stat 7(1): e184, Algorithm 2) across all stream covariance
+// kernels (0 = exponential, 1 = spherical, 2 = mariah, 3 = linear).
+// =============================================================================
+SEXP C_s3n_nngp_bootstrap(
+    SEXP X_r, SEXP y_r, SEXP obs_nb_r,
+    SEXP beta_hat_r, SEXP theta_hat_r,
+    SEXP kernel_id_r, SEXP n_boot_r, SEXP seed_r
+) {
+    int n         = Rf_nrows(X_r);
+    int p         = Rf_ncols(X_r);
+    int kernel_id = Rf_asInteger(kernel_id_r);
+    int n_boot    = std::max(0, Rf_asInteger(n_boot_r));
+    int seed_raw  = Rf_asInteger(seed_r);
+    uint64_t seed_base = (seed_raw == NA_INTEGER) ? 2026ULL : (uint64_t)(uint32_t)seed_raw;
+
+    const double* X         = REAL(X_r);
+    const double* y         = REAL(y_r);
+    const double* beta_hat  = REAL(beta_hat_r);
+    const double* theta_hat = REAL(theta_hat_r);
+
+    double sig_hat = (Rf_length(theta_hat_r) >= 1 && std::isfinite(theta_hat[0])) ? std::max(1e-8, theta_hat[0]) : 1.0;
+    double tau_hat = (Rf_length(theta_hat_r) >= 2 && std::isfinite(theta_hat[1])) ? std::max(0.0, theta_hat[1]) : 0.1;
+    double phi_hat = (Rf_length(theta_hat_r) >= 3 && std::isfinite(theta_hat[2])) ? std::max(1e-6, theta_hat[2]) : 0.05;
+    double eta_hat = std::max(1e-6, tau_hat / sig_hat);
+
+    const double* d        = REAL(VECTOR_ELT(obs_nb_r, 0));
+    const double* nnWt     = REAL(VECTOR_ELT(obs_nb_r, 1));
+    const int*    nnIndx   = INTEGER(VECTOR_ELT(obs_nb_r, 2));
+    const int*    nnIndxLU = INTEGER(VECTOR_ELT(obs_nb_r, 3));
+    const double* D        = REAL(VECTOR_ELT(obs_nb_r, 4));
+    const double* Dwt      = REAL(VECTOR_ELT(obs_nb_r, 5));
+    const int*    CIndx    = INTEGER(VECTOR_ELT(obs_nb_r, 6));
+    int total_nb = Rf_length(VECTOR_ELT(obs_nb_r, 0));
+
+    SEXP boot_beta_r  = PROTECT(Rf_allocMatrix(REALSXP, std::max(1, n_boot), p));
+    SEXP boot_theta_r = PROTECT(Rf_allocMatrix(REALSXP, std::max(1, n_boot), 3));
+    SEXP e_tilde_r    = PROTECT(Rf_allocVector(REALSXP, n));
+    double* boot_beta  = REAL(boot_beta_r);
+    double* boot_theta = REAL(boot_theta_r);
+    double* e_tilde    = REAL(e_tilde_r);
+    std::fill(boot_beta,  boot_beta  + (size_t)std::max(1, n_boot) * p, NA_REAL);
+    std::fill(boot_theta, boot_theta + (size_t)std::max(1, n_boot) * 3, NA_REAL);
+    std::fill(e_tilde, e_tilde + n, 0.0);
+
+    if (n >= 2 && p >= 1 && Rf_length(beta_hat_r) == p) {
+        std::vector<double> xb(n, 0.0);
+        std::vector<double> r_obs(n, 0.0);
+        for (int i = 0; i < n; ++i) {
+            double m = 0.0;
+            for (int j = 0; j < p; ++j) m += X[i + (size_t)j * n] * beta_hat[j];
+            xb[i]    = m;
+            r_obs[i] = y[i] - m;
+        }
+
+        // Step A: NNGP Cholesky factors (B, F) at MLE & whitened residuals e_tilde
+        std::vector<double> B_vals(std::max(1, total_nb), 0.0);
+        std::vector<double> sqrt_sig_f(n, std::sqrt(sig_hat * (1.0 + eta_hat)));
+
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < n; ++i) {
+            double b_vec[64];
+            double f_i = 1.0 + eta_hat;
+            int k = 0;
+            nngp_node_factors(i, n, d, nnWt, nnIndxLU, D, Dwt, CIndx,
+                              eta_hat, phi_hat, kernel_id, b_vec, f_i, k);
+
+            int start = nnIndxLU[i];
+            double r_hat = 0.0;
+            for (int l = 0; l < k; ++l) {
+                B_vals[start + l] = b_vec[l];
+                r_hat += b_vec[l] * r_obs[nnIndx[start + l]];
+            }
+            double sf = std::sqrt(std::max(1e-12, sig_hat * f_i));
+            sqrt_sig_f[i] = sf;
+            e_tilde[i] = (r_obs[i] - r_hat) / sf;
+        }
+
+        // Standardize whitened residuals (mean 0, unit variance)
+        double mean_e = 0.0;
+        for (int i = 0; i < n; ++i) mean_e += e_tilde[i];
+        mean_e /= (double)n;
+        double var_e = 0.0;
+        for (int i = 0; i < n; ++i) {
+            e_tilde[i] -= mean_e;
+            var_e += e_tilde[i] * e_tilde[i];
+        }
+        double sd_e = std::sqrt(var_e / (double)std::max(1, n - p));
+        if (sd_e > 1e-8 && std::isfinite(sd_e)) {
+            for (int i = 0; i < n; ++i) e_tilde[i] /= sd_e;
+        }
+
+        // Step B: Parallel bootstrap replicates across OpenMP threads
+        if (n_boot >= 1) {
+            double init_x0 = std::max(-12.0, std::min(6.0, std::log(std::max(1e-5, eta_hat))));
+            double init_x1 = std::max(-9.0,  std::min(4.0, std::log(std::max(1e-4, phi_hat))));
+
+            #pragma omp parallel
+            {
+                std::vector<double> r_boot(n, 0.0);
+                std::vector<double> y_boot(n, 0.0);
+                std::vector<double> y_tilde(n, 0.0);
+                std::vector<double> X_tilde((size_t)n * p, 0.0);
+                std::vector<double> log_f(n, 0.0);
+                std::vector<double> XtX((size_t)p * p, 0.0);
+                std::vector<double> Xty(p, 0.0);
+                std::vector<double> beta_b(p, 0.0);
+
+                auto clamp_x0 = [](double v) { return std::max(-12.0, std::min(6.0, v)); };
+                auto clamp_x1 = [](double v) { return std::max(-9.0,  std::min(4.0, v)); };
+
+                #pragma omp for schedule(dynamic, 1)
+                for (int b = 0; b < n_boot; ++b) {
+                    uint64_t s = seed_base ^ ((uint64_t)(b + 1) * 0x9e3779b97f4a7c15ULL);
+                    s = (s ^ (s >> 30)) * 0xbf58476d1ce4e5b9ULL;
+                    s = (s ^ (s >> 27)) * 0x94d049bb133111ebULL;
+                    s = s ^ (s >> 31);
+                    std::mt19937_64 rng(s);
+                    std::uniform_int_distribution<int> uni_idx(0, n - 1);
+
+                    // Forward-solve (I - B) * r_boot = sqrt(sigma^2 * F) * e_star
+                    for (int i = 0; i < n; ++i) {
+                        double e_star = e_tilde[uni_idx(rng)];
+                        int start = nnIndxLU[i];
+                        int k     = nnIndxLU[n + i];
+                        if (k > 64) k = 64;
+                        double pred_r = 0.0;
+                        for (int l = 0; l < k; ++l) {
+                            int nb = nnIndx[start + l];
+                            if (nb >= 0 && nb < i) {
+                                pred_r += B_vals[start + l] * r_boot[nb];
+                            }
+                        }
+                        r_boot[i] = pred_r + sqrt_sig_f[i] * e_star;
+                        y_boot[i] = xb[i] + r_boot[i];
+                    }
+
+                    double sig_b = sig_hat, tau_b = tau_hat;
+                    auto eval_nm = [&](double x0, double x1) -> double {
+                        double e_val = std::exp(clamp_x0(x0));
+                        double p_val = std::exp(clamp_x1(x1));
+                        return nngp_eval_serial(
+                            n, p, X, y_boot.data(),
+                            d, nnWt, nnIndx, nnIndxLU, D, Dwt, CIndx,
+                            e_val, p_val, kernel_id,
+                            y_tilde, X_tilde, log_f, XtX, Xty,
+                            beta_b.data(), sig_b, tau_b
+                        );
+                    };
+
+                    // Warm-started 2D Nelder-Mead simplex from (log(eta_hat), log(phi_hat))
+                    double vx[3][2];
+                    double vf[3];
+                    vx[0][0] = init_x0;
+                    vx[0][1] = init_x1;
+                    vx[1][0] = (init_x0 + 0.35 <= 6.0) ? (init_x0 + 0.35) : (init_x0 - 0.35);
+                    vx[1][1] = init_x1;
+                    vx[2][0] = init_x0;
+                    vx[2][1] = (init_x1 + 0.35 <= 4.0) ? (init_x1 + 0.35) : (init_x1 - 0.35);
+                    for (int v = 0; v < 3; ++v) vf[v] = eval_nm(vx[v][0], vx[v][1]);
+
+                    for (int iter = 0; iter < 80; ++iter) {
+                        int idx[3] = {0, 1, 2};
+                        std::sort(idx, idx + 3, [&](int a, int c_i) { return vf[a] < vf[c_i]; });
+                        int il = idx[0], im = idx[1], ih = idx[2];
+
+                        double d1 = std::hypot(vx[im][0] - vx[il][0], vx[im][1] - vx[il][1]);
+                        double d2 = std::hypot(vx[ih][0] - vx[il][0], vx[ih][1] - vx[il][1]);
+                        if ((vf[ih] - vf[il]) <= 1e-5 * (std::abs(vf[il]) + 1.0) && std::max(d1, d2) <= 1e-4) {
+                            break;
+                        }
+
+                        double c0 = 0.5 * (vx[il][0] + vx[im][0]);
+                        double c1 = 0.5 * (vx[il][1] + vx[im][1]);
+                        double xr0 = clamp_x0(2.0 * c0 - vx[ih][0]);
+                        double xr1 = clamp_x1(2.0 * c1 - vx[ih][1]);
+                        double fr  = eval_nm(xr0, xr1);
+
+                        if (fr < vf[il]) {
+                            double xe0 = clamp_x0(c0 + 2.0 * (xr0 - c0));
+                            double xe1 = clamp_x1(c1 + 2.0 * (xr1 - c1));
+                            double fe  = eval_nm(xe0, xe1);
+                            if (fe < fr) {
+                                vx[ih][0] = xe0; vx[ih][1] = xe1; vf[ih] = fe;
+                            } else {
+                                vx[ih][0] = xr0; vx[ih][1] = xr1; vf[ih] = fr;
+                            }
+                        } else if (fr < vf[im]) {
+                            vx[ih][0] = xr0; vx[ih][1] = xr1; vf[ih] = fr;
+                        } else if (fr < vf[ih]) {
+                            double xc0 = clamp_x0(c0 + 0.5 * (xr0 - c0));
+                            double xc1 = clamp_x1(c1 + 0.5 * (xr1 - c1));
+                            double fc  = eval_nm(xc0, xc1);
+                            if (fc <= fr) {
+                                vx[ih][0] = xc0; vx[ih][1] = xc1; vf[ih] = fc;
+                            } else {
+                                for (int q : {im, ih}) {
+                                    vx[q][0] = 0.5 * (vx[il][0] + vx[q][0]);
+                                    vx[q][1] = 0.5 * (vx[il][1] + vx[q][1]);
+                                    vf[q] = eval_nm(vx[q][0], vx[q][1]);
+                                }
+                            }
+                        } else {
+                            double xc0 = clamp_x0(c0 + 0.5 * (vx[ih][0] - c0));
+                            double xc1 = clamp_x1(c1 + 0.5 * (vx[ih][1] - c1));
+                            double fc  = eval_nm(xc0, xc1);
+                            if (fc < vf[ih]) {
+                                vx[ih][0] = xc0; vx[ih][1] = xc1; vf[ih] = fc;
+                            } else {
+                                for (int q : {im, ih}) {
+                                    vx[q][0] = 0.5 * (vx[il][0] + vx[q][0]);
+                                    vx[q][1] = 0.5 * (vx[il][1] + vx[q][1]);
+                                    vf[q] = eval_nm(vx[q][0], vx[q][1]);
+                                }
+                            }
+                        }
+                    }
+
+                    int best_i = 0;
+                    if (vf[1] < vf[best_i]) best_i = 1;
+                    if (vf[2] < vf[best_i]) best_i = 2;
+                    double eta_b = std::exp(clamp_x0(vx[best_i][0]));
+                    double phi_b = std::exp(clamp_x1(vx[best_i][1]));
+
+                    nngp_eval_serial(
+                        n, p, X, y_boot.data(),
+                        d, nnWt, nnIndx, nnIndxLU, D, Dwt, CIndx,
+                        eta_b, phi_b, kernel_id,
+                        y_tilde, X_tilde, log_f, XtX, Xty,
+                        beta_b.data(), sig_b, tau_b
+                    );
+
+                    for (int j = 0; j < p; ++j) {
+                        boot_beta[b + (size_t)j * n_boot] = beta_b[j];
+                    }
+                    boot_theta[b + 0 * n_boot] = sig_b;
+                    boot_theta[b + 1 * n_boot] = tau_b;
+                    boot_theta[b + 2 * n_boot] = phi_b;
+                }
+            }
+        }
+    }
+
+    SEXP out = PROTECT(Rf_allocVector(VECSXP, 3));
+    SET_VECTOR_ELT(out, 0, boot_beta_r);
+    SET_VECTOR_ELT(out, 1, boot_theta_r);
+    SET_VECTOR_ELT(out, 2, e_tilde_r);
+
+    SEXP names = PROTECT(Rf_allocVector(STRSXP, 3));
+    SET_STRING_ELT(names, 0, Rf_mkChar("boot.Beta"));
+    SET_STRING_ELT(names, 1, Rf_mkChar("boot.Theta"));
+    SET_STRING_ELT(names, 2, Rf_mkChar("norm.residual"));
+    Rf_setAttrib(out, R_NamesSymbol, names);
+
+    UNPROTECT(5);
     return out;
 }
 

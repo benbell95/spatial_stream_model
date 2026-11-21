@@ -86,6 +86,6 @@ Comprehensive guides covering setup, modelling workflows, custom data and river 
 | Guide | Purpose |
 | :--- | :--- |
 | [**Spatial Stream Modelling & Kriging Theory**](./s3n_modelling_and_kriging_guide.md) | Mathematical foundations of ROS imputation, 12 response transformations, Tail-Up / Tail-Down / Joint Additive stream covariance, multi-kernel NNGP estimation, hydrological cross-validation modes, universal stream kriging, and optimal monitoring design. |
-| [**Where This Pipeline Differs from `S3N`**](./where_this_differs_from_s3n.md) | Attribution to `S3N` (`arXiv:2512.12398`) and `BRISC`, which `S3N` functions remain in use, and what this C++/R/Python platform replaces or adds. |
+| [**Where This Pipeline Differs from `S3N`**](./where_this_differs_from_s3n.md) | Attribution to `S3N` (`arXiv:2512.12398`) and `BRISC`, engine options (`--engine=cpp` default vs. optional `S3N` `--engine=brisc` fallback), and what this C++/R/Python platform replaces or adds. |
 | [**Preprocessing & C++ Neighbour Engine**](./preprocessing_pipeline.md) | Walkthrough of river-network GeoPackage extraction, ROS censored imputation, station snapping, AFV/Strahler computation, and the OpenMP C++ Euler-tour neighbour engine. |
 | [**Two-Stage GAM & Measurement-Error Kriging**](./two_stage_gam_measurement_error_kriging_guide.md) | Propagating stage-1 temporal/GAM standard errors into stage-2 spatial kriging variance. |

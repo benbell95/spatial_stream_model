@@ -5,7 +5,7 @@
 - [1. Executive Overview & Motivation](#1-executive-overview--motivation)
   - [1.1 Why Standard Geostatistics Fails on River Networks](#11-why-standard-geostatistics-fails-on-river-networks)
   - [1.2 The Computational Bottleneck of Classical SSN Models](#12-the-computational-bottleneck-of-classical-ssn-models)
-  - [1.3 How the `S3N` Package Solves the Scalability Barrier](#13-how-the-s3n-package-solves-the-scalability-barrier)
+  - [1.3 How Sparse Stream NNGP (`S3N`) Solves the Scalability Barrier](#13-how-sparse-stream-nngp-s3n-solves-the-scalability-barrier)
 - [2. End-to-End Architecture: From Raw GIS & Monitoring Data to Modelled Output](#2-end-to-end-architecture-from-raw-gis--monitoring-data-to-modelled-output)
   - [2.1 Multi-Network Monitoring Data Sources & Domain Naming Conventions](#21-multi-network-monitoring-data-sources--domain-naming-conventions)
 - [3. Stage 1: From Raw River Network & Monitoring Samples to a Directed Topological Graph](#3-stage-1-from-raw-river-network--monitoring-samples-to-a-directed-topological-graph)
@@ -21,12 +21,12 @@
   - [4.3 The `Tail-Down` Covariance Function (`C_TD`: Hydrologic Stream Distance)](#43-the-tail-down-covariance-function-c_td-hydrologic-stream-distance)
   - [4.4 Stream Covariance Kernel Families](#44-stream-covariance-kernel-families)
   - [4.5 Joint Additive Covariance (`Tail-Up + Tail-Down + Euclidean`)](#45-joint-additive-covariance-tail-up-tail-down-euclidean)
-- [5. Stage 3: The `S3N` Package Architecture & C++ OpenMP Neighbour Engine](#5-stage-3-the-s3n-package-architecture--c-openmp-neighbour-engine)
-  - [5.1 Core Functions in the `S3N` R Package](#51-core-functions-in-the-s3n-r-package)
+- [5. Stage 3: Engine Architecture & C++ OpenMP Neighbour Solver](#5-stage-3-engine-architecture--c-openmp-neighbour-solver)
+  - [5.1 Native C++ NNGP Engine vs. Optional S3N Package Fallback](#51-native-c-nngp-engine-vs-optional-s3n-package-fallback)
   - [5.2 How the C++ Euler-Tour & Stream Neighbour Engine Works](#52-how-the-c-euler-tour--stream-neighbour-engine-works)
-- [6. Stage 4: Sparse NNGP Maximum Likelihood Estimation & Parametric Bootstrap](#6-stage-4-sparse-nngp-maximum-likelihood-estimation--parametric-bootstrap)
-  - [6.1 How `BRISC_estimation_stream()` Avoids the `O(n³)` Matrix Inversion](#61-how-brisc_estimation_stream-avoids-the-on³-matrix-inversion)
-  - [6.2 Parametric Bootstrap Confidence Intervals (`BRISC_bootstrap()`)](#62-parametric-bootstrap-confidence-intervals-brisc_bootstrap)
+- [6. Stage 4: Sparse NNGP Maximum Likelihood Estimation & Spatial Bootstrap](#6-stage-4-sparse-nngp-maximum-likelihood-estimation--spatial-bootstrap)
+  - [6.1 How NNGP Estimation Avoids the `O(n³)` Matrix Inversion](#61-how-nngp-estimation-avoids-the-on³-matrix-inversion)
+  - [6.2 Spatial Residual Bootstrap Confidence Intervals (`Saha & Datta, 2018`)](#62-spatial-residual-bootstrap-confidence-intervals-saha--datta-2018)
 - [7. Stage 5: How Universal Stream Kriging Works in Detail](#7-stage-5-how-universal-stream-kriging-works-in-detail)
   - [7.1 Mathematical Formulation of Universal Stream Kriging (`UK`)](#71-mathematical-formulation-of-universal-stream-kriging-uk)
   - [7.2 How `SE(s₀)` Behaves Across the River Network (3 Canonical Regimes)](#72-how-ses₀-behaves-across-the-river-network-3-canonical-regimes)
@@ -59,11 +59,11 @@ To respect river topology, Ver Hoef, Peterson & Theobald (2006) and Ver Hoef & P
 - Inverting a dense `n × n` covariance matrix via Cholesky factorisation requires **`O(n³)` time and `O(n²)` memory** per likelihood evaluation.
 - Building and storing all-pairs hydrologic distance matrices across national river networks (`q = 37,396` to `90,876` reaches) requires **`O(q²)` memory** (`> 60 GB` of disk/RAM matrices) and hours of computation.
 
-### 1.3 How the `S3N` Package Solves the Scalability Barrier
-The **Scalable Spatial Stream Network (`S3N`)** R package (Kunke, Olden & McCormick, 2024/2026; `https://github.com/jpierkunke/S3N`) overcomes this `O(n³)` bottleneck by embedding stream-network moving-average covariance functions inside a **Nearest-Neighbour Gaussian Process (`NNGP`)** framework (Datta et al., 2016) powered by the C++/OpenMP **`BRISC`** engine (Saha & Datta, 2018):
-- Instead of conditioning each reach on all `n` stations simultaneously, `S3N` orders stations topologically along the river tree and conditions each station on at most **`m = 15` nearest stream-network neighbours**.
+### 1.3 How Sparse Stream NNGP (`S3N`) Solves the Scalability Barrier
+The **Scalable Spatial Stream Network (`S3N`)** framework (Kunke, Olden & McCormick, 2024/2026; `https://github.com/jpierkunke/S3N`) overcomes this `O(n³)` bottleneck by embedding stream-network moving-average covariance functions inside a **Nearest-Neighbour Gaussian Process (`NNGP`)** formulation (Datta et al., 2016) building on **`BRISC`** (Saha & Datta, 2018):
+- Instead of conditioning each reach on all `n` stations simultaneously, stream reaches are ordered topologically along the river tree and each station is conditioned on at most **`m = 15` nearest stream-network neighbours**.
 - This replaces the dense `n × n` matrix inversion with `n` independent **`m × m` (`15 × 15`) linear systems**, reducing computational complexity from **`O(n³)` and `O(q n²)` down to `O(n m³)` for estimation and `O(q m³)` for universal stream kriging**—scales that grow **linearly** with both the number of stations `n` and the number of river reaches `q`.
-- This pipeline pairs `S3N`'s core estimation, kriging, and bootstrap engines (`BRISC_estimation_stream`, `BRISC_prediction_stream`, `BRISC_bootstrap`) with a custom OpenMP C++ Euler-tour tree neighbour engine ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)), completing national model fitting, parametric bootstrapping, 5-fold cross-validation, and universal kriging across **`37,396–91,118` reaches and `177–1,384` observed reaches across England in ~15–25 seconds**.
+- By default (**`--engine=cpp`**), this pipeline executes the entire estimation, clean-room Saha & Datta (2018) spatial residual bootstrap, 5-fold cross-validation, Joint Additive kriging, and universal prediction natively inside our thread-safe OpenMP C++ library ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)), making the external `S3N` R package **strictly optional** (retained under `--engine=brisc`). On a 20-core workstation, All-England Nitrate (`90,876` reaches, `1,210` observed reaches) completes full Joint S3N estimation, 50-replicate spatial residual bootstrapping (`boot_sec ≈ 0.55 s`), and 5-fold CV in **~2.8 seconds** (plus CSV I/O and figure rendering).
 - Models can be fitted to either the standard **River Surveillance Network (`RSN`)**, the headwater-focused **Small Streams Network (`SSN`)**, or their pooled combination **(`RSS`)** using `--source=<rsn|ssn|rss>`.
 
 ---
@@ -98,9 +98,9 @@ flowchart TD
     end
 
     subgraph Stage3["Stage 3: S3N Estimation, Bootstrap & Universal Kriging (scripts/run_s3n_determinand.R)"]
-        E1["3.1 Sparse NNGP Maximum Likelihood Estimation\nJoint Additive C_s3n_joint_nngp() (--combine=joint, default)\nor Component S3N::BRISC_estimation_stream() (--combine=precision)"]
-        E2["3.2 Parametric Bootstrap Confidence Intervals\nS3N::BRISC_bootstrap() (95% CIs for Beta & Theta)"]
-        E3["3.3 Universal Stream Kriging Across All q_tot Reaches\nC_s3n_joint_nngp() or S3N::BRISC_prediction_stream()\nPoint Predictions y_hat(s0) & Kriging SE(s0) for TU, TD, Euc & Combined"]
+        E1["3.1 Sparse NNGP Maximum Likelihood Estimation\nJoint Additive C_s3n_joint_nngp() (--combine=joint, default)\n& Native C_s3n_nngp_loglik() (--engine=cpp, default) / optional S3N::BRISC (--engine=brisc)"]
+        E2["3.2 Spatial Residual Bootstrap Confidence Intervals\nOpenMP C_s3n_nngp_bootstrap() (--engine=cpp, all 4 kernels) or S3N::BRISC_bootstrap() (--engine=brisc)"]
+        E3["3.3 Universal Stream Kriging Across All q_tot Reaches\nC_s3n_joint_nngp() / C_s3n_predict_meas_error() (or S3N::BRISC_prediction_stream() under --engine=brisc)\nPoint Predictions y_hat(s0) & Kriging SE(s0) for TU, TD, Euc & Combined"]
         E4["3.4 Combined Prediction & Physical Back-Transformation\nJoint TU+TD+Euc Predictor (default) or Information-Gain Blend (--combine=precision)\nAnalytical Inverse to Natural Scale (pred_combined)"]
         E5["3.5 Out-of-Sample 5-Fold Cross-Validation\nCompares OLS, S3N Tail-Up, S3N Tail-Down, and S3N Combined"]
         D3 --> E1
@@ -379,18 +379,18 @@ $$
 
 ---
 
-## 5. Stage 3: The `S3N` Package Architecture & C++ OpenMP Neighbour Engine
+## 5. Stage 3: Engine Architecture & C++ OpenMP Neighbour Solver
 
-### 5.1 Core Functions in the `S3N` R Package
-The `S3N` package (`remotes::install_github("jpierkunke/S3N")`, version `1.0.5`) extends the `BRISC` (Bootstrap for Rapid Inference on Spatial Covariances) C/C++ library to dendritic stream networks via five core functions:
+### 5.1 Native C++ NNGP Engine vs. Optional S3N Package Fallback
+Upstream `S3N` (`remotes::install_github("jpierkunke/S3N")`, version `1.0.5`) extends the `BRISC` C/C++ library to stream networks via five functions. In this pipeline, all core NNGP steps run natively inside our thread-safe C++/OpenMP shared library ([`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)) by default (**`--engine=cpp`**), making the external `S3N` R package **strictly optional** (retained via **`--engine=brisc`** when `--kernel=exponential` and measurement error is inactive):
 
-| `S3N` Package Function | Role in `S3N` | How This Pipeline Uses / Accelerates It |
-| :--- | :--- | :--- |
-| `order_stream()` | Orders observed stream locations topologically from downstream (river mouth) to upstream (headwaters) within each network (`netID`, `upDist`). | Implemented directly in R via `order(df$CatchID[obs_idx], df$obs_up_dist_km[obs_idx])` so observed sites `1..n_obs` are strictly ordered downstream-to-upstream before unmonitored reaches `(n_obs+1)..q_tot`. |
-| `get_neighbor_stream()` | Finds the `m` nearest stream neighbours for each observed location `i` among `{1, ..., i-1}` and for each prediction location `j` among `{1, ..., n_obs}`, computing stream distances and confluence weights. | Replaced by the compiled C++/OpenMP engine **`.Call("C_compute_s3n_neighbors", ...)`** in [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp), which builds the identical `obs_neighbors`, `pred_neighbors`, `obsobs_dist`, and `obsobs_wt` structures **100×–300× faster** (~0.88 sec vs. minutes in R). |
-| `BRISC_estimation_stream()` | Estimates fixed-effect slopes `Beta` (`β̂`) and spatial covariance parameters `Theta = (sigma.sq, tau.sq, phi)` (`σ̂², τ̂², φ̂`) via sparse NNGP profile maximum likelihood (`L-BFGS-B`). | Called directly on both `nb_tu$obs_neighbors` (`Tail-Up`) and `nb_td$obs_neighbors` (`Tail-Down`). |
-| `BRISC_bootstrap()` | Computes rapid `95%` parametric bootstrap confidence intervals for all fixed effects `Beta` and covariance parameters `Theta` by simulating from the sparse NNGP Cholesky factor. | Called directly on `fit_tu` and `fit_td` (`n_boot = 50` or `100` replicates). |
-| `BRISC_prediction_stream()` | Performs **Universal Stream Kriging** at all `q_tot` target reaches using the `m = 15` nearest observed stations in `pred_neighbors`, returning point predictions (`$prediction`) and `95%` prediction intervals (`$prediction.ci`). | Called directly across all `q_tot` reaches (`37,396` to `90,876` reaches) for both `Tail-Up` and `Tail-Down`. |
+| Spatial Stage | Reference `S3N` Function | Default Pipeline Engine (`--engine=cpp`) | Optional Fallback (`--engine=brisc`) |
+| :--- | :--- | :--- | :--- |
+| **Vecchia Ordering** | `order_stream()` | Implemented directly in R via `order(df$CatchID[obs_idx], df$obs_up_dist_km[obs_idx])` (`1..n_obs` ahead of unmonitored reaches `(n_obs+1)..q_tot`). | Same R downstream-to-upstream ordering. |
+| **Neighbour Graph** | `get_neighbor_stream()` | **`.Call("C_compute_s3n_neighbors", ...)`** in OpenMP C++ (`100×–300×` faster than R tree walks, producing exact `obs_neighbors`, `pred_neighbors`, `obsobs_dist`, and `obsobs_wt`). | Same C++ OpenMP neighbour structures. |
+| **Profile NNGP MLE** | `BRISC_estimation_stream()` | **`fit_nngp_cpp()` + `.Call("C_s3n_nngp_loglik", ...)`** across **all 4 covariance kernels** (`exponential`, `spherical`, `mariah`, `linear`) and AIC `auto`; defaults to all OpenMP threads (`--threads=auto`). | `BRISC_estimation_stream()` (`L-BFGS-B`, `exponential` only; safely defaults to `n_omp = 1` inside `BRISC`). |
+| **Monte Carlo CIs (`--boot=`)** | `BRISC_bootstrap()` | **`bootstrap_nngp_cpp()` + `.Call("C_s3n_nngp_bootstrap", ...)`**: clean-room Saha & Datta (2018) spatial residual bootstrap parallelised across replicates in C++ OpenMP (95% Efron CIs across all 4 kernels; `--boot=0` uses analytical Fisher SEs). | `BRISC_bootstrap()` (R-level resampling via `L-BFGS-B`, `2*est - q` pivotal CIs, `exponential` only; `--boot=0` uses Fisher SEs). |
+| **Universal Kriging** | `BRISC_prediction_stream()` | **`.Call("C_s3n_predict_meas_error", ...)`** (supports both `v = 0` homoskedastic and heteroskedastic ME) + **`C_s3n_joint_nngp()`** (`--combine=joint`). | `BRISC_prediction_stream()` when ME is inactive; **`C_s3n_joint_nngp()`** still runs `--combine=joint`. |
 
 ---
 
@@ -398,7 +398,7 @@ The `S3N` package (`remotes::install_github("jpierkunke/S3N")`, version `1.0.5`)
 
 > **In plain English:** Checking whether two river reaches lie upstream/downstream of each other normally means walking parent pointers step by step up to 100+ times per pair. The C++ engine visits each river tree once upfront to give every reach an entry/exit timestamp pair (`tin`, `tout`), turning every ancestry check into four fast integer comparisons in memory.
 
-To feed `BRISC_estimation_stream()` and `BRISC_prediction_stream()`, the pipeline evaluates flow-connectedness `FC(a, b)`, hydrologic distance `d_hydro(a, b)`, and confluence weights `w(a, b)` across Observed–Observed and Predicted–Observed pairs. Doing this via R tree walks takes `O(q × n × depth)` operations; [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) executes it in under a second in three steps:
+[`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) evaluates flow-connectedness `FC(a, b)`, hydrologic distance `d_hydro(a, b)`, and confluence weights `w(a, b)` across Observed–Observed and Predicted–Observed pairs in under a second instead of `O(q × n × depth)` R tree walks:
 
 #### Step A: `O(1)` Flow-Connectedness via Euler-Tour DFS Timestamps (`C_build_tree_tin_tout()`)
 1. Starting from every river mouth root (`parent_dn[r] == -1`), `C_build_tree_tin_tout()` performs a single linear `O(q_tot)` Depth-First Search (`DFS`) upstream into the tributary trees.
@@ -408,35 +408,37 @@ To feed `BRISC_estimation_stream()` and `BRISC_prediction_stream()`, the pipelin
    Checking whether any two reaches `(a, b)` are **flow-connected** therefore takes just **four integer comparisons (`O(1)` time)**.
 
 #### Step B: Pairwise Stream Distance & Weight Kernel (`calc_pair()`)
-For any pair of reaches `(a, b)`:
+For any distinct pair of reaches `(a, b)` (`a == b` sets `fc = true, dist = 0.0, wt = 1.0`):
 1. **Same Basin & Flow-Connected (`(tin[a] <= tin[b] && tout[b] <= tout[a]) || (tin[b] <= tin[a] && tout[a] <= tout[b])`)**:
    - `fc = true`
    - `dist = max(1e-4, |up_dist_km[a] - up_dist_km[b]|)`
    - For **Tail-Up (`model_type == 0`)**:
-     `wt = min(1 - 1e-6, exp(0.5 × (min(log_afv[a], log_afv[b]) - max(log_afv[a], log_afv[b])) - 0.001 × dist))`
+     `wt = min(1.0 - 1e-6, exp(0.5 × (min(log_afv[a], log_afv[b]) - max(log_afv[a], log_afv[b]))))`
    - For **Tail-Down (`model_type == 1`)**:
-     `wt = min(1 - 1e-6, exp(-0.001 × dist))`
-   *(Note: The `-0.001 × dist` factor is a small numerical tie-breaking stabiliser compensated by `phi_shift = +0.001` when reporting `phi = φ̂ + 0.001`, keeping the matrix positive-definite when multiple stations snap near zero distance.)*
+     `wt = 1.0 - 1e-6`
+   *(Note: The `1.0 - 1e-6` cap is an off-diagonal stability bound required so `S3N::BRISC_estimation_stream()` and Cholesky solves remain strictly positive definite when zero-distance tributaries meet.)*
 2. **Same Basin & Flow-Unconnected**:
    - Walk `anc = parent_dn[a]` downstream until `tin[anc] <= tin[b] && tout[b] <= tout[anc]` to find the Lowest Common Ancestor confluence reach `anc`.
-   - `dist = max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 × d2m_km[anc])`
-   - For **Tail-Up (`model_type == 0`)**: `fc = false`, `wt = 0.0` (zero covariance across separate tributaries).
-   - For **Tail-Down (`model_type == 1`)**: `fc = true`, `wt = min(1 - 1e-6, exp(-0.001 × dist))` (active hydrologic distance covariance across the confluence).
+   - If a valid confluence `anc` exists (`found_lca == true`):
+     - `dist = max(1e-4, up_dist_km[a] + up_dist_km[b] - 2.0 × d2m_km[anc])`
+     - For **Tail-Up (`model_type == 0`)**: `fc = false`, `wt = 0.0` (zero covariance across separate tributaries).
+     - For **Tail-Down (`model_type == 1`)**: `fc = true`, `wt = 1.0 - 1e-6` (active hydrologic distance covariance across the confluence).
+   - If disconnected sub-trees share a `CatchID` (`found_lca == false`): treated identically to cross-basin pairs below (`fc = false`, `wt = 0.0`, `dist = 1e6 + Euclidean_dist_km(a, b)`).
 3. **Different River Basins (`CatchID[a] != CatchID[b]`)**:
    - `fc = false`, `wt = 0.0`, `dist = 1e6 + Euclidean_dist_km(a, b)`.
    - Because `wt = 0.0` and `dist > 1,000,000 km`, any padding neighbour drawn from another catchment when a small coastal basin has fewer than `m = 15` stations contributes **exactly `0.0`** to the covariance vector `c_i` and kriging weights `λ_i`.
 
 #### Step C: Selecting the `m = 15` Nearest Stream Neighbours (`std::partial_sort`)
 Observed reaches are ordered **downstream-to-upstream** (`1..n_obs`) before running Vecchia's NNGP approximation for the following reason:
-- In `BRISC_estimation_stream()`, observation `i` can only condition on **preceding** observations `j ∈ {0, 1, ..., i - 1}`.
+- In NNGP estimation (`C_s3n_nngp_loglik()` and `BRISC_estimation_stream()`), observation `i` can only condition on **preceding** observations `j ∈ {0, 1, ..., i - 1}`.
 - Because reaches are ordered by `CatchID` and increasing `obs_up_dist_km`, for any upstream reach `i`, every station located **downstream** along its flow path to the sea (plus lower-basin tributaries) has index `j < i` and is available as a conditioning neighbour.
-- Using `std::partial_sort` with comparator `Cand::operator<`, the engine selects the top `m_i = min(i, 15)` neighbours for each station `i` (and the top `m = 15` neighbours out of all `n_obs` stations for each prediction reach `s₀ ∈ {1, ..., q_tot}`), prioritising **flow-connected neighbours (`fc == true`) first**, and then **smallest hydrologic distance (`dist`)**.
+- Using `std::partial_sort` with weight-aware comparator `Cand::operator<`, the engine selects the top `m_i = min(i, 15)` neighbours for each station `i` (and the top `m = 15` neighbours out of all `n_obs` stations for each prediction reach `s₀ ∈ {1, ..., q_tot}`), prioritising **flow-connected neighbours (`fc == true`) first**, weighted by Tail-Up effective distance `dist - 20 log(wt)` (or smallest `dist` for Tail-Down).
 
-#### Step D: Memory Layout of `obs_neighbors` and `pred_neighbors` Passed to `S3N` *(C API Internals)*
-`C_compute_s3n_neighbors()` returns a 4-element R list matching `S3N`'s internal C structures:
+#### Step D: Memory Layout of `obs_neighbors` and `pred_neighbors` *(C API Internals)*
+`C_compute_s3n_neighbors()` returns a 4-element R list compatible with both our native C++ solvers (`C_s3n_nngp_loglik`, `C_s3n_nngp_bootstrap`, `C_s3n_predict_meas_error`, `C_s3n_joint_nngp`) and `S3N`'s internal C structures:
 1. **`obsobs_dist`** (`n × n` matrix): Pairwise stream distances `d_hydro(i, j)` between all observed stations.
 2. **`obsobs_wt`** (`n × n` matrix): Pairwise confluence weights `w_ij` between all observed stations.
-3. **`obs_neighbors`** (8-element Compressed Sparse Row list consumed by `BRISC_estimation_stream()`):
+3. **`obs_neighbors`** (8-element Compressed Sparse Row list):
    - `d` (`total_d` vector): Stream distances from each station `i` to its `m_i` conditioning neighbours `N(i)`.
    - `nnWt` (`total_d` vector): Confluence weights `w_{i, j}` between station `i` and each neighbour `j ∈ N(i)`.
    - `nnIndx` (`total_d` integer vector): 0-based station indices of the `m_i` neighbours.
@@ -445,18 +447,18 @@ Observed reaches are ordered **downstream-to-upstream** (`1..n_obs`) before runn
    - `Dwt` (`total_D` vector): Flattened lower-triangular `m_i × m_i` pairwise confluence weights among the neighbours `k, l ∈ N(i)` (`Dwt[base_D + l × m_i + k] = obsobs_wt[n_k, n_l]`, with `1.0` on the diagonal `l == k`).
    - `CIndx` (`2n` integer lookup vector): Starting offset `ind1stD[i]` and element count `m_i²` inside `D` and `Dwt` for each station `i`.
    - `Length.D` (scalar integer): Total length `Σ_{i=0}^{n-1} m_i²` of vectors `D` and `Dwt`.
-4. **`pred_neighbors`** (3-element list of length `q_tot × m` consumed by `BRISC_prediction_stream()`):
+4. **`pred_neighbors`** (3-element list of length `q_tot × m`):
    - `nnIndx`: 0-based indices (`0 .. n_obs-1`) of the `m = 15` nearest observed stations for every reach `s₀ ∈ {1, ..., q_tot}`.
    - `nnDist`: Hydrologic distances `d_hydro(s₀, s_{j_k})` from reach `s₀` to each of its `m` station neighbours.
    - `nnWght`: Confluence weights `w(s₀, s_{j_k})` between reach `s₀` and each of its `m` station neighbours.
 
 ---
 
-## 6. Stage 4: Sparse NNGP Maximum Likelihood Estimation & Parametric Bootstrap
+## 6. Stage 4: Sparse NNGP Maximum Likelihood Estimation & Spatial Bootstrap
 
 > **In plain English:** Fitting a full spatial Gaussian Process to thousands of stations requires inverting huge `n × n` matrices at every step. NNGP keeps only each station's `m = 15` closest downstream/nearby neighbours, reducing every optimiser step to `n` tiny `15 × 15` solves that run in parallel.
 
-### 6.1 How `BRISC_estimation_stream()` Avoids the `O(n³)` Matrix Inversion
+### 6.1 How NNGP Estimation Avoids the `O(n³)` Matrix Inversion
 In a full Gaussian Process, the log-likelihood of the `n × 1` observed response vector `y` given design matrix `X` (`n × p`) and covariance matrix `Σ(θ) = C_stream(σ², φ) + τ² I_n` is:
 
 `log L(β, σ², τ², φ) = -(n / 2) log(2π) - (1 / 2) log det(Σ(θ)) - (1 / 2) (y - Xβ)ᵀ Σ(θ)⁻¹ (y - Xβ)`
@@ -467,39 +469,41 @@ Evaluating `det(Σ(θ))` and `Σ(θ)⁻¹` directly for `n = 1,210–8,401` stat
 Instead of conditioning observation `y_i` on all preceding observations `{y_1, ..., y_{i-1}}`, NNGP conditions `y_i` only on its `m_i ≤ 15` nearest stream neighbours `N(i) ⊂ {1, ..., i-1}` stored in `obs_neighbors`:
 
 1. For each observation `i = 1, ..., n`, let:
-   - `c_i` (`m_i × 1`) be the stream covariance vector between station `i` and its neighbours `N(i)`, constructed from `obs_neighbors$d` and `obs_neighbors$nnWt`:
-     `[c_i]_k = σ² × nnWt[k] × exp(-φ × d[k])`
+   - `c_i` (`m_i × 1`) be the stream covariance vector between station `i` and its neighbours `N(i)`, constructed from `obs_neighbors$d` and `obs_neighbors$nnWt` (for any supported kernel `K_k(d; φ)`):
+     `[c_i]_l = σ² × nnWt[l] × K_k(d[l]; φ)`
    - `C_{N(i)}` (`m_i × m_i`) be the stream covariance matrix among the `m_i` neighbours in `N(i)`, constructed from `obs_neighbors$D` and `obs_neighbors$Dwt`:
-     `[C_{N(i)}]_{kl} = σ² × Dwt[k, l] × exp(-φ × D[k, l]) + τ² × I(k == l)`
-2. Define the **`1 × m_i` conditional regression coefficient vector `a_i`** and the **scalar conditional variance `d_i`** for station `i`:
-   - `a_i = c_iᵀ C_{N(i)}⁻¹`
-   - `d_i = (σ² + τ²) - c_iᵀ C_{N(i)}⁻¹ c_i = (σ² + τ²) - a_i c_i`
-3. Embed each `a_i` into row `i` (at columns `N(i)`) of an `n × n` strictly lower-triangular sparse matrix `A` (with at most `m = 15` non-zero entries per row), and let `D_diag = diag(d_1, d_2, ..., d_n)`.
+     `[C_{N(i)}]_{kl} = σ² × Dwt[k, l] × K_k(D[k, l]; φ) + τ² × I(k == l)`
+2. Define the **`1 × m_i` conditional regression coefficient vector `b_i`** and the **scalar conditional variance `d_i`** for station `i`:
+   - `b_i = c_iᵀ C_{N(i)}⁻¹`
+   - `d_i = (σ² + τ²) - c_iᵀ C_{N(i)}⁻¹ c_i = (σ² + τ²) - b_i c_i`
+3. Embed each `b_i` into row `i` (at columns `N(i)`) of an `n × n` strictly lower-triangular sparse matrix `B` (with at most `m = 15` non-zero entries per row), and let `D_diag = diag(d_1, d_2, ..., d_n)`.
 4. Then the NNGP precision matrix `Σ̃(θ)⁻¹` has the exact analytical representation:
-   `Σ̃(θ)⁻¹ = (I - A)ᵀ D_diag⁻¹ (I - A)`
+   `Σ̃(θ)⁻¹ = (I - B)ᵀ D_diag⁻¹ (I - B)`
    and its determinant is simply the product of the scalar conditional variances:
    `log det(Σ̃(θ)) = Σ_{i=1}^n log(d_i)`
 
 **Why this scales cleanly**:
-- Computing `a_i` and `d_i` for station `i` only requires solving a **`15 × 15` linear system** (`m³ = 3,375` operations), which is independent across `i = 1, ..., n` and parallelised across OpenMP threads.
-- Applying `(I - A)` to `y` and `X` is a sparse `O(n m)` dot product:
-  `ỹ_i = y_i - a_i y_{N(i)}`  and  `X̃_i = X_i - a_i X_{N(i)}`.
+- Computing `b_i` and `d_i` for station `i` only requires solving a **`15 × 15` linear system** (`m³ = 3,375` operations), which is independent across `i = 1, ..., n` and parallelised across OpenMP threads.
+- Applying `(I - B)` to `y` and `X` is a sparse `O(n m)` dot product:
+  `ỹ_i = y_i - b_i y_{N(i)}`  and  `X̃_i = X_i - b_i X_{N(i)}`.
 - The Generalised Least Squares (`GLS`) estimate of the fixed-effect slopes `β̂(θ)` for any candidate spatial parameters `θ` reduces to weighted least squares with diagonal weights `1 / d_i`:
   `β̂(θ) = (X̃ᵀ D_diag⁻¹ X̃)⁻¹ (X̃ᵀ D_diag⁻¹ ỹ)`
-- `BRISC_estimation_stream()` profiles out `β̂` and total variance `σ²`, maximising the profile log-likelihood over the remaining two parameters (`α = τ² / σ²` nugget-to-sill ratio and `φ` decay rate) via bounded **`L-BFGS-B`** optimisation in **~0.10–0.25 seconds**.
+- Both engines profile out `β̂` and total variance `σ²`, optimising the profile log-likelihood over the remaining two parameters (`η = τ² / σ²` nugget-to-sill ratio and `φ` decay rate) via multi-start grid + Nelder–Mead inside **`fit_nngp_cpp()` / `C_s3n_nngp_loglik()`** (`--engine=cpp`, default) or `L-BFGS-B` inside **`BRISC_estimation_stream()`** (`--engine=brisc`, exponential only).
 
 ---
 
-### 6.2 Parametric Bootstrap Confidence Intervals (`BRISC_bootstrap()`)
-Because maximum likelihood estimators of spatial variance components (`σ², τ², φ`) can have skewed finite-sample distributions, `S3N` provides `BRISC_bootstrap(BRISC_Out, n_boot)` (Saha & Datta, 2018):
+### 6.2 Spatial Residual Bootstrap Confidence Intervals (`Saha & Datta, 2018`)
+Because maximum likelihood estimators of spatial variance components (`σ², τ², φ`) can have skewed finite-sample distributions, the pipeline implements Saha & Datta's (2018, *Stat* 7(1): e184, Algorithm 2) **decorrelated spatial residual bootstrap** natively in OpenMP C++ (`C_s3n_nngp_bootstrap()` under default `--engine=cpp`, supporting all 4 stream kernels) and also supports `S3N::BRISC_bootstrap()` under `--engine=brisc`:
 
-1. Using the fitted parameters `β̂` and `Θ̂ = (σ̂², τ̂², φ̂)`, `BRISC` already holds the sparse NNGP factors `Â` and `D̂_diag = diag(d̂_1, ..., d̂_n)` from the final likelihood evaluation.
-2. For each bootstrap replicate `b = 1, ..., B` (`n_boot = 50` or `100`):
-   - Draw an independent standard normal vector `z*^(b) ~ N(0, I_n)`.
-   - Scale by the conditional standard deviations: `u*^(b)_i = √d̂_i × z*^(b)_i`.
-   - Solve the sparse unit lower-triangular system `(I - Â) w*^(b) = u*^(b)` by fast forward-substitution (`w*^(b)_i = u*^(b)_i + â_i w*^(b)_{N(i)}`) in `O(n m)` time.
-   - Form the synthetic spatial stream response vector `y*^(b) = X β̂ + w*^(b)` and re-run `BRISC_estimation_stream` to obtain bootstrap estimates `(β̂*^(b), Θ̂*^(b))`.
-3. The empirical `2.5%` and `97.5%` quantiles across the `B` bootstrap replicates yield the `95%` confidence intervals `[CI_Lower, CI_Upper]` saved in `parameters_<code>.csv`.
+1. At the fitted MLE `(β̂, Θ̂ = (σ̂², τ̂², φ̂))`, compute the NNGP Cholesky factors `(B̂, F̂ = D̂_diag / σ̂²)` (`b_i` and `f_i = (1 + η̂) - c_iᵀ b_i / σ̂²`) and form the **whitened (decorrelated) residuals**:
+   `ẽ_i = [ r_i - b̂_i r_{N(i)} ] / √(σ̂² f̂_i)`, where `r = y - X β̂`.
+2. Centre `ẽ` to mean `0` and scale by its sample standard deviation (`df = n - p`) so empirical innovations have mean `0` and unit variance.
+3. In parallel across OpenMP threads for each replicate `b = 1, ..., B` (`--boot=50` default, seeded deterministically per replicate so `1` vs `N` threads produce bit-identical results):
+   - Draw an i.i.d. bootstrap sample `ẽ*^(b)` with replacement from `{ẽ_1, ..., ẽ_n}`.
+   - Reconstruct spatially correlated stream residuals in `O(n m)` via forward substitution:
+     `r*^(b)_i = √(σ̂² f̂_i) ẽ*^(b)_i + Σ_{l ∈ N(i)} B̂_{il} r*^(b)_l`.
+   - Form `y*^(b) = X β̂ + r*^(b)` and re-estimate `(β̂*^(b), Θ̂*^(b))` via NNGP profile MLE (`nngp_eval_serial()` in `--engine=cpp`; `BRISC_bootstrap()` in `--engine=brisc`).
+4. Under default `--engine=cpp`, the empirical `2.5%` and `97.5%` quantiles across the `B` replicates give ordered **95% Efron percentile confidence intervals** `[CI_Lower, CI_Upper]` (non-negative clamped for variance/range parameters); setting `--boot=0` skips resampling and uses fast GLS + finite-difference Fisher information SEs (`method = "fisher_asymptotic"`). Under `--engine=brisc`, pivotal intervals `2 θ̂ - quantile(θ*, c(0.975, 0.025))` clamped at `0` are returned instead.
 
 ---
 
@@ -509,7 +513,7 @@ Because maximum likelihood estimators of spatial variance components (`σ², τ�
 
 Once spatial parameters are estimated, the pipeline predicts across **all `q_tot` stream reaches** (`1 .. q_tot`, covering both monitored reaches and unmonitored headwaters):
 - Under default **`--combine=joint`**, `C_s3n_joint_nngp()` estimates and kriges the unified `Tail-Up + Tail-Down + Euclidean + Nugget` covariance jointly alongside standalone `Tail-Up` and `Tail-Down` fits.
-- Under **`--combine=precision`**, `BRISC_prediction_stream()` predicts `fit_tu` and `fit_td` separately and blends them via spatial information-gain weighting (`§7.3`).
+- Under **`--combine=precision`**, `fit_tu` and `fit_td` are predicted separately (`C_s3n_predict_meas_error()` under default `--engine=cpp` or active measurement error, or `BRISC_prediction_stream()` under `--engine=brisc` without ME) and blended via spatial information-gain weighting (`§7.3`).
 
 The single-component kriging math below (`§7.1`–`§7.2`) applies to each component (with `C_s3n_joint_nngp()` summing all three spatial kernels in `c(s₀)` and `C_{N(s₀)}`).
 
@@ -550,7 +554,7 @@ Weighting the `m` station residuals directly by `c_k(s₀)` would **double-count
 Diagonal entries (`k == l`) equal the **total prior variance `σ̂² + τ̂²`** (partial sill + nugget), whereas off-diagonal entries (`k != l`) measure spatial redundancy between station `k` and station `l`.
 
 #### Step 4: Solving for the Optimal Kriging Weights `λ(s₀)` (`m × 1`)
-`BRISC_prediction_stream()` solves the `15 × 15` positive-definite linear system via Cholesky factorisation to obtain the **Kriging Weight Vector `λ(s₀) = (λ_1, ..., λ_m)ᵀ`**:
+The kriging predictor solves the `15 × 15` positive-definite linear system via Cholesky factorisation to obtain the **Kriging Weight Vector `λ(s₀) = (λ_1, ..., λ_m)ᵀ`**:
 
 `C_{N(s₀)} λ(s₀) = c(s₀)   ⟹   λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)`
 
@@ -561,7 +565,7 @@ This system enforces two key geostatistical properties:
 2. **Nugget Smoothing (`τ̂²` Regularisation)**: Because the diagonal of `C_{N(s₀)}` includes nugget variance `τ̂²` while `c(s₀)` does not (since predictions target the latent river state at `s₀`), even at a monitored reach (`d_1 = 0, w_1 = 1`), self-weight stays `λ_1 ≤ σ̂² / (σ̂² + τ̂²) < 1`, filtering out single-sample noise (`τ̂²`).
 
 #### Step 5: Computing the Universal Kriging Prediction `ŷ(s₀)` and Standard Error `SE(s₀)`
-With `λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)` in hand, `BRISC_prediction_stream()` computes:
+With `λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)` in hand, `C_s3n_predict_meas_error()` (or `BRISC_prediction_stream()` under `--engine=brisc`) computes:
 
 1. **Kriged Point Prediction (`pr$prediction`)**:
    `ŷ(s₀) = x(s₀)ᵀ β̂ + Σ_{k=1}^m λ_k(s₀) × [ y(s_{j_k}) - x(s_{j_k})ᵀ β̂ ]`
@@ -630,7 +634,7 @@ To evaluate predictive skill at unmonitored locations without spatial leakage, [
    - **Non-Spatial OLS Baseline**: Fit `β̂_OLS = (X_trᵀ X_tr)⁻¹ X_trᵀ y_tr` via QR decomposition (`qr.solve`) and predict at held-out stations: `ŷ_OLS[te] = X_te β̂_OLS`.
    - **Dynamic Graph Re-Ordering**: Reorder the reach table `df_cv <- df_ord[c(tr, te, (n_obs + 1):q_tot), ]` so that **only the `n_tr` training stations occupy indices `1 .. n_tr`**, while the held-out test stations sit at indices `(n_tr + 1) .. n_obs` (treated identically to unmonitored prediction reaches).
    - **Re-Building Fold-Specific Stream Neighbours**: Call `.Call("C_build_tree_tin_tout", ...)` and `.Call("C_compute_s3n_neighbors", as.integer(n_tr), ...)` so neighbours are selected **exclusively from the `n_tr` training stations**.
-   - **Fold-Specific Estimation & Universal Kriging**: Fit `BRISC_estimation_stream()` strictly on the `n_tr` training stations (`y_tr`, `X_tr`) for both `Tail-Up` and `Tail-Down`, then call `BRISC_prediction_stream()` to krige the held-out test stations `(n_tr + 1) .. n_obs`, combining them via their fold-specific information weights `inf_tu_cv` and `inf_td_cv`.
+   - **Fold-Specific Estimation & Universal Kriging**: Fit NNGP profile MLE (`C_s3n_nngp_loglik()` under default `--engine=cpp`, or `BRISC_estimation_stream()` under `--engine=brisc`) strictly on the `n_tr` training stations (`y_tr`, `X_tr`) for both `Tail-Up` and `Tail-Down`, then predict at the held-out test stations `(n_tr + 1) .. n_obs` (`C_s3n_predict_meas_error()` / `BRISC_prediction_stream()`) and combine via `C_s3n_joint_nngp()` or fold-specific information weights `inf_tu_cv` and `inf_td_cv`.
 3. **Out-of-Sample Accuracy Metrics**:
    Across all `n_obs` out-of-sample predictions `ŷ_CV`, the pipeline computes:
    - **`CV RMSE` (Root Mean Squared Error)**: `√( (1 / n_obs) Σ_{i=1}^{n_obs} (y_i - ŷ_CV,i)² )`
@@ -654,13 +658,13 @@ The example below illustrates how `--combine=precision` computes a single-reach 
    - **Station `s_1`** (`2.4 km` upstream along the same channel, `log_AFV` ratio giving confluence weight `w_1 = 0.85`, observed log-nitrate `y(s_1) = 1.620`, covariate expectation `x(s_1)ᵀ β̂ = 1.200`, so **positive station residual `r_1 = +0.420`**).
    - **Station `s_2`** (`3.1 km` away on a neighbouring tributary sharing a confluence `1.2 km` downstream, so `FC(s₀, s_2) = 0` for Tail-Up [`w_2,TU = 0`], while for Tail-Down `w_2,TD = 1.0`, with **station residual `r_2 = +0.350`**).
 
-3. **Step 3 — Tail-Up Universal Kriging (`BRISC_prediction_stream` on `fit_tu`)**:
+3. **Step 3 — Tail-Up Universal Kriging (`fit_tu`)**:
    - `Tail-Up` cross-covariance with `s_1`: `c_1,TU = 0.2580 × 0.85 × exp(-0.0256 × 2.4) = 0.2061` (while `c_2,TU = 0` because `s_2` is flow-unconnected).
    - Solving `C_{N(s₀),TU} λ_TU = c_TU` gives weight `λ_1,TU ≈ 0.511` on Station `s_1` (plus smaller weights on further upstream/downstream flow-connected stations), shifting the prediction upward by `+0.215`:
      `ŷ_TU(s₀) = 1.180 + 0.215 = 1.395` (`exp(1.395) = 4.035 mg/L`)
    - The resulting Tail-Up Kriging variance is `SE_TU(s₀)² = (0.2580 + 0.1449) - 0.1053 = 0.2976`, so **`SE_TU(s₀) = 0.5455`**.
 
-4. **Step 4 — Tail-Down Universal Kriging (`BRISC_prediction_stream` on `fit_td`)**:
+4. **Step 4 — Tail-Down Universal Kriging (`fit_td`)**:
    - `Tail-Down` incorporates **both** flow-connected Station `s_1` (`c_1,TD = 0.2465 × exp(-0.0568 × 2.4) = 0.2153`) and sibling-tributary Station `s_2` (`c_2,TD = 0.2465 × exp(-0.0568 × 3.1) = 0.2068`).
    - Solving `C_{N(s₀),TD} λ_TD = c_TD` assigns positive weights to both `s_1` and `s_2`, yielding:
      `ŷ_TD(s₀) = 1.165 + 0.245 = 1.410` (`exp(1.410) = 4.096 mg/L`)
@@ -742,11 +746,11 @@ Rscript scripts/run_s3n_determinand.R 0052 --censor=em
 | :--- | :--- | :--- |
 | **1. Confluence Additive Function (`log_AFV`)** | `log_AFV(p) = log_AFV(u) + log(US_Accum(p) / Σ_{q ∈ Children(u)} US_Accum(q))` | [`../scripts/01_preprocess_orn.py`](../scripts/01_preprocess_orn.py) |
 | **2. Tail-Up Confluence Weight (`w_ij`)** | `w_ij = √(AFV_up / AFV_dn) = exp(0.5 × (min(log_AFV_i, log_AFV_j) - max(log_AFV_i, log_AFV_j)))` if `FC(i,j)=1`, else `0` | [`../src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) (`calc_pair`) |
-| **3. Exponential Stream Covariance (`C_stream`)** | `C(s_i, s_j) = σ² × w_ij × exp(-φ × d_hydro(s_i, s_j)) + τ² × I(i == j)` | `S3N::BRISC_estimation_stream()` |
-| **4. Sparse NNGP Precision Matrix (`Σ̃⁻¹`)** | `Σ̃⁻¹ = (I - A)ᵀ D_diag⁻¹ (I - A)`, where `a_i = c_iᵀ C_{N(i)}⁻¹` and `d_i = (σ² + τ²) - a_i c_i` | `S3N::BRISC_estimation_stream()` |
-| **5. Universal Stream Kriging Weights (`λ(s₀)`)** | `λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)` (`m × m` system with `m = 15` nearest observed stations) | `S3N::BRISC_prediction_stream()` |
-| **6. Universal Stream Kriging Prediction (`ŷ(s₀)`)** | `ŷ(s₀) = x(s₀)ᵀ β̂ + λ(s₀)ᵀ (y_{N(s₀)} - X_{N(s₀)} β̂)` | `S3N::BRISC_prediction_stream()` |
-| **7. Universal Stream Kriging Variance (`SE(s₀)²`)** | `SE(s₀)² = (σ̂² + τ̂²) - c(s₀)ᵀ C_{N(s₀)}⁻¹ c(s₀)` | `S3N::BRISC_prediction_stream()` |
+| **3. Exponential Stream Covariance (`C_stream`)** | `C(s_i, s_j) = σ² × w_ij × exp(-φ × d_hydro(s_i, s_j)) + τ² × I(i == j)` | `C_s3n_nngp_loglik()` (or `S3N::BRISC_estimation_stream()`) |
+| **4. Sparse NNGP Precision Matrix (`Σ̃⁻¹`)** | `Σ̃⁻¹ = (I - B)ᵀ D_diag⁻¹ (I - B)`, where `b_i = c_iᵀ C_{N(i)}⁻¹` and `d_i = (σ² + τ²) - b_i c_i` | `C_s3n_nngp_loglik()` (or `S3N::BRISC_estimation_stream()`) |
+| **5. Universal Stream Kriging Weights (`λ(s₀)`)** | `λ(s₀) = C_{N(s₀)}⁻¹ c(s₀)` (`m × m` system with `m = 15` nearest observed stations) | `C_s3n_predict_meas_error()` (or `S3N::BRISC_prediction_stream()`) |
+| **6. Universal Stream Kriging Prediction (`ŷ(s₀)`)** | `ŷ(s₀) = x(s₀)ᵀ β̂ + λ(s₀)ᵀ (y_{N(s₀)} - X_{N(s₀)} β̂)` | `C_s3n_predict_meas_error()` (or `S3N::BRISC_prediction_stream()`) |
+| **7. Universal Stream Kriging Variance (`SE(s₀)²`)** | `SE(s₀)² = (σ̂² + τ̂²) - c(s₀)ᵀ C_{N(s₀)}⁻¹ c(s₀)` | `C_s3n_predict_meas_error()` (or `S3N::BRISC_prediction_stream()`) |
 | **8. Spatial Information-Gain Weight (`info(s₀)`)** | `info(s₀) = max(10⁻⁴, 1 - SE(s₀)² / (σ̂² + τ̂²))` | [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) |
 | **9. Combined `Tail-Up + Tail-Down` Estimator** | `ŷ_comb = (info_TU × ŷ_TU + info_TD × ŷ_TD) / (info_TU + info_TD)` | [`../scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) |
 

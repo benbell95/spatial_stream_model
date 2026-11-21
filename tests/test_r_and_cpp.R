@@ -1251,5 +1251,93 @@ assert_true(length(unique(round(out_orig[1:3], 10))) == 1L &&
             all(out_orig[ros_tied_c] > 0 & out_orig[ros_tied_c] <= ros_tied_in[ros_tied_c]),
             "impute_censored_ros is order-invariant across permutations for tied <LOD values")
 
+# 12q. OpenMP thread helpers (get/set round-trip) & engine CLI parsing
+assert_true(is.loaded("C_s3n_get_omp_max_threads") && is.loaded("C_s3n_set_omp_threads") &&
+            is.loaded("C_s3n_nngp_bootstrap"),
+            "OpenMP thread helpers and C_s3n_nngp_bootstrap loaded")
+omp_orig <- .Call("C_s3n_get_omp_max_threads")
+assert_true(is.integer(omp_orig) && length(omp_orig) == 1L && omp_orig >= 1L,
+            "C_s3n_get_omp_max_threads returns positive integer")
+prev_set <- .Call("C_s3n_set_omp_threads", 2L)
+assert_true(prev_set == omp_orig, "C_s3n_set_omp_threads returns previous count")
+assert_true(.Call("C_s3n_get_omp_max_threads") >= 1L, "C_s3n_get_omp_max_threads valid after set")
+invisible(.Call("C_s3n_set_omp_threads", as.integer(omp_orig)))
+
+assert_true(parse_engine_arg(character(0)) == "cpp", "parse_engine_arg defaults to 'cpp'")
+assert_true(parse_engine_arg(c("--engine=brisc")) == "brisc", "parse_engine_arg accepts --engine=brisc")
+assert_true(parse_engine_arg(c("--s3n-engine=legacy")) == "brisc", "parse_engine_arg aliases legacy -> brisc")
+assert_true(parse_engine_arg(c("--engine=native")) == "cpp", "parse_engine_arg aliases native -> cpp")
+assert_true(is.na(parse_n_omp_arg(c("--threads=auto"), default = 1L)),
+            "parse_n_omp_arg treats --threads=auto as NA_integer_")
+bad_eng <- tryCatch({ normalize_engine_name("unknown_engine"); FALSE }, error = function(e) TRUE)
+assert_true(bad_eng, "normalize_engine_name rejects invalid engine values")
+
+# 12r. C++ spatial residual bootstrap (exponential & spherical) + 1 vs 4 thread determinism + n_boot=0 fallback
+df_bt     <- df_syn[order(-df_syn$has_obs, df_syn$CatchID, df_syn$obs_up_dist_km), ]
+n_obs_bt  <- sum(df_bt$has_obs == 1L)
+par_i_bt  <- match(df_bt$parent_dn, df_bt$RivID, nomatch = 0L)
+par0_bt   <- ifelse(df_bt$parent_dn == 0L | par_i_bt == 0L, -1L, par_i_bt - 1L)
+tt_bt     <- .Call("C_build_tree_tin_tout", as.integer(par0_bt))
+afv_bt    <- compute_reach_log_afv(df_bt, "length", parent_0 = par0_bt)
+nb_bt     <- .Call("C_compute_s3n_neighbors",
+                   as.integer(n_obs_bt), 5L, as.integer(par0_bt), as.integer(df_bt$CatchID),
+                   as.integer(tt_bt[[1]]), as.integer(tt_bt[[2]]),
+                   as.double(df_bt$Dist2Mth_km), as.double(df_bt$obs_up_dist_km), as.double(afv_bt),
+                   as.double(df_bt$mid_X), as.double(df_bt$mid_Y), 0L)
+X_bt      <- build_design_matrix(df_bt[1:n_obs_bt, , drop = FALSE], include_peat = FALSE, var_specs = c("Elevation", "Is_Aquifer"))
+y_bt      <- log(df_bt$obs_val[1:n_obs_bt])
+
+for (k_nm in c("exponential", "spherical")) {
+  f_bt <- fit_nngp_cpp(X_bt, y_bt, nb_bt$obs_neighbors, var(y_bt), kernel_name = k_nm)
+  bs_k <- bootstrap_nngp_cpp(f_bt, X_bt, y_obs = y_bt, obs_nb = nb_bt$obs_neighbors, n_boot = 30L, seed = 2026L)
+  assert_true(identical(bs_k$method, "spatial_residual_bootstrap"),
+              paste0("bootstrap_nngp_cpp uses spatial_residual_bootstrap for ", k_nm))
+  assert_true(nrow(bs_k$boot.Beta) == 30L && ncol(bs_k$boot.Beta) == ncol(X_bt) &&
+              nrow(bs_k$boot.Theta) == 30L && ncol(bs_k$boot.Theta) == 3L &&
+              all(is.finite(bs_k$boot.Beta)) && all(is.finite(bs_k$boot.Theta)),
+              paste0("Spatial bootstrap matrices finite 30xp and 30x3 for ", k_nm))
+  assert_true(all(bs_k$confidence.interval[1, ] <= bs_k$confidence.interval[2, ]) &&
+              all(bs_k$confidence.interval[1, c("sigma.sq", "tau.sq", "phi")] >= 0),
+              paste0("Spatial bootstrap CIs ordered and Theta non-negative for ", k_nm))
+  assert_true(abs(mean(bs_k$norm.residual)) < 0.25 && sd(bs_k$norm.residual) > 0.5 && sd(bs_k$norm.residual) < 1.6,
+              paste0("Whitened residuals standardized for ", k_nm))
+}
+
+# Thread-count invariance: 1 thread vs 4 threads with same seed produces bit-identical results
+f_det <- fit_nngp_cpp(X_bt, y_bt, nb_bt$obs_neighbors, var(y_bt), kernel_name = "exponential")
+invisible(.Call("C_s3n_set_omp_threads", 1L))
+bs_t1 <- bootstrap_nngp_cpp(f_det, X_bt, y_obs = y_bt, obs_nb = nb_bt$obs_neighbors, n_boot = 30L, seed = 999L)
+invisible(.Call("C_s3n_set_omp_threads", 4L))
+bs_t4 <- bootstrap_nngp_cpp(f_det, X_bt, y_obs = y_bt, obs_nb = nb_bt$obs_neighbors, n_boot = 30L, seed = 999L)
+invisible(.Call("C_s3n_set_omp_threads", as.integer(omp_orig)))
+assert_near(max(abs(bs_t1$boot.Beta - bs_t4$boot.Beta)), 0.0, tol = 1e-12,
+            msg = "Spatial bootstrap Beta replicates bit-identical across 1 vs 4 OpenMP threads")
+assert_near(max(abs(bs_t1$boot.Theta - bs_t4$boot.Theta)), 0.0, tol = 1e-12,
+            msg = "Spatial bootstrap Theta replicates bit-identical across 1 vs 4 OpenMP threads")
+
+bs_fisher <- bootstrap_nngp_cpp(f_det, X_bt, y_obs = y_bt, obs_nb = nb_bt$obs_neighbors, n_boot = 0L)
+assert_true(identical(bs_fisher$method, "fisher_asymptotic") &&
+            all(bs_fisher$confidence.interval[1, ] <= bs_fisher$confidence.interval[2, ]),
+            "n_boot=0 falls back cleanly to fisher_asymptotic CIs")
+
+# 12s. fit_s3n_domain engine='cpp' and graceful engine='brisc' fallback + runtime naming
+dom_cpp <- quiet_eval(fit_s3n_domain(
+  df = df_syn, domain_id = "test_cpp", domain_label = "CPP Engine Test",
+  trans_obj = build_transformer("log"), var_specs = c("Elevation", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 20L, n_omp = 2L, engine = "cpp"
+))
+assert_true(!is.null(dom_cpp) && identical(names(dom_cpp$runtimes), c("neighbor_sec", "est_sec", "boot_sec", "pred_sec")) &&
+            all(is.finite(dom_cpp$runtimes)) &&
+            all(dom_cpp$param_df$CI_Lower <= dom_cpp$param_df$CI_Upper, na.rm = TRUE),
+            "fit_s3n_domain(engine='cpp') produces valid spatial bootstrap CIs and clean runtime names")
+
+dom_brk <- suppressMessages(quiet_eval(fit_s3n_domain(
+  df = df_syn, domain_id = "test_brk", domain_label = "BRISC Engine Fallback Test",
+  trans_obj = build_transformer("log"), var_specs = c("Elevation", "Is_Aquifer"),
+  m_neighbors = 5L, n_boot = 20L, n_omp = 1L, engine = "brisc"
+)))
+assert_true(!is.null(dom_brk) && all(is.finite(dom_brk$cv_summary$RMSE)),
+            "fit_s3n_domain(engine='brisc') succeeds directly or falls back cleanly when S3N unavailable")
+
 cat("  [PASS] Phase 5 regression suite passed\n")
 cat("\nALL R & C++ UNIT TESTS PASSED!\n")

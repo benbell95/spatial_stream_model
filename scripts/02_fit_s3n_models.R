@@ -29,7 +29,8 @@ DATA_DIR <- dir_cfg$data_dir
 OUT_BASE <- dir_cfg$out_dir
 
 meas_error_arg <- any(c("--meas-error", "--gam") %in% args)
-n_omp_cli      <- parse_n_omp_arg(args, default = 1L)
+n_omp_cli      <- parse_n_omp_arg(args, default = NA_integer_)
+engine_cli     <- parse_engine_arg(args, default = "cpp")
 
 src_cli      <- parse_source_arg(args)
 source_cli   <- resolve_source_tag(src_cli, base_dir = BASE_DIR)
@@ -66,6 +67,10 @@ if ("--list-transforms" %in% args || "--list-transformations" %in% args) {
 }
 if ("--list-kernels" %in% args) {
   print_available_kernels()
+  quit(save = "no", status = 0)
+}
+if ("--list-engines" %in% args) {
+  print_available_engines()
   quit(save = "no", status = 0)
 }
 if ("--list-trends" %in% args) {
@@ -221,7 +226,8 @@ analyze_domain <- function(df, domain_id, domain_label, m_neighbors = 15L, n_boo
     threshold = threshold_cli,
     threshold_dir = threshold_dir_cli,
     design_sites = design_sites_cli,
-    censor_mode = censor_cli
+    censor_mode = censor_cli,
+    engine = engine_cli
   )
 }
 

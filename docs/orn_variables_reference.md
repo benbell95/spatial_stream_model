@@ -49,7 +49,7 @@ These variables are passed to the compiled C++/OpenMP neighbour engine ([`src/s3
 
 ## 3. Fixed-Effect Regression Covariates (`X`)
 
-These variables are assembled into the standardised design matrix `X` by [`build_design_matrix()`](../scripts/s3n_covariates.R) (defined in [`scripts/s3n_covariates.R`](../scripts/s3n_covariates.R) and shared across [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R)) for Non-Spatial OLS, `BRISC_estimation_stream`, and `BRISC_prediction_stream`:
+These variables are assembled into the standardised design matrix `X` by [`build_design_matrix()`](../scripts/s3n_covariates.R) (defined in [`scripts/s3n_covariates.R`](../scripts/s3n_covariates.R) and shared across [`scripts/run_s3n_determinand.R`](../scripts/run_s3n_determinand.R) and [`scripts/02_fit_s3n_models.R`](../scripts/02_fit_s3n_models.R)) for Non-Spatial OLS, native C++ NNGP (`C_s3n_nngp_loglik()` / `C_s3n_joint_nngp()` / `C_s3n_predict_meas_error()` under default `--engine=cpp`), and optional `S3N` (`BRISC_estimation_stream()` / `BRISC_prediction_stream()` under `--engine=brisc`):
 
 | Predictor in Design Matrix `X` | Exported Column in `england_rsn_reaches.csv` | Source in `ORN_v2.gpkg` | Derivation & Transformation |
 | :--- | :--- | :--- | :--- |

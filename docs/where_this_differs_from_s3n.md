@@ -4,12 +4,13 @@
 
 - [Acknowledgements, Foundations & Attribution](#acknowledgements-foundations--attribution)
 - [1. High-Level Overview: `S3N` vs. This Pipeline](#1-high-level-overview-s3n-vs-this-pipeline)
-- [2. Where This Pipeline Uses the `S3N` Package](#2-where-this-pipeline-uses-the-s3n-package)
+- [2. Engine Selection and Optional `S3N` Usage](#2-engine-selection-and-optional-s3n-usage)
 - [3. Where This Pipeline Replaces `S3N`](#3-where-this-pipeline-replaces-s3n)
   - [3.1 Zero-Dependency GIS Ingestion, Cycle Resolution & Station Snapping](#31-zero-dependency-gis-ingestion-cycle-resolution--station-snapping)
   - [3.2 Sub-Second C++/OpenMP Euler-Tour Neighbour Engine](#32-sub-second-copenmp-euler-tour-neighbour-engine)
   - [3.3 Numerically Stable `log_AFV` & Physical Confluence Weighting](#33-numerically-stable-logafv-physical-confluence-weighting)
   - [3.4 Combining `Tail-Up` & `Tail-Down`](#34-combining-tail-up--tail-down)
+  - [3.5 Native C++/OpenMP NNGP Estimation, Prediction & Spatial Bootstrap](#35-native-copenmp-nngp-estimation-prediction--spatial-bootstrap)
 - [4. Additional Features Available in This Pipeline](#4-additional-features-available-in-this-pipeline)
 - [5. License](#5-license)
 - [6. Related Documentation](#6-related-documentation)
@@ -24,16 +25,16 @@ Full credit belongs to the authors of the foundational packages and theory on wh
 
 - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
   > Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
-- **`BRISC` R Package** (*Bootstrap for Rapid Inference on Spatial Covariances*) — **Arkajyoti Saha and Abhirup Datta**, whose sparse NNGP Cholesky conditioning, profile likelihood solver, and rapid parametric bootstrap algorithm provide the computational core extended by `S3N`:
+- **`BRISC` R Package** (*Bootstrap for Rapid Inference on Spatial Covariances*) — **Arkajyoti Saha and Abhirup Datta**, whose sparse NNGP Cholesky conditioning, profile likelihood solver, and rapid spatial residual bootstrap algorithm provide the theoretical and computational foundation extended by `S3N`:
   > Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
 - **Foundational NNGP & Stream Geostatistics**:
   - Datta, A., Banerjee, S., Finley, A. O., & Gelfand, A. E. (2016). *Hierarchical Nearest-Neighbor Gaussian Process Models for Large Geostatistical Datasets*. *Journal of the American Statistical Association*, 111(514), 800–812.
   - Ver Hoef, J. M., Peterson, E. E., & Theobald, D. (2006). *Spatial Statistical Models that Use Flow and Stream Distance*. *Environmental and Ecological Statistics*, 13(4), 449–464.
   - Ver Hoef, J. M., & Peterson, E. E. (2010). *A Moving Average Approach for Spatial Statistical Models of Stream Networks*. *Journal of the American Statistical Association*, 105(489), 6–18.
 
-In this repository, `S3N` is used for standard univariate exponential model fitting, bootstrapping, and kriging, while the surrounding codebase wraps and extends it (alongside a built-in OpenMP C++ NNGP fallback and extensions) into an end-to-end national preprocessing, modelling, validation, multivariate co-kriging, risk-mapping, and reporting platform.
+By default (`--engine=cpp`), this repository now runs **fully natively without requiring the external `S3N` package**, using our own thread-safe OpenMP C++ NNGP estimator, kriging predictor, and clean-room implementation of Saha & Datta's (2018) decorrelated spatial residual bootstrap. The upstream `S3N` R package (`BRISC_*`) remains **optional** and can be explicitly selected for benchmarking or reference parity via `--engine=brisc`.
 
-> **Citation:** If you use this pipeline, please cite both the original `S3N` paper — Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. arXiv:2512.12398 ([https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)) — and the `BRISC` paper — Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
+> **Citation:** If you use this pipeline in published work or downstream analysis, please cite both the original `S3N` paper — Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. arXiv:2512.12398 ([https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)) — and the `BRISC` paper — Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
 
 ---
 
@@ -42,6 +43,8 @@ In this repository, `S3N` is used for standard univariate exponential model fitt
 | Dimension | Upstream `S3N` R Package | This Pipeline (`spatial_stream_model`) |
 | :--- | :--- | :--- |
 | **Scope** | Univariate spatial estimation, bootstrap, and kriging functions in R (`S3N`). | End-to-end headless CLI pipeline (Python + R + OpenMP C++) from raw GIS/CSVs to maps and reports. |
+| **External Package Requirement** | Requires `S3N` + CRAN dependencies (`RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr`). | **Zero external NNGP dependencies required by default (`--engine=cpp`)**; `S3N` is strictly **optional** (`--engine=brisc`). |
+| **Estimation & Bootstrap Engine** | `S3N::BRISC_*` (`L-BFGS-B` + `BRISC_bootstrap` for Exponential only; upstream OpenMP data race if `n_omp > 1`). | Thread-safe OpenMP C++ NNGP (`C_s3n_nngp_loglik`, `C_s3n_nngp_bootstrap`, `C_s3n_predict_meas_error`) across all 4 kernels (`--boot=0` Fisher SE fallback), plus optional `--engine=brisc`. |
 | **GIS & Topology Prep** | Expects pre-processed, pre-snapped stream network topology/order tables prepared externally (e.g. via GIS/`SSN2`). | Zero-GIS Python extractor (`01_preprocess_orn.py`) reading `.gpkg`/`.parquet`, breaking braids/canal loops, and orthogonally snapping stations. |
 | **Neighbour Construction** | R-level `order_stream()` and `get_neighbor_stream()` tree walks. | Sub-second OpenMP C++ Euler-tour LCA & `std::partial_sort` neighbour engine (`src/s3n_fast_neighbors.cpp`). |
 | **Covariance Structure** | Single-component `Tail-Up` or `Tail-Down` exponential NNGP at a time. | 4 stream kernels (`exponential`, `spherical`, `mariah`, `linear`, plus AIC `auto`), plus **Joint Additive `Tail-Up + Tail-Down + Euclidean` NNGP**. |
@@ -52,25 +55,37 @@ In this repository, `S3N` is used for standard univariate exponential model fitt
 
 ---
 
-## 2. Where This Pipeline Uses the `S3N` Package
+## 2. Engine Selection and Optional `S3N` Usage
 
-Inside [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R), `load_s3n_backend()` checks whether the `S3N` R package is installed (`.s3n_env$has_s3n_pkg`). When **all three conditions hold**:
-1. `S3N` is installed,
-2. `--kernel=exponential` is selected, and
-3. Heteroskedastic measurement error (`--meas-error` / `--gam`) is **not** active,
+Inside [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R), `fit_s3n_domain()` exposes an explicit `--engine=<cpp|brisc>` switch (aliases `--s3n-engine=cpp|brisc`, inspectable via `--list-engines`):
 
-the pipeline delegates individual `Tail-Up` and `Tail-Down` component fitting and prediction to three `S3N` functions:
+- **`--engine=cpp` *(Default)***: Runs all estimation, spatial residual bootstrapping, and universal kriging inside [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp). Because `S3N` is **no longer required**, the entire pipeline runs out of the box with zero external NNGP package dependencies, multi-core OpenMP scaling (`auto` all available cores by default unless `--threads=<N>` / `--omp=<N>` is given), and true Monte Carlo spatial residual bootstrap CIs across all four covariance kernels (`exponential`, `spherical`, `mariah`, `linear`).
+- **`--engine=brisc` *(Optional Legacy Fallback)***: Delegates univariate component estimation, bootstrap, and kriging to the optional external `S3N` R package **only when all three conditions hold**:
+  1. The `S3N` package is installed (checked by `load_s3n_backend()` -> `.s3n_env$has_s3n_pkg`),
+  2. `--kernel=exponential` is selected, and
+  3. Heteroskedastic measurement error (`--meas-error` / `--gam` / `source_se`) is **not** active.
+  If `--engine=brisc` is requested without `S3N` installed, the runner prints a notice and automatically falls back to `--engine=cpp`. If `S3N` updates upstream in the future or you want to verify reference parity, passing `--engine=brisc` lets you invoke it side by side at any time.
 
-| `S3N` Function | Role in This Pipeline | Where Called |
+### Engine Comparison: `--engine=cpp` vs. `--engine=brisc`
+
+| Feature / Mechanism | `--engine=cpp` (Default Native Engine) | `--engine=brisc` (Optional Legacy `S3N` Fallback) |
+| :--- | :--- | :--- |
+| **External R Dependency** | **None** (uses bundled [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp)). | Requires `jpierkunke/S3N` + CRAN deps (`RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr`). |
+| **Supported Kernels** | **All 4** (`exponential`, `spherical`, `mariah`, `linear`) + AIC `auto`. | **`exponential` only** (other kernels/ME always route through C++). |
+| **Profile MLE Optimiser** | Multi-start `(eta, phi)` grid + bounded Nelder–Mead simplex (`C_s3n_nngp_loglik()` + `fit_nngp_cpp()`). | `BRISC_estimation_stream()` (`L-BFGS-B` inside `S3N`/`BRISC`). |
+| **Bootstrap CI Method (`--boot=N`)** | **Saha & Datta (2018) clean-room C++ spatial residual bootstrap** (`C_s3n_nngp_bootstrap()`): whitens residuals via NNGP Cholesky factors `(B, F)`, standardises them, resamples replicates in parallel across OpenMP threads using deterministic per-replicate `splitmix64`/`std::mt19937_64` seeding, forward-solves synthetic responses, re-estimates MLEs, and computes **95% Efron percentile CIs** (non-negative clamped for `Theta`). `--boot=0` falls back immediately to GLS + finite-difference Fisher asymptotic SEs. | `BRISC_bootstrap()`: resamples NNGP normalised residuals at the R level (one replicate per `lapply` iteration) and re-estimates `Beta` and `Theta` via `L-BFGS-B` (`2*est - quantile` pivotal intervals, clamped at `0` for `Theta`). `--boot=0` falls back to Fisher asymptotic SEs. |
+| **Universal Kriging** | `C_s3n_predict_meas_error()` (supports both homoskedastic `v = 0` and heteroskedastic ME weights) + `C_s3n_joint_nngp()` (`--combine=joint`). | `BRISC_prediction_stream()` for component TU/TD when ME is inactive (`C_s3n_joint_nngp()` still handles `--combine=joint`). |
+| **OpenMP Thread Safety** | **Fully thread-safe; defaults to all available cores** (bit-identical bootstrap replicates whether run with `1` or `N` threads). | Defaults to **`n_omp = 1`** inside `BRISC_*`. Overcomes upstream `S3N` `BRISC.cpp` / `BRISC_Predict.cpp` possible `dpotrf` corruption/segfaults. |
+
+### `S3N` Functions Invoked Under `--engine=brisc`
+
+| `S3N` Function | Role Under `--engine=brisc` | Where Called |
 | :--- | :--- | :--- |
 | `BRISC_estimation_stream()` | Estimates GLS fixed-effect slopes `Beta` and spatial parameters `Theta = (sigma.sq, tau.sq, phi)` via sparse NNGP profile MLE (`L-BFGS-B`) on `nb_tu$obs_neighbors` and `nb_td$obs_neighbors`. | [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`estimate_component()`) |
-| `BRISC_bootstrap()` | Generates 95% parametric bootstrap confidence intervals for `Beta` and `Theta` when `engine == "brisc"`. | [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`bootstrap_component()`) |
+| `BRISC_bootstrap()` | Generates 95% parametric bootstrap confidence intervals for `Beta` and `Theta` when `--boot >= 1`. | [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`bootstrap_component()`) |
 | `BRISC_prediction_stream()` | Computes universal stream kriging point predictions (`$prediction`) and 95% prediction intervals (`$prediction.ci`) across all `q_tot` reaches for `Tail-Up` and `Tail-Down`. | [`scripts/s3n_model_functions.R`](../scripts/s3n_model_functions.R) (`predict_component()`) |
 
-> [!NOTE]
-> **Recommended `S3N` Usage & Automatic C++ Fallback**: The default `--combine=joint` solver runs via [`C_s3n_joint_nngp()`](../src/s3n_fast_neighbors.cpp). Upstream `S3N` (`BRISC_estimation_stream()`, `BRISC_bootstrap()`, `BRISC_prediction_stream()`) still handles individual `Tail-Up` / `Tail-Down` exponential component fits, Monte Carlo parametric bootstrap CIs (`--boot=`), and `--combine=precision`.
->
-> Without `S3N` installed, the OpenMP C++ fallback (`fit_nngp_cpp()`, `bootstrap_nngp_cpp()`, `C_s3n_predict_meas_error()`) runs all models automatically using analytical GLS asymptotic CIs for `Beta` and log-normal approximations for variance parameters; **installing `S3N` is recommended** for full Monte Carlo parametric bootstrap CIs.
+*(Note: Both `--combine=joint` via [`C_s3n_joint_nngp()`](../src/s3n_fast_neighbors.cpp) and Multivariate Factor-LMC Co-Kriging in [`run_s3n_cokriging.R`](../scripts/run_s3n_cokriging.R) always execute natively in our C++/OpenMP library regardless of `--engine=`.)*
 
 ---
 
@@ -92,6 +107,13 @@ In large national catchments (e.g., Humber or Thames), raw multiplicative Additi
 
 ### 3.4 Combining `Tail-Up` & `Tail-Down`
 Upstream `S3N` fits one stream covariance model (`Tail-Up` **or** `Tail-Down`) at a time. This pipeline fits both and combines them either via a unified **Joint Additive NNGP** (`--combine=joint`, default) or via reach-level **Local Spatial Information-Gain Weighting** (`--combine=precision`: $w(s_0) = \max(10^{-4}, 1 - \text{SE}(s_0)^2 / (\hat{\sigma}^2 + \hat{\tau}^2))$), which shifts unmonitored headwaters toward `Tail-Down` while blending both along monitored mainstems.
+
+### 3.5 Native C++/OpenMP NNGP Estimation, Prediction & Spatial Bootstrap
+Under the default `--engine=cpp`, [`src/s3n_fast_neighbors.cpp`](../src/s3n_fast_neighbors.cpp) also replaces `S3N::BRISC_*` across every stage of univariate inference without relying on external Fortran/R-error-inside-OpenMP calls:
+- **`C_s3n_nngp_loglik()`**: Evaluates Vecchia profile NNGP log-likelihoods and solves GLS fixed effects $\hat{\beta}$ in parallel across OpenMP threads for `exponential`, `spherical`, `mariah`, and `linear` stream covariance kernels.
+- **`C_s3n_nngp_bootstrap()`**: Clean-room C++/OpenMP implementation of Saha & Datta's (2018) decorrelated spatial residual bootstrap (Algorithm 2), parallelising independent bootstrap replicates across CPU cores with deterministic per-replicate seeding (`boot_sec ≈ 0.55 s` for 50 Tail-Up + 50 Tail-Down replicates across All England `n_obs = 1,210`).
+- **`C_s3n_predict_meas_error()`**: Stack-allocated OpenMP universal stream kriging predictor handling both homoskedastic (`v = 0`) and heteroskedastic observation-error variances (`--meas-error` / `--gam` / `--source-se`).
+- **`C_s3n_get_omp_max_threads()` / `C_s3n_set_omp_threads()`**: Thread-budget management helpers ensuring single-target scripts utilise all available cores by default and shielding C++ stages from `S3N::BRISC`'s process-global `omp_set_num_threads()` calls whenever `--engine=brisc` is used.
 
 ---
 

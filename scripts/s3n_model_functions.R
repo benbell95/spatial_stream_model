@@ -6,6 +6,7 @@
 
 .s3n_env <- new.env(parent = emptyenv())
 .s3n_env$has_s3n_pkg <- FALSE
+.s3n_env$default_omp_threads <- NULL
 
 load_s3n_backend <- function(base_dir = ".") {
   cand_libs <- c(
@@ -34,7 +35,35 @@ load_s3n_backend <- function(base_dir = ".") {
     }
     dyn.load(so_path)
   }
+  if (is.null(.s3n_env$default_omp_threads) && is.loaded("C_s3n_get_omp_max_threads")) {
+    .s3n_env$default_omp_threads <- as.integer(.Call("C_s3n_get_omp_max_threads"))
+  }
   invisible(TRUE)
+}
+
+normalize_engine_name <- function(e_str, default = "cpp") {
+  if (is.null(e_str) || length(e_str) == 0L || is.na(e_str[1]) || !nzchar(trimws(as.character(e_str[1])))) return(default)
+  e <- tolower(trimws(as.character(e_str[1])))
+  if (e %in% c("cpp", "native", "nngp", "s3n_cpp", "default")) return("cpp")
+  if (e %in% c("brisc", "s3n", "s3n_brisc", "legacy")) return("brisc")
+  stop(sprintf("Unknown --engine='%s'. Valid engines: cpp, brisc", e_str[1]))
+}
+
+parse_engine_arg <- function(args = character(0), default = "cpp") {
+  e_arg <- grep("^--(engine|s3n-engine)=", args, value = TRUE)
+  if (length(e_arg) > 0L) {
+    val <- sub("^--(engine|s3n-engine)=", "", e_arg[1])
+    return(normalize_engine_name(val, default = default))
+  }
+  normalize_engine_name(default, default = "cpp")
+}
+
+print_available_engines <- function() {
+  cat("Available NNGP Estimation / Bootstrap Engines (--engine=<mode>):\n")
+  cat("  cpp   (default) : Native thread-safe C++ OpenMP NNGP engine with Saha & Datta (2018)\n")
+  cat("                    decorrelated spatial residual bootstrap across all 4 covariance kernels\n")
+  cat("  brisc           : Legacy external S3N::BRISC fallback (Exponential kernel without ME;\n")
+  cat("                    defaults to n_omp=1 inside BRISC due to upstream OpenMP race)\n\n")
 }
 
 S3N_KERNEL_SPECS <- list(
@@ -1306,7 +1335,45 @@ fit_nngp_cpp <- function(X_obs, y_vec_obs, obs_nb, vy, kernel_name = "exponentia
   )
 }
 
-bootstrap_nngp_cpp <- function(fit_obj, X_obs) {
+bootstrap_nngp_cpp <- function(fit_obj, X_obs, y_obs = NULL, obs_nb = NULL, n_boot = 50L, seed = 2026L) {
+  n_boot_int <- suppressWarnings(as.integer(n_boot))
+  if (!is.null(y_obs) && !is.null(obs_nb) && is.finite(n_boot_int) && n_boot_int >= 5L &&
+      is.loaded("C_s3n_nngp_bootstrap")) {
+    kid <- if (!is.null(fit_obj$kernel_id)) as.integer(fit_obj$kernel_id) else 0L
+    th_hat <- as.double(c(fit_obj$Theta["sigma.sq"], fit_obj$Theta["tau.sq"], fit_obj$Theta["phi"]))
+    b_res <- tryCatch(
+      .Call("C_s3n_nngp_bootstrap",
+            X_obs, as.double(y_obs), obs_nb,
+            as.double(fit_obj$Beta), th_hat,
+            kid, n_boot_int, as.integer(seed)),
+      error = function(e) NULL
+    )
+    if (!is.null(b_res) && !is.null(b_res$boot.Beta) && !is.null(b_res$boot.Theta)) {
+      b_beta  <- b_res$boot.Beta
+      b_theta <- b_res$boot.Theta
+      ok_b <- rowSums(!is.finite(b_beta)) == 0L & rowSums(!is.finite(b_theta)) == 0L &
+        b_theta[, 1] > 0 & b_theta[, 2] >= 0 & b_theta[, 3] > 0
+      if (sum(ok_b) >= 5L) {
+        b_beta  <- b_beta[ok_b, , drop = FALSE]
+        b_theta <- b_theta[ok_b, , drop = FALSE]
+        b_mat   <- cbind(b_beta, b_theta)
+        ci_mat  <- apply(b_mat, 2L, quantile, probs = c(0.025, 0.975), na.rm = TRUE, names = FALSE)
+        p_b     <- ncol(b_beta)
+        ci_mat[, (p_b + 1L):ncol(b_mat)] <- pmax(0.0, ci_mat[, (p_b + 1L):ncol(b_mat)])
+        colnames(b_beta)  <- colnames(X_obs)
+        colnames(b_theta) <- c("sigma.sq", "tau.sq", "phi")
+        colnames(ci_mat)  <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
+        return(list(
+          boot.Beta           = b_beta,
+          boot.Theta          = b_theta,
+          norm.residual       = b_res$norm.residual,
+          confidence.interval = ci_mat,
+          method              = "spatial_residual_bootstrap"
+        ))
+      }
+    }
+  }
+
   se_beta <- sqrt(pmax(1e-12, diag(as.matrix(fit_obj$cov.beta))))
   ci_beta_lo <- fit_obj$Beta - 1.959964 * se_beta
   ci_beta_hi <- fit_obj$Beta + 1.959964 * se_beta
@@ -1322,7 +1389,7 @@ bootstrap_nngp_cpp <- function(fit_obj, X_obs) {
   ci_th_hi <- th * exp( 1.959964 * se_log_th)
   ci_mat <- rbind(c(ci_beta_lo, ci_th_lo), c(ci_beta_hi, ci_th_hi))
   colnames(ci_mat) <- c(colnames(X_obs), "sigma.sq", "tau.sq", "phi")
-  list(confidence.interval = ci_mat)
+  list(confidence.interval = ci_mat, method = "fisher_asymptotic")
 }
 
 fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
@@ -1469,7 +1536,9 @@ fit_and_predict_joint_s3n <- function(X_obs, y_vec_obs, v_meas, has_me, X_all,
 parse_n_omp_arg <- function(args = character(0), default = 1L) {
   thr_arg <- grep("^--(threads|n-omp|omp)=", args, value = TRUE)
   if (length(thr_arg) > 0) {
-    val <- suppressWarnings(as.integer(sub("^--(threads|n-omp|omp)=", "", thr_arg[1])))
+    raw_v <- tolower(trimws(sub("^--(threads|n-omp|omp)=", "", thr_arg[1])))
+    if (raw_v %in% c("auto", "all", "max")) return(NA_integer_)
+    val <- suppressWarnings(as.integer(raw_v))
     if (is.finite(val) && val >= 1L) return(val)
   }
   as.integer(default)
@@ -1482,7 +1551,7 @@ fit_s3n_domain <- function(df,
                            var_specs = NULL,
                            m_neighbors = 15L,
                            n_boot = 50L,
-                           n_omp = 1L,
+                           n_omp = NA_integer_,
                            use_meas_error = FALSE,
                            net_meta = NULL,
                            obs_col = "obs_val",
@@ -1496,12 +1565,45 @@ fit_s3n_domain <- function(df,
                            threshold = NA_real_,
                            threshold_dir = "above",
                            design_sites = 0L,
-                           censor_mode = "ros") {
+                           censor_mode = "ros",
+                           engine = "cpp") {
   obs_idx <- which(df$has_obs == 1L & !is.na(df[[obs_col]]))
   n_obs   <- length(obs_idx)
   if (n_obs < 15L) {
     cat(sprintf("  Skipping separate fit for %s (only %d observed reaches).\n", domain_label, n_obs))
     return(NULL)
+  }
+
+  engine_req <- normalize_engine_name(engine, default = "cpp")
+  use_brisc  <- (engine_req == "brisc") && isTRUE(.s3n_env$has_s3n_pkg)
+  if (engine_req == "brisc" && !isTRUE(.s3n_env$has_s3n_pkg)) {
+    message("  [Notice] --engine=brisc requested, but R package 'S3N' is not installed/visible; falling back to native 'cpp' OpenMP engine.")
+  }
+
+  def_thr <- if (!is.null(.s3n_env$default_omp_threads) && is.finite(.s3n_env$default_omp_threads) && .s3n_env$default_omp_threads >= 1L) {
+    as.integer(.s3n_env$default_omp_threads)
+  } else if (is.loaded("C_s3n_get_omp_max_threads")) {
+    as.integer(.Call("C_s3n_get_omp_max_threads"))
+  } else {
+    1L
+  }
+  n_omp_in <- if (is.null(n_omp) || length(n_omp) == 0L || is.na(n_omp[1])) NA_integer_ else as.integer(n_omp[1])
+  if (is.na(n_omp_in) || n_omp_in < 1L) {
+    cpp_omp   <- def_thr
+    brisc_omp <- 1L
+  } else if (!use_brisc) {
+    cpp_omp   <- n_omp_in
+    brisc_omp <- 1L
+  } else {
+    brisc_omp <- n_omp_in
+    cpp_omp   <- if (brisc_omp == 1L) def_thr else brisc_omp
+  }
+  if (use_brisc && brisc_omp > 1L) {
+    warning(sprintf("Upstream S3N::BRISC has a known OpenMP data race when n_omp=%d > 1 (risk of dpotrf failure / segfault); prefer --engine=cpp or --threads=1.", brisc_omp), call. = FALSE)
+  }
+  if (is.loaded("C_s3n_set_omp_threads")) {
+    prev_omp <- as.integer(.Call("C_s3n_set_omp_threads", as.integer(cpp_omp)))
+    on.exit(.Call("C_s3n_set_omp_threads", as.integer(prev_omp)), add = TRUE)
   }
 
   cat(sprintf("\n--- Fitting %s (%d reaches, %d observed) ---\n", domain_label, nrow(df), n_obs))
@@ -1574,8 +1676,11 @@ fit_s3n_domain <- function(df,
   afv_mode   <- parse_afv_arg(paste0("--afv=", afv_scheme))
   trend_req  <- normalize_trend_name(trend, default = "linear")
   df_ord$log_AFV <- compute_reach_log_afv(df_ord, afv_scheme = afv_mode, parent_0 = parent_0)
-  cat(sprintf("  Spatial configuration: kernel = %s | combine = %s | afv = %s | trend = %s\n",
-              kernel_req, comb_mode, afv_mode, trend_req))
+  cat(sprintf("  Spatial configuration: kernel = %s | combine = %s | afv = %s | trend = %s | engine = %s (cpp_omp=%d%s)\n",
+              kernel_req, comb_mode, afv_mode, trend_req,
+              if (use_brisc && kernel_req == "exponential") "brisc" else "cpp",
+              cpp_omp,
+              if (use_brisc && kernel_req == "exponential") sprintf(", brisc_omp=%d", brisc_omp) else ""))
 
   X_all <- build_design_matrix(df_ord, include_peat = (domain_id == "england"), var_specs = var_specs)
   cat(sprintf("  Fixed-effect covariates (%d): %s\n", ncol(X_all), paste(colnames(X_all), collapse = ", ")))
@@ -1606,17 +1711,26 @@ fit_s3n_domain <- function(df,
   nb_td <- build_neighbors(1L)
   t_nb  <- (proc.time() - t0)[3]
 
+  restore_cpp_omp <- function() {
+    if (is.loaded("C_s3n_set_omp_threads")) {
+      .Call("C_s3n_set_omp_threads", as.integer(cpp_omp))
+    }
+  }
+
   estimate_component <- function(X_m, y_m, obs_nb_m, vy_m, k_name, init_theta = NULL) {
-    if (k_name == "exponential" && isTRUE(.s3n_env$has_s3n_pkg)) {
+    if (k_name == "exponential" && use_brisc) {
       has_it <- !is.null(init_theta) && length(init_theta) >= 3L &&
         all(is.finite(init_theta[1:3])) && all(init_theta[1:3] > 0)
       sig_0 <- if (has_it) as.numeric(init_theta[1]) else vy_m * 0.7
       tau_0 <- if (has_it) as.numeric(init_theta[2]) else vy_m * 0.1
       phi_0 <- if (has_it) as.numeric(init_theta[3]) else 0.05
-      res_b <- BRISC_estimation_stream(
-        coords = as.matrix(seq_len(nrow(X_m))), y = as.matrix(y_m), x = X_m,
-        neighbor = obs_nb_m, sigma.sq = sig_0, tau.sq = tau_0, phi = phi_0,
-        cov.model = "exponential", n_omp = n_omp, nugget_status = 1, verbose = FALSE
+      res_b <- tryCatch(
+        BRISC_estimation_stream(
+          coords = as.matrix(seq_len(nrow(X_m))), y = as.matrix(y_m), x = X_m,
+          neighbor = obs_nb_m, sigma.sq = sig_0, tau.sq = tau_0, phi = phi_0,
+          cov.model = "exponential", n_omp = brisc_omp, nugget_status = 1, verbose = FALSE
+        ),
+        finally = restore_cpp_omp()
       )
       res_b$kernel_name <- "exponential"
       res_b$kernel_id   <- 0L
@@ -1696,15 +1810,22 @@ fit_s3n_domain <- function(df,
   }
 
   t2 <- proc.time()
-  bootstrap_component <- function(fit_obj) {
-    if (identical(fit_obj$engine, "brisc") && isTRUE(.s3n_env$has_s3n_pkg)) {
-      BRISC_bootstrap(fit_obj, n_boot = n_boot, n_omp = n_omp, verbose = FALSE)
+  bootstrap_component <- function(fit_obj, obs_nb_m, boot_seed) {
+    if (identical(fit_obj$engine, "brisc") && use_brisc) {
+      if (is.finite(n_boot) && as.integer(n_boot) >= 1L) {
+        tryCatch(
+          BRISC_bootstrap(fit_obj, n_boot = n_boot, n_omp = brisc_omp, verbose = FALSE),
+          finally = restore_cpp_omp()
+        )
+      } else {
+        bootstrap_nngp_cpp(fit_obj, X_obs, n_boot = 0L)
+      }
     } else {
-      bootstrap_nngp_cpp(fit_obj, X_obs)
+      bootstrap_nngp_cpp(fit_obj, X_obs, y_obs = y_obs_s3n, obs_nb = obs_nb_m, n_boot = n_boot, seed = boot_seed)
     }
   }
-  bs_tu <- bootstrap_component(fit_tu)
-  bs_td <- bootstrap_component(fit_td)
+  bs_tu <- bootstrap_component(fit_tu, nb_tu$obs_neighbors, 2026L + 100L)
+  bs_td <- bootstrap_component(fit_td, nb_td$obs_neighbors, 2026L + 200L)
   t_bs  <- (proc.time() - t2)[3]
 
   t3 <- proc.time()
@@ -1716,11 +1837,14 @@ fit_s3n_domain <- function(df,
             as.integer(m_use),
             nb_obj$pred_neighbors$nnIndx, nb_obj$pred_neighbors$nnDist, nb_obj$pred_neighbors$nnWght,
             nb_obj$obsobs_dist, nb_obj$obsobs_wt)
-    } else if (identical(fit_obj$engine, "brisc") && kid == 0L && isTRUE(.s3n_env$has_s3n_pkg)) {
-      BRISC_prediction_stream(
-        BRISC_Out = fit_obj, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
-        neighbor = nb_obj$pred_neighbors, obsobs_dist = nb_obj$obsobs_dist, obsobs_wt = nb_obj$obsobs_wt,
-        n_omp = n_omp, verbose = FALSE
+    } else if (identical(fit_obj$engine, "brisc") && kid == 0L && use_brisc) {
+      tryCatch(
+        BRISC_prediction_stream(
+          BRISC_Out = fit_obj, coords.0 = as.matrix(1:q_tot), X.0 = X_all,
+          neighbor = nb_obj$pred_neighbors, obsobs_dist = nb_obj$obsobs_dist, obsobs_wt = nb_obj$obsobs_wt,
+          n_omp = brisc_omp, verbose = FALSE
+        ),
+        finally = restore_cpp_omp()
       )
     } else {
       th_vec <- c(fit_obj$Theta["sigma.sq"], fit_obj$Theta["tau.sq"], fit_obj$Theta["phi"], kid)
@@ -2004,11 +2128,14 @@ fit_s3n_domain <- function(df,
                             p_cv$nnIndx, p_cv$nnDist, p_cv$nnWght,
                             nb_cv$obsobs_dist, nb_cv$obsobs_wt)
         denom <- sum(theta_me[1:2])
-      } else if (identical(f_cv$engine, "brisc") && kid == 0L && isTRUE(.s3n_env$has_s3n_pkg)) {
-        pr_raw <- BRISC_prediction_stream(
-          BRISC_Out = f_cv, coords.0 = as.matrix(seq_along(te)), X.0 = X_te,
-          neighbor = p_cv, obsobs_dist = nb_cv$obsobs_dist, obsobs_wt = nb_cv$obsobs_wt,
-          n_omp = n_omp, verbose = FALSE
+      } else if (identical(f_cv$engine, "brisc") && kid == 0L && use_brisc) {
+        pr_raw <- tryCatch(
+          BRISC_prediction_stream(
+            BRISC_Out = f_cv, coords.0 = as.matrix(seq_along(te)), X.0 = X_te,
+            neighbor = p_cv, obsobs_dist = nb_cv$obsobs_dist, obsobs_wt = nb_cv$obsobs_wt,
+            n_omp = brisc_omp, verbose = FALSE
+          ),
+          finally = restore_cpp_omp()
         )
         denom <- sum(f_cv$Theta[1:2])
       } else {
@@ -2208,6 +2335,7 @@ fit_s3n_domain <- function(df,
     cv_pts         = cv_pts,
     exceed_summary = exceed_summary,
     design_df      = design_df,
-    runtimes       = c(neighbor_sec = t_nb, est_sec = t_est, boot_sec = t_bs, pred_sec = t_pred)
+    runtimes       = c(neighbor_sec = as.numeric(t_nb), est_sec = as.numeric(t_est),
+                       boot_sec = as.numeric(t_bs), pred_sec = as.numeric(t_pred))
   )
 }

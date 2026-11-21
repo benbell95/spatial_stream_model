@@ -6,7 +6,17 @@
 [![Live Dashboard](https://img.shields.io/badge/Live_Dashboard-GitHub_Pages-38bdf8?logo=githubpages&logoColor=white)](https://benbell95.github.io/spatial_stream_model/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-This project implements a headless pipeline for **Scalable Spatial Stream Modelling (`NNGP`)**, including; 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access river network data from the Environment Agency (EA), and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
+This project implements a headless pipeline for **Scalable Spatial Stream Modelling (S3N)**, including; 5-fold cross-validation, universal stream kriging, and diagnostic reporting, using open-access river network data from the Environment Agency (EA), and the Ordnance Survey Open Rivers Network, `ORN v2` riverline dataset across England.
+
+>  This pipeline is based upon the **Scalable Spatial Stream Network (`S3N`)** paper and R package ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear Nearest-Neighbour Gaussian Process (`NNGP`) scaling to river networks. Full attribution to the authors of these packages and statistical theory:
+> - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
+>   Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
+> - **`BRISC` R Package** — **Arkajyoti Saha and Abhirup Datta**:
+>   Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
+>
+> **If you use this pipeline in published work or downstream analysis, please cite both the original `S3N` paper (Kunke et al., 2025, `arXiv:2512.12398`) and the `BRISC` paper (Saha & Datta, 2018, *Stat*, 7(1), e184).**
+>
+> See [Where This Pipeline Differs from `S3N`](docs/where_this_differs_from_s3n.md) for a full breakdown of what is shared, replaced, or added.
 
 ### Key Features
 
@@ -24,15 +34,7 @@ Also supports using other environmental (river) datasets including citizen scien
 
 A full [interactive dashboard](https://benbell95.github.io/spatial_stream_model/) is also included to showcase these features.
 
->  This pipeline is based upon the **Scalable Spatial Stream Network (`S3N`)** paper and R package ([`jpierkunke/S3N`](https://github.com/jpierkunke/S3N)), which brings linear Nearest-Neighbour Gaussian Process (`NNGP`) scaling to river networks. Full attribution to the authors of these packages and statistical theory:
-> - **`S3N` R Package** ([https://github.com/jpierkunke/S3N](https://github.com/jpierkunke/S3N)) — **Jessica P. Kunke, Julian D. Olden, and Tyler H. McCormick**:
->   Kunke, J. P., Olden, J. D., & McCormick, T. H. (2025). *Scalable Spatial Stream Network (S3N) Models*. **arXiv:2512.12398 [stat.ME]**. [https://arxiv.org/abs/2512.12398](https://arxiv.org/abs/2512.12398)
-> - **`BRISC` R Package** — **Arkajyoti Saha and Abhirup Datta**:
->   Saha, A., & Datta, A. (2018). *BRISC: Bootstrap for Rapid Inference on Spatial Covariances*. *Stat*, 7(1), e184.
->
-> **If you use this pipeline in published work or downstream analysis, please cite both the original `S3N` paper (Kunke et al., 2025, `arXiv:2512.12398`) and the `BRISC` paper (Saha & Datta, 2018, *Stat*, 7(1), e184).**
->
-> See [Where This Pipeline Differs from `S3N`](docs/where_this_differs_from_s3n.md) for a full breakdown of what is shared, replaced, or added.
+
 
 ## 📑 Table of Contents
 
@@ -56,16 +58,18 @@ A full [interactive dashboard](https://benbell95.github.io/spatial_stream_model/
 ### 1. System Prerequisites
 
 - **Python ≥ 3.8** — uses Python standard library only for core `.gpkg`/CSV preprocessing (optional `pyproj` for custom CRS reprojection, `pyarrow` for GeoParquet).
-- **R ≥ 3.5.0** with `S3N`, its dependencies, and optional `data.table` (strongly recommended for 5–15× faster CSV I/O). 
+- **R ≥ 3.5.0** — all NNGP estimation, spatial residual bootstrap CIs, and universal kriging run natively via [`src/s3n_fast_neighbors.cpp`](src/s3n_fast_neighbors.cpp) (`--engine=cpp`, default). Optional `data.table` is strongly recommended for 5–15× faster CSV I/O, `jsonlite` for faster JSON config parsing, and external `S3N` package is now **optional** (if using `--engine=brisc`).
 
 On Linux, install C++/OpenMP, BLAS/LAPACK, Cairo, and SQLite dev headers (if needed); on Windows, install **[Rtools](https://cran.r-project.org/bin/windows/Rtools/)** (or use **WSL2**).
 
 ### 2. Quick Setup (R Packages, C++ Library & Paths)
 ```r
-# Install required/recommended R dependencies
-install.packages(c("RANN", "rdist", "matrixStats", "pbapply", "dplyr", "jsonlite", "remotes", "data.table"))
-# Install S3N package from GitHub
-remotes::install_github("jpierkunke/S3N")
+# Recommended CRAN packages (fast CSV I/O & JSON config parsing; optional fallback built in)
+install.packages(c("data.table", "jsonlite"))
+
+# Optional: only needed if you explicitly run `--engine=brisc` (legacy S3N::BRISC fallback)
+# install.packages(c("RANN", "rdist", "matrixStats", "pbapply", "dplyr", "remotes"))
+# remotes::install_github("jpierkunke/S3N")
 ```
 ⚠️ Windows and MacOS users must compile the OpenMP C++ engine (`src/s3n_fast_neighbors.cpp`) in order to run these scripts. (This comes precompiled on Linux). More detailed information available in the [setup guide](docs/setup_and_architecture.md#13-compiled-c--openmp-library-srcs3n_fast_neighborscpp). 
 

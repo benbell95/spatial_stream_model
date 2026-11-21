@@ -139,7 +139,7 @@ The pipeline implements transformation-specific formulas via `calc_response_meas
 
 ### 2.3 Nugget Decomposition
 
-When fitting spatial covariance parameters via Maximum Likelihood (using Vecchia-approximated NNGP in `BRISC_estimation_stream`), the optimizer estimates:
+When fitting spatial covariance parameters via Maximum Likelihood (using Vecchia-approximated NNGP in `C_s3n_nngp_loglik()` by default under `--engine=cpp`, or optional `BRISC_estimation_stream()` under `--engine=brisc`), the optimizer estimates:
 - Partial sill variance: $\hat{\sigma}^2$
 - Total non-spatial variance: $\hat{\tau}_{\text{total}}^2$
 - Spatial decay parameter: $\hat{\phi}$

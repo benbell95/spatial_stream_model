@@ -37,13 +37,12 @@ The pipeline minimises external dependencies so it runs reliably in headless Lin
 
 ### 1.2 R Environment
 - **R Version**: **R ≥ 3.5.0**.
-- **Required R Packages**:
+- **R Packages** *(core NNGP fitting, spatial residual bootstrapping, and universal kriging run natively via `src/s3n_fast_neighbors.cpp` under `--engine=cpp` with no required third-party CRAN/GitHub packages)*:
   | Package | Source | Purpose |
   | :--- | :--- | :--- |
-  | **`S3N`** | GitHub (`remotes::install_github("jpierkunke/S3N")`) | Scalable Spatial Stream Network NNGP estimation (`BRISC_estimation_stream`), kriging (`BRISC_prediction_stream`), and parametric bootstrap (`BRISC_bootstrap`). *(Recommended for standard exponential fits; C++ fallback handles custom kernels/ME/missing `S3N`.)* |
-  | `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr` | CRAN | Runtime dependencies of `jpierkunke/S3N`. |
-  | `jsonlite` *(optional / recommended)* | CRAN | Fast JSON parsing for `configs/*.json` and `network_metadata.json` (with built-in base-R fallback in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
   | `data.table` *(optional / strongly recommended)* | CRAN | Multi-threaded `fread()` / `fwrite()` CSV I/O (`5–15x` faster on large sample files and ~91k-reach prediction outputs, with automatic base-R `read.csv()` / `write.csv()` fallback via `fast_read_csv()` / `fast_write_csv()` in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
+  | `jsonlite` *(optional / recommended)* | CRAN | Fast JSON parsing for `configs/*.json` and `network_metadata.json` (with built-in base-R fallback in [`scripts/s3n_config.R`](../scripts/s3n_config.R)). |
+  | **`S3N`** *(optional — legacy `--engine=brisc` fallback)* | GitHub (`remotes::install_github("jpierkunke/S3N")`) | External `BRISC_estimation_stream()`, `BRISC_prediction_stream()`, and `BRISC_bootstrap()` for Exponential fits without ME when `--engine=brisc` is explicitly passed. Not needed for `--engine=cpp` (default). *(CRAN deps when building `S3N`: `RANN`, `rdist`, `matrixStats`, `pbapply`, `dplyr`.)* |
   | `splines`, `mgcv`, `rpart` | Bundled with standard R | Used when `--trend=spline\|gam\|rf\|gbm` is enabled (automatic fallback to `spline`/`linear` if unavailable). |
   | `stats`, `graphics`, `grDevices`, `utils`, `parallel` | Base R | Linear algebra, statistics, and headless PNG/PDF/SVG plotting (`type = "cairo"`). |
 
@@ -70,19 +69,21 @@ R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp
 
 #### macOS Notes (Intel & Apple Silicon)
 - **Compiler & C++ Recompile**: Install **Xcode Command Line Tools** (`xcode-select --install`, macOS's build-tool prerequisite analogous to Windows Rtools), then run `R CMD SHLIB --preclean src/s3n_fast_neighbors.cpp` from the repository root so the prebuilt Linux `.so` is replaced with a macOS build.
-- **OpenMP (`--omp=N`)**: Stock Apple Clang + CRAN R compiles cleanly without OpenMP (running single-threaded). To enable multi-threaded C++ and `S3N`, install `brew install libomp` and add the corresponding `-Xpreprocessor -fopenmp` / `-lomp` flags in `~/.R/Makevars`.
+- **OpenMP (`--omp=N` / `--threads=N`)**: Stock Apple Clang + CRAN R compiles cleanly without OpenMP (running single-threaded). To enable multi-threaded C++ (and optional `S3N`), install `brew install libomp` and add the corresponding `-Xpreprocessor -fopenmp` / `-lomp` flags in `~/.R/Makevars`.
 - **Graphics Devices**: `PNG` (default) and `PDF` fall back automatically to native macOS Quartz/PDF devices when Cairo is unavailable. `SVG` output (`--fig-format=svg` or [`scripts/07_compare_cokriging_runs.R`](../scripts/07_compare_cokriging_runs.R)) requires XQuartz (`capabilities("cairo") == TRUE`).
 - **GeoParquet & Arbitrary CRS Transforms**: Standard `.gpkg` and CSV preprocessing need no extra packages. For `.parquet`/`.geoparquet` files, install `pyarrow` (`pip install pyarrow`) or Homebrew `gdal` (`brew install gdal`, searched via `libgdal.dylib` / `/opt/homebrew/lib/libgdal.dylib`); for non-BNG EPSG CRS transforms, install `pyproj` or `brew install proj` (`cs2cs`).
 
 #### Windows Notes
-- **Rtools & C++ Recompile**: Install **Rtools** matching your R version so `R CMD SHLIB` (and building `S3N` from GitHub) compiles `src/s3n_fast_neighbors.dll` with OpenMP support via [`src/Makevars.win`](../src/Makevars.win).
+- **Rtools & C++ Recompile**: Install **Rtools** matching your R version so `R CMD SHLIB` (and optional `S3N` if building from GitHub for `--engine=brisc`) compiles `src/s3n_fast_neighbors.dll` with OpenMP support via [`src/Makevars.win`](../src/Makevars.win).
 - **`R.exe` / `Rscript.exe` on `PATH`**: CRAN's Windows installer does not add R to `PATH` automatically. Either add `C:\Program Files\R\R-<ver>\bin\x64\` to `PATH`, invoke the full `R.exe` / `Rscript.exe` path in PowerShell (`& "..."`) or Command Prompt, compile from the R/RStudio console via `system2(...)` (Section 1.3), or use [`cli_workbench/index.html`](../cli_workbench/index.html) (which includes an R-version path selector).
 - **Python Auto-Preprocessing**: Install Python 3 from `python.org` (or Conda); [`resolve_python_bin()`](../scripts/s3n_config.R#L64-L78) automatically skips Windows' `WindowsApps` Store stub and falls back to `py -3`.
 - **GeoParquet & Arbitrary CRS Transforms**: Standard `.gpkg` and CSV preprocessing work out of the box (SQLite3 is bundled with Python for Windows). For `.parquet`/`.geoparquet` files, install `pyarrow` (`pip install pyarrow`) or ensure OSGeo4W/Conda `gdal*.dll` is on `PATH`; for non-BNG EPSG CRS transforms, install `pyproj` (or ensure `cs2cs` is on `PATH`).
 
 ### 1.5 Hardware Profile
 - **RAM**: ~1.5 GB peak memory for a full national run.
-- **CPU**: Defaults to **`1` OpenMP thread** (`--omp=1` via `parse_n_omp_arg(..., default = 1L)`) for reproducible single-node runs; pass `--omp=4` (or higher) for multi-core speedups. With `--omp=4`, a full national + 3-basin ORN run with 5-fold CV and 4 figures completes in ~18–25 seconds.
+- **CPU**:
+  - **Single-determinand runners (`run_s3n_determinand.R`, `02_fit_s3n_models.R`)**: Default to **`auto`** OpenMP threads (`parse_n_omp_arg(..., default = NA_integer_)`), automatically using all available OpenMP cores under the native **`--engine=cpp`** default (override explicitly via `--threads=<N>` or `--omp=<N>`). Under `--engine=brisc`, calls to `S3N::BRISC_*` safely default to `1` thread internally (avoiding an upstream `S3N` OpenMP race) and restore the full C++ OpenMP thread budget immediately afterwards.
+  - **Co-kriging (`run_s3n_cokriging.R`)**: Defaults to **`1`** (`parse_n_omp_arg(..., default = 1L)`); pass `--omp=4` (or higher) for multi-core acceleration.
 
 ---
 

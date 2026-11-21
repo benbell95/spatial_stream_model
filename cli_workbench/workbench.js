@@ -97,7 +97,7 @@
       "wbTemporal", "wbTemporalSeason", "wbTemporalYear", "wbTemporalMonth",
       "wbDesignSites", "wbBasinSel", "wbBasinCustom",
       "wbPreferSel", "wbPreferCustom", "wbWeightSel", "wbWeightCustom",
-      "wbSeSel", "wbSeCustom", "wbFormat", "wbPalette", "wbOmp",
+      "wbSeSel", "wbSeCustom", "wbFormat", "wbPalette", "wbEngine", "wbOmp",
       "wbRVersionSel", "wbRVersionCustom",
       "wbPostDir1", "wbCompareMode", "wbPostDir2", "wbPostLabels", "wbPostOut",
       "wbSnapCatchmentSel", "wbSnapCatchmentCustom", "wbSnapOut",
@@ -177,7 +177,8 @@
       wbSeCustom: "",
       wbFormat: "png_200",
       wbPalette: "standard",
-      wbOmp: "1",
+      wbEngine: "cpp",
+      wbOmp: "auto",
       wbRVersionSel: "4.4.3",
       wbRVersionCustom: "",
       wbPostDir1: "output/results/det_0117_orn_rsn",
@@ -490,7 +491,8 @@
       const sourceSe = resolveSelectOrCustom(els.wbSeSel, els.wbSeCustom, "");
       const fmtVal = els.wbFormat ? els.wbFormat.value : "png_200";
       const palette = els.wbPalette ? els.wbPalette.value : "standard";
-      const omp = els.wbOmp ? els.wbOmp.value : "1";
+      const engine = els.wbEngine ? els.wbEngine.value : "cpp";
+      const omp = els.wbOmp ? els.wbOmp.value : "auto";
 
       const normalizeSourceTag = (srcVal) => {
         const s = (srcVal || "rsn").trim().toLowerCase();
@@ -667,7 +669,7 @@
         if (fmtVal === "svg") args.push("--fig-format=svg");
         else if (fmtVal === "pdf") args.push("--fig-format=pdf");
         else if (fmtVal === "png_300") args.push("--dpi=300");
-        if (omp && omp !== "1") args.push(`--omp=${omp}`);
+        if (omp && omp !== "auto" && omp !== "1") args.push(`--omp=${omp}`);
 
         const coTokenParts = coTargets.split(",").map((s) => s.trim()).filter(Boolean);
         const coSlugs = coTokenParts.map((s) => (s.includes(":") ? s.split(":").slice(1).join(":") : s).replace(/[^a-zA-Z0-9_]+/g, "_")).join("_");
@@ -728,7 +730,8 @@
 
         if (palette === "reverse") args.push("--reverse-color");
 
-        if (omp && omp !== "1") args.push(`--omp=${omp}`);
+        if (engine && engine === "brisc") args.push("--engine=brisc");
+        if (omp && omp !== "auto") args.push(`--omp=${omp}`);
 
         const inferredDs = effectiveDetDataset !== "auto" ? effectiveDetDataset : (/^[0-9]{4}$/.test(singleTarget) ? "wq" : (selectedTargetDs || "ecol"));
         const folderPrefix = inferredDs === "wq" ? `det_${singleTarget}` : `${inferredDs}_${singleTarget.replace(/[^a-zA-Z0-9_]+/g, "_")}`;
